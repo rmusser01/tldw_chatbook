@@ -1192,3 +1192,98 @@ checks that no dispatch was recorded. The complete raw-CLI file passes **20 in
 2.68s**, two dependency warnings (`/private/tmp/tldw-raw-cli-guard-review-final.xml`).
 All final changed-file lint/diff checks and changed-region formatting pass;
 unrelated pre-existing formatting drift was not rewritten.
+
+## Approved production repairs (2026-09-06, after user approval)
+
+This section supersedes the approval-pending state above. The five bounded
+repairs were approved, specified in
+`Docs/superpowers/specs/2026-09-06-approved-console-regressions-design.md`,
+implemented with RED/GREEN evidence and independently reviewed. No full-suite
+opt-in, merge, resource-threshold change or screen-size ceiling increase occurred.
+
+- **TASK-31817:** exact owned retry-dialog lifetime, synchronous suspend decision,
+  canonical idle repaint and stale-confirmation rejection. Independent review
+  additionally found that covering the already mounted retry suspends that modal,
+  not Console; a private dialog's undecided-suspend hook now abandons its exact
+  session. Real Confirm/Escape decisions remain distinct. The complete file passes
+  **21 in 57.47s** (`/private/tmp/tldw-31817-reviewed-full.xml`).
+- **TASK-31822:** budget Redirect's 10 cells only while active. The fixed +10
+  experiment regressed idle narrow layouts and was rejected. Reuse deferred draft
+  reflow on run-state changes: before that correction, focusing Stop moved it
+  between mouse-down and mouse-up. Bound the optional filename to remaining space,
+  preserving its full tooltip. Actual Stop stays at `(149,44,6,1)` throughout the
+  click at 160x48, with the original 0.5-second deadline. No forced scrolling or
+  Stop pre-focus. Final click/width **14 pass**; complete attachment/width **35 pass**
+  with no retained SQLite; command **104 pass**; streaming/width **102 pass**.
+  Evidence: `/private/tmp/tldw-31822-{final-green,attachments-width-full,command-full,responsive-green}.{xml,log}`.
+- **TASK-31823:** ordinary cached-screen resume registers CHAT in the existing
+  tracked timer list. Real navigation tests preserve the prior conversation,
+  create the intended character session/greeting, require the exact handoff
+  revision to become **settled**, and stop delivery if hidden again. A no-op
+  acknowledgement cannot satisfy the revised assertion. Suppressing only the new
+  timer makes the final fixture fail (`tldw-31823-final-fixture-red.xml`). Complete
+  handoff/UAT/reuse/ordered-resume files pass **36 in 83.13s**
+  (`tldw-approved-resume-complete.xml`).
+- **TASK-31824:** empty-stack guard precedes current-screen access; real matching
+  and stale-screen controls remain intact. Full buddy/parallel/live-handoff files
+  pass **134 in 146.97s**, no retained SQLite or FD-growth warning
+  (`/private/tmp/tldw-approved-buddy-handoffs-final.xml` and `.log`).
+- **TASK-31825:** only unsaved contiguous leading system artifacts become
+  RENDERED_SYSTEM; saved revision descriptors and later ACTIVE_REQUEST artifacts
+  are unchanged. Real provider dispatch and native SQLite capture readback remain
+  enabled. Complete durable/prepared/provenance files pass **91**; adding the
+  unchanged size guard yields **95 passed / 1 failed in 9.85s**
+  (`/private/tmp/tldw-approved-trace-size-final.xml`). Full character UAT plus new
+  handoff controls pass **8**, including the final exact-source content assertions.
+
+The UAT originally retained owned auxiliary databases. Importing the existing
+exact builder/controller/DB fixtures closes them: **8 passed in 26.45s**, zero
+native retained SQLite lines (`/private/tmp/tldw-31823-resource-retry.xml`). The
+same observer exposed additional adjacent reuse/dictation/command fixture owners;
+their test-only adapters are tracked under TASK-31821. Shared cleanup internals
+and production resource lifecycles are unchanged.
+
+The final seven-file fixture cohort is **253 passed in 374.99s**, five
+dependency/deprecation warnings, **zero retained SQLite lines and no resource
+growth warning** (`/private/tmp/tldw-31821-dictation-reuse-resources.xml` and
+`.log`). Module-local factories route imported dictation helpers through their
+exact owner; real-app reuse adds only exact notification-DB registration.
+Independent ownership review found no issues. Root's integrated owner-fault
+controls plus complete handoff/UAT/attachment/width files pass **56 in 71.95s**,
+three dependency warnings, native attribution clean
+(`/private/tmp/tldw-approved-integration-final.xml`). These completed runs replace
+the earlier adjacent-fixture resource qualifications, not their behavioral gates.
+The exact original TASK-31821 five-file cohort, previously **93 passed / 1 Stop
+failure**, now passes **94 in 105.93s**, three dependency warnings, native
+attribution clean (`/private/tmp/tldw-31821-original-cohort-complete.xml` and
+`.log`). TASK-31821 is Done alongside the five approved production repairs.
+
+Current qualified limitations, not folded into passing counts:
+
+1. **Screen size:** ChatScreen is now **16,901 / 16,818 lines** and **508 / 505
+   methods**. The new timer adds one line to the pre-existing violation; no ceiling
+   was raised and no unrelated decomposition was bundled.
+2. **Two request-provenance census guards:** the baseline table predates owner
+   changes, not just line movement. MANUAL_SUMMARY no longer has its old runtime
+   marker; manual summary now uses the capture-off auxiliary summary path with
+   `route=None`, auto compaction forwards through kwargs, and Settings adds an
+   uncensused auxiliary call. An offset-only refresh would falsely claim route
+   coverage. Existing ADR-052 manual-memory behavior needs a separately reviewed
+   census-contract reconciliation. Tests remain unchanged and failing; see
+   `/private/tmp/tldw-31825-full.xml` and the baseline comparison log.
+3. **Retry Speech at 90x30:** the overflow/narrow/cursor selection is **84 passed /
+   1 failed**, specifically
+   `Tests/UI/test_console_narrow_layout.py::test_console_retry_speech_button_routes_without_resuming`.
+   It also fails when all changed composer methods are restored from HEAD via a
+   scoped negative-control fixture (`tldw-31822-retry-speech-baseline.xml`). This is
+   not a Stop regression; no assertion, viewport or handler was changed to hide it.
+4. Historical non-UI inventory is not newly qualified by these bounded runs.
+   A new full-repository sweep still requires explicit opt-in.
+
+Several background test processes exited 137 without a report. They are discarded
+as incomplete evidence; only completed XML/log runs above count. No foreign
+process was killed. Current app/controller full-file lint counts match HEAD
+exactly (133/27); the other three edited production files have zero lint findings.
+New/edited test lint and changed-region formatting pass. Impeccable's layout scan
+is empty; its dense inline-row guidance kept this to control reachability and
+responsive budgeting, not a redesign.

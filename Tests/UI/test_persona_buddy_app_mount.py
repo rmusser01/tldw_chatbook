@@ -104,6 +104,40 @@ def test_overlay_refresh_without_screens_starts_no_presentation_work(enabled):
     assert getattr(app, "_persona_buddy_overlay", None) is None
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_late_rebuild_without_screens_starts_no_presentation_work(enabled, monkeypatch):
+    app = _BuddyApp(PersonaBuddyPreferences(enabled=enabled))
+    scheduled = []
+    monkeypatch.setattr(
+        app, "_schedule_persona_buddy_overlay", lambda: scheduled.append(1)
+    )
+    assert app.screen_stack == []
+
+    app.on_base_app_screen_contents_rebuilt(
+        BaseAppScreen.ContentsRebuilt(app.initial_screen)
+    )
+
+    assert scheduled == []
+    assert getattr(app, "_persona_buddy_overlay", None) is None
+
+
+@pytest.mark.parametrize("matching", [False, True])
+@pytest.mark.asyncio
+async def test_rebuild_only_reconciles_the_current_screen(matching, monkeypatch):
+    app = _BuddyApp(PersonaBuddyPreferences())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        scheduled = []
+        monkeypatch.setattr(
+            app, "_schedule_persona_buddy_overlay", lambda: scheduled.append(1)
+        )
+        screen = app.screen if matching else _BuddyScreen(app, "stale")
+
+        app.on_base_app_screen_contents_rebuilt(BaseAppScreen.ContentsRebuilt(screen))
+
+        assert scheduled == ([1] if matching else [])
+
+
 @pytest.mark.asyncio
 async def test_threaded_controller_changes_reconcile_without_manual_ui_calls():
     app = _BuddyApp(PersonaBuddyPreferences())

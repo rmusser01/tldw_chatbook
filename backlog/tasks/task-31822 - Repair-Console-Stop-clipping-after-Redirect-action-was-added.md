@@ -1,10 +1,11 @@
 ---
 id: TASK-31822
 title: Repair Console Stop clipping after Redirect action was added
-status: To Do
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 06:18'
+updated_date: '2026-09-06 15:16'
 labels: []
 dependencies: []
 ---
@@ -17,7 +18,19 @@ The real 160x48 Console action row budgets 37 cells while active controls requir
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 At the existing 160x48 viewport the active Stop button is physically visible and clickable without forced scrolling or programmatic Stop focus.
-- [ ] #2 The action-width calculation accounts for applicable controls without changing Redirect semantics or widening test deadlines.
-- [ ] #3 Real click/cancellation and relevant composer layout tests pass, with ordinary composer focus established for synthetic Send setup.
+- [x] #1 At the existing 160x48 viewport the active Stop button is physically visible and clickable without forced scrolling or programmatic Stop focus.
+- [x] #2 The action-width calculation accounts for applicable controls without changing Redirect semantics or widening test deadlines.
+- [x] #3 Real click/cancellation and relevant composer layout tests pass, with ordinary composer focus established for synthetic Send setup.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Follow approved-console-regressions plan TASK31822: RED physical Stop containment with ordinary composer focus, include Redirect in existing width budget, GREEN real click and complete layout/attachment tests, independent review. ADR required: no; routine layout correction preserves control semantics and DESIGN.md.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Approved bounded layout repair, refined after 80-column baseline: reserve Redirect 10 cells only while active; reuse existing deferred draft reflow on run-state changes so Stop does not move between mouse-down and mouse-up; let optional attachment labels yield narrow-row space while retaining the full tooltip. Existing order, visibility, 160x48 viewport and 0.5-second click deadline remain unchanged. Original containment RED; final actual Stop plus width controls14pass, complete attachment/width35pass with no native retained SQLite, complete command104pass, streaming/width102pass, overflow/narrow/cursor84pass1baseline Retry Speech failure reproduced with original methods restored. Logs /private/tmp/tldw-31822-{final-green,attachments-width-full,command-full,responsive-green,layout-full,retry-speech-baseline}.{xml,log}. Fixture retention in adjacent command/dictation files is TASK31821, not waived. Independent code/spec review, scoped lint/format/diff checks and Impeccable layout scan pass. No new ADR; existing dense inline action row preserved.
+<!-- SECTION:NOTES:END -->

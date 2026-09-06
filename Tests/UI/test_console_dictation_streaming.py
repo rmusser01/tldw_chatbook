@@ -24,7 +24,7 @@ from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictation import (
     _mounted_console,
-    _ready_host,
+    _ready_host as _build_ready_host,
     _wait_for_mic_label,
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -37,6 +37,17 @@ from tldw_chatbook.Chat.console_voice_input import VoiceCommand, VoiceFailed
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+from Tests.UI.app_factory import _build_test_app
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+
+
+def _ready_host():
+    return _build_ready_host(_build_test_app)
+
 
 # `_ready_host()`/`ConsoleHarness` (used by every other test in this module)
 # deliberately mounts without the production CSS_PATH for speed -- a bare

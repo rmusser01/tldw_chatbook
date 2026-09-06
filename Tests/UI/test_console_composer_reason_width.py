@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.geometry import Region
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -104,6 +104,59 @@ async def test_resize_from_wide_to_narrow_reapplies_the_strip_budget():
             f"{draft.region.width} columns while the reason strip still held "
             "layout space"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [80, 160])
+@pytest.mark.parametrize("run_active", [False, True])
+async def test_composer_visible_actions_fit_with_and_without_attachment(
+    width, run_active
+):
+    """Redirect must not push Stop or Clear outside the painted action row."""
+    _, host = _ready_host()
+    async with host.run_test(size=(width, 30)) as pilot:
+        composer, draft, _ = await _composer_parts(host, pilot)
+        composer.focus()
+        composer.load_draft("A correction for this run")
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=run_active,
+            can_save_chatbook=False,
+            send_label="Queue full" if run_active else "Send",
+        )
+        for attachment in (None, "source.png"):
+            composer.set_pending_attachment_label(attachment)
+            await pilot.pause()
+            actions = composer.query_one("#console-composer-actions")
+            assert host.screen.region.contains_region(actions.region)
+            assert draft.region.width >= (DRAFT_FLOOR if width == 160 else 8)
+            if attachment:
+                assert (
+                    composer.query_one("#console-attachment-indicator").tooltip
+                    == attachment
+                )
+            for button in actions.query(Button):
+                if button.display:
+                    assert actions.content_region.contains_region(button.region), {
+                        "actions": actions.content_region,
+                        "button": button.id,
+                        "region": button.region,
+                    }
+                    assert (
+                        host.screen.get_widget_at(
+                            button.region.x + button.region.width // 2, button.region.y
+                        )[0]
+                        is button
+                    )
+            assert (
+                composer.query_one("#console-redirect-generation").display is run_active
+            )
+            assert composer.query_one("#console-stop-generation").display is run_active
+
+        await pilot.resize_terminal(80 if width == 160 else 160, 30)
+        await pilot.pause()
+        assert host.screen.region.contains_region(actions.region)
+        assert draft.region.width >= 8
 
 
 # ---------------------------------------------------------------------------
