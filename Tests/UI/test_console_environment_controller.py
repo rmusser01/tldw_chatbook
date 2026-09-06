@@ -1,13 +1,15 @@
 # Tests/UI/test_console_environment_controller.py
 """Controller cadence/TTL/backoff tests — no Textual app, synchronous fakes."""
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-import pytest
+from datetime import UTC, datetime, timedelta
 
-import tldw_chatbook.UI.Console_Modules.environment as env_mod
+import tldw_chatbook.Workspaces.environment_status as env_mod
 from tldw_chatbook.Chat.console_environment_state import (
-    EnvironmentSnapshot, EnvSourceAvailability, GitEnvState, PrEnvState, TasksEnvState,
+    EnvironmentSnapshot,
+    EnvSourceAvailability,
+    GitEnvState,
+    PrEnvState,
+    TasksEnvState,
 )
 from tldw_chatbook.UI.Console_Modules.environment import ConsoleEnvironmentController
 
@@ -18,26 +20,36 @@ class Fixture:
         self.snapshots: list[EnvironmentSnapshot] = []
         self.root: str | None = root
         self.rail_open = rail_open
-        self.clock = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+        self.clock = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
         self.git_calls = 0
         self.pr_calls = 0
 
         def fake_git(path, previous=None):
             self.git_calls += 1
-            return GitEnvState(availability=EnvSourceAvailability.OK,
-                               root=str(path), branch="feat/task-1-x")
+            return GitEnvState(
+                availability=EnvSourceAvailability.OK,
+                root=str(path),
+                branch="feat/task-1-x",
+            )
 
         def fake_pr(path, branch, runner=None, previous=None):
             self.pr_calls += 1
-            return PrEnvState(availability=EnvSourceAvailability.OK, number=7,
-                              title="T", state="OPEN", url="https://x/pull/7")
+            return PrEnvState(
+                availability=EnvSourceAvailability.OK,
+                number=7,
+                title="T",
+                state="OPEN",
+                url="https://x/pull/7",
+            )
 
         monkeypatch.setattr(env_mod, "gather_git_env", fake_git)
         monkeypatch.setattr(env_mod, "gather_pr_env", fake_pr)
         monkeypatch.setattr(
-            env_mod.BacklogTaskScanner, "scan",
+            env_mod.BacklogTaskScanner,
+            "scan",
             lambda scanner, ws, branch: TasksEnvState(
-                availability=EnvSourceAvailability.NOT_APPLICABLE),
+                availability=EnvSourceAvailability.NOT_APPLICABLE
+            ),
         )
 
         def run_worker(fn, **kwargs):
@@ -64,8 +76,10 @@ def test_local_and_net_use_distinct_worker_groups(monkeypatch):
     fx = Fixture(monkeypatch)
     fx.controller.request_refresh(include_net=True)
     groups = {d["group"] for d in fx.dispatched}
-    assert groups == {ConsoleEnvironmentController.LOCAL_WORKER_GROUP,
-                      ConsoleEnvironmentController.NET_WORKER_GROUP}
+    assert groups == {
+        ConsoleEnvironmentController.LOCAL_WORKER_GROUP,
+        ConsoleEnvironmentController.NET_WORKER_GROUP,
+    }
     assert all(d["thread"] is True and d["exclusive"] is True for d in fx.dispatched)
 
 
@@ -85,8 +99,11 @@ def test_net_ttl_suppresses_refetch_within_60s_and_force_busts_it(monkeypatch):
 def test_three_failures_pause_the_local_tier_until_forced(monkeypatch):
     fx = Fixture(monkeypatch)
     monkeypatch.setattr(
-        env_mod, "gather_git_env",
-        lambda path, previous=None: GitEnvState(availability=EnvSourceAvailability.ERROR),
+        env_mod,
+        "gather_git_env",
+        lambda path, previous=None: GitEnvState(
+            availability=EnvSourceAvailability.ERROR
+        ),
     )
     for _ in range(3):
         fx.controller.poll_tick()
@@ -102,6 +119,7 @@ def _fail_git(fx, monkeypatch):
     lambda silently stops incrementing it, so a test asserting on the count
     reads 0 and proves nothing about the pause.
     """
+
     def fail_git(path, previous=None):
         fx.git_calls += 1
         return GitEnvState(availability=EnvSourceAvailability.ERROR)
@@ -129,12 +147,14 @@ def test_forced_refresh_revives_a_paused_local_tier(monkeypatch):
 
     fx.controller.request_refresh(include_net=True, force_net=True)
     assert fx.git_calls == 4  # revived by the explicit refresh
+
     # ... and an ordinary poll works again from there (counter really reset,
     # not merely bypassed for the one forced call).
     def ok_git(path, previous=None):
         fx.git_calls += 1
-        return GitEnvState(availability=EnvSourceAvailability.OK,
-                           root=str(path), branch="feat/x")
+        return GitEnvState(
+            availability=EnvSourceAvailability.OK, root=str(path), branch="feat/x"
+        )
 
     monkeypatch.setattr(env_mod, "gather_git_env", ok_git)
     fx.controller.poll_tick()
@@ -213,28 +233,38 @@ class DeferredFixture:
         self.snapshots: list[EnvironmentSnapshot] = []
         self.root: str | None = root
         self.rail_open = rail_open
-        self.clock = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+        self.clock = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
         self.git_calls = 0
         self.pr_calls = 0
         self.pr_branches_seen: list[str | None] = []
 
         def fake_git(path, previous=None):
             self.git_calls += 1
-            return GitEnvState(availability=EnvSourceAvailability.OK,
-                               root=str(path), branch=f"feat/call-{self.git_calls}")
+            return GitEnvState(
+                availability=EnvSourceAvailability.OK,
+                root=str(path),
+                branch=f"feat/call-{self.git_calls}",
+            )
 
         def fake_pr(path, branch, runner=None, previous=None):
             self.pr_calls += 1
             self.pr_branches_seen.append(branch)
-            return PrEnvState(availability=EnvSourceAvailability.OK, number=7,
-                              title="T", state="OPEN", url="https://x/pull/7")
+            return PrEnvState(
+                availability=EnvSourceAvailability.OK,
+                number=7,
+                title="T",
+                state="OPEN",
+                url="https://x/pull/7",
+            )
 
         monkeypatch.setattr(env_mod, "gather_git_env", fake_git)
         monkeypatch.setattr(env_mod, "gather_pr_env", fake_pr)
         monkeypatch.setattr(
-            env_mod.BacklogTaskScanner, "scan",
+            env_mod.BacklogTaskScanner,
+            "scan",
             lambda scanner, ws, branch: TasksEnvState(
-                availability=EnvSourceAvailability.NOT_APPLICABLE),
+                availability=EnvSourceAvailability.NOT_APPLICABLE
+            ),
         )
 
         def run_worker(fn, **kwargs):
@@ -283,9 +313,11 @@ def test_root_spelling_difference_does_not_defeat_ttl(monkeypatch):
 
     def fake_git_resolved(path, previous=None):
         fx.git_calls += 1
-        return GitEnvState(availability=EnvSourceAvailability.OK,
-                           root="/private/tmp/wt",  # resolved -- different
-                           branch="feat/task-1-x")  # spelling than the accessor
+        return GitEnvState(
+            availability=EnvSourceAvailability.OK,
+            root="/private/tmp/wt",  # resolved -- different
+            branch="feat/task-1-x",
+        )  # spelling than the accessor
 
     monkeypatch.setattr(env_mod, "gather_git_env", fake_git_resolved)
 
@@ -297,13 +329,17 @@ def test_root_spelling_difference_does_not_defeat_ttl(monkeypatch):
 
     def net_dispatch_count() -> int:
         return sum(
-            1 for d in fx.dispatched if d["group"] == ConsoleEnvironmentController.NET_WORKER_GROUP
+            1
+            for d in fx.dispatched
+            if d["group"] == ConsoleEnvironmentController.NET_WORKER_GROUP
         )
 
     net_dispatches_before = net_dispatch_count()
     for _ in range(5):
         fx.controller.poll_tick()
-    assert net_dispatch_count() == net_dispatches_before  # no false root-change reset fired
+    assert (
+        net_dispatch_count() == net_dispatches_before
+    )  # no false root-change reset fired
     assert fx.pr_calls == 1  # gh called at most once inside the TTL window
 
 
@@ -313,8 +349,11 @@ def test_local_tier_resumes_after_root_change_following_pause(monkeypatch):
     (set unconditionally on every local landing, success or failure)."""
     fx = Fixture(monkeypatch)
     monkeypatch.setattr(
-        env_mod, "gather_git_env",
-        lambda path, previous=None: GitEnvState(availability=EnvSourceAvailability.ERROR),
+        env_mod,
+        "gather_git_env",
+        lambda path, previous=None: GitEnvState(
+            availability=EnvSourceAvailability.ERROR
+        ),
     )
     for _ in range(3):
         fx.controller.poll_tick()
@@ -322,14 +361,20 @@ def test_local_tier_resumes_after_root_change_following_pause(monkeypatch):
 
     def local_dispatch_count() -> int:
         return sum(
-            1 for d in fx.dispatched if d["group"] == ConsoleEnvironmentController.LOCAL_WORKER_GROUP
+            1
+            for d in fx.dispatched
+            if d["group"] == ConsoleEnvironmentController.LOCAL_WORKER_GROUP
         )
 
     local_dispatches_before = local_dispatch_count()
     fx.root = "/other/repo"
     fx.controller.poll_tick()
-    assert local_dispatch_count() > local_dispatches_before  # pause lifted by the root change
-    assert fx.controller._failures["local"] < 3  # counters were reset, not left at the cap
+    assert (
+        local_dispatch_count() > local_dispatches_before
+    )  # pause lifted by the root change
+    assert (
+        fx.controller._failures["local"] < 3
+    )  # counters were reset, not left at the cap
 
 
 def test_stale_local_landing_is_dropped_by_dispatch_token(monkeypatch):

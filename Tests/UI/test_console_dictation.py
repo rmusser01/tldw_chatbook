@@ -647,3 +647,36 @@ async def test_retry_success_racing_teardown_cannot_insert_into_new_generation(
             assert failed.discard_calls == 1
     finally:
         retry_release.set()
+
+
+@pytest.mark.asyncio
+async def test_teardown_during_real_retry_dialog_cannot_replay_retained_audio(monkeypatch):
+    fake = FakeDictationSession(
+        stop_error="Parakeet transcription failed.",
+        retry_available=True,
+    )
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    _, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        console.app_instance.push_screen_wait = host.push_screen_wait
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+        console._request_console_dictation_start()
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        console._request_console_dictation_stop()
+        await _wait_for_mounted_retry_dialog(host, pilot)
+        assert fake.retry_available
+        await console._dictation.teardown()
+        # Let the newly mounted modal finish its input activation before clicking.
+        await pilot.pause(0.6)
+        await pilot.click("#confirm-button")
+        await asyncio.wait_for(console.workers.wait_for_complete(), timeout=3)
+        assert fake.retry_calls == 0
+        assert fake.retry_available is False
+        assert composer.draft_text() == "keep this draft"
+        assert console._console_dictation_state == "idle"

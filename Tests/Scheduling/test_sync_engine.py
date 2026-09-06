@@ -1079,11 +1079,17 @@ async def test_sync_now_review_mutation_other_error_retains_it(tmp_path):
 
     outcome = await engine.sync_now()
 
-    # task-23105-review F2: the reminder phase itself succeeded, but a
-    # pushback phase failed -- that must surface as an error outcome, not
-    # a clean "ok" beside a fresh error badge.
-    assert outcome.status == "error"
-    assert "offline" in (outcome.error or "")
+    # UAT finding 3c (supersedes task-23105-review F2's "must surface as
+    # an error outcome" ruling): the reminder phase itself succeeded, and
+    # that must be reported honestly -- collapsing it to `status="error"`
+    # is exactly the "Sync failed" toast the UAT caught lying over a
+    # phase that had nothing to do with the failure. The pushback
+    # failure still reaches the caller, as its own labeled entry.
+    assert outcome.status == "ok"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation review pushback" in outcome.phase_errors[0]
+    assert "offline" in outcome.phase_errors[0]
     pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     state = db.get_sync_state("server:1") or {}
@@ -1216,6 +1222,160 @@ async def test_sync_now_replays_definition_create_and_dedupes_same_cycle_pull(tm
     assert len(rows) == 1, "create replay + same-cycle pull must yield exactly one row"
     assert rows[0]["id"] == local_id
     assert rows[0]["server_id"] == "srv-def-1"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_push_stamps_last_push_at(tmp_path):
+    """UAT finding 3c: `_sync_reminders` used to be the ONLY writer of
+    `last_push_at`, and only for its own reminder pushes -- a cycle that
+    pushed nothing on the reminder side but DID push a definition create
+    left the sync bar showing "Last push: -" forever, even though a push
+    genuinely happened this cycle."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "create",
+            "definition_payload": {"family": "recurring_question", "name": "Draft"},
+            "server_definition_id": None,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Draft",
+        "lifecycle": "configured",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    assert not (db.get_sync_state("server:1") or {}).get("last_push_at")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert outcome.pushed == 0, "nothing was pushed on the REMINDER side this cycle"
+    state = db.get_sync_state("server:1") or {}
+    assert state.get("last_push_at"), (
+        "a genuine definition push must stamp last_push_at even when the "
+        "reminder phase itself pushed nothing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_noop_cycle_does_not_stamp_last_push_at(tmp_path):
+    """The other half of the same fix: a cycle with no pending definition
+    mutations at all must not fabricate a push timestamp."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    state = db.get_sync_state("server:1") or {}
+    assert not state.get("last_push_at")
+
+
+def test_definition_push_success_outcomes_cover_every_return_value():
+    """Review round 1 finding 2: `_DEFINITION_PUSH_SUCCESS_OUTCOMES` is a
+    hand-maintained set with no automatic tie to the string vocabulary
+    `_push_definition_mutation` and its five helpers can actually return.
+    A new outcome added to any of those six functions (or to
+    `_replay_definition_mutations`'s own inline `"transfer_skipped"`)
+    without a matching classification here used to be silent: nothing
+    would fail, `last_push_at` would just never move for it. This walks
+    the AST of every one of those function bodies and asserts every
+    outcome string it can produce -- literal `return "..."` values, PLUS
+    `_push_definition_lifecycle`'s two dynamic shapes (`return action`
+    and `return f"{action}_not_found"`, both keyed on the three lifecycle
+    actions) -- is classified in EXACTLY ONE of `_DEFINITION_PUSH_
+    SUCCESS_OUTCOMES` / `_DEFINITION_PUSH_NON_SUCCESS_OUTCOMES`. An
+    unclassified new outcome fails this test instead of silently
+    freezing `last_push_at`.
+    """
+    import ast
+    import inspect
+
+    from tldw_chatbook.Scheduling.services import sync_engine as sync_engine_module
+    from tldw_chatbook.Scheduling.services.sync_engine import (
+        _DEFINITION_LIFECYCLE_ACTIONS,
+        _DEFINITION_PUSH_NON_SUCCESS_OUTCOMES,
+        _DEFINITION_PUSH_SUCCESS_OUTCOMES,
+    )
+
+    push_helper_names = {
+        "_push_definition_mutation",
+        "_push_definition_create",
+        "_push_definition_update",
+        "_push_definition_lifecycle",
+        "_push_definition_release",
+        "_push_definition_transfer",
+    }
+
+    source = inspect.getsource(sync_engine_module)
+    tree = ast.parse(source)
+
+    discovered: set[str] = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.AsyncFunctionDef) and node.name in push_helper_names
+        ):
+            continue
+        for sub in ast.walk(node):
+            if not (isinstance(sub, ast.Return) and sub.value is not None):
+                continue
+            value = sub.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                discovered.add(value.value)
+            elif node.name == "_push_definition_lifecycle" and isinstance(
+                value, ast.Name
+            ):
+                # `return action` -- dynamic, but only ever one of the
+                # three lifecycle actions this handler dispatches on.
+                discovered.update(_DEFINITION_LIFECYCLE_ACTIONS)
+            elif node.name == "_push_definition_lifecycle" and isinstance(
+                value, ast.JoinedStr
+            ):
+                # `return f"{action}_not_found"` -- same dynamic source.
+                discovered.update(
+                    f"{action}_not_found" for action in _DEFINITION_LIFECYCLE_ACTIONS
+                )
+            # A delegating `return await self._push_definition_X(...)`
+            # (from `_push_definition_mutation`'s own dispatch) contributes
+            # nothing itself -- the callee's own literal returns, walked
+            # separately above, already cover it.
+
+    # `_replay_definition_mutations`'s own pre-dispatch short-circuit --
+    # not a `return`, a `counts["transfer_skipped"] = ...` dict write --
+    # is a seventh real outcome this vocabulary must include.
+    discovered.add("transfer_skipped")
+
+    assert discovered, "the AST walk found nothing -- the helper names above drifted"
+
+    known = _DEFINITION_PUSH_SUCCESS_OUTCOMES | _DEFINITION_PUSH_NON_SUCCESS_OUTCOMES
+    unclassified = discovered - known
+    assert not unclassified, (
+        f"new/unclassified push outcome(s) {sorted(unclassified)} -- add each "
+        "to _DEFINITION_PUSH_SUCCESS_OUTCOMES (if it means a mutation reached "
+        "the server) or _DEFINITION_PUSH_NON_SUCCESS_OUTCOMES (if not) in "
+        "sync_engine.py"
+    )
+    stale = _DEFINITION_PUSH_SUCCESS_OUTCOMES - discovered
+    assert not stale, (
+        f"_DEFINITION_PUSH_SUCCESS_OUTCOMES claims outcome(s) {sorted(stale)} "
+        "that no longer exist in source -- prune it"
+    )
 
 
 @pytest.mark.asyncio
@@ -1569,8 +1729,14 @@ async def test_sync_now_definition_create_retryable_error_retains_mutation(tmp_p
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
-    assert "offline" in (outcome.error or "")
+    # UAT finding 3c: the reminder phase's own "ok" is no longer masked
+    # by this unrelated definition-push failure; the failure still
+    # reaches the caller as its own labeled `phase_errors` entry.
+    assert outcome.status == "ok"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definition push" in outcome.phase_errors[0]
+    assert "offline" in outcome.phase_errors[0]
     pending = db.get_pending_mutations("server:1", primitive="automation_definition")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     row = db.get_automation_definition(local_id)
@@ -1918,8 +2084,13 @@ async def test_sync_now_definition_lifecycle_retryable_error_retains_mutation(tm
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
-    assert "offline" in (outcome.error or "")
+    # UAT finding 3c: the reminder phase's own "ok" is no longer masked
+    # by this unrelated definition-push (lifecycle) failure.
+    assert outcome.status == "ok"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definition push" in outcome.phase_errors[0]
+    assert "offline" in outcome.phase_errors[0]
     pending = db.get_pending_mutations("server:1", primitive="automation_lifecycle")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
@@ -2089,7 +2260,11 @@ async def test_sync_now_definition_transfer_timeout_retains_sent_and_mutation(
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
+    # UAT finding 3c: the reminder phase's own "ok" is no longer masked
+    # by this unrelated definition-push (transfer) failure.
+    assert outcome.status == "ok"
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definition push" in outcome.phase_errors[0]
     row = db.get_automation_definition(local_id)
     assert row["transfer_state"] == "to_server_sent", (
         "disarm precedes the request -- an ambiguous failure leaves the "
@@ -2740,7 +2915,11 @@ async def test_sync_now_definition_release_retryable_error_keeps_copy_dormant(
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
+    # UAT finding 3c: the reminder phase's own "ok" is no longer masked
+    # by this unrelated definition-push (release) failure.
+    assert outcome.status == "ok"
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definition push" in outcome.phase_errors[0]
     pending = db.get_pending_mutations("server:1", primitive="automation_definition")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     copy_row = db.get_automation_definition(copy_id)
@@ -2994,13 +3173,18 @@ async def test_sync_now_definitions_phase_failure_does_not_abort_results_phase(t
 
     outcome = await engine.sync_now()
 
-    # task-23105-review F2: a failed automation phase must surface as an
-    # error outcome even though the reminder phase (and the later results
-    # phase) still ran to completion -- results are still pulled, but the
-    # workbench must not toast "Sync completed" next to a fresh error
-    # badge (the controller ruled the prior "ok" pin a plan artifact).
-    assert outcome.status == "error"
-    assert "down" in (outcome.error or "")
+    # UAT finding 3c (supersedes task-23105-review F2's "must surface as
+    # an error outcome" ruling): the reminder phase (and the later
+    # results phase) ran to completion -- that success must be reported
+    # honestly rather than collapsed into `status="error"` next to a
+    # fresh error badge, which is exactly the "Sync failed" toast the
+    # UAT caught misreporting an unrelated phase's failure. The
+    # definitions-phase failure still reaches the caller, labeled.
+    assert outcome.status == "ok"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definitions pull" in outcome.phase_errors[0]
+    assert "down" in outcome.phase_errors[0]
     assert len(db.list_automation_results("server:1")) == 1
     state = db.get_sync_state("server:1") or {}
     assert state.get("sync_errors"), "the definitions-phase failure must be recorded"
@@ -3158,9 +3342,10 @@ async def test_sync_now_reminder_policy_refusal_does_not_mask_automation_error(
 ):
     """The reminder phase's own policy action can be refused
     (`not_applicable`) while a DIFFERENT policy action -- an automation
-    phase -- genuinely fails. The old `status == "ok"` guard only caught
-    this when the reminder phase was "ok"; "not_applicable" let the
-    automation failure through unreported."""
+    phase -- genuinely fails. UAT finding 3c: `status`/`error` now
+    describe ONLY the reminder phase (unconditionally, not just when it
+    was "ok") -- the automation failure must still reach the caller, via
+    `phase_errors`, never silently dropped."""
     from tldw_chatbook.Scheduling.services.server_client import (
         ServerClientPolicyError,
     )
@@ -3178,8 +3363,11 @@ async def test_sync_now_reminder_policy_refusal_does_not_mask_automation_error(
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "error"
-    assert "defs down" in (outcome.error or "")
+    assert outcome.status == "not_applicable"
+    assert outcome.error is None
+    assert len(outcome.phase_errors) == 1
+    assert "Automation definitions pull" in outcome.phase_errors[0]
+    assert "defs down" in outcome.phase_errors[0]
     assert len(db.list_automation_results("server:1")) == 1  # later phase still ran
     state = db.get_sync_state("server:1") or {}
     assert state.get("sync_errors"), "the definitions-phase failure must be recorded"
@@ -3330,6 +3518,136 @@ async def test_reminder_release_raises_no_conflict_while_the_mirror_is_listed(tm
 
 
 @pytest.mark.asyncio
+async def test_reminder_release_same_cycle_stale_pull_does_not_ghost_reinsert(
+    tmp_path,
+):
+    """root-causes.md #4 (Major 6, task-3 ghost row): `_network_phase`
+    pulls BEFORE it pushes, so the pull's `pulled_items` still lists the
+    mirror server-side row `_push_reminder_release` is about to
+    hard-delete in this SAME cycle. Applying that stale payload used to
+    re-insert the mirror under a brand-new local id no tombstone could
+    ever remove -- a permanent "deleted on server" conflict that survives
+    navigation, re-sync, and conflict resolution.
+
+    Fix: `_push_reminder_release` now returns `released_server_id`, and
+    `_sync_reminders` filters `pulled_items` by it before applying --
+    the exact twin of the `adopted_server_id` seen-set guard the opposite
+    direction (transfer_to_server) already had.
+    """
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-9",
+    )
+    db.set_sync_mapping(mirror_id, "srv-rem-9", "reminder_task", "server:1")
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-9",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    # The pull still lists the server row: the release hasn't run yet
+    # THIS cycle -- the exact same-cycle stale-payload window.
+    server_client.list_reminders.return_value = {
+        "items": [{"id": "srv-rem-9", "title": "Standup"}]
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    all_rows = db.list_reminder_tasks(owner_id=None)
+    assert len(all_rows) == 1, (
+        "the stale pull must not re-insert the mirror the release just "
+        f"tore down; rows: {all_rows!r}"
+    )
+    assert all_rows[0]["id"] == copy_id
+    assert db.get_conflicts("server:1") == [], (
+        "a re-inserted mirror with no tombstone would forever conflict "
+        "as 'deleted on server'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_reminder_releases_same_cycle_stale_pull_ghosts_neither(
+    tmp_path,
+):
+    """Fix round 1, finding 5: the single-release pin above doesn't
+    exercise `released_server_ids`' own construction, which is a SET
+    COMPREHENSION over every `staged_outcomes` entry -- correctly handles
+    more than one release per cycle as written, but nothing drove that
+    path. Two mirrors, both released, both still stale-listed in the SAME
+    pull: neither may ghost-reinsert."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+
+    mirror_a = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-a",
+    )
+    db.set_sync_mapping(mirror_a, "srv-rem-a", "reminder_task", "server:1")
+    copy_a = db.create_local_copy_from_mirror("reminder_task", mirror_a)
+    db.record_pending_mutation(
+        mirror_a,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-a",
+            "local_copy_id": copy_a,
+        },
+    )
+
+    mirror_b = db.create_reminder_task(
+        owner_id="server:1",
+        title="Retro",
+        schedule_kind="one_time",
+        server_id="srv-rem-b",
+    )
+    db.set_sync_mapping(mirror_b, "srv-rem-b", "reminder_task", "server:1")
+    copy_b = db.create_local_copy_from_mirror("reminder_task", mirror_b)
+    db.record_pending_mutation(
+        mirror_b,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-b",
+            "local_copy_id": copy_b,
+        },
+    )
+
+    server_client = AsyncMock()
+    # Both server rows still listed: neither release has run yet THIS
+    # cycle -- the same-cycle stale-payload window, for both at once.
+    server_client.list_reminders.return_value = {
+        "items": [
+            {"id": "srv-rem-a", "title": "Standup"},
+            {"id": "srv-rem-b", "title": "Retro"},
+        ]
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    all_rows = db.list_reminder_tasks(owner_id=None)
+    assert {row["id"] for row in all_rows} == {copy_a, copy_b}, (
+        f"neither released mirror may ghost-reinsert; rows: {all_rows!r}"
+    )
+    assert db.get_conflicts("server:1") == []
+
+
+@pytest.mark.asyncio
 async def test_rejected_reminder_release_settles_per_mutation(tmp_path):
     """L15: a definitively rejected release used to re-raise through
     `_push_mutation`'s blanket `except ServerClientError: raise`, aborting
@@ -3366,3 +3684,254 @@ async def test_rejected_reminder_release_settles_per_mutation(tmp_path):
     )
     state = db.get_sync_state("server:1") or {}
     assert state.get("sync_errors"), "the refusal must be reported, not swallowed"
+
+
+# ----------------------------------------------------------------------
+# Orphaned transfer_to_server mutation settlement (task-3, root-causes.md
+# #5 / Major 9 / plan ruling 4). `_network_phase`'s mutation query is
+# scoped to the CURRENT target_owner, so a `transfer_to_server` mutation
+# recorded under a PRIOR server scope (the configured server's address
+# changed underneath it) is never selected, never attempted, and used to
+# hang `to_server_pending` forever -- no route to Retry/Cancel. `_settle_
+# orphaned_transfer_mutations` is the sweep that finds and settles one.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_orphaned_reminder_transfer_mutation_settles_to_failed(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    # Queued while "server:old-host" was the active server; the config
+    # has since moved to "server:1" (this test's SyncEngine owner).
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:old-host",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    # An orphaned mutation settles locally -- it must never be replayed
+    # against whatever server happens to be active now.
+    server_client.create_reminder.assert_not_awaited()
+    row = db.get_reminder_task(local_id)
+    assert row["transfer_state"] == "to_server_failed", (
+        "settled, not left hanging to_server_pending forever"
+    )
+    pending = db.get_pending_mutations("server:old-host", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["transfer_errors"], (
+        "Retry/Cancel + 'Last transfer error:' both key off a truthy "
+        "transfer_errors entry"
+    )
+
+
+def test_orphaned_transfer_mutation_settles_when_no_server_is_configured(
+    tmp_path,
+):
+    """Final review finding 1: the removed-server/dead-server case, the
+    UAT's actual core symptom -- `target_owner=None` (nothing configured
+    at all) must settle every still-pending transfer_to_server mutation,
+    not just ones scoped to a DIFFERENT server. Calls the sweep directly
+    (it's a plain sync method, no network, no `sync_now()` round trip
+    needed) -- the workbench's `_settle_orphaned_transfers` calls it the
+    exact same way at mount, unconditionally, regardless of reachability.
+    """
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:removed-host",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+    engine = SyncEngine(db, server_client=None, owner_id="local")
+
+    engine._settle_orphaned_transfer_mutations(None)
+
+    row = db.get_reminder_task(local_id)
+    assert row["transfer_state"] == "to_server_failed", (
+        "no server configured means nothing this mutation could still be "
+        "valid for -- it must settle, not hang forever"
+    )
+    pending = db.get_pending_mutations(
+        "server:removed-host", primitive="reminder_task"
+    )
+    assert len(pending) == 1
+    assert pending[0]["payload"]["transfer_errors"]
+
+
+@pytest.mark.asyncio
+async def test_orphaned_definition_transfer_mutation_settles_to_failed(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    definition_id = db.create_automation_definition(
+        "local", "recurring_question", "Daily digest"
+    )
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        definition_id,
+        "automation_definition",
+        "server:old-host",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Daily digest",
+            },
+        },
+    )
+    server_client = _empty_reminders_client()
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.preview_automation_definition.assert_not_awaited()
+    row = db.get_automation_definition(definition_id)
+    assert row["transfer_state"] == "to_server_failed"
+    pending = db.get_pending_mutations(
+        "server:old-host", primitive="automation_definition"
+    )
+    assert len(pending) == 1
+    assert pending[0]["payload"]["transfer_errors"]
+
+
+@pytest.mark.asyncio
+async def test_transfer_mutation_still_scoped_to_active_server_is_not_orphaned(
+    tmp_path,
+):
+    """The non-regression twin: a mutation whose scope MATCHES the
+    current active server must replay normally, not get swept as
+    orphaned."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.return_value = {"id": "srv-rem-1"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.create_reminder.assert_awaited_once()
+    row = db.get_reminder_task(local_id)
+    assert row["transfer_state"] is None, "converted to a server mirror, not failed"
+    assert row["server_id"] == "srv-rem-1"
+
+
+# ----------------------------------------------------------------------
+# Capabilities handshake (task-3, root-causes.md #7, plan ruling 5).
+# `get_capabilities` returning `None` means the server predates
+# Scheduled Tasks automation entirely -- `_pull_definitions`/`_pull_
+# results` must skip outright rather than page into a guaranteed 404.
+# `ServerClientNotFoundError` from the ACTUAL results call despite a
+# successful capabilities probe is the narrower, real UAT repro (a
+# mid-rollout server): that must degrade to the SAME honest copy family,
+# never a raw scheduled_task_not_found.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pull_results_skips_outright_when_capabilities_absent(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.get_capabilities = AsyncMock(return_value=None)
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    result = await engine._pull_results("server:1")
+
+    assert result == {}
+    server_client.list_automation_results.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pull_definitions_skips_outright_when_capabilities_absent(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.get_capabilities = AsyncMock(return_value=None)
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    result = await engine._pull_definitions("server:1")
+
+    assert result == {}
+    server_client.list_automation_definitions.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pull_results_proceeds_when_capabilities_present(tmp_path):
+    """The non-regression twin: capabilities present -> the pull still
+    runs normally (the gate must not become a blanket skip)."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.get_capabilities = AsyncMock(return_value={"items": []})
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    result = await engine._pull_results("server:1")
+
+    assert result == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
+    server_client.list_automation_results.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pull_results_reports_honest_copy_when_route_missing_despite_capabilities(
+    tmp_path,
+):
+    """The actual UAT repro (root-causes.md #7): capabilities ARE present
+    (a mid-rollout server), but `/results` specifically 404s -- a probe
+    alone cannot predict this, so the per-call catch is what turns it
+    into the same honest family of copy instead of a raw
+    scheduled_task_not_found poisoning the sync verdict (Minor 24 /
+    Major 7)."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.get_capabilities = AsyncMock(return_value={"items": []})
+    server_client.list_automation_results = AsyncMock(
+        side_effect=ServerClientNotFoundError("scheduled_task_not_found")
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok", "the reminder phase is unaffected"
+    assert len(outcome.phase_errors) == 1
+    assert "does not provide the results inbox" in outcome.phase_errors[0]
+    assert "scheduled_task_not_found" not in outcome.phase_errors[0], (
+        "the raw server error code must not leak into the user-facing copy"
+    )

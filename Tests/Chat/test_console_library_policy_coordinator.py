@@ -140,9 +140,7 @@ async def test_committed_save_publishes_to_all_same_process_holders_only_after_c
         return original_insert(target, candidate)
 
     repository.insert = blocked_insert  # type: ignore[method-assign]
-    save_task = asyncio.create_task(
-        coordinator.save("first", _candidate(allowed=True))
-    )
+    save_task = asyncio.create_task(coordinator.save("first", _candidate(allowed=True)))
     assert await asyncio.to_thread(entered.wait, 5)
     assert first.snapshot.source == "new_session"
     assert second.snapshot.source == "new_session"
@@ -165,9 +163,9 @@ async def test_fresh_execution_read_defeats_stale_allowed_holder(
     conversation_id = first_db.add_conversation({"title": "fresh"})
     assert conversation_id is not None
     first_repository = ConsoleLibraryPolicyRepository(first_db)
-    assert first_repository.insert(conversation_id, _candidate(allowed=True)).status is (
-        ConsoleLibraryPolicyWriteStatus.COMMITTED
-    )
+    assert first_repository.insert(
+        conversation_id, _candidate(allowed=True)
+    ).status is (ConsoleLibraryPolicyWriteStatus.COMMITTED)
     second_db = CharactersRAGDB(path, client_id="second-process")
     second_repository = ConsoleLibraryPolicyRepository(second_db)
     coordinator = ConsoleLibraryPolicyCoordinator(first_repository)
@@ -175,9 +173,12 @@ async def test_fresh_execution_read_defeats_stale_allowed_holder(
     holder.snapshot = first_repository.read(conversation_id).snapshot
     coordinator.register_holder("session", conversation_id, holder)
 
-    assert second_repository.compare_and_swap(
-        conversation_id, 1, _candidate(allowed=False)
-    ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+    assert (
+        second_repository.compare_and_swap(
+            conversation_id, 1, _candidate(allowed=False)
+        ).status
+        is ConsoleLibraryPolicyWriteStatus.COMMITTED
+    )
     captured = await coordinator.capture_for_execution("session")
 
     assert captured.policy_revision == 2
@@ -219,7 +220,9 @@ async def test_unavailable_execution_read_returns_and_publishes_fail_closed_snap
 
 
 @pytest.mark.asyncio
-async def test_commit_after_capture_changes_only_the_next_capture(tmp_path: Path) -> None:
+async def test_commit_after_capture_changes_only_the_next_capture(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "linearization.sqlite"
     first_db = CharactersRAGDB(path, client_id="capture")
     conversation_id = first_db.add_conversation({"title": "linearization"})
@@ -303,4 +306,6 @@ async def test_capture_retries_when_session_is_rebound_during_the_durable_read(
     assert captured.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
     assert captured.policy_revision == 1
     assert rebound_holder.snapshot == captured
-    assert first_holder.snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
+    assert (
+        first_holder.snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
+    )

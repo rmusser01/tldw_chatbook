@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 import pytest
 from textual.app import App
 from textual.events import AppFocus
+from textual.screen import Screen
 
 from Tests.UI.test_console_fleet_panel import _FleetBridge
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -94,6 +95,64 @@ def _row_ids(section: ConsoleInspectorSection) -> list[str]:
 # ---------------------------------------------------------------------------
 # Row actions
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_suspended_environment_stays_quiet_and_refreshes_on_resume():
+    """A covered reusable screen is still displayed but must not collect."""
+    async with _console_screen() as (pilot, screen):
+        owner = screen._console_environment
+        owner._workspace_root_accessor = lambda: "/w"
+        dispatches = []
+        owner._dispatch_local = lambda root: dispatches.append(("local", root))
+        owner._dispatch_net = lambda root, **kwargs: dispatches.append(("net", root))
+        screen._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        assert dispatches
+        await pilot.app.push_screen(Screen())
+        await pilot.pause()
+        assert screen.is_mounted and _right_rail_open(screen)
+        assert pilot.app.screen is not screen
+        dispatches.clear()
+        screen._poll_console_environment()
+        screen.notify_terminal_focus_regained()
+        owner.request_refresh(include_net=True)
+        assert dispatches == []
+        assert not owner._rail_open_accessor()
+        await pilot.app.pop_screen()
+        await pilot.pause()
+        assert pilot.app.screen is screen
+        assert screen._console_environment is owner
+        assert ("local", "/w") in dispatches
+        assert ("net", "/w") in dispatches
+
+
+@pytest.mark.asyncio
+async def test_first_open_without_workspace_paints_empty_state_and_reuses_owner():
+    """Lazy first-open must paint even when no gather can produce a landing."""
+    async with _console_screen() as (pilot, screen):
+        screen._review_selection._console_change_review_workspace_roots = lambda: ()
+        assert screen._console_environment_owner is None
+        screen.notify_terminal_focus_regained()
+        screen._poll_console_environment()
+        screen._run_coalesced_console_agent_fleet_sync()
+        assert screen._console_environment_owner is None
+        screen._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        owner = screen._console_environment
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        assert section.display
+        assert "env-empty" in _row_ids(section)
+        screen._set_console_rail_preference(right_open=False)
+        await pilot.pause()
+        screen.notify_terminal_focus_regained()
+        screen._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        assert screen._console_environment is owner
+        assert section.display
+        assert "env-empty" in _row_ids(section)
 
 
 @pytest.mark.asyncio

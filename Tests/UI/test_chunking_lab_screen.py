@@ -5,6 +5,7 @@ import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +14,9 @@ from textual.widgets import TextArea
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
+
+if TYPE_CHECKING:
+    from tldw_chatbook.app import TldwCli
 
 
 async def settle_lab(app, screen, pilot):
@@ -549,10 +553,54 @@ async def test_sample_source_and_extent_are_visible_after_reopen(
 
 
 @pytest.mark.asyncio
-async def test_lazy_screen_workers_abandon_work_after_teardown(lab_app, monkeypatch):
+async def test_initial_load_survives_yielding_mount_handler(
+    lab_app: "TldwCli", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mount-time scheduling must not silently abandon recovery initialization.
+
+    Args:
+        lab_app: Isolated application fixture for the mounted Lab screen.
+        monkeypatch: Pytest fixture for replacing the inherited mount handler.
+    """
+    from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+
+    mount_observations: list[tuple[BaseAppScreen, bool]] = []
+
+    async def yielding_mount(self: BaseAppScreen) -> None:
+        """Yield during inherited mount dispatch without altering framework state."""
+        # Textual dispatches handlers across the MRO, including this base handler
+        # after the Lab override. Observe that ordering instead of assuming it.
+        mount_observations.append((self, self.is_mounted))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        mount_observations.append((self, self.is_mounted))
+
+    monkeypatch.setattr(BaseAppScreen, "on_mount", yielding_mount)
+    async with lab_app.run_test(size=(120, 40)) as pilot:
+        screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
+        await lab_app.push_screen(screen)
+        assert [
+            mounted for owner, mounted in mount_observations if owner is screen
+        ] == [False, False]
+        await asyncio.wait_for(screen.wait_until_ready(), 3)
+        await settle_lab(lab_app, screen, pilot)
+        assert screen.coordinator is not None
+        assert not screen.query_one("#lab-sample").disabled
+
+
+@pytest.mark.asyncio
+async def test_lazy_screen_workers_abandon_work_after_teardown(
+    lab_app: "TldwCli", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep deferred screen workers inert after teardown.
+
+    Args:
+        lab_app: Isolated application fixture for the mounted Lab screen.
+        monkeypatch: Pytest fixture for capturing deferred worker dispatch.
+    """
     import inspect
 
-    async with lab_app.run_test(size=(80, 24)):
+    async with lab_app.run_test(size=(80, 24)) as pilot:
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
         pending = []
         monkeypatch.setattr(
@@ -560,6 +608,7 @@ async def test_lazy_screen_workers_abandon_work_after_teardown(lab_app, monkeypa
         )
         try:
             await lab_app.push_screen(screen)
+            await pilot.pause()
             screen._coordinator_changed(None)
             assert len(pending) == 2
             assert all(inspect.iscoroutinefunction(work) for work in pending)

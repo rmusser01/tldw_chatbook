@@ -9664,7 +9664,6 @@ class TestSignalsExchangeCapture:
         self,
         monkeypatch,
     ):
-        import tldw_chatbook.Chat.console_trace_custom_pii as custom_pii
 
         revision_id = "77777777-7777-4777-8777-777777777777"
         ruleset = validate_custom_pii_rules_config(
@@ -9687,14 +9686,16 @@ class TestSignalsExchangeCapture:
         assert ruleset is not None
         assert register_custom_pii_ruleset(ruleset) is True
         calls = 0
-        real_run = custom_pii.run_custom_pii_batch
+        from tldw_chatbook.Chat import console_trace_regex_worker as regex_worker
+
+        real_run = regex_worker.run_custom_pii_batch
 
         def counted_run(*args, **kwargs):
             nonlocal calls
             calls += 1
             return real_run(*args, **kwargs)
 
-        monkeypatch.setattr(custom_pii, "run_custom_pii_batch", counted_run)
+        monkeypatch.setattr(regex_worker, "run_custom_pii_batch", counted_run)
         aggregate = ConsoleProviderStreamSignals(
             exchange_capture_enabled=True,
             capture_detail=CaptureDetail.FULL,

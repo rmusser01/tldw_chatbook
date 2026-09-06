@@ -54,6 +54,7 @@ from .unified_rows import (
     _humanize_schedule,
     definition_cron_expression,  # noqa: F401  (re-export: definition_detail.py imports this from here)
     owner_display_label,
+    reminder_has_fired,
 )
 
 
@@ -201,6 +202,13 @@ def _format_next_run(
     # badge said "Disabled" (Qodo review). Suppression is a property of the
     # status, not of whether a stale timestamp happens to survive.
     display_status = _task_status(task)
+    # UAT finding 3e: a fired one-time reminder is COMPLETED (not
+    # DISABLED, since `_task_status` above now checks `reminder_has_
+    # fired` first) -- its own branch, not the generic "nothing
+    # scheduled" fallback below, so "Completed" never explains itself as
+    # "— (disabled)".
+    if display_status == TaskStatus.COMPLETED:
+        return "—"
     if display_status == TaskStatus.DISABLED:
         return "— (disabled)"
     if display_status == TaskStatus.PAUSED:
@@ -288,7 +296,18 @@ def _task_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
     left disabled rows showing "Waiting" (task-23101). Enabling restores
     the recorded last outcome. Consumers that need the recorded outcome
     itself use ``_underlying_status`` (review F5).
+
+    UAT finding 3e: this predated the Queue's Completed bucket
+    (`unified_rows._reminder_bucket`) and was never reconciled with it.
+    Dispatching a one-time reminder sets ``enabled=False`` AND clears
+    ``next_run_at`` -- so a fired reminder's row was bucketed Completed
+    (drives the chip/glyph) while this method still said Disabled (drives
+    the badge/next-run text) for the exact same row. Checking
+    ``reminder_has_fired`` first, BEFORE the ``enabled`` override, makes
+    the two seams share the one rule instead of quietly disagreeing.
     """
+    if isinstance(task, ReminderTask) and reminder_has_fired(task):
+        return TaskStatus.COMPLETED
     if isinstance(task, ReminderTask) and not task.enabled:
         return TaskStatus.DISABLED
     return _underlying_status(task)
@@ -605,6 +624,56 @@ class TaskDetail(Vertical):
             id="scheduling-task-detail-empty-state",
         )
         with Vertical(id="scheduling-task-detail-metadata"):
+            # UAT display-blocker fix: this row used to be the LAST thing
+            # in the pane, after History -- past the fold at every
+            # measured width (`_scheduling_uat_remediation` root-causes
+            # doc, finding 2). It carries the one Edit-in-full affordance
+            # this pane has (no kebab -- plan ruling 1), so it now composes
+            # FIRST, mirroring `DefinitionDetail`'s own Pause/Run-now row.
+            yield Horizontal(
+                Button(
+                    "Edit",
+                    id="scheduling-edit-task",
+                    variant="primary",
+                    tooltip="Edit this scheduled task.",
+                ),
+                Button(
+                    "Acknowledge incident",
+                    id="scheduling-ack-incident",
+                    tooltip="Silence notifications for the current failure "
+                    "incident until it recurs after a success. Does not disable "
+                    "the task.",
+                ),
+                Button(
+                    "Run now",
+                    id="scheduling-run-now",
+                    variant="primary",
+                    tooltip="Dispatch this scheduled task immediately, without "
+                    "waiting for its schedule. A real dispatch: a recurring "
+                    "task's next occurrence is computed from now, a one-time "
+                    "task is consumed. Works on disabled tasks without enabling "
+                    "them.",
+                ),
+                Button(
+                    "Enable",
+                    id="scheduling-enable-task",
+                    variant="success",
+                    tooltip="Enable this scheduled task.",
+                ),
+                Button(
+                    "Disable",
+                    id="scheduling-disable-task",
+                    variant="warning",
+                    tooltip="Disable this scheduled task.",
+                ),
+                Button(
+                    "Delete",
+                    id="scheduling-delete-task",
+                    variant="error",
+                    tooltip="Delete this scheduled task.",
+                ),
+                id="scheduling-task-detail-lifecycle",
+            )
             yield Horizontal(
                 Static("Title:", classes="scheduling-detail-label"),
                 Static(
@@ -772,50 +841,6 @@ class TaskDetail(Vertical):
                 id="scheduling-task-detail-incidents",
                 classes="scheduling-detail-value",
             )
-        yield Horizontal(
-            Button(
-                "Edit",
-                id="scheduling-edit-task",
-                variant="primary",
-                tooltip="Edit this scheduled task.",
-            ),
-            Button(
-                "Acknowledge incident",
-                id="scheduling-ack-incident",
-                tooltip="Silence notifications for the current failure "
-                "incident until it recurs after a success. Does not disable "
-                "the task.",
-            ),
-            Button(
-                "Run now",
-                id="scheduling-run-now",
-                variant="primary",
-                tooltip="Dispatch this scheduled task immediately, without "
-                "waiting for its schedule. A real dispatch: a recurring "
-                "task's next occurrence is computed from now, a one-time "
-                "task is consumed. Works on disabled tasks without enabling "
-                "them.",
-            ),
-            Button(
-                "Enable",
-                id="scheduling-enable-task",
-                variant="success",
-                tooltip="Enable this scheduled task.",
-            ),
-            Button(
-                "Disable",
-                id="scheduling-disable-task",
-                variant="warning",
-                tooltip="Disable this scheduled task.",
-            ),
-            Button(
-                "Delete",
-                id="scheduling-delete-task",
-                variant="error",
-                tooltip="Delete this scheduled task.",
-            ),
-            id="scheduling-task-detail-lifecycle",
-        )
         # redesign PR-4, task 4 (ruling 2): the legacy Move/Retry/Cancel
         # button row that lived here (schedules-handoff spec §6, PR-5
         # task 7) is RETIRED -- the Runs-on row's own dropdown + mini-bar
@@ -1153,6 +1178,7 @@ class TaskDetail(Vertical):
                     allow_blank=False,
                     value=current_owner,
                     id=_RUNS_ON_EDITOR_ID,
+                    compact=True,
                 )
             )
         elif row is self._repeat_row:
@@ -1163,11 +1189,12 @@ class TaskDetail(Vertical):
                     allow_blank=False,
                     value=current_preset,
                     id=_REPEAT_EDITOR_ID,
+                    compact=True,
                 )
             )
         elif row is self._at_row:
             initial = task.run_at.isoformat() if task.run_at is not None else ""
-            row.begin_edit(Input(value=initial, id=_AT_EDITOR_ID))
+            row.begin_edit(Input(value=initial, id=_AT_EDITOR_ID, compact=True))
         elif row is self._timezone_row:
             # task.timezone is guaranteed set here: this row's affordance
             # is only ever True while `task.schedule_kind` is RECURRING,
@@ -1179,6 +1206,7 @@ class TaskDetail(Vertical):
                     allow_blank=False,
                     value=task.timezone,
                     id=_TIMEZONE_EDITOR_ID,
+                    compact=True,
                 )
             )
 

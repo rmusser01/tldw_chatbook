@@ -166,7 +166,9 @@ class _FailingContribution:
         raise RuntimeError("injected promotion failure")
 
 
-def test_promotion_failure_rolls_back_rows_and_retains_activity_for_retry(tmp_path) -> None:
+def test_promotion_failure_rolls_back_rows_and_retains_activity_for_retry(
+    tmp_path,
+) -> None:
     db = CharactersRAGDB(tmp_path / "activity-promotion.db", "activity-test")
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.create_session(ephemeral=True)
@@ -186,9 +188,12 @@ def test_promotion_failure_rolls_back_rows_and_retains_activity_for_retry(tmp_pa
         )
 
     assert store.pending_library_activity(session.id) == before
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM message_trajectory_metadata"
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM message_trajectory_metadata")
+        .fetchone()[0]
+        == 0
+    )
 
     conversation_id = store.promote_ephemeral_session(session.id)
     rows = db.get_trajectory_rows(conversation_id)
@@ -325,7 +330,9 @@ def test_close_serializes_against_late_provider_capture(tmp_path) -> None:
     assert store._library_activity_buffer.pending_events(session.id) == ()  # noqa: SLF001
 
 
-def test_store_projects_pending_and_durable_activity_to_native_assistant(tmp_path) -> None:
+def test_store_projects_pending_and_durable_activity_to_native_assistant(
+    tmp_path,
+) -> None:
     db = CharactersRAGDB(tmp_path / "activity-projection.db", "activity-test")
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.create_session(ephemeral=True)

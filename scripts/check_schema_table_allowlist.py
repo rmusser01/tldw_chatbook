@@ -152,7 +152,9 @@ SCHEMAS: tuple[SchemaSources, ...] = (
     SchemaSources(
         key="chachanotes",
         sql_globs=("chachanotes_*.sql",),
-        python_files=(REPO_ROOT / "tldw_chatbook" / "DB" / "ChaChaNotes_DB.py",),
+        python_files=(
+            REPO_ROOT / "tldw_chatbook" / "DB" / "ChaChaNotes_DB.py",
+        ),
     ),
     # TASK-19867 owns adding "media" and "prompts" here; see the module
     # docstring for why they are not enabled yet.

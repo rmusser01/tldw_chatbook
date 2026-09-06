@@ -259,6 +259,23 @@ class ServerNotificationsService:
         self._enforce("notifications.reminders.configure.server")
         return self._dump(await self._require_client().delete_reminder_task(task_id))
 
+    async def get_scheduled_automation_capabilities(self) -> dict[str, Any]:
+        """Probe server-advertised Scheduled Tasks automation capabilities.
+
+        task-3 (schedules UAT remediation ruling 5) capabilities
+        handshake: a 404 here means the server predates Scheduled Tasks
+        automation entirely, which `SchedulingServerClient.get_capabilities`
+        turns into an honest degrade rather than a crash.
+
+        Returns:
+            The capabilities response (``items``, one entry per
+            automation family) as a JSON-mode dict.
+        """
+        self._enforce("scheduler.automations.list.server")
+        return self._dump(
+            await self._require_client().get_scheduled_task_automation_capabilities()
+        )
+
     async def list_scheduled_automations(
         self,
         *,

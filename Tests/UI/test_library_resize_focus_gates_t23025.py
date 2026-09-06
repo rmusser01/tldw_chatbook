@@ -634,7 +634,7 @@ async def test_resize_ingest_rail_autocollapse_crossing_still_works():
         await pilot.resize_terminal(90, 48)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_ingest_auto_collapsed_rail,
+            lambda: screen._ingest_state.auto_collapsed_rail,
             message="narrow Ingest resize never auto-collapsed the rail",
         )
         assert screen._library_rail_collapsed is True
@@ -643,7 +643,7 @@ async def test_resize_ingest_rail_autocollapse_crossing_still_works():
         await pilot.resize_terminal(170, 48)
         await _wait_for_condition(
             pilot,
-            lambda: not screen._library_ingest_auto_collapsed_rail,
+            lambda: not screen._ingest_state.auto_collapsed_rail,
             message="wide Ingest resize never restored the rail",
         )
         assert screen._library_rail_collapsed is False

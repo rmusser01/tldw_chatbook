@@ -90,13 +90,9 @@ def merge_console_roleplay_context(
     existing_version = (
         owned_context.get("version") if isinstance(owned_context, Mapping) else None
     )
-    if (
-        _is_integer(existing_version)
-        and existing_version > ROLEPLAY_CONTEXT_VERSION
-    ):
+    if _is_integer(existing_version) and existing_version > ROLEPLAY_CONTEXT_VERSION:
         raise RoleplayContextVersionError(
-            "Cannot overwrite Console roleplay context at version "
-            f"{existing_version}."
+            f"Cannot overwrite Console roleplay context at version {existing_version}."
         )
 
     user_name_override = normalize_chat_display_name(

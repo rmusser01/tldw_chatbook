@@ -1188,6 +1188,11 @@ class LLMManagementWindow(Container):
                     wrap=True,
                     highlight=True,
                 )
+                from ..Widgets.llamacpp_snapshot_manager import LlamaCppSnapshotManager
+
+                yield LlamaCppSnapshotManager(
+                    self.app_instance.llamacpp_snapshot_service
+                )
 
             # Llamafile View
             with _LazyServerPane(id="llm-view-llamafile", classes="llm-view"):
@@ -2213,6 +2218,11 @@ class LLMManagementWindow(Container):
         if view_name in self._model_library_focus_ids:
             self.call_after_refresh(self._restore_model_library_focus, view_name)
         self._start_view_work(view_name, target_view)
+        if view_name == "llama-cpp":
+            from ..Widgets.llamacpp_snapshot_manager import LlamaCppSnapshotManager
+
+            for manager in target_view.query(LlamaCppSnapshotManager):
+                manager.request_refresh()
 
     def _record_model_library_focus(self, focused: Widget | None) -> None:
         """Retain stable row focus whenever the screen's reactive focus changes."""

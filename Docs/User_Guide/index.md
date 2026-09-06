@@ -39,6 +39,7 @@ can sync with a tldw server you configure).
 | Ctrl+6 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
 | Ctrl+7 | [Schedules](schedules.md) 🚧 | When jobs, watchlists, and workflows run. |
 | Ctrl+8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
+| F11 | [Meetings](meetings.md) | Record a call or a room with a live labelled transcript, then file it in the Library. |
 | Ctrl+9 | [MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and audit. |
 | Ctrl+0 | [ACP](acp.md) 🚧 | Agent Client Protocol agents, sessions, runtimes, diffs, and terminals. |
 | F7 | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |

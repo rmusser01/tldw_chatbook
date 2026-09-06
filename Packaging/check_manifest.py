@@ -5,14 +5,13 @@ from __future__ import annotations
 
 import argparse
 import configparser
-from email.parser import Parser
 import fnmatch
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
 import tarfile
 import zipfile
-
+from email.parser import Parser
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 # The file template store (tldw_chatbook/Chunking/templates/) is deleted
 # (spec §8.1.2): no path under it may appear in either artifact.
@@ -83,6 +82,64 @@ SAMIRA_RESOURCE_PATHS = {
     f"{SAMIRA_RESOURCE_ROOT}/expressions/{label}.webp"
     for label in SAMIRA_REACTION_LABELS
 }
+PIXEL_MIGU_CHARACTER_ROOT = "tldw_chatbook/assets/characters/pixel_migu"
+PIXEL_MIGU_BUDDY_ROOT = "tldw_chatbook/assets/persona_visual/pixel_migu"
+PIXEL_MIGU_POSES = (
+    "angry",
+    "celebrate",
+    "confused",
+    "excited",
+    "happy",
+    "listening",
+    "love",
+    "neutral",
+    "sad",
+    "skeptical",
+    "sleepy",
+    "surprised",
+    "thinking",
+    "thumbs_up",
+    "type",
+    "wave",
+)
+PIXEL_MIGU_RESOURCE_PATHS = (
+    {
+        f"{PIXEL_MIGU_CHARACTER_ROOT}/{name}"
+        for name in (
+            "ASSET_LICENSE.md",
+            "pixel-migu.character.json",
+            "pixel-migu.character.png",
+            "visual_identity_pack.json",
+        )
+    }
+    | {
+        f"{PIXEL_MIGU_CHARACTER_ROOT}/expressions/{name}.png"
+        for name in (*PIXEL_MIGU_POSES, "speaking", "error")
+    }
+    | {
+        f"{PIXEL_MIGU_BUDDY_ROOT}/{name}"
+        for name in ("PROVENANCE.md", "assets.json", "manifest.json")
+    }
+    | {f"{PIXEL_MIGU_BUDDY_ROOT}/pose-{name}.png" for name in PIXEL_MIGU_POSES}
+    | {
+        f"{PIXEL_MIGU_BUDDY_ROOT}/{name}-{frame}.png"
+        for name in (
+            "alert-idle",
+            "confused",
+            "error",
+            "happy",
+            "idle",
+            "sleepy",
+            "speaking",
+            "think",
+            "thinking",
+            "thumbs-up",
+            "type",
+            "wave",
+        )
+        for frame in range(1, 5)
+    }
+)
 TIKTOKEN_CACHE_PREFIX = "tldw_chatbook/assets/tiktoken_cache/"
 WINDOWS_INVALID_COMPONENT_CHARS = frozenset('<>:"\\|?*')
 WINDOWS_RESERVED_COMPONENTS = frozenset(
@@ -107,43 +164,53 @@ TIKTOKEN_RESOURCE_PATHS = {
 }
 TIKTOKEN_REQUIREMENT = "tiktoken==0.14.0"
 
-REQUIRED_SDIST_PATHS = {
-    "LICENSE",
-    "README.md",
-    "CLAUDE.md",
-    "CHANGELOG.md",
-    "MANIFEST.in",
-    "pyproject.toml",
-    "requirements.txt",
-    "tldw_chatbook/__init__.py",
-    "tldw_chatbook/app.py",
-    "tldw_chatbook/css/tldw_cli_modular.tcss",
-    "tldw_chatbook/css/components/stats_screen.css",
-    "tldw_chatbook/Config_Files/rag_pipelines.toml",
-    "tldw_chatbook/Evals/config/eval_config.yaml",
-    "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-    "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-    # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
-    "tldw_chatbook/LLM_Calls/LICENSE",
-    "tldw_chatbook/tldw_api/LICENSE",
-    SEMANTIC_TRACE_MIGRATION_PATH,
-    SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-} | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
+REQUIRED_SDIST_PATHS = (
+    {
+        "LICENSE",
+        "README.md",
+        "CLAUDE.md",
+        "CHANGELOG.md",
+        "MANIFEST.in",
+        "pyproject.toml",
+        "requirements.txt",
+        "tldw_chatbook/__init__.py",
+        "tldw_chatbook/app.py",
+        "tldw_chatbook/css/tldw_cli_modular.tcss",
+        "tldw_chatbook/css/components/stats_screen.css",
+        "tldw_chatbook/Config_Files/rag_pipelines.toml",
+        "tldw_chatbook/Evals/config/eval_config.yaml",
+        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+        # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
+        "tldw_chatbook/LLM_Calls/LICENSE",
+        "tldw_chatbook/tldw_api/LICENSE",
+        SEMANTIC_TRACE_MIGRATION_PATH,
+        SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
+    }
+    | SAMIRA_RESOURCE_PATHS
+    | PIXEL_MIGU_RESOURCE_PATHS
+    | TIKTOKEN_RESOURCE_PATHS
+)
 
-REQUIRED_WHEEL_PATHS = {
-    "tldw_chatbook/__init__.py",
-    "tldw_chatbook/app.py",
-    "tldw_chatbook/css/tldw_cli_modular.tcss",
-    "tldw_chatbook/Config_Files/rag_pipelines.toml",
-    "tldw_chatbook/Evals/config/eval_config.yaml",
-    "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-    "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-    # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
-    "tldw_chatbook/LLM_Calls/LICENSE",
-    "tldw_chatbook/tldw_api/LICENSE",
-    SEMANTIC_TRACE_MIGRATION_PATH,
-    SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-} | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
+REQUIRED_WHEEL_PATHS = (
+    {
+        "tldw_chatbook/__init__.py",
+        "tldw_chatbook/app.py",
+        "tldw_chatbook/css/tldw_cli_modular.tcss",
+        "tldw_chatbook/Config_Files/rag_pipelines.toml",
+        "tldw_chatbook/Evals/config/eval_config.yaml",
+        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+        # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
+        "tldw_chatbook/LLM_Calls/LICENSE",
+        "tldw_chatbook/tldw_api/LICENSE",
+        SEMANTIC_TRACE_MIGRATION_PATH,
+        SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
+    }
+    | SAMIRA_RESOURCE_PATHS
+    | PIXEL_MIGU_RESOURCE_PATHS
+    | TIKTOKEN_RESOURCE_PATHS
+)
 
 REQUIRED_SDIST_GLOBS = {
     "tldw_chatbook/css/*.tcss",
@@ -258,9 +325,7 @@ def _archive_name_errors(label: str, names: list[str]) -> list[str]:
         extraction_name = posix_path.as_posix()
         previous = extraction_names.setdefault(extraction_name.casefold(), name)
         if previous != name:
-            errors.append(
-                f"{label}: duplicate archive path: {name} aliases {previous}"
-            )
+            errors.append(f"{label}: duplicate archive path: {name} aliases {previous}")
         canonical = extraction_name + ("/" if name.endswith("/") else "")
         if (
             "\\" in name
@@ -433,6 +498,7 @@ def _validate_content(
                 name.endswith(".md")
                 and not name.startswith("tldw_chatbook/Config_Files/")
                 and name != f"{SAMIRA_RESOURCE_ROOT}/ASSET_LICENSE.md"
+                and name not in PIXEL_MIGU_RESOURCE_PATHS
             ):
                 errors.append(f"{label}: forbidden development Markdown: {name}")
 
@@ -444,6 +510,20 @@ def _validate_content(
             f"{label}: Samira resources differ; "
             f"missing={sorted(SAMIRA_RESOURCE_PATHS - samira_members)}, "
             f"unexpected={sorted(samira_members - SAMIRA_RESOURCE_PATHS)}"
+        )
+
+    pixel_migu_members = {
+        name
+        for name in members
+        if name.startswith(
+            (f"{PIXEL_MIGU_CHARACTER_ROOT}/", f"{PIXEL_MIGU_BUDDY_ROOT}/")
+        )
+    }
+    if pixel_migu_members != PIXEL_MIGU_RESOURCE_PATHS:
+        errors.append(
+            f"{label}: pixel-migu resources differ; "
+            f"missing={sorted(PIXEL_MIGU_RESOURCE_PATHS - pixel_migu_members)}, "
+            f"unexpected={sorted(pixel_migu_members - PIXEL_MIGU_RESOURCE_PATHS)}"
         )
 
     if tiktoken_members is None:

@@ -138,9 +138,7 @@ def test_both_viewer_profiles_preserve_frozen_pii_masks() -> None:
         capture_detail=CaptureDetail.FULL,
         request={
             "system_message": "",
-            "messages_payload": [
-                {"role": "user", "content": "Email [REDACTED PII]"}
-            ],
+            "messages_payload": [{"role": "user", "content": "Email [REDACTED PII]"}],
             "tools": [],
         },
         response={"content": "[REDACTED PII]"},

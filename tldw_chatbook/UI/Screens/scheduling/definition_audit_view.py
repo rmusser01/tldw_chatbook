@@ -45,6 +45,8 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import DataTable, Static
 
+from tldw_chatbook.Scheduling.services.server_client import ServerClientNotFoundError
+
 
 @dataclass
 class DefinitionAuditFetch:
@@ -109,10 +111,39 @@ async def fetch_definition_audit(
         return DefinitionAuditFetch(
             notice_override="Run history needs a connected server."
         )
+    # task-3 (schedules UAT remediation ruling 5) capabilities handshake:
+    # a server that doesn't expose Scheduled Tasks automation at all
+    # can't have a run-history route either -- say so honestly instead of
+    # attempting a call guaranteed to 404 (root-causes.md #7). Fails open
+    # (attempts the call anyway) on a probe blip -- only a DEFINITIVE
+    # "capabilities route absent" answer short-circuits here.
+    try:
+        capabilities_absent = (
+            await server_client.get_capabilities() is None
+        )
+    except Exception:  # noqa: BLE001
+        capabilities_absent = False
+    if capabilities_absent:
+        return DefinitionAuditFetch(
+            notice_override=(
+                "This server does not support scheduled task automation "
+                "(server too old)."
+            )
+        )
     definition_id = str(definition.get("id") or "")
     try:
         response = await server_client.list_automation_definition_audit(
             definition_id
+        )
+    except ServerClientNotFoundError:
+        # The narrower case a capabilities probe alone can't predict: this
+        # server IS new enough to advertise capabilities but doesn't (yet)
+        # serve THIS route -- same honest family of copy, not a raw
+        # scheduled_task_not_found (UAT Minor 24).
+        return DefinitionAuditFetch(
+            notice_override=(
+                "This server does not provide run history (server too old)."
+            )
         )
     except Exception:  # noqa: BLE001
         logger.exception(

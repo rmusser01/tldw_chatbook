@@ -85,7 +85,9 @@ def resolve_console_destination(
     Returns:
         A credential-free destination containing only normalized origin identity.
     """
-    provider = resolution.provider if isinstance(resolution.provider, str) else "unknown"
+    provider = (
+        resolution.provider if isinstance(resolution.provider, str) else "unknown"
+    )
     model = resolution.model if isinstance(resolution.model, str) else None
     parsed = _parse_endpoint_origin(resolution.base_url)
     if parsed is None:

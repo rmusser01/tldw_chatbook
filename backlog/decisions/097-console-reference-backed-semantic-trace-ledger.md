@@ -62,6 +62,13 @@ project-instruction bodies never enter default durable capture.
    abandoned generations remain distinct calls. No call stores a history array
    proportional to the conversation's age.
 
+   Agent run identity binds the stable opaque actor/chain pair carried by route
+   provenance, not the chain alone (PR2433 review, 2026-09-05). The existing
+   `run_id` stores `actor_uuid:chain_uuid`; both inputs are canonical UUIDv4
+   values, so this is an unambiguous content-free identity. No new schema,
+   content hash, or process-local ownership registry is introduced. Historical
+   chain-only runs remain readable, but cannot authorize a new continuation.
+
 5. **Store request headers only when their effective value changes.** A complete
    logical header records provider/model configuration, rendered system references,
    tool-schema references, response/reasoning controls, endpoint's credential-free

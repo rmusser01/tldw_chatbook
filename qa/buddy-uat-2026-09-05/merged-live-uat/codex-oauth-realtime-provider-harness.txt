@@ -1,0 +1,49 @@
+"""Production realtime adapter, synthetic text only, ephemeral Codex OAuth auth."""
+import asyncio
+import hashlib
+import json
+import logging
+from pathlib import Path
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+from loguru import logger
+logger.remove()
+logging.disable(logging.CRITICAL)
+ROOT = Path('/private/tmp/chatbook-migu-dragging-20260905')
+sys.path.insert(0, str(ROOT))
+from tldw_chatbook.LLM_Calls.realtime.openai_session import OpenAIRealtimeSession
+from tldw_chatbook.LLM_Calls.realtime.protocol import RealtimeCallbacks, RealtimeSessionConfig
+
+async def main():
+    token = json.loads(Path('/Users/macbook-dev/.codex/auth.json').read_text())['tokens']['access_token']
+    ready, done = asyncio.Event(), asyncio.Event()
+    chunks, transcript, failures = [], [], []
+    result = {'tested_at':datetime.now(timezone.utc).isoformat(),
+              'revision':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
+              'harness_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+              'credential_source':'existing Codex OAuth login', 'model':'gpt-realtime',
+              'microphone_opened':False, 'input':'synthetic text only', 'audio_played':False}
+    callbacks = RealtimeCallbacks(on_ready=ready.set, on_reply_done=done.set,
+        on_audio_delta=chunks.append, on_output_transcript_delta=transcript.append,
+        on_error=lambda error: failures.append(type(error).__name__))
+    session = OpenAIRealtimeSession(RealtimeSessionConfig(api_key=token, model='gpt-realtime',
+        voice='marin', instructions='Follow the short test instruction exactly.'), callbacks)
+    try:
+        await asyncio.wait_for(session.connect(), 20)
+        await asyncio.wait_for(ready.wait(), 10)
+        result['session_ready'] = True
+        session.send_text_item('Say exactly: The blue notebook is ready.', request_response=True)
+        await asyncio.wait_for(done.wait(), 30)
+        result.update(reply_complete=True, output_audio_bytes=sum(map(len,chunks)),
+                      transcript=''.join(transcript), error_types=failures)
+    except Exception as error:
+        result.update(reply_complete=False, exception_type=type(error).__name__, error_types=failures)
+    finally:
+        await session.close()
+        result['session_closed'] = True
+    Path('/private/tmp/migu-realtime-oauth-provider.json').write_text(json.dumps(result,indent=2)+'\n')
+    print(json.dumps(result))
+
+asyncio.run(main())

@@ -40,10 +40,14 @@ class ConsoleLibraryPolicyRepository:
         if type(conversation_id) is not str or not conversation_id.strip():
             return normalize_policy_read(None)
         try:
-            row = self.db.get_connection().execute(
-                _POLICY_SELECT + " WHERE policy.conversation_id = ?",
-                (conversation_id,),
-            ).fetchone()
+            row = (
+                self.db.get_connection()
+                .execute(
+                    _POLICY_SELECT + " WHERE policy.conversation_id = ?",
+                    (conversation_id,),
+                )
+                .fetchone()
+            )
             if row is None:
                 return normalize_policy_read(None)
             return self._result_from_row(row)
@@ -77,7 +81,9 @@ class ConsoleLibraryPolicyRepository:
                         """,
                         (
                             conversation_id,
-                            int(candidate.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC),
+                            int(
+                                candidate.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
+                            ),
                             int(
                                 candidate.assistant_access
                                 is ConsoleAssistantLibraryAccess.ALLOWED
@@ -220,9 +226,11 @@ class ConsoleLibraryPolicyRepository:
 
     @staticmethod
     def _valid_candidate(candidate: object) -> bool:
-        return isinstance(candidate, ConsoleLibraryPolicyCandidate) and isinstance(
-            candidate.auto_retrieve, ConsoleAutoRetrieve
-        ) and isinstance(candidate.assistant_access, ConsoleAssistantLibraryAccess)
+        return (
+            isinstance(candidate, ConsoleLibraryPolicyCandidate)
+            and isinstance(candidate.auto_retrieve, ConsoleAutoRetrieve)
+            and isinstance(candidate.assistant_access, ConsoleAssistantLibraryAccess)
+        )
 
     @staticmethod
     def _missing_conversation_write() -> ConsoleLibraryPolicyWriteResult:

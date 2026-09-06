@@ -1,0 +1,60 @@
+{
+  "production_diff_sha256": "72fff5947be564d1f15b7905caf812ac11051cfeea0314db47c95f5ab25af364",
+  "regression": {
+    "test": "Tests/Chat/test_console_durable_commit_offload.py::test_stop_during_dispatch_cas_settles_before_returning",
+    "cases": 4,
+    "red": "Original direct cases produced BLOCKED; agent cases remained BLOCKED until pre-worker cancellation handling was covered.",
+    "green": "4 passed; both direct and agent paths, CAS before/after commit, repeated Stop, another active stream/checkpoint/cancel owner preserved. Independent SQLite verifies terminal state after the CAS worker finishes."
+  },
+  "targeted_durability_recovery": {
+    "passed": 120,
+    "deselected_baseline_failures": 3,
+    "exit_code": 0,
+    "modules": [
+      "test_console_durable_commit_offload.py",
+      "test_console_first_send_atomicity.py",
+      "test_console_dispatch_recovery.py",
+      "test_console_dispatch_recovery_fix_round1.py",
+      "test_console_dispatch_recovery_fix_round2.py",
+      "test_console_dispatch_recovery_fix_round3.py",
+      "test_console_dispatch_recovery_fix_round4.py",
+      "test_console_dispatch_queue_recovery.py"
+    ],
+    "filter": "not clean_restore_reconcile and not terminal_checkpoint_reconcile and not (explicit_retry_resumes_every_unfinished_postcommit_effect_before_provider and checkpoint_transition)",
+    "warnings": [
+      "requests dependency-version warning",
+      "Session-level file descriptor growth warning across recovery fixtures"
+    ]
+  },
+  "controller_regressions": {
+    "module": "Tests/Chat/test_console_chat_controller.py",
+    "filter": "stop or cancel or settlement or pre_worker_failure",
+    "passed": 28,
+    "deselected": 230,
+    "exit_code": 0
+  },
+  "baseline_failures": [
+    {
+      "test": "Tests/Chat/test_console_durable_commit_offload.py::test_clean_restore_reconcile_takes_no_write_lock",
+      "reason": "Fixture raw UPDATE rejected: semantic mutation authorization required for message update."
+    },
+    {
+      "test": "Tests/Chat/test_console_durable_commit_offload.py::test_terminal_checkpoint_reconcile_still_deletes_under_write_lock",
+      "reason": "Fixture raw UPDATE rejected: semantic mutation authorization required for message update."
+    },
+    {
+      "test": "Tests/Chat/test_console_dispatch_recovery_fix_round2.py::test_explicit_retry_resumes_every_unfinished_postcommit_effect_before_provider[checkpoint_transition]",
+      "reason": "Existing provider_started=True versus expected False assertion."
+    }
+  ],
+  "baseline_method": "Production package exported from untouched HEAD with git archive; python -P and PYTHONPATH selected the exported package. Baseline traceback paths confirmed the export; the same three tests failed.",
+  "static": {
+    "fatal_ruff": "E9,F63,F7,F82 passed for production and test files",
+    "full_controller_ruff": "176 existing findings on current and HEAD; no new code/message signatures",
+    "full_test_ruff": "Two pre-existing unused-variable findings in the old event-loop contention test; no new findings",
+    "format": "Changed test file passes; whole controller already unformatted at HEAD, unrelated formatting retained",
+    "bandit": "Current and HEAD each have 17 identical signatures: 10 B110 and 7 B101. No new finding.",
+    "diff_check": "passed"
+  },
+  "scope": "Targeted tests only; no full suite. Live early Stop evidence is recorded separately with the matching process identity and production hashes."
+}

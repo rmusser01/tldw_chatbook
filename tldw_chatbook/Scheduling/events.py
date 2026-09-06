@@ -287,6 +287,26 @@ class SyncCompleted(Message):
         self.outcome = outcome
 
 
+class ReminderDispatched(Message):
+    """Posted (to the App) after the scheduler loop dispatches a reminder.
+
+    UAT finding 3a: nothing outside the workbench's own user-initiated
+    actions ever re-read the DB while the screen was open, so a fired
+    reminder kept painting "Waiting" until the next 60s ticker or a
+    navigation away and back. `SchedulerLoop` has no route to a screen
+    (it is UI-agnostic by design), so it fires this through the app
+    (`TldwCli.on_reminder_dispatched`), which relays it to the
+    `SchedulesWorkbench` if one is currently mounted. Carries only the
+    task id, informational only for now -- the handler does a full
+    `_request_tasks_refresh()` rather than a targeted repaint, since a
+    fired one-time reminder's bucket/next-run text both change together.
+    """
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__()
+        self.task_id = task_id
+
+
 class SyncFailed(Message):
     """Posted when a sync attempt fails.
 
@@ -295,9 +315,21 @@ class SyncFailed(Message):
         error: Human-readable failure text for the UI. Sourced either
             from a raised exception or from the error the engine recorded
             on a ``SyncOutcome`` whose status is ``"error"``.
+        outcome: The engine's ``SyncOutcome`` for the attempt, when one
+            exists (a raised exception outside the engine has none) --
+            final review finding 6: without it, an automation-phase
+            failure in the SAME cycle as the reminder-phase failure this
+            event already reports (`SyncOutcome.phase_errors`) had no
+            route to the UI at all on the failed path, only the
+            succeeded-reminder-phase path (`SyncCompleted`). Typed
+            ``object`` to keep this event module free of a
+            service-layer import, same as ``SyncCompleted.outcome``.
     """
 
-    def __init__(self, owner_id: str, error: str) -> None:
+    def __init__(
+        self, owner_id: str, error: str, outcome: object | None = None
+    ) -> None:
         super().__init__()
         self.owner_id = owner_id
         self.error = error
+        self.outcome = outcome

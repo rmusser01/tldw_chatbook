@@ -8,18 +8,29 @@ the thin ``@on`` handlers that delegate here, mirroring the
 ``CCPCharacterHandler`` pattern (a class holding a reference to its screen).
 """
 
+# ruff: noqa: BLE001
+
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from textual.css.query import QueryError
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from ...Character_Chat.Character_Chat_Lib import (
+    process_db_messages_to_ui_history,
     retrieve_conversation_messages_for_ui,
+)
+from ...Character_Chat.character_conversation_navigation import (
+    CharacterConversationCursor,
+    CharacterConversationNavigationService,
+    CharacterKeywordSnapshot,
+    LocalCharacterConversationTarget,
+    ResolvedLocalCharacterKey,
 )
 from ...Constants import (
     CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
@@ -37,6 +48,12 @@ from ...Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspector
 from ..Navigation.main_navigation import NavigateToScreen
 
 if TYPE_CHECKING:
+    from ...Chat.console_conversation_activation import (
+        CharacterConversationActivationRequest,
+    )
+    from ..Navigation.character_conversation_navigation import (
+        RoleplayCharacterConversationLink,
+    )
     from ..Screens.personas_screen import PersonasScreen
 
 
@@ -57,11 +74,14 @@ _CONVERSATIONS_MAX_AUTO_HOPS = 4
 class PersonasConversationsController:
     """Handles the saved-conversations region for ``PersonasScreen``."""
 
-    def __init__(self, screen: "PersonasScreen") -> None:
+    def __init__(self, screen: PersonasScreen) -> None:
         self.screen = screen
         # Conversations listed for the selected character (id -> title) and
         # the conversation currently open in the read-only center view.
         self._conversation_rows: dict[str, str] = {}
+        self._conversation_activation_requests: dict[
+            str, CharacterConversationActivationRequest
+        ] = {}
         self._open_character_id: str | None = None
         self._open_conversation_id: str | None = None
         self._open_conversation_title: str = ""
@@ -74,14 +94,22 @@ class PersonasConversationsController:
         self._failed_conversation_id: str | None = None
         self._preview_attempt: object | None = None
         self._resume_in_flight_attempts: dict[str, object] = {}
+        self._resume_cancellation: object | None = None
         self._list_character_id: str | None = None
         self._loaded_conversation_ids: set[str] = set()
-        self._next_conversation_cursor: tuple[Any, str] | None = None
+        self._next_conversation_cursor: (
+            CharacterConversationCursor | tuple[Any, str] | int | None
+        ) = None
+        self._conversation_query = ""
+        self._conversation_total = 0
+        self._requested_conversation_id: str | None = None
         self._has_more_conversations = False
         self._conversation_list_phase: str | None = None
         self._conversation_list_attempt: object | None = None
+        self._conversation_page_revision: int | None = None
+        self._conversation_keyword_snapshot: CharacterKeywordSnapshot | None = None
         self._conversation_attempt_boundaries: list[
-            tuple[Any, str] | None
+            CharacterConversationCursor | tuple[Any, str] | int | None
         ] = []
 
     def reset(self) -> None:
@@ -92,7 +120,6 @@ class PersonasConversationsController:
         except QueryError:
             pass
         self._reset_conversation_browse()
-        self.close_conversation_preview()
         self._resume_in_flight_attempts = {}
 
     # ===== Listing =====
@@ -120,6 +147,89 @@ class PersonasConversationsController:
             await self._recover_owned_conversation_render_failure(
                 str(character_id), None, True, attempt
             )
+
+    async def search_conversations(self, query: str) -> None:
+        """Start a new exact-character Keyword generation for the current card."""
+
+        # An explicit new query abandons the old exact-row seek, not its identity
+        # in favor of a substitute row. Ordinary browsing owns the new results.
+        if getattr(self.screen, "_pending_character_conversation_link", None) is not None:
+            self.screen._pending_character_conversation_link = None
+        self._requested_conversation_id = None
+        self._conversation_query = str(query or "").strip()
+        character_id = self._list_character_id
+        if character_id is not None:
+            await self.load_conversations(character_id)
+
+    def synchronize_deep_link_query(self, query: str) -> None:
+        """Synchronize controller and visible query without duplicate search."""
+
+        value = str(query or "").strip()
+        self._conversation_query = value
+        try:
+            search = self.screen.query_one("#personas-conversations-search", Input)
+        except QueryError:
+            return
+        if search.value != value:
+            with search.prevent(Input.Changed):
+                search.value = value
+
+    def request_conversation_focus(self, conversation_id: str) -> None:
+        """Focus a deep-linked row after its owned page commits."""
+
+        self._requested_conversation_id = str(conversation_id).strip() or None
+
+    def exact_link_problem(self, link: RoleplayCharacterConversationLink) -> str | None:
+        """Re-fence one exact link using only authoritative SQLite metadata.
+
+        Returns:
+            Recovery copy for a stale/unavailable target, otherwise None.
+        """
+
+        db = self.screen._character_db()
+        with db.transaction() as connection:
+            authority = db.get_local_authority_id()
+            if authority != link.character.data_authority_id:
+                return "The active Data Profile changed."
+            row = connection.execute(
+                "SELECT c.deleted, c.runtime_backend, c.assistant_kind, "
+                "c.assistant_authority_id, c.character_id, card.deleted AS card_deleted "
+                "FROM conversations AS c LEFT JOIN character_cards AS card "
+                "ON card.id = c.character_id WHERE c.id = ?",
+                (link.conversation_id,),
+            ).fetchone()
+            if row is None or row["deleted"]:
+                return "The exact conversation is no longer available."
+            if (
+                row["runtime_backend"] != "local"
+                or row["assistant_kind"] != "character"
+                or row["assistant_authority_id"] != authority
+                or row["character_id"] != link.character.character_id
+                or row["card_deleted"] is None
+                or row["card_deleted"]
+            ):
+                return "The exact conversation no longer belongs to this saved character."
+            if db.get_character_conversation_search_revision() != link.data_revision:
+                return "Results changed. Retry to refresh this exact conversation."
+        return None
+
+    def reveal_deep_link_row(self, link: RoleplayCharacterConversationLink) -> None:
+        """Reveal a proved exact row after compact pane layout has settled."""
+
+        request = self._conversation_activation_requests.get(link.conversation_id)
+        if (
+            not self.screen.is_mounted
+            or self.screen.app.screen is not self.screen
+            or request is None
+            or request.target.character != link.character
+            or request.data_revision != link.data_revision
+            or self._conversation_query != link.query.strip()
+        ):
+            return
+        try:
+            self.screen.query_one(PersonasInspectorPane).focus_conversation(link.conversation_id)
+        except (QueryError, ValueError):
+            pass
 
     async def request_older_conversations(self) -> None:
         """Handle the actionable Load/Retry tail without starting duplicates."""
@@ -164,9 +274,13 @@ class PersonasConversationsController:
 
     def _reset_conversation_browse(self, character_id: str | None = None) -> None:
         """Invalidate an active list read and clear memory-only browse state."""
+        self.close_conversation_preview()
         self._conversation_list_attempt = None
+        self._conversation_page_revision = None
+        self._conversation_keyword_snapshot = None
         self._list_character_id = character_id
         self._conversation_rows = {}
+        self._conversation_activation_requests = {}
         self._loaded_conversation_ids = set()
         self._next_conversation_cursor = None
         self._has_more_conversations = False
@@ -206,13 +320,65 @@ class PersonasConversationsController:
     def _load_conversations_sync(
         self,
         character_id: str,
-        cursor: tuple[Any, str] | None,
+        cursor: CharacterConversationCursor | tuple[Any, str] | int | None,
         initial: bool,
         attempt: object,
     ) -> None:
         """Fetch one saved-conversation page off the UI thread."""
         try:
             db = self.screen._character_db()
+            if hasattr(db, "get_local_authority_id"):
+                service = CharacterConversationNavigationService(db)
+                key = ResolvedLocalCharacterKey(
+                    db.get_local_authority_id(), int(character_id)
+                )
+                if self._conversation_query:
+                    service.ensure_keyword_index()
+                    page = service.keyword_search(
+                        self._conversation_query,
+                        character=key,
+                        offset=cursor if isinstance(cursor, int) else 0,
+                        limit=PERSONAS_CONVERSATIONS_PAGE_SIZE,
+                    )
+                else:
+                    typed_cursor = (
+                        cursor if isinstance(cursor, CharacterConversationCursor) else None
+                    )
+                    page = service.page_for_character(
+                        key,
+                        cursor=typed_cursor,
+                        limit=PERSONAS_CONVERSATIONS_PAGE_SIZE,
+                    )
+                records = tuple(
+                    {
+                        "id": row.target.conversation_id,
+                        "title": row.title,
+                        "last_modified": row.last_modified,
+                        "created_at": row.created_at,
+                        "target": row.target,
+                        "data_revision": page.data_revision,
+                    }
+                    for row in page.rows
+                    if row.target is not None
+                )
+                page_offset = cursor if isinstance(cursor, int) else 0
+                if (
+                    page.next_cursor is not None
+                    or page_offset + len(records) < page.total
+                ):
+                    records += ({"_page_sentinel": True},)
+                self.screen.app.call_from_thread(
+                    self.apply_conversation_page,
+                    character_id,
+                    cursor,
+                    initial,
+                    attempt,
+                    records,
+                    page.total,
+                    page.keyword_snapshot,
+                    page.next_cursor,
+                )
+                return
             if cursor is None:
                 records = db.get_conversations_for_character(
                     int(character_id), limit=_CONVERSATIONS_FETCH_LIMIT
@@ -244,12 +410,13 @@ class PersonasConversationsController:
             initial,
             attempt,
             records,
+            None,
         )
 
     def _owns_conversation_page(
         self,
         character_id: str,
-        cursor: tuple[Any, str] | None,
+        cursor: CharacterConversationCursor | tuple[Any, str] | int | None,
         attempt: object,
     ) -> bool:
         """Return whether a list continuation still owns the visible context."""
@@ -268,7 +435,7 @@ class PersonasConversationsController:
     def _owns_conversation_retry(
         self,
         character_id: str,
-        cursor: tuple[Any, str] | None,
+        cursor: CharacterConversationCursor | tuple[Any, str] | int | None,
         initial: bool,
     ) -> bool:
         """Return whether a released attempt still owns its retry context."""
@@ -289,7 +456,7 @@ class PersonasConversationsController:
     async def _recover_owned_conversation_render_failure(
         self,
         character_id: str,
-        cursor: tuple[Any, str] | None,
+        cursor: CharacterConversationCursor | tuple[Any, str] | int | None,
         initial: bool,
         attempt: object,
         *,
@@ -298,6 +465,7 @@ class PersonasConversationsController:
         """Release one owned attempt and make a bounded retry presentation."""
         if not self._owns_conversation_page(character_id, cursor, attempt):
             return
+
         self._conversation_list_attempt = None
         self._conversation_list_phase = "initial-retry" if initial else "append-retry"
         preserved_rows = (
@@ -359,7 +527,7 @@ class PersonasConversationsController:
     async def apply_conversation_page_failure(
         self,
         character_id: str,
-        cursor: tuple[Any, str] | None,
+        cursor: CharacterConversationCursor | tuple[Any, str] | int | None,
         initial: bool,
         attempt: object,
     ) -> None:
@@ -371,16 +539,40 @@ class PersonasConversationsController:
     async def apply_conversation_page(
         self,
         character_id: str,
-        cursor: tuple[Any, str] | None,
+        cursor: CharacterConversationCursor | tuple[Any, str] | int | None,
         initial: bool,
         attempt: object,
         records: tuple[object, ...],
+        total: int | None = None,
+        keyword_snapshot: CharacterKeywordSnapshot | None = None,
+        page_cursor: CharacterConversationCursor | None = None,
     ) -> None:
         """Validate, present, and then commit one still-owned page."""
+        from ...Chat.console_conversation_activation import (
+            CharacterConversationActivationRequest,
+        )
+
         if not self._owns_conversation_page(character_id, cursor, attempt):
             return
 
-        durable_page: list[tuple[str, str, Any]] = []
+        link = getattr(self.screen, "_pending_character_conversation_link", None)
+        if link is not None and link.conversation_id is not None:
+            problem = await asyncio.to_thread(self.exact_link_problem, link)
+            if not self._owns_conversation_page(character_id, cursor, attempt):
+                return
+            if problem is not None:
+                self._conversation_list_attempt = None
+                self.screen._show_character_link_recovery(problem)
+                return
+
+        durable_page: list[
+            tuple[
+                str,
+                str,
+                Any,
+                CharacterConversationActivationRequest | None,
+            ]
+        ] = []
         for record in records:
             if not isinstance(record, Mapping):
                 continue
@@ -391,31 +583,82 @@ class PersonasConversationsController:
             conversation_id = str(raw_id).strip()
             if not conversation_id:
                 continue
+            target = record.get("target")
+            revision = record.get("data_revision")
+            activation_request = None
+            if isinstance(target, LocalCharacterConversationTarget) and isinstance(
+                revision, int
+            ) and not isinstance(revision, bool):
+                activation_request = CharacterConversationActivationRequest(
+                    target=target,
+                    data_authority_id=target.character.data_authority_id,
+                    data_revision=revision,
+                )
             durable_page.append(
                 (
                     conversation_id,
                     str(record.get("title") or "Untitled conversation"),
                     last_modified,
+                    activation_request,
                 )
             )
             if len(durable_page) == PERSONAS_CONVERSATIONS_PAGE_SIZE:
                 break
 
+        page_revisions = {
+            request.data_revision
+            for _conversation_id, _title, _modified, request in durable_page
+            if request is not None
+        }
+        page_revision = next(iter(page_revisions)) if len(page_revisions) == 1 else None
+        if (
+            not initial
+            and self._conversation_query
+            and hasattr(self.screen._character_db(), "get_local_authority_id")
+            and (
+                page_revision is None
+                or self._conversation_page_revision is None
+                or page_revision != self._conversation_page_revision
+                or keyword_snapshot != self._conversation_keyword_snapshot
+            )
+        ):
+            # Keyword OFFSET cursors are valid only inside the generation that
+            # produced page one.  A changed revision restarts rather than
+            # mixing ranks and skipping/repeating otherwise stable rows.
+            self._conversation_list_attempt = None
+            await self.load_conversations(character_id)
+            return
+
         raw_cursor = (
-            (durable_page[-1][2], durable_page[-1][0])
+            (cursor if isinstance(cursor, int) else 0) + len(durable_page)
+            if self._conversation_query and durable_page
+            else
+            page_cursor
+            if hasattr(self.screen._character_db(), "get_local_authority_id")
+            and durable_page
+            else (durable_page[-1][2], durable_page[-1][0])
             if durable_page
             else None
         )
-        accepted: list[tuple[str, str, Any]] = []
+        accepted: list[
+            tuple[
+                str,
+                str,
+                Any,
+                CharacterConversationActivationRequest | None,
+            ]
+        ] = []
         page_ids: set[str] = set()
-        for conversation_id, title, last_modified in durable_page:
+        for conversation_id, title, last_modified, activation_request in durable_page:
             if (
                 conversation_id in self._loaded_conversation_ids
                 or conversation_id in page_ids
             ):
                 continue
             page_ids.add(conversation_id)
-            accepted.append((conversation_id, title, last_modified))
+            accepted.append(
+                (conversation_id, title, last_modified, activation_request)
+            )
 
         has_more = len(records) > PERSONAS_CONVERSATIONS_PAGE_SIZE
         if not accepted and has_more:
@@ -437,9 +680,17 @@ class PersonasConversationsController:
                 )
                 has_more = False
 
-        rows = tuple((conversation_id, title) for conversation_id, title, _ in accepted)
+        rows = tuple(
+            (conversation_id, title)
+            for conversation_id, title, _last_modified, _request in accepted
+        )
         if initial:
             proposed_rows = dict(rows)
+            proposed_requests = {
+                conversation_id: request
+                for conversation_id, _title, _modified, request in accepted
+                if request is not None
+            }
             proposed_ids = {
                 conversation_id for conversation_id, _ in rows
             }
@@ -447,6 +698,14 @@ class PersonasConversationsController:
         else:
             proposed_rows = dict(self._conversation_rows)
             proposed_rows.update(rows)
+            proposed_requests = dict(self._conversation_activation_requests)
+            proposed_requests.update(
+                {
+                    conversation_id: request
+                    for conversation_id, _title, _modified, request in accepted
+                    if request is not None
+                }
+            )
             proposed_ids = set(self._loaded_conversation_ids)
             proposed_ids.update(conversation_id for conversation_id, _ in rows)
             proposed_cursor = raw_cursor or self._next_conversation_cursor
@@ -480,12 +739,64 @@ class PersonasConversationsController:
             return
         if not self._owns_conversation_page(character_id, cursor, attempt):
             return
+        if link is not None and link.conversation_id is not None:
+            problem = await asyncio.to_thread(self.exact_link_problem, link)
+            if not self._owns_conversation_page(character_id, cursor, attempt):
+                return
+            if problem is not None:
+                self._conversation_list_attempt = None
+                self.screen._show_character_link_recovery(problem)
+                return
         self._conversation_rows = proposed_rows
+        self._conversation_activation_requests = proposed_requests
         self._loaded_conversation_ids = proposed_ids
         self._next_conversation_cursor = proposed_cursor
         self._has_more_conversations = has_more
         self._conversation_list_phase = "ready"
         self._conversation_list_attempt = None
+        if initial:
+            self._conversation_page_revision = page_revision
+            self._conversation_keyword_snapshot = keyword_snapshot
+        if total is not None:
+            self._conversation_total = total
+            try:
+                inspector.set_conversation_total(total)
+                if keyword_snapshot is not None:
+                    inspector.set_conversation_snapshot(keyword_snapshot.completed_at)
+            except QueryError:
+                pass
+        visible_total = total if total is not None else len(proposed_rows)
+        try:
+            self.screen.query_one(
+                "#ccp-character-card-view"
+            ).set_conversation_total(visible_total)
+        except (AttributeError, QueryError):
+            pass
+        if self._requested_conversation_id in self._conversation_rows:
+            requested = self._requested_conversation_id
+            try:
+                inspector.focus_conversation(requested)
+            except (QueryError, ValueError):
+                if link is not None:
+                    self.screen._show_character_link_recovery(
+                        "The exact conversation could not be focused. Retry."
+                    )
+            else:
+                self._requested_conversation_id = None
+                if link is not None and self.screen._pending_character_conversation_link is link:
+                    self.screen._pending_character_conversation_link = None
+        elif self._requested_conversation_id is not None and has_more:
+            # A deep link may target any row in the character's complete
+            # history, not only the first page. Continue the owned keyset walk
+            # until the exact durable id is rendered or history is exhausted.
+            await self.request_older_conversations()
+        elif self._requested_conversation_id is not None:
+            self._requested_conversation_id = None
+            if link is not None:
+                self.screen._show_character_link_recovery(
+                    "The exact conversation is not in these results. "
+                    "Retry after refreshing the source, or change the search."
+                )
 
     # ===== Read-only view =====
 
@@ -497,6 +808,16 @@ class PersonasConversationsController:
         replaces it with the content (or a newer selection supersedes it).
         """
         screen = self.screen
+        request = self._conversation_activation_requests.get(conversation_id)
+        if request is None and hasattr(
+            screen._character_db(), "get_local_authority_id"
+        ):
+            screen._notify(
+                "This conversation is no longer available. Refresh conversations and "
+                "try again.",
+                "warning",
+            )
+            return
         preview_attempt = object()
         self._preview_attempt = preview_attempt
         self._open_character_id = (
@@ -532,6 +853,7 @@ class PersonasConversationsController:
             conversation_id,
             screen.state.selected_entity_name or "Character",
             preview_attempt,
+            request,
         )
 
     def load_conversation_messages(
@@ -539,6 +861,7 @@ class PersonasConversationsController:
         conversation_id: str,
         character_name: str,
         preview_attempt: object,
+        request: CharacterConversationActivationRequest | None,
     ) -> None:
         """Schedule the transcript fetch on the screen's worker pool.
 
@@ -553,6 +876,7 @@ class PersonasConversationsController:
                 conversation_id,
                 character_name,
                 preview_attempt,
+                request,
             ),
             thread=True,
             exclusive=True,
@@ -564,19 +888,44 @@ class PersonasConversationsController:
         conversation_id: str,
         character_name: str,
         preview_attempt: object,
+        request: CharacterConversationActivationRequest | None,
     ) -> None:
         """Fetch and shape the conversation's messages off the UI thread."""
         try:
-            history = (
-                retrieve_conversation_messages_for_ui(
-                    self.screen._character_db(),
-                    conversation_id,
-                    character_name,
-                    None,
+            db = self.screen._character_db()
+            if request is not None:
+                raw_messages = CharacterConversationNavigationService(
+                    db
+                ).validated_preview_messages(
+                    request.target,
+                    data_revision=request.data_revision,
                     limit=200,
                 )
-                or []
-            )
+                if raw_messages is None:
+                    self.screen.app.call_from_thread(
+                        self.show_conversation_unavailable,
+                        conversation_id,
+                        preview_attempt,
+                    )
+                    return
+                history = process_db_messages_to_ui_history(
+                    list(raw_messages),
+                    char_name_from_card=character_name,
+                    user_name_for_placeholders=None,
+                    actual_user_sender_id_in_db="User",
+                    actual_char_sender_id_in_db=character_name,
+                )
+            elif not hasattr(db, "get_local_authority_id"):
+                history = retrieve_conversation_messages_for_ui(
+                    db, conversation_id, character_name, None, limit=200
+                ) or []
+            else:
+                self.screen.app.call_from_thread(
+                    self.show_conversation_unavailable,
+                    conversation_id,
+                    preview_attempt,
+                )
+                return
         except Exception:
             logger.opt(exception=True).warning(
                 f"Could not load messages for conversation {conversation_id}.",
@@ -677,6 +1026,28 @@ class PersonasConversationsController:
         screen._show_center(_CONVERSATION_VIEW_ID)
         screen._sync_title_and_console_actions()
 
+    async def show_conversation_unavailable(
+        self, conversation_id: str, preview_attempt: object
+    ) -> None:
+        """Render a fail-closed state when the listed identity changed."""
+
+        if not self._owns_preview(conversation_id, preview_attempt):
+            return
+        screen = self.screen
+        try:
+            view = screen.query_one(PersonasConversationTranscriptWidget)
+        except QueryError:
+            return
+        rendered = await view.show_unavailable(preview_attempt)
+        if not rendered or not self._owns_preview(conversation_id, preview_attempt):
+            return
+        self._loaded_conversation_id = None
+        self._failed_conversation_id = conversation_id
+        self._open_conversation_transcript = ""
+        self._open_conversation_truncated = False
+        screen._show_center(_CONVERSATION_VIEW_ID)
+        screen._sync_title_and_console_actions()
+
     def close_conversation_preview(self) -> None:
         """Invalidate the open preview so delayed continuations lose ownership."""
         preview_attempt = self._preview_attempt
@@ -747,7 +1118,20 @@ class PersonasConversationsController:
             screen._notify("Conversation staged in Console.", "information")
 
     def resume_in_console(self) -> None:
-        """Navigate to Console with only the open saved-conversation ID."""
+        """Start one source-owned activation worker without duplicate attempts."""
+
+        self.screen.run_worker(
+            self._resume_in_console(),
+            exclusive=True,
+            group="roleplay-console-activation",
+        )
+
+    async def _resume_in_console(self) -> None:
+        """Ask the app-owned Console service to open one exact typed target."""
+        from ...Chat.console_conversation_activation import (
+            ConsoleActivationResultKind,
+        )
+
         target_id = str(self._open_conversation_id or "").strip()
         if not target_id or target_id not in self._conversation_rows:
             self.screen._notify(
@@ -758,18 +1142,95 @@ class PersonasConversationsController:
             return
         if target_id in self._resume_in_flight_attempts:
             return
+        if not await self.screen.confirm_navigation():
+            return
         attempt = object()
         self._resume_in_flight_attempts[target_id] = attempt
-        self._set_resume_button_busy(True)
-        self.screen.post_message(
-            NavigateToScreen(
-                TAB_CHAT,
-                {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: target_id},
+        app = self.screen.app_instance
+        activate_descriptor = getattr(
+            type(app), "activate_character_conversation_from_roleplay", None
+        )
+        if not callable(activate_descriptor):
+            # Compatibility for deliberately minimal test/adaptor apps. The
+            # real app always owns the typed activation method below.
+            self._set_resume_button_busy(True)
+            self.screen.post_message(
+                NavigateToScreen(
+                    TAB_CHAT,
+                    {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: target_id},
+                )
             )
+            self.screen.set_timer(
+                1.0, partial(self._restore_resume_button, target_id, attempt)
+            )
+            return
+        self._set_resume_phase("opening")
+        try:
+            request = self._conversation_activation_requests[target_id]
+        except KeyError:
+            self._resume_in_flight_attempts.pop(target_id, None)
+            self._set_resume_phase("failure")
+            return
+        cancellation = asyncio.Event()
+        self._resume_cancellation = cancellation
+        activate = (
+            activate_descriptor.__get__(app, type(app))
+            if callable(activate_descriptor)
+            else None
         )
-        self.screen.set_timer(
-            1.0, partial(self._restore_resume_button, target_id, attempt)
-        )
+        if not callable(activate):
+            self._resume_in_flight_attempts.pop(target_id, None)
+            self._set_resume_phase("failure")
+            return
+        try:
+            result = await activate(request, cancellation, self._set_resume_phase)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Character conversation activation failed unexpectedly."
+            )
+            self._set_resume_phase("failure")
+            self.screen._notify(
+                "The conversation could not be opened. Retry.", "warning"
+            )
+            return
+        finally:
+            if self._resume_cancellation is cancellation:
+                self._resume_cancellation = None
+            if self._resume_in_flight_attempts.get(target_id) is attempt:
+                self._resume_in_flight_attempts.pop(target_id, None)
+        if result.kind is ConsoleActivationResultKind.OPENED:
+            return
+        if result.kind is ConsoleActivationResultKind.FAILED:
+            # FAILED is the closed-union recovery for a stale global search
+            # generation as well as an unexpected Console failure. Never
+            # retry its immutable request in place: return to a freshly-read
+            # result set, whose rows bind the current authority/revision.
+            character_id = self._list_character_id
+            if character_id is not None:
+                self.request_conversation_focus(target_id)
+                await self.load_conversations(character_id)
+                self.screen._notify(
+                    "Conversation results refreshed. Open the conversation and retry.",
+                    "warning",
+                )
+                return
+        self._set_resume_phase("failure")
+        copy = {
+            ConsoleActivationResultKind.CANCELLED_PRECOMMIT: "Opening cancelled. Retry when ready.",
+            ConsoleActivationResultKind.DATA_PROFILE_CHANGED: "The active Data Profile changed.",
+            ConsoleActivationResultKind.CHARACTER_UNAVAILABLE: "The saved character is unavailable.",
+            ConsoleActivationResultKind.NOT_FOUND: "Conversation is no longer available.",
+        }.get(result.kind, "The conversation could not be opened. Retry.")
+        self.screen._notify(copy, "warning")
+
+    def cancel_resume(self) -> bool:
+        """Cancel the caller-owned opening phase before Console commit."""
+
+        cancellation = self._resume_cancellation
+        if cancellation is None:
+            return False
+        cancellation.set()
+        return True
 
     def _set_resume_button_busy(self, busy: bool) -> None:
         """Paint the shared Resume button's local source-side state."""
@@ -779,6 +1240,20 @@ class PersonasConversationsController:
             return
         button.disabled = busy
         button.label = "Opening Console…" if busy else "Resume chat"
+
+    def _set_resume_phase(self, phase: str) -> None:
+        """Paint the mounted caller's activation phase or retry state."""
+
+        try:
+            button = self.screen.query_one("#personas-conversation-resume", Button)
+        except QueryError:
+            return
+        button.disabled = phase in {"opening", "finishing"}
+        button.label = {
+            "opening": "Opening…",
+            "finishing": "Finishing…",
+            "failure": "Retry",
+        }.get(phase, "Resume chat")
 
     def _restore_resume_button(self, target_id: str, attempt: object) -> None:
         """Release the exact target when navigation leaves Roleplay mounted."""

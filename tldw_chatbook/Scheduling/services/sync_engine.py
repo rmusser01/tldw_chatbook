@@ -63,6 +63,42 @@ _SYNC_MAX_PAGES = 4
 #: them (final review I4).
 _TRANSFER_ACTIONS = ("transfer_to_server", "release_from_server")
 
+#: `_push_definition_mutation`'s outcome vocabulary that means "a mutation
+#: actually reached the server this cycle" (UAT finding 3c) -- everything
+#: else (`invalid`/`orphaned`/`unsynced`/`transfer_skipped`/
+#: `transfer_cas_skipped`/`transfer_failed`/`transfer_orphaned`/
+#: `unknown`/`{action}_not_found`) settled without a real push. Read by
+#: `_replay_definition_mutations`, the only other writer of
+#: `last_push_at` besides `_sync_reminders`'s own reminder-scoped one.
+_DEFINITION_PUSH_SUCCESS_OUTCOMES = frozenset(
+    {"created", "updated", "released", "transferred", "pause", "resume", "archive"}
+)
+
+#: Review round 1 finding 2: the complement of the set above, so a
+#: drift-guard test can assert every outcome `_push_definition_mutation`
+#: (+ its five `_push_definition_*` helpers, + `_replay_definition_
+#: mutations`'s own `"transfer_skipped"`) can actually return is
+#: CLASSIFIED as one or the other -- an unclassified new outcome fails
+#: that test instead of silently never moving `last_push_at`.
+#: `{action}_not_found` is `_push_definition_lifecycle`'s dynamic
+#: NotFoundError outcome (`action` is always one of the three lifecycle
+#: actions below).
+_DEFINITION_PUSH_NON_SUCCESS_OUTCOMES = frozenset(
+    {
+        "unknown",
+        "invalid",
+        "orphaned",
+        "unsynced",
+        "transfer_cas_skipped",
+        "transfer_orphaned",
+        "transfer_failed",
+        "transfer_skipped",
+        "pause_not_found",
+        "resume_not_found",
+        "archive_not_found",
+    }
+)
+
 
 @dataclass(frozen=True)
 class SyncOutcome:
@@ -81,12 +117,26 @@ class SyncOutcome:
       pulled or pushed; not an error.
     - ``error``: the attempt failed. ``error`` carries the message that
       was also recorded as a persisted sync error.
+
+    ``status``/``error`` describe ONLY the reminder phase (`_sync_
+    reminders`) -- the automation phases (review pushback, definition
+    push, definitions pull, results pull) are independently contained by
+    `_run_phase` and run regardless of the reminder phase's own outcome.
+    UAT finding 3c: `sync_now` used to collapse any later phase's error
+    into `status="error"` + `error=phase_errors[0]`, so a cycle whose
+    definition push succeeded still toasted "Sync failed" over an
+    unrelated results-pull 404. ``phase_errors`` carries those phases'
+    own LABELED failures (e.g. ``"Automation results pull: ..."``)
+    instead, so a caller can report the reminder outcome honestly *and*
+    surface the rest as its own notice -- never silently dropped, never
+    misreported as the whole cycle failing.
     """
 
     status: str
     pulled: int = 0
     pushed: int = 0
     error: str | None = None
+    phase_errors: tuple[str, ...] = ()
 
 
 def now_utc_iso() -> str:
@@ -120,12 +170,105 @@ class SyncEngine:
         self.server_client = server_client
         self.owner_id = owner_id
 
+    def _settle_orphaned_transfer_mutations(
+        self, target_owner: str | None
+    ) -> None:
+        """Settle a `transfer_to_server` mutation whose scope no longer
+        matches the active server (task-3, root-causes.md #5 / ruling 4).
+
+        `_network_phase`'s mutation query is deliberately scoped to
+        `target_owner` (`get_pending_mutations(target_owner, ...)`), so a
+        mutation recorded under a PRIOR server scope -- the configured
+        server's address changed underneath it -- is never selected,
+        never attempted, and the row hangs `to_server_pending` forever
+        with no route to Retry/Cancel (the UAT's permanent "Moving to
+        server..."). This is the one place that looks ACROSS every owner
+        scope (`get_pending_mutations(owner_id=None, ...)`, the same
+        all-owners mode `cancel_transfer`'s own lookup already relies on)
+        to find one -- mirrors `recover_inflight_transfers`'s per-row,
+        per-primitive exception-guarded shape, run once per sync cycle
+        (not startup-only) so a mid-session reconfiguration settles on
+        the very next sync rather than waiting for a restart.
+
+        `target_owner=None` (final review finding 1): the workbench's
+        mount/refresh path also calls this directly -- pure local DB
+        work, so it must run even when NO server is configured/reachable
+        at all, the UAT's actual "removed the server / it went down"
+        core symptom that gating this behind a live `sync_now()` (which
+        `action_sync_now`/the mount-time probe both refuse without a
+        reachable server) never reaches. `None` never equals a real
+        `mutation_owner` string, so every still-pending transfer_to_
+        server mutation is correctly swept as orphaned when nothing is
+        configured -- exactly right, since there is no server left it
+        could still be valid for.
+
+        Only a still-unattempted mutation (`to_server_pending`) is
+        touched -- an ambiguous `to_server_sent` row belongs to
+        `recover_inflight_transfers`, not this sweep (same division of
+        labor that method's own docstring draws for other stuck states).
+        The CAS's own `expected=` guard makes the read-and-write atomic;
+        no separate row fetch is needed first.
+        """
+        for primitive in (_REMINDER_PRIMITIVE, _DEFINITION_PRIMITIVE):
+            try:
+                mutations = self.db.get_pending_mutations(
+                    owner_id=None, primitive=primitive
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    f"Orphaned-transfer sweep failed to list mutations "
+                    f"for {primitive}"
+                )
+                continue
+            for mutation in mutations:
+                payload = mutation.get("payload") or {}
+                if payload.get("action") != "transfer_to_server":
+                    continue
+                if payload.get("transfer_errors"):
+                    continue  # already settled
+                mutation_owner = mutation.get("owner_id")
+                if mutation_owner == target_owner:
+                    continue  # still valid for the active server
+                local_id = mutation.get("local_id")
+                try:
+                    settled = self.db.set_transfer_state(
+                        primitive,
+                        local_id,
+                        "to_server_failed",
+                        expected=("to_server_pending",),
+                        pending_mutation={
+                            "primitive": primitive,
+                            "owner_id": mutation_owner,
+                            "payload": {
+                                **payload,
+                                "transfer_errors": [
+                                    "The server this move was queued for "
+                                    "is no longer configured."
+                                ],
+                            },
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        f"Failed to settle orphaned transfer mutation for "
+                        f"{primitive} {local_id}"
+                    )
+                    continue
+                if settled:
+                    logger.warning(
+                        f"Orphaned transfer_to_server mutation settled to "
+                        f"to_server_failed for {primitive} {local_id} "
+                        f"(queued for {mutation_owner!r}; active server "
+                        f"is {target_owner!r})"
+                    )
+
     async def pull(self, owner_id: str | None = None) -> None:
         """Public entry point to pull server reminders for the given owner."""
         target_owner = owner_id if owner_id is not None else self.owner_id
         if self.server_client is None:
             return
 
+        self._settle_orphaned_transfer_mutations(target_owner)
         await self._pull_reminders(target_owner)
 
         # Automation mirrors run regardless of reminder-phase health (review
@@ -207,6 +350,7 @@ class SyncEngine:
         if self.server_client is None:
             return SyncOutcome("not_applicable")
 
+        self._settle_orphaned_transfer_mutations(target_owner)
         reminder_outcome = await self._sync_reminders(target_owner)
 
         # Automation mirrors, appended after the reminder phase (task 4) and
@@ -223,7 +367,7 @@ class SyncEngine:
             target_owner, "Automation review pushback", self._replay_review_mutations
         )
         if error:
-            phase_errors.append(error)
+            phase_errors.append(f"Automation review pushback: {error}")
         if pushed_review_ids:
             logger.info(
                 f"Automation review pushback for {target_owner}: "
@@ -248,7 +392,7 @@ class SyncEngine:
             self._replay_definition_mutations,
         )
         if error:
-            phase_errors.append(error)
+            phase_errors.append(f"Automation definition push: {error}")
         definition_push_counts, pushed_lifecycle_server_ids = (
             definition_push_result
             if definition_push_result is not None
@@ -271,7 +415,7 @@ class SyncEngine:
             skip_lifecycle_server_ids=pushed_lifecycle_server_ids,
         )
         if error:
-            phase_errors.append(error)
+            phase_errors.append(f"Automation definitions pull: {error}")
         if counts:
             logger.info(f"Automation definitions pull for {target_owner}: {counts}")
 
@@ -282,7 +426,7 @@ class SyncEngine:
             skip_review_server_ids=skip_review_server_ids,
         )
         if error:
-            phase_errors.append(error)
+            phase_errors.append(f"Automation results pull: {error}")
         if counts:
             logger.info(f"Automation results pull for {target_owner}: {counts}")
 
@@ -301,8 +445,15 @@ class SyncEngine:
         # already carries its own message and is left alone. Results/
         # definitions already pulled by an earlier phase this round are
         # not rolled back.
-        if reminder_outcome.status in ("ok", "not_applicable") and phase_errors:
-            return replace(reminder_outcome, status="error", error=phase_errors[0])
+        #
+        # UAT finding 3c: this used to collapse ANY later-phase error into
+        # `status="error"` (masking a genuinely successful reminder/
+        # definition-push phase behind "Sync failed"). `status`/`error`
+        # now describe ONLY the reminder phase; `phase_errors` carries
+        # the labeled rest so a caller can report both honestly instead
+        # of picking one truth to tell.
+        if phase_errors:
+            return replace(reminder_outcome, phase_errors=tuple(phase_errors))
 
         return reminder_outcome
 
@@ -332,6 +483,28 @@ class SyncEngine:
 
         try:
             with self.db.transaction() as conn:
+                # UAT finding 4 / root-causes.md #4 (ghost row): `_network_
+                # phase` pulls BEFORE it pushes, so a reminder released THIS
+                # cycle is still listed in `pulled_items` from the
+                # pre-release snapshot. Applying that stale item would
+                # re-insert the mirror `_push_reminder_release` just tore
+                # down, with a brand-new local id no tombstone can remove --
+                # it then reads as "deleted on server" forever. Exact twin
+                # of the `adopted_server_id` seen-set guard below (this
+                # method, further down): filter what this cycle just
+                # released out of the stale payload before applying it.
+                released_server_ids = {
+                    outcome["released_server_id"]
+                    for outcome in staged_outcomes
+                    if outcome.get("released_server_id")
+                }
+                if released_server_ids:
+                    pulled_items = [
+                        item
+                        for item in pulled_items
+                        if item.get("id") not in released_server_ids
+                    ]
+
                 # Ensure pulled items have safe defaults before the DB helper
                 # copies fields verbatim.
                 for item in pulled_items:
@@ -603,6 +776,17 @@ class SyncEngine:
                 and server_definition_id
             ):
                 pushed_lifecycle_server_ids.add(server_definition_id)
+        if any(outcome in _DEFINITION_PUSH_SUCCESS_OUTCOMES for outcome in counts):
+            # UAT finding 3c: `_sync_reminders` is the ONLY existing
+            # `last_push_at` writer, and only for its own reminder
+            # pushes -- a definition edit/lifecycle push (with nothing
+            # on the reminder side this cycle) left the header showing
+            # "Last push: -" forever. Direct call, not
+            # `asyncio.to_thread`, matching every other `self.db.*` call
+            # in this method. Only stamped on a genuine push (not
+            # `invalid`/`unsynced`/`transfer_skipped`/etc.) so an
+            # all-noop cycle can never move it.
+            self.db.update_sync_state(owner_id, last_push_at=now_utc_iso())
         return counts, frozenset(pushed_lifecycle_server_ids)
 
     async def _push_definition_mutation(self, mutation: dict, owner_id: str) -> str:
@@ -1143,6 +1327,30 @@ class SyncEngine:
         )
         self.db.delete_pending_mutation(mutation_id)
 
+    async def _automation_capabilities_available(self) -> bool:
+        """Whether the server still exposes Scheduled Tasks automation at all.
+
+        task-3 (schedules UAT remediation ruling 5) capabilities
+        handshake: `SchedulingServerClient.get_capabilities` returns
+        ``None`` only for a definitive "the capabilities route itself
+        does not exist" answer (a server old enough to predate Scheduled
+        Tasks automation entirely) -- that is the ONE case this returns
+        ``False`` for, so `_pull_definitions`/`_pull_results` can skip
+        outright rather than let every page 404 (root-causes.md #7).
+        Fails OPEN on any other outcome (a transient probe failure must
+        not silently stop pulling automations that otherwise work fine --
+        the per-call `ServerClientNotFoundError` handling below is what
+        catches the narrower "capabilities exist, this ONE route doesn't
+        yet" case a probe alone cannot distinguish).
+        """
+        assert self.server_client is not None
+        try:
+            return await self.server_client.get_capabilities() is not None
+        except ServerClientError:
+            return True
+        except Exception:  # noqa: BLE001
+            return True
+
     async def _pull_definitions(
         self,
         owner_id: str,
@@ -1161,8 +1369,14 @@ class SyncEngine:
         forwarded unchanged to every page's upsert call -- see the design
         comment on
         `ScheduledTasksDB.upsert_automation_definitions_from_server`.
+
+        task-3 capabilities handshake: returns an empty (no-op) result
+        outright when the server does not expose Scheduled Tasks
+        automation at all, rather than paging into a guaranteed 404.
         """
         assert self.server_client is not None
+        if not await self._automation_capabilities_available():
+            return {}
         totals: dict[str, int] = {}
         offset = 0
         for _page_num in range(_SYNC_MAX_PAGES):
@@ -1203,14 +1417,34 @@ class SyncEngine:
         ``skip_review_server_ids`` (Task 5 same-cycle echo) is forwarded
         unchanged to every page's upsert call -- see the design comment on
         `ScheduledTasksDB.upsert_automation_results_from_server`.
+
+        task-3 capabilities handshake: returns an empty (no-op) result
+        outright when the server does not expose Scheduled Tasks
+        automation at all (rather than paging into a guaranteed 404). A
+        server whose capabilities probe DOES succeed but whose `/results`
+        route specifically is missing (root-causes.md #7's actual UAT
+        repro -- a mid-rollout server new enough for capabilities, too
+        old for the results-inbox surface) cannot be told apart by that
+        probe alone; the `ServerClientNotFoundError` below is what turns
+        THAT case into the same honest copy instead of a raw
+        ``scheduled_task_not_found`` poisoning the sync verdict (UAT
+        Minor 24 / Major 7).
         """
         assert self.server_client is not None
+        if not await self._automation_capabilities_available():
+            return {}
         totals: dict[str, int] = {}
         offset = 0
         for _page_num in range(_SYNC_MAX_PAGES):
-            response = await self.server_client.list_automation_results(
-                limit=_RESULTS_PAGE_SIZE, offset=offset
-            )
+            try:
+                response = await self.server_client.list_automation_results(
+                    limit=_RESULTS_PAGE_SIZE, offset=offset
+                )
+            except ServerClientNotFoundError as exc:
+                raise ServerClientNotFoundError(
+                    "This server does not provide the results inbox "
+                    "(server too old)."
+                ) from exc
             if not isinstance(response, dict):
                 response = {}
             page = list(response.get("items") or [])
@@ -1526,10 +1760,18 @@ class SyncEngine:
         genuine double execution. Deleting the mirror on the ack is what
         makes the ADR's "the mirror is torn down" claim true.
 
-        Returns a plain ``{"local_id": ...}`` outcome, same shape and same
-        reasoning as `_push_reminder_transfer`'s: this action does its own
-        DB writes immediately, so `_sync_reminders`'s batched apply has
-        nothing left to do with it.
+        Returns ``{"local_id": ..., "released_server_id": ...}`` once the
+        mirror is actually torn down (no ``server_id``/``delete_local``/
+        ``mutation_id`` keys, same shape family as `_push_reminder_transfer`'s
+        `adopted_server_id`): this action does its own DB writes
+        immediately, so `_sync_reminders`'s batched apply has nothing left
+        to do with it. ``released_server_id`` exists so `_sync_reminders`
+        can filter this cycle's already-stale `pulled_items` (`_network_
+        phase` pulls BEFORE it pushes) -- otherwise the pre-release pull
+        payload re-inserts the mirror this call just deleted, with a new
+        local id no tombstone can remove (root-causes.md #4 / UAT finding
+        4). Exact twin of `adopted_server_id`'s seen-set guard 12 lines
+        below `_sync_reminders`'s own apply call.
         """
         server_task_id = payload.get("server_task_id")
         local_copy_id = payload.get("local_copy_id")
@@ -1581,7 +1823,7 @@ class SyncEngine:
         self.db.delete_reminder_task(local_id)
         self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, owner_id)
         self.db.delete_pending_mutation(mutation_id)
-        return {"local_id": local_id}
+        return {"local_id": local_id, "released_server_id": server_task_id}
 
     async def _push_tombstone(
         self, tombstone: dict, owner_id: str

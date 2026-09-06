@@ -187,9 +187,7 @@ def test_compose_builds_run_call_caps_from_rule_verdicts():
         assert first.ok is True
         second = registry.invoke_by_name("web_search", {})
         assert second.ok is False
-        assert second.error == PERSONA_POLICY_CALL_CAP_REFUSAL.format(
-            name="web_search"
-        )
+        assert second.error == PERSONA_POLICY_CALL_CAP_REFUSAL.format(name="web_search")
         # An uncapped sibling tool is untouched by the cap refusal.
         assert registry.invoke_by_name("fs_read", {}).ok is True
 

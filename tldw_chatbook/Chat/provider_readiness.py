@@ -4,10 +4,6 @@ from __future__ import annotations
 
 import os
 
-from tldw_chatbook.LLM_Calls.anthropic_subscription import (
-    anthropic_auth_source,
-    read_claude_code_credential,
-)
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -533,6 +529,12 @@ def get_provider_readiness(
         return _invalid_settings_readiness(provider_name, provider_key)
 
     requires_api_key = _requires_api_key(provider_key)
+
+    if provider_key == "anthropic":
+        from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+            anthropic_auth_source,
+            read_claude_code_credential,
+        )
 
     # TASK-26022 (AC#5): explicit subscription mode for Anthropic. Reported as
     # its own source so subscription vs API key is visible at a glance; the

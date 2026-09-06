@@ -51,6 +51,14 @@ FLOOR = (80, 24)
 MID = (110, 40)
 WIDE = (220, 60)
 
+#: The exact tmux capture size the schedules-UAT-remediation root-causes
+#: doc measured the detail-pane clip against (finding 2): `TaskDetail`
+#: size.h=30 / virtual.h=51 there, tall enough for one plain reminder's
+#: Details/Frequency/collapsed-History groups to overflow the pane with
+#: no scroll route -- reused here so the pinning tests measure the same
+#: geometry the doc's probe did.
+TALL = (235, 52)
+
 
 class BundledCSSWorkbenchApp(ConsolidatedCSSApp):
     """Harness with the app CSS tier, where the `.compact` rules live.
@@ -575,6 +583,176 @@ async def test_the_full_width_layout_keeps_all_three_panes(tmp_path):
             assert workbench.query_one("#scheduling-list-header").region.height == 3
             assert workbench.query_one("#scheduling-chip-cycle", Button).display is False
             assert "Nightly check" in _painted(pilot.app)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Display blockers (schedules-UAT-remediation task 1): the rail filter's
+# typed text and the detail pane's scroll/lifecycle-row fold. Geometry
+# pins via `_painted()` (`app.screen._compositor.render_strips()`), never
+# a stored attribute -- `test_detail_value_row.py`'s own module contract.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_queue_filter_paints_typed_text_while_focused(tmp_path):
+    """Finding 1b: `#scheduling-queue-filter` is a 1-row `Input`; app CSS
+    (`_scheduling.tcss`) already wins its border, but not the app-wide
+    `*:focus { outline: solid ... }` (`core/_reset.tcss`), which painted
+    OVER the input's only content row -- what the user typed was on
+    screen but invisible, byte-identical to the live UAT capture the
+    root-causes doc quotes. `compact=True` opts the filter into Textual's
+    own `Input.-textual-compact:focus { outline: none; ... }` rule
+    (TASK-17961) the same way the row editors below do."""
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        async with app.run_test(size=FLOOR) as pilot:
+            workbench = await _open_workbench(pilot)
+            filter_input = workbench.query_one("#scheduling-queue-filter", Input)
+            assert filter_input.has_class("-textual-compact"), (
+                "the queue filter was constructed without compact=True"
+            )
+
+            await pilot.click("#scheduling-queue-filter")
+            await pilot.pause()
+            await pilot.press("r", "o", "u", "n", "d", "u", "p")
+            await pilot.pause()
+
+            assert filter_input.value == "roundup"
+            assert "roundup" in _painted(pilot.app), (
+                "the filter's typed text is not painted while focused"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_escape_blurs_the_queue_filter_so_chip_keys_reach_the_screen(tmp_path):
+    """UAT Minor 21: with no blur, Escape fell through to the screen's
+    OWN `escape` -> `clear_marks` binding (a real, intentional binding --
+    `SchedulesWorkbench.BINDINGS`) while focus stayed on the filter, so
+    the very next `f`/`1`-`4` chip key landed in the still-focused
+    `Input` as literal text instead of cycling the chip. `_QueueFilterInput`
+    (schedules_workbench.py) binds `escape` on itself, which Textual
+    checks before the screen's own binding (`App._check_bindings` walks
+    the focus chain closest-first)."""
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        async with app.run_test(size=FLOOR) as pilot:
+            workbench = await _open_workbench(pilot)
+            filter_input = workbench.query_one("#scheduling-queue-filter", Input)
+            filter_input.focus()
+            await pilot.pause()
+            assert pilot.app.focused is filter_input
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert pilot.app.focused is not filter_input, (
+                "escape left the filter focused"
+            )
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert workbench._chip == "active", (
+                "the chip key was swallowed by the still-focused filter "
+                "instead of reaching the screen binding"
+            )
+            assert filter_input.value == "", (
+                "the chip key landed in the filter as literal text"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_the_lifecycle_row_paints_without_scrolling_at_a_tall_docked_size(
+    tmp_path,
+):
+    """Finding 2: `#scheduling-task-detail-lifecycle` (Edit/Run now/
+    Enable/Disable/Delete) used to compose LAST in the pane, after the
+    History group -- past the fold at every measured width, including
+    this one (the doc's own probe: `painted 'Edit': False` at 235x52,
+    235x75, and 110x40 alike). It now composes FIRST, directly under
+    `#scheduling-task-detail-metadata`'s opening, so it must be visible
+    with NO scrolling at all."""
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        _reminder(db, "Nightly check")
+        async with app.run_test(size=TALL) as pilot:
+            await _open_workbench(pilot)
+            await _select_row(pilot)
+
+            painted = _painted(pilot.app)
+            assert "Edit" in painted, f"the Edit button is not painted: {painted!r}"
+            assert "Run now" in painted, (
+                f"the Run now button is not painted: {painted!r}"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_the_docked_task_detail_pane_scrolls_to_reveal_history_past_the_fold(
+    tmp_path,
+):
+    """Finding 2: `TaskDetail`/`DefinitionDetail` are plain `Vertical`
+    (`overflow: hidden hidden` by default) taller than their own box at
+    every measured width -- the History group was clipped with no
+    scrollbar, no wheel handling, no PageDown. `overflow-y: auto` +
+    `#scheduling-task-detail-groups { height: auto }` (the nested
+    `Vertical` that was ALSO clipping its own children, `height: 1fr` by
+    default) together open a real scroll route to it."""
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        _reminder(db, "Nightly check")
+        async with app.run_test(size=TALL) as pilot:
+            await _open_workbench(pilot)
+            await _select_row(pilot)
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            assert detail.max_scroll_y > 0, (
+                "the docked TaskDetail pane has no scroll route at all"
+            )
+            assert "History" not in _painted(pilot.app), (
+                "History is already visible before scrolling -- this size "
+                "no longer reproduces the fold"
+            )
+
+            detail.scroll_end(animate=False)
+            await pilot.pause()
+
+            assert "History" in _painted(pilot.app), (
+                "History is still unreachable after scrolling to the end"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_the_lifecycle_row_paints_in_the_80x24_pushed_detail(tmp_path):
+    """Finding 2, the pushed-detail twin of the docked-pane pin above --
+    `WorkbenchHostScreen` mounts a FRESH `TaskDetail` instance (task 6's
+    own precedent), so the CSS fix and the compose-order move must both
+    apply there too, not just to the docked pane."""
+    app = BundledCSSWorkbenchApp()
+    db, _service = _real_service(tmp_path, app)
+    try:
+        _reminder(db, "Nightly check")
+        async with app.run_test(size=FLOOR) as pilot:
+            await _open_workbench(pilot)
+            await _select_row(pilot)
+            await _push_detail(pilot)
+
+            painted = _painted(pilot.app)
+            assert "Edit" in painted, f"the Edit button is not painted: {painted!r}"
+            assert "Run now" in painted, (
+                f"the Run now button is not painted: {painted!r}"
+            )
     finally:
         db.close()
 

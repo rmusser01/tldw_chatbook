@@ -12,6 +12,11 @@
 # measurements in its docstring where a textbook index was simply never
 # chosen because no media DB has ever run ANALYZE.
 
+character_conversation_search_dirty_authority_revision	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
+character_conversation_search_documents_character	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
+character_conversation_search_documents_revision	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
+character_conversation_search_generations_authority_status	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
+character_conversation_search_one_ready_generation	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
 idx_ab_test_runs_test	pre-convention	plan never captured without stats
 idx_ab_tests_models	pre-convention	plan never captured without stats
 idx_ab_tests_status	pre-convention	plan never captured without stats

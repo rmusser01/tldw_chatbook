@@ -260,7 +260,7 @@ class TestDottedFormStringDefaultRegression:
             f'[library.ingest]\nlast_directory = "{remembered_dir}"\nbackend = "local"\n',
         ):
             receiver = SimpleNamespace(
-                _library_ingest_form=SimpleNamespace(path="")
+                _ingest_state=SimpleNamespace(form=SimpleNamespace(path=""))
             )
             result = LibraryScreen._library_ingest_browse_location(receiver)
 

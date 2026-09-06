@@ -6880,9 +6880,11 @@ async def test_run_agent_reply_threads_exact_admitted_trace_request_to_bridge():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("production_boundary", [False, True])
 async def test_durable_capture_on_composes_exact_trace_request_through_real_agent_path(
     tmp_path,
     monkeypatch,
+    production_boundary,
 ):
     """The durable production path owns provenance before the agent bridge."""
     from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
@@ -6904,6 +6906,9 @@ async def test_durable_capture_on_composes_exact_trace_request_through_real_agen
     runs_db = AgentRunsDB(tmp_path / "durable-agent-runs.sqlite", client_id="task12")
     repository = ConsoleTraceRepository()
     service = ConsoleTraceService(repository)
+    from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+
+    production_factory = ConsoleTraceBoundaryFactory(chat_db, repository=repository)
     with chat_db.transaction() as cursor:
         segment = repository.create_segment(cursor)
     owner_holder = []
@@ -6919,6 +6924,16 @@ async def test_durable_capture_on_composes_exact_trace_request_through_real_agen
         assert provenance is not None
         assert request.semantic.provenance is not None
         policy = request.semantic.provenance.capture_policy
+        if production_boundary:
+            boundary = production_factory(request, _resolution, route)
+            if not owner_holder:
+                owner_holder.append(
+                    SimpleNamespace(owner_id=boundary.identity.owner_id)
+                )
+            routes.append(route)
+            provenances.append(provenance)
+            policies.append(policy)
+            return boundary
         preparation_identity = new_opaque_id()
         with chat_db.transaction() as cursor:
             if not owner_holder:
@@ -7078,6 +7093,134 @@ async def test_durable_capture_on_composes_exact_trace_request_through_real_agen
             SavedRevisionTraceProvenance,
         )
         assert provenances[1].messages_payload[0] == provenances[0].messages_payload[0]
+    finally:
+        runs_db.close()
+        await gateway.aclose()
+        chat_db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change_history", [False, True])
+async def test_two_saved_turns_keep_history_references_through_production_trace(
+    tmp_path,
+    monkeypatch,
+    change_history,
+):
+    """Ordinary history must extend the real trace surface on the next send."""
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.Chat.console_trace_provenance import SavedRevisionTraceProvenance
+    from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+
+    chat_db = CharactersRAGDB(tmp_path / "two-turn-trace.sqlite", "task31714")
+    runs_db = AgentRunsDB(tmp_path / "two-turn-runs.sqlite", client_id="task31714")
+    factory = ConsoleTraceBoundaryFactory(chat_db)
+    requests = []
+
+    def boundary(request, resolution, route):
+        result = factory(request, resolution, route)
+        requests.append(request)
+        return result
+
+    def adapter(**_kwargs):
+        return {"choices": [{"message": {"content": "Observations recorded."}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=boundary,
+    )
+
+    async def resolve_for_send(_selection):
+        return ConsoleProviderResolution(
+            ready=True,
+            provider="openai",
+            model="test-model",
+            base_url="https://api.openai.com/v1",
+            execution_key="openai",
+            streaming=False,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="openai",
+                model="test-model",
+                endpoint_identity="https://api.openai.com/v1",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    monkeypatch.setattr(gateway, "resolve_for_send", resolve_for_send)
+    original_preparation = controller_module.ConsoleTurnPreparation
+
+    def capture_on(**kwargs):
+        kwargs["capture_mode"] = ConsoleTraceCaptureMode.CAPTURE_ON
+        return original_preparation(**kwargs)
+
+    monkeypatch.setattr(controller_module, "ConsoleTurnPreparation", capture_on)
+    store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+    session = _arm_session(store)
+    session.settings = ConsoleSessionSettings(provider="openai", model="test-model")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=runs_db, store=store, provider_gateway=gateway
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="openai",
+        model="test-model",
+        agent_runtime_enabled=True,
+        agent_bridge=bridge,
+    )
+    try:
+        first = await controller.submit_draft("Observe the sky.", session_id=session.id)
+        assert first.accepted
+        assert len(requests) == 1
+        with chat_db.transaction() as connection:
+            first_call = tuple(
+                connection.execute("SELECT * FROM console_trace_calls").fetchone()
+            )
+        first_user_id = store.messages_for_session(session.id)[0].persisted_message_id
+        reader = ConsoleTraceNativeReader(chat_db)
+        first_trace = reader.read_calls(first_user_id)
+        assert len(first_trace) == 1
+        assert first_trace[0].capture.request.get("omitted") is None
+        if change_history:
+            substitute = controller._apply_skill_substitution
+
+            async def changed_history(rows):
+                result = await substitute(rows)
+                result[0][0] = {**result[0][0], "content": "Different history."}
+                return result
+
+            monkeypatch.setattr(
+                controller, "_apply_skill_substitution", changed_history
+            )
+        # Equal text is deliberate: different saved owners must remain distinct.
+        second = await controller.submit_draft(
+            "Observe the sky.", session_id=session.id
+        )
+        assert second.accepted
+        with chat_db.transaction() as connection:
+            assert first_call in [
+                tuple(row)
+                for row in connection.execute("SELECT * FROM console_trace_calls")
+            ]
+        assert reader.read_calls(first_user_id) == first_trace
+        if change_history:
+            assert len(requests) == 1
+            assert (
+                controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
+            )
+            return
+        assert len(requests) == 2
+        assert controller.run_state_for(session.id).status is ConsoleRunStatus.COMPLETED
+        first_user = requests[0].provenance.messages_payload[-1]
+        assert isinstance(first_user, SavedRevisionTraceProvenance)
+        assert first_user in requests[1].provenance.messages_payload
+        second_user = requests[1].provenance.messages_payload[-1]
+        assert isinstance(second_user, SavedRevisionTraceProvenance)
+        assert first_user != second_user
+        assert all(
+            not any(key.startswith(("_native", "_tldw")) for key in row)
+            for request in requests
+            for row in request.messages_payload
+        )
     finally:
         runs_db.close()
         await gateway.aclose()

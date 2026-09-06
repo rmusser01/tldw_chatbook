@@ -587,9 +587,7 @@ class ConsoleLibraryPolicyDisplayState:
     assistant_access_label: Literal["Blocked", "Allowed"]
     provider_intent_label: str
     resolved_destination_label: str
-    feedback: Literal[
-        "idle", "saving", "saved", "conflict", "unavailable", "error"
-    ]
+    feedback: Literal["idle", "saving", "saved", "conflict", "unavailable", "error"]
     feedback_copy: str
     save_enabled: bool
     editing_enabled: bool
@@ -609,9 +607,7 @@ class ConsoleLibraryPolicyDisplayState:
     ) -> "ConsoleLibraryPolicyDisplayState":
         """Project a safe policy snapshot without mixing in staged evidence."""
         automatic = snapshot.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
-        allowed = (
-            snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
-        )
+        allowed = snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
         unavailable = snapshot.source == "unavailable"
         auto_label: Literal["Never", "Automatic"] = (
             "Automatic" if automatic else "Never"
@@ -744,9 +740,7 @@ class ConsoleControlState:
                 policy_revision=None,
                 source="new_session",
             )
-        library_display = ConsoleLibraryPolicyDisplayState.from_snapshot(
-            library_policy
-        )
+        library_display = ConsoleLibraryPolicyDisplayState.from_snapshot(library_policy)
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
@@ -1062,9 +1056,7 @@ def estimate_console_next_send_tokens(
                     }
                 )
     schemas = (
-        tools_info.get("native_schemas")
-        if isinstance(tools_info, Mapping)
-        else None
+        tools_info.get("native_schemas") if isinstance(tools_info, Mapping) else None
     )
     if schemas:
         # Serialization is guarded, not assumed: a schema object whose
@@ -1600,9 +1592,7 @@ def turn_file_entries(
         root-prefixed only when more than one clean ROOT (not window)
         contributed.
     """
-    clean = [
-        (row, files) for row, files in row_files if not row.get("tracking_error")
-    ]
+    clean = [(row, files) for row, files in row_files if not row.get("tracking_error")]
     multi_root = len({str(row["root"]) for row, _ in clean}) > 1
     paired: list[tuple[TurnFileEntry, Mapping[str, Any]]] = []
     for row, files in clean:
@@ -1956,7 +1946,9 @@ def _cap_text_to_byte_budget(text: str, budget_bytes: int, tail: str) -> str:
     return "\n".join(kept) + tail_line
 
 
-def hunk_excerpt(hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CAP) -> str:
+def hunk_excerpt(
+    hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CAP
+) -> str:
     """Render a capped, self-contained excerpt of one hunk.
 
     This is the retention safety net (spec §1): captured once at note
@@ -2028,7 +2020,7 @@ def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
     short_id = str(note["run_id"])[:8]
     kind = str(note.get("anchor_kind") or "hunk")
     if kind == "file":
-        return f"### {note['path']} — whole file   [run {short_id}]\n" f"> {note['note']}"
+        return f"### {note['path']} — whole file   [run {short_id}]\n> {note['note']}"
     if kind == "diff_line":
         return (
             f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
@@ -2073,9 +2065,7 @@ def _oldest_note_entry_truncated_to_fit(
     sep_bytes = 1  # the "\n" joining the heading and this entry
     if held_after > 0:
         holdover_bytes = len(
-            f"\n\n… {held_after} more notes held for the next message".encode(
-                "utf-8"
-            )
+            f"\n\n… {held_after} more notes held for the next message".encode("utf-8")
         )
     else:
         holdover_bytes = 0
@@ -2218,10 +2208,10 @@ def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
     for note in notes:
         kind = str(note.get("anchor_kind") or "hunk")
         if kind == "file":
-            location = f'{note["path"]} (whole file)'
+            location = f"{note['path']} (whole file)"
         elif kind == "diff_line":
-            location = f'{note["path"]} {note["hunk_header"]} line'
+            location = f"{note['path']} {note['hunk_header']} line"
         else:
-            location = f'{note["path"]} {note["hunk_header"]}'
+            location = f"{note['path']} {note['hunk_header']}"
         lines.append(f'📝 Diff feedback attached — {location}: "{note["note"]}"')
     return "\n".join(lines)

@@ -7,7 +7,7 @@ from importlib import import_module
 
 from loguru import logger
 
-from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_RESEARCH_WORKSPACE
+from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_MEETINGS, TAB_RESEARCH_WORKSPACE
 from .shell_destinations import resolve_shell_route
 
 
@@ -142,6 +142,9 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "workflows",
         "tldw_chatbook.UI.Screens.workflows_screen",
         "WorkflowsScreen",
+    ),
+    TAB_MEETINGS: ScreenRoute(
+        "meetings", TAB_MEETINGS, "tldw_chatbook.UI.Screens.meetings_screen", "MeetingsScreen"
     ),
     "mcp": ScreenRoute(
         "mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"

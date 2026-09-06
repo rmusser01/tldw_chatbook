@@ -26,7 +26,9 @@ from tldw_chatbook.Chat.console_trace_models import (
 )
 
 
-def test_call_state_vocabulary_covers_reservation_dispatch_and_terminal_outcomes() -> None:
+def test_call_state_vocabulary_covers_reservation_dispatch_and_terminal_outcomes() -> (
+    None
+):
     expected_members = {
         "RESERVED": "reserved",
         "NOT_DISPATCHED": "not_dispatched",
@@ -333,7 +335,9 @@ def test_surface_replacement_sequences_require_plain_nonnegative_integers(
         )
 
 
-def test_frozen_policy_requires_pii_ruleset_provenance_when_masking_is_enabled() -> None:
+def test_frozen_policy_requires_pii_ruleset_provenance_when_masking_is_enabled() -> (
+    None
+):
     with pytest.raises(ValueError, match="ruleset"):
         FrozenTracePolicy(
             policy_id=new_opaque_id(),

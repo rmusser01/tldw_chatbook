@@ -22,7 +22,7 @@ from ...UI.character_display_text import (
     sanitize_character_display_text,
 )
 from .personas_character_tts_widget import PersonasCharacterTTSWidget
-from .personas_pane_messages import EditCharacterRequested
+from .personas_pane_messages import ConversationsRequested, EditCharacterRequested
 
 _CARD_NAME_MAX_CHARACTERS = 200
 _CARD_LONG_FIELD_MAX_CHARACTERS = 20_000
@@ -129,6 +129,13 @@ class PersonasCharacterCardWidget(Container):
                 disabled=True,
                 # F-037: a disabled Edit explains itself.
                 tooltip="Select a character to edit.",
+            )
+            yield Button(
+                "Conversations (0)",
+                id="personas-card-conversations",
+                classes="console-action-secondary",
+                disabled=True,
+                tooltip="Select a character to browse its conversations.",
             )
 
     # ===== Public API =====
@@ -257,6 +264,20 @@ class PersonasCharacterCardWidget(Container):
                 else "This character has no saved record to edit."
             )
         )
+        conversations = self.query_one("#personas-card-conversations", Button)
+        conversations.disabled = self._character_id is None
+        conversations.tooltip = (
+            None
+            if self._character_id is not None
+            else "Select a character to browse its conversations."
+        )
+
+    def set_conversation_total(self, total: int) -> None:
+        """Expose the selected character's authoritative conversation count."""
+
+        self.query_one("#personas-card-conversations", Button).label = (
+            f"Conversations ({max(0, int(total))})"
+        )
 
     # ===== Events =====
 
@@ -265,6 +286,12 @@ class PersonasCharacterCardWidget(Container):
         event.stop()
         if self._character_id is not None:
             self.post_message(EditCharacterRequested(self._character_id))
+
+    @on(Button.Pressed, "#personas-card-conversations")
+    def _conversations_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._character_id is not None:
+            self.post_message(ConversationsRequested())
 
 
 __all__ = ["PersonasCharacterCardWidget"]

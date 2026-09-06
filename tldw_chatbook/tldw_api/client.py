@@ -981,6 +981,7 @@ from .server_notifications_schemas import (
     ServerNotificationStreamEvent,
 )
 from .scheduled_tasks_automation_schemas import (
+    ScheduledTaskAutomationCapabilities,
     ScheduledTaskAutomationDefinition,
     ScheduledTaskAutomationDefinitionList,
     ScheduledTaskAutomationRunNowResponse,
@@ -8077,6 +8078,25 @@ class TLDWAPIClient:
     async def delete_reminder_task(self, task_id: str) -> ReminderTaskDeleteResponse:
         response = await self._request("DELETE", f"/api/v1/tasks/{task_id}")
         return ReminderTaskDeleteResponse.model_validate(response)
+
+    async def get_scheduled_task_automation_capabilities(
+        self,
+    ) -> ScheduledTaskAutomationCapabilities:
+        """Probe server-advertised Scheduled Tasks automation capabilities.
+
+        Mirrors `get_sync_v2_capabilities`'s probe-and-validate shape
+        (task-3, schedules UAT remediation ruling 5). The caller
+        (`SchedulingServerClient.get_capabilities`) treats a 404 here as
+        "this server predates Scheduled Tasks automation entirely" -- an
+        honest degrade, never a crash (root-causes.md #7).
+
+        Returns:
+            The parsed capabilities response.
+        """
+        response = await self._request(
+            "GET", "/api/v1/scheduled-tasks/capabilities"
+        )
+        return ScheduledTaskAutomationCapabilities.model_validate(response)
 
     async def list_scheduled_task_automation_definitions(
         self,
