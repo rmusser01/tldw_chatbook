@@ -19979,16 +19979,13 @@ class ChatScreen(BaseAppScreen):
         session = self._session._active_native_console_session()
         if session is None or session.id != session_id:
             raise RuntimeError("Canvas session is unavailable")
-        active_ids: list[str] = []
-        for native_id in store.active_path_message_ids(session_id):
-            message = store.get_message(native_id)
-            active_ids.append(message.persisted_message_id or message.id)
+        active_ids = store.canvas_active_path_message_ids(session_id)
         if not active_ids:
             raise RuntimeError("Canvas requires an active transcript message")
         return CanvasScope(
             session_id=session_id,
             conversation_id=session.persisted_conversation_id or session_id,
-            active_message_ids=tuple(active_ids),
+            active_message_ids=active_ids,
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id=str(uuid4()),

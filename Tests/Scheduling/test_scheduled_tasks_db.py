@@ -2906,3 +2906,181 @@ def test_get_pending_mutation_for_local_id_returns_newest_across_owners(tmp_path
     row = db.get_pending_mutation_for_local_id(rid, "automation_definition")
     assert row is not None
     assert row["owner_id"] == "server:b"
+
+
+# ----------------------------------------------------------------------
+# Cross-id-space run/result history bridge (task-31415)
+# ----------------------------------------------------------------------
+
+
+def test_list_automation_runs_and_results_bridge_across_transfer_identity(tmp_path):
+    """A transferred definition's pre-transfer local-id run/result history
+    and its post-transfer server-id-mirrored results both surface under
+    EITHER id, from `list_automation_runs`, `list_automation_results`, AND
+    `count_automation_results`/`count_unread_results` (which route through
+    the same `_definition_id_aliases` seam) -- not just the id that
+    happened to be queried."""
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition("local", "recurring_question", "D1")
+
+    # Pre-transfer: a locally-executed run + result, carrying the local id
+    # (automation_runs is local-only -- see count_automation_runs's own
+    # docstring -- so every run always carries the local id regardless of
+    # transfer).
+    run_id = db.create_automation_run("local", local_id, 1, "manual", status="completed")
+    assert run_id is not None
+    local_result_id = db.create_automation_result(
+        "local", local_id, run_id, "finding", "Local finding", "summary", "key-local",
+    )
+    assert local_result_id is not None
+
+    # Transfer to server: local id kept, server_id linked (id answers to
+    # BOTH spaces from here on).
+    assert db.adopt_server_definition_identity(
+        local_id, {"id": "srv-1", "name": "D1"}
+    ) is True
+
+    # Post-transfer: a result mirrored from the server carries the
+    # server id verbatim (`upsert_automation_results_from_server` has no
+    # local id to translate it to).
+    db.upsert_automation_results_from_server(
+        "local",
+        [{
+            "id": "srv-res-1",
+            "definition_id": "srv-1",
+            "run_id": "srv-run-1",
+            "kind": "finding",
+            "title": "Server finding",
+            "summary": "summary",
+            "dedupe_key": "key-server",
+            "created_at": "2026-09-05T00:00:00+00:00",
+        }],
+    )
+    server_result_id = next(
+        row["id"] for row in db.list_automation_results("local")
+        if row["dedupe_key"] == "key-server"
+    )
+
+    for query_id in (local_id, "srv-1"):
+        runs = db.list_automation_runs("local", definition_id=query_id)
+        assert [r["id"] for r in runs] == [run_id]
+
+        results = db.list_automation_results("local", definition_id=query_id)
+        assert {r["id"] for r in results} == {local_result_id, server_result_id}
+
+        assert db.count_automation_results("local", definition_id=query_id) == 2
+        assert db.count_unread_results("local", definition_id=query_id) == 2
+
+
+def test_list_automation_runs_and_results_never_transferred_unchanged(tmp_path):
+    """AC#4 regression gate: a definition that has never transferred
+    (server_id NULL, alias set == {id}) returns EXACTLY what a plain
+    equality filter would -- no extra rows, no changed ordering. Pinned
+    against >=3 rows at distinct timestamps for both runs and results."""
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "local", "recurring_question", "Untransferred"
+    )
+
+    run_ids = [
+        db.create_automation_run("local", local_id, 1, "manual", status="completed")
+        for _ in range(3)
+    ]
+    result_ids = [
+        db.create_automation_result(
+            "local", local_id, run_ids[0], "finding", f"T{i}", "S", f"key-{i}",
+        )
+        for i in range(3)
+    ]
+    with closing(db._get_connection()) as conn:
+        for i, run_id in enumerate(run_ids):
+            conn.execute(
+                "UPDATE automation_runs SET created_at = ? WHERE id = ?",
+                (f"2026-09-0{i + 1}T00:00:00+00:00", run_id),
+            )
+        for i, result_id in enumerate(result_ids):
+            conn.execute(
+                "UPDATE automation_results SET created_at = ? WHERE id = ?",
+                (f"2026-09-0{i + 1}T00:00:00.000000+00:00", result_id),
+            )
+        conn.commit()
+
+    with closing(db._get_connection()) as conn:
+        expected_run_ids = [
+            row["id"] for row in conn.execute(
+                "SELECT id FROM automation_runs WHERE owner_id = ? "
+                "AND definition_id = ? ORDER BY created_at DESC, id DESC",
+                ("local", local_id),
+            ).fetchall()
+        ]
+        expected_result_ids = [
+            row["id"] for row in conn.execute(
+                "SELECT id FROM automation_results WHERE definition_id = ? "
+                "ORDER BY strftime('%Y-%m-%dT%H:%M:%f', created_at) DESC, "
+                "created_at DESC, id DESC",
+                (local_id,),
+            ).fetchall()
+        ]
+
+    assert [
+        r["id"] for r in db.list_automation_runs("local", definition_id=local_id)
+    ] == expected_run_ids
+    assert [
+        r["id"] for r in db.list_automation_results("local", definition_id=local_id)
+    ] == expected_result_ids
+    assert db.count_automation_results("local", definition_id=local_id) == 3
+    assert db.count_unread_results("local", definition_id=local_id) == 3
+
+
+def test_list_automation_runs_and_results_unknown_id_and_no_cross_bleed(tmp_path):
+    """Revert-check test 3: an id with no matching definition row returns
+    exactly its own carried rows (no error, no cross-bleed) -- and, for
+    two REAL definitions with unrelated id spaces, aliasing a query for
+    one never leaks the other's rows."""
+    db = _mk_db(tmp_path)
+    def_a = db.create_automation_definition("local", "recurring_question", "A")
+    def_b = db.create_automation_definition("local", "recurring_question", "B")
+    assert db.adopt_server_definition_identity(def_a, {"id": "srv-a", "name": "A"})
+    assert db.adopt_server_definition_identity(def_b, {"id": "srv-b", "name": "B"})
+
+    run_a = db.create_automation_run("local", def_a, 1, "manual", status="completed")
+    run_b = db.create_automation_run("local", def_b, 1, "manual", status="completed")
+    result_a = db.create_automation_result(
+        "local", def_a, run_a, "finding", "A", "S", "key-a"
+    )
+    result_b = db.create_automation_result(
+        "local", def_b, run_b, "finding", "B", "S", "key-b"
+    )
+
+    for query_id in (def_a, "srv-a"):
+        assert [
+            r["id"] for r in db.list_automation_runs("local", definition_id=query_id)
+        ] == [run_a]
+        assert {
+            r["id"] for r in db.list_automation_results("local", definition_id=query_id)
+        } == {result_a}
+
+    for query_id in (def_b, "srv-b"):
+        assert [
+            r["id"] for r in db.list_automation_runs("local", definition_id=query_id)
+        ] == [run_b]
+        assert {
+            r["id"] for r in db.list_automation_results("local", definition_id=query_id)
+        } == {result_b}
+
+    # An id with no matching automation_definitions row at all: no error,
+    # exactly the rows carrying that literal id, no cross-bleed from A/B.
+    orphan_run = db.create_automation_run(
+        "local", "orphan-def", 1, "manual", status="completed"
+    )
+    orphan_result = db.create_automation_result(
+        "local", "orphan-def", orphan_run, "finding", "Orphan", "S", "key-orphan",
+    )
+    assert [
+        r["id"] for r in db.list_automation_runs("local", definition_id="orphan-def")
+    ] == [orphan_run]
+    assert {
+        r["id"] for r in db.list_automation_results("local", definition_id="orphan-def")
+    } == {orphan_result}
+    assert db.list_automation_runs("local", definition_id="unknown-def-xyz") == []
+    assert db.list_automation_results("local", definition_id="unknown-def-xyz") == []

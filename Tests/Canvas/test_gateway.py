@@ -264,6 +264,32 @@ async def test_same_revision_reload_rejects_an_awaited_old_load_plan(monkeypatch
         await gateway.aclose()
 
 
+@pytest.mark.asyncio
+@pytest.mark.loopback_network
+async def test_plan_route_preserves_generic_authority_fault_classification(monkeypatch):
+    authority = _Authority([])
+
+    async def faulty_plan(_scope):
+        raise ValueError("unexpected internal fault")
+
+    monkeypatch.setattr(authority, "resolve_render_plan", faulty_plan)
+    gateway = CanvasGateway(authority=authority)
+    try:
+        launch = await gateway.open_shell(_scope())
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as session:
+            await _ready_bridge(session, gateway, launch, prepare=False)
+            response = await session.get(
+                _launch_url(launch, "api/plan"),
+                headers={"Sec-Fetch-Dest": "empty", "Sec-Fetch-Site": "same-origin"},
+            )
+            assert response.status == 503
+            assert await response.json() == {"error": "gateway_unavailable"}
+    finally:
+        await gateway.aclose()
+
+
 async def _ready_bridge(
     session: aiohttp.ClientSession,
     gateway: CanvasGateway,

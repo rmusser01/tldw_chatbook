@@ -4191,59 +4191,60 @@ class SchedulesWorkbench(BaseAppScreen):
     def _definition_results_query(
         self, service: "SchedulingService", definition: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], int]:
-        """`(results, total)` for `definition` alone, across BOTH its id
-        spaces -- the definition-filtered pushed Results view's listing
-        (redesign PR-4 task 2). Capped at `RESULTS_INBOX_LIMIT`, same as
-        the global inbox (the brief: "preserve the cap-line honesty").
+        """`(results, total)` for `definition` alone -- the definition-
+        filtered pushed Results view's listing (redesign PR-4 task 2).
+        Capped at `RESULTS_INBOX_LIMIT`, same as the global inbox (the
+        brief: "preserve the cap-line honesty").
 
         `ScheduledTasksDB.list_automation_results`/`count_automation_
-        results` only equality-filter ONE `definition_id` at a time (own
-        docstring's caveat), so a definition with results in both spaces
-        needs two queries, merged here and re-sorted by REAL instant
-        (`_result_sort_key`) rather than trusting either query's own
-        newest-first order to interleave correctly across the merge.
+        results` resolve `definition_id` across BOTH a definition's id
+        spaces INTERNALLY now (task-31415's `_definition_id_aliases`
+        seam) -- a single query under either id already returns results
+        recorded under both, so this no longer loops over
+        `_definition_id_space` and merges two queries by hand (that used
+        to be required, and double-counts `total` if repeated now that
+        the seam does the union itself).
         """
         local_id, server_id = self._definition_id_space(definition)
-        merged: dict[str, dict[str, Any]] = {}
-        total = 0
-        for definition_id in (local_id, server_id):
-            if not definition_id:
-                continue
-            total += service.db.count_automation_results(
-                owner_id=None, definition_id=definition_id
-            )
-            for row in service.db.list_automation_results(
-                owner_id=None, definition_id=definition_id, limit=RESULTS_INBOX_LIMIT
-            ):
-                merged[row["id"]] = row
-        results = sorted(merged.values(), key=_result_sort_key, reverse=True)
+        definition_id = local_id or server_id
+        if not definition_id:
+            return [], 0
+        total = service.db.count_automation_results(
+            owner_id=None, definition_id=definition_id
+        )
+        results = service.db.list_automation_results(
+            owner_id=None, definition_id=definition_id, limit=RESULTS_INBOX_LIMIT
+        )
+        results = sorted(results, key=_result_sort_key, reverse=True)
         return results[:RESULTS_INBOX_LIMIT], total
 
     def _definition_unread_result_ids(
         self, service: "SchedulingService", definition: dict[str, Any]
     ) -> list[str]:
         """Definition-scoped counterpart of `_unread_result_ids` -- every
-        unread result id for THIS definition alone (both id spaces),
-        uncapped by `RESULTS_INBOX_LIMIT` for the same Qodo-HIGH reason
-        that method's own docstring documents."""
+        unread result id for THIS definition alone, uncapped by
+        `RESULTS_INBOX_LIMIT` for the same Qodo-HIGH reason that method's
+        own docstring documents.
+
+        Single query, same reasoning as `_definition_results_query`
+        (task-31415): the DB layer already resolves both id spaces.
+        """
         local_id, server_id = self._definition_id_space(definition)
-        ids: list[str] = []
-        for definition_id in (local_id, server_id):
-            if not definition_id:
-                continue
-            unread_total = service.db.count_unread_results(
-                owner_id=None, definition_id=definition_id
-            )
-            if not unread_total:
-                continue
-            results = service.db.list_automation_results(
-                owner_id=None,
-                definition_id=definition_id,
-                review_state="unread",
-                limit=unread_total,
-            )
-            ids.extend(result["id"] for result in results)
-        return ids
+        definition_id = local_id or server_id
+        if not definition_id:
+            return []
+        unread_total = service.db.count_unread_results(
+            owner_id=None, definition_id=definition_id
+        )
+        if not unread_total:
+            return []
+        results = service.db.list_automation_results(
+            owner_id=None,
+            definition_id=definition_id,
+            review_state="unread",
+            limit=unread_total,
+        )
+        return [result["id"] for result in results]
 
     async def _dispatch_mark_all_results_read(
         self, service: "SchedulingService", unread_ids: list[str]

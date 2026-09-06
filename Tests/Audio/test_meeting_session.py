@@ -417,7 +417,7 @@ def test_local_sink_writes_jsonl_and_submits_audio_with_diarization(tmp_path):
     assert lines[0] == {
         "seq": 0, "t_audio_start": 0.0, "t_audio_end": 2.0,
         "t_wall_start": lines[0]["t_wall_start"], "t_wall_end": lines[0]["t_wall_end"],
-        "label": "you", "text": "hello",
+        "label": "you", "text": "hello", "speaker_id": None,
     }
     assert calls == [{
         "source_path": str(tmp_path / "mixed.wav"),

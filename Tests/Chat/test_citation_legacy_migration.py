@@ -611,6 +611,40 @@ def test_raw_verification_detects_same_stat_rewrite_after_cutover(
     assert service.get_journal(conversation_id).state is LegacyMigrationState.DIVERGED
 
 
+def test_read_only_citation_verification_rejects_mismatch_without_journal_writes(
+    db,
+    tmp_path,
+):
+    from tldw_chatbook.Chat.citation_trace_repository import (
+        CitationPersistenceUnavailable,
+    )
+
+    conversation_id, message_ids = _conversation_with_messages(db, 1)
+    sidecar = tmp_path / "read-only.json"
+    _write_sidecar(sidecar, conversation_id, message_ids)
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    assert (
+        service.migrate_next_batch(conversation_id).state
+        is LegacyMigrationState.COMPLETE
+    )
+    sidecar.write_bytes(sidecar.read_bytes().replace(b"Legacy title", b"ChangedTitle"))
+    before = tuple(db.get_connection().iterdump())
+    sidecar_before = sidecar.read_bytes()
+    with pytest.raises(
+        CitationPersistenceUnavailable, match="citation_verification_required"
+    ):
+        service.read_conversation(
+            conversation_id, verify_canonical=True, read_only=True
+        )
+    assert tuple(db.get_connection().iterdump()) == before
+    assert sidecar.read_bytes() == sidecar_before
+
+
 def test_completed_migration_becomes_diverged_when_source_is_unreadable(
     db: CharactersRAGDB,
     tmp_path,

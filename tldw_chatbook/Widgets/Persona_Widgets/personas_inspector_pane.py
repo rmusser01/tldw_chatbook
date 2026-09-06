@@ -418,6 +418,14 @@ class PersonasInspectorPane(VerticalScroll):
         self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
         self.query_one("#personas-selected-kind", Static).update("Type: -")
+        # TASK-31804: blank the portrait on deselect -- load-bearing, do NOT
+        # drop as redundant with the show_selection paths. Those paths blank
+        # the avatar only when a NEW item is selected; a pure deselection
+        # (selection cleared, nothing selected next) reaches none of them, so
+        # without this line the previously selected character's face lingers
+        # in the rail while the summary reads "Selected: none" -- the exact
+        # contradictory state this fixes.
+        self.set_avatar_thumbnail(None)
         await self.show_conversations(())
         self.show_validation(())
         self._apply_action_state()

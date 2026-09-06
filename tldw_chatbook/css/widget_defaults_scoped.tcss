@@ -2898,6 +2898,22 @@
         width: 100%;
         height: auto;
     }
+    /* Task 8: same trap as #library-media-filter above -- Input defaults to
+     * width 100%, which inside a row Horizontal would blow the label off
+     * to the side. */
+    LibraryMediaCanvas .library-media-speaker-row {
+        width: 100%;
+        height: auto;
+    }
+    /* Class-keyed (not `.row Static`): ancestor-scoped bare-type subjects
+     * are ratcheted by test_textual_css_fastpath (ADR-097). */
+    LibraryMediaCanvas Static.library-media-speaker-label {
+        width: auto;
+        min-width: 0;
+    }
+    LibraryMediaCanvas Input.library-media-speaker-input {
+        width: 1fr;
+    }
 
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */

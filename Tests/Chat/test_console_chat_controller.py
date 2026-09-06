@@ -5528,6 +5528,7 @@ async def test_deferred_canvas_provider_uses_the_runtime_restart_latch(tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("materialize_native_authority", [False, True])
 @pytest.mark.parametrize(
     ("ephemeral", "seed_role", "persist_seed", "expected_ok"),
     [
@@ -5544,6 +5545,7 @@ async def test_canvas_scope_projects_only_native_system_rows_by_durability(
     seed_role,
     persist_seed,
     expected_ok,
+    materialize_native_authority,
 ):
     from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
@@ -5601,10 +5603,25 @@ async def test_canvas_scope_projects_only_native_system_rows_by_durability(
             content="synthetic seed",
             persist=persist_seed,
         )
+        if materialize_native_authority:
+            from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+            screen_owner = SimpleNamespace(
+                _ensure_console_chat_store=lambda: store,
+                _session=SimpleNamespace(
+                    _active_native_console_session=lambda: session,
+                ),
+            )
+            runtime.ensure_canvas_native_authority(
+                scope_resolver=lambda session_id: ChatScreen._console_canvas_scope(
+                    screen_owner, session_id
+                ),
+            )
 
         submitted = await controller.submit_draft("project this path")
 
         assert submitted.accepted is True
+        assert "result" in seen, "Canvas scope capture prevented provider dispatch"
         assert seen["result"].ok is expected_ok
         if ephemeral:
             assert seen["scope_path"] == seen["native_path"]
@@ -8554,6 +8571,179 @@ async def test_production_trace_factory_keeps_canvas_tool_loops_on_their_saved_t
         await runtime.dispose()
         chat_db.close_connection()
         trace_observer.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_next_canvas_turn_reads_and_branches_from_native_historical_selection(
+    tmp_path,
+    monkeypatch,
+):
+    """Three real submits share the live pinned revision with the tool provider."""
+    from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
+    from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+    from tldw_chatbook.Canvas.models import CanvasScope
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    db = CharactersRAGDB(tmp_path / "historical-selection.sqlite", "selection-test")
+    runs_db = AgentRunsDB(
+        tmp_path / "historical-runs.sqlite", client_id="selection-test"
+    )
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    store = runtime.ensure_chat_store()
+    session = _arm_session(store)
+    session.settings = ConsoleSessionSettings(provider="openai", model="test-model")
+    identity = {}
+    observed = {}
+    calls = 0
+
+    def result(messages, name):
+        prefix = f"{FENCE_TOOL_RESULT_PREFIX}{name}: "
+        content = next(
+            str(message.get("content", ""))
+            for message in reversed(messages)
+            if str(message.get("content", "")).startswith(prefix)
+        )
+        return json.loads(content.removeprefix(prefix))
+
+    def adapter(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls in {1, 5, 9}:
+            name, arguments = "find_tools", {"query": "canvas"}
+        elif calls in {2, 6, 10}:
+            name, arguments = (
+                "load_tools",
+                {
+                    "ids": [
+                        "canvas:canvas_create",
+                        "canvas:canvas_read",
+                        "canvas:canvas_update",
+                    ]
+                },
+            )
+        elif calls == 3:
+            name, arguments = (
+                "canvas_create",
+                {"title": "Pinned", "html": "<p>first</p>"},
+            )
+        elif calls == 7:
+            name, arguments = (
+                "canvas_update",
+                {
+                    "canvas_id": identity["canvas_id"],
+                    "expected_parent_revision_id": identity["revision_id"],
+                    "html": "<p>second</p>",
+                },
+            )
+        elif calls == 11:
+            name, arguments = "canvas_read", {"canvas_id": identity["canvas_id"]}
+        elif calls == 12:
+            observed["read"] = result(kwargs["messages_payload"], "canvas_read")
+            name, arguments = (
+                "canvas_update",
+                {
+                    "canvas_id": identity["canvas_id"],
+                    "expected_parent_revision_id": identity["revision_id"],
+                    "html": "<p>branch from first</p>",
+                },
+            )
+        else:
+            if calls == 4:
+                identity.update(
+                    result(kwargs["messages_payload"], "canvas_create")["canvas"]
+                )
+            elif calls == 8:
+                observed["second"] = result(kwargs["messages_payload"], "canvas_update")
+            else:
+                assert calls == 13
+                observed["branch"] = result(kwargs["messages_payload"], "canvas_update")
+            return {"choices": [{"message": {"content": "Done."}}]}
+        content = (
+            f"{FENCE_OPEN}\n"
+            + json.dumps({"name": name, "arguments": arguments})
+            + "\n```"
+        )
+        return {"choices": [{"message": {"content": content}}]}
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+
+    async def resolve_for_send(_selection):
+        return ConsoleProviderResolution(
+            ready=True,
+            provider="openai",
+            model="test-model",
+            base_url="https://api.openai.com/v1",
+            execution_key="openai",
+            streaming=False,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="openai",
+                model="test-model",
+                endpoint_identity="https://api.openai.com/v1",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    monkeypatch.setattr(gateway, "resolve_for_send", resolve_for_send)
+
+    def live_scope(session_id):
+        assert session_id == session.id
+        return CanvasScope(
+            session_id=session_id,
+            conversation_id=session.persisted_conversation_id or session_id,
+            active_message_ids=tuple(
+                store.get_message(mid).persisted_message_id or mid
+                for mid in store.active_path_message_ids(session_id)
+            ),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="native-selection",
+        )
+
+    authority = runtime.ensure_canvas_native_authority(scope_resolver=live_scope)
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=runs_db, store=store, provider_gateway=gateway
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="openai",
+        model="test-model",
+        agent_runtime_enabled=True,
+        agent_bridge=bridge,
+    )
+    try:
+        for prompt in ("Create first.", "Update second."):
+            submitted = await controller.submit_draft(prompt, session_id=session.id)
+            assert submitted.terminal_status is ConsoleRunStatus.COMPLETED
+        authority.gateway_scope(
+            session_id=session.id,
+            browser_session_id="historical-browser",
+            canvas_id=identity["canvas_id"],
+            revision_id=identity["revision_id"],
+            follow_latest=False,
+        )
+        submitted = await controller.submit_draft(
+            "Read and branch from the pin.", session_id=session.id
+        )
+        assert submitted.terminal_status is ConsoleRunStatus.COMPLETED
+        assert calls == 13
+        assert observed["read"]["html"] == "<p>first</p>"
+        assert observed["branch"]["status"] == "staged"
+        rows = (
+            db.get_connection()
+            .execute(
+                "SELECT parent_revision_id, html FROM canvas_revisions ORDER BY sequence"
+            )
+            .fetchall()
+        )
+        assert len(rows) == 3
+        assert rows[2]["parent_revision_id"] == identity["revision_id"]
+        assert rows[2]["html"] == "<p>branch from first</p>"
+    finally:
+        runs_db.close()
+        await gateway.aclose()
+        await runtime.dispose()
+        db.close_connection()
 
 
 @pytest.mark.parametrize("seam", ["durable", "canvas", "policy"])
