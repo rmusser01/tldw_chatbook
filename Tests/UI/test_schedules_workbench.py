@@ -5194,6 +5194,64 @@ async def test_header_resolves_local_only_when_probe_is_policy_refused():
         )
 
 
+class _PendingProbeService(_MockSchedulingServiceMixin):
+    """task-31798: the OTHER arm of the same branch -- `server_reachable` is
+    None but the probe was NOT policy-refused (`server_permission_denied` stays
+    False), i.e. a probe still genuinely in flight. The header must keep the
+    transient "Checking sync status…" copy in this case, never prematurely
+    settle to local-only."""
+
+    server_client = _MockServerClient(notifications_service=object())
+
+    def __init__(self) -> None:
+        self.db = _MockSchedulingDB()
+        self._server_reachable = None
+        self._server_permission_denied = False
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        return []
+
+    async def refresh_server_reachability(self) -> bool:
+        # Models an unresolved probe: neither reachability nor a permission
+        # verdict has been established.
+        return bool(self._server_reachable)
+
+    @property
+    def server_reachable(self):
+        return self._server_reachable
+
+    @property
+    def server_permission_denied(self) -> bool:
+        return self._server_permission_denied
+
+
+@pytest.mark.asyncio
+async def test_header_stays_checking_while_probe_unresolved_without_permission_denial():
+    """task-31798: the `server_reachable is None` header branch must ONLY
+    settle to local-only when `server_permission_denied` is set (the completed,
+    policy-refused case). With permission-denial False (probe not yet
+    resolved), it must keep painting "Checking sync status…" -- the guard that
+    keeps the 31798 fix from swallowing the honest in-flight state."""
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+
+    app = WorkbenchTestApp()
+    app.scheduling_service = _PendingProbeService()
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="127.0.0.1:8000")
+    )
+    async with app.run_test(size=(160, 48)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await settle_schedules_workbench(pilot)
+        header = pilot.app.screen.query_one(
+            "#schedules-destination-header", DestinationHeader
+        )
+        assert header.state.status_label == "Checking sync status…", (
+            f"got {header.state.status_label!r} -- with no permission denial "
+            "recorded the probe is treated as still in flight, so the header "
+            "must stay on the transient checking copy"
+        )
+
+
 class _EmptyThenOneReminderService(_MockSchedulingServiceMixin):
     """task-31799: an empty queue until the first reminder is created, so the
     empty -> first-row transition (the one the UAT found truncated to header

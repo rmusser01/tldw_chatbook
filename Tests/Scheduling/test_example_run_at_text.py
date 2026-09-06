@@ -25,11 +25,27 @@ def test_example_run_at_text_is_always_in_the_future():
     )
 
 
-def test_example_run_at_text_shape_and_days_ahead():
+def test_example_run_at_text_shape_and_days_ahead(monkeypatch):
     # Shared default keeps every caller's shown example identical, and the
     # forgiving 'YYYY-MM-DD 09:00' shape parse_forgiving_datetime accepts.
+    #
+    # Pin a single reference "now" (deliberately near local midnight) so the
+    # value produced and the expected date are derived from the SAME instant:
+    # two independent `datetime.now()` calls straddling midnight would compute
+    # different calendar dates and fail spuriously.
+    import tldw_chatbook.Scheduling.schedule_input_parsing as sip
+
+    fixed_now = datetime(2026, 9, 6, 23, 59, 30)
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now if tz is None else fixed_now.replace(tzinfo=tz)
+
+    monkeypatch.setattr(sip, "datetime", _FrozenDateTime)
+
     text = example_run_at_text(days_ahead=7)
-    expected_date = (datetime.now() + timedelta(days=7)).date().isoformat()
+    expected_date = (fixed_now + timedelta(days=7)).date().isoformat()
     assert text == f"{expected_date} 09:00"
 
 
