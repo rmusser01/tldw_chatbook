@@ -10,6 +10,7 @@ import json
 import re
 import threading
 import time
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -41,6 +42,21 @@ class MeetingMeta:
     system_source: str
     provider: str
     model: str
+    #: The one shared display name for the mic ("you") channel (task 31746),
+    #: stamped by `MeetingSessionOwner.start()` from `meeting_owner.
+    #: meeting_user_display_name()` -- so `render_markdown` and every
+    #: after-the-fact render agree with what the live session showed.
+    #: Defaulted to "You" for direct-construction call sites (tests, and any
+    #: `MeetingMeta` built before this field existed).
+    user_display_name: str = "You"
+    #: Hybrid-room mic diarization (task 31743): when True, the mic ("you")
+    #: and overlap ("both") channels are ALSO sent to the live diarizer in
+    #: call mode, and the Stop pass reconciles against `mixed.wav` instead of
+    #: `others.wav` (see `_on_final` / `stop`). Stamped from `MeetingSettings.
+    #: diarize_mic_channel` by `MeetingSessionOwner.start()`. Defaulted False
+    #: for direct-construction call sites and back-filled False for old
+    #: `meeting.json` files that predate this field.
+    diarize_mic_channel: bool = False
     speaker_names: dict = field(default_factory=dict)
     format_version: int = 2
 
@@ -152,6 +168,8 @@ class Diarizer(Protocol):
 
     def assign(self, pcm: bytes, sample_rate: int, seq: int) -> str | None: ...
 
+    def pin(self, cluster_id: str) -> None: ...
+
     def centroids(self) -> dict[str, Any]: ...
 
     def close(self) -> None: ...
@@ -190,6 +208,13 @@ def read_meeting_json(folder: Path) -> dict:
     # Back-fill pre-task-2 (format_version 1 or absent) recordings so
     # callers can always read `speaker_names` without a KeyError.
     payload.setdefault("speaker_names", {})
+    # Back-fill pre-task-31746 recordings the same way: they were made
+    # before the mic channel's display name was persisted, and always
+    # showed "You" live.
+    payload.setdefault("user_display_name", "You")
+    # Back-fill pre-task-31743 recordings: mic-channel diarization did not
+    # exist yet, so those meetings never diarized "you"/"both" segments.
+    payload.setdefault("diarize_mic_channel", False)
     return payload
 
 
@@ -217,18 +242,65 @@ def update_meeting_json(folder: Path, **fields: Any) -> dict:
 MAX_SPEAKER_NAME_CHARS = 64
 _WIDGET_SAFE_CLUSTER_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
+#: Markdown-significant ASCII punctuation, backslash-escaped before a name is
+#: interpolated into `render_markdown`'s `**{name}:**` (Qodo Q1). CommonMark
+#: renders `\x` as a literal `x` for any ASCII punctuation, so escaping is
+#: lossless: the reader sees exactly what was typed.
+_MARKDOWN_ESCAPES = str.maketrans({char: "\\" + char for char in "\\`*_[]()#<>|~"})
+
+
+def escape_markdown_name(name: str) -> str:
+    """Escape a user-typed name for interpolation into Markdown (Qodo Q1).
+
+    Names reach `render_markdown`'s emphasis syntax, and the Library renders
+    that document through Textual's Markdown widget -- so an unescaped
+    ``[x](http://e)`` or ``` `code` ``` became live markup in the persisted
+    transcript. The plain "[hh:mm:ss] Name: text" render is NOT escaped: it
+    is plain text, and a backslash there would be shown verbatim.
+
+    Args:
+        name: The already-normalized display name (or composed label).
+
+    Returns:
+        The same text with Markdown-significant ASCII punctuation escaped.
+    """
+    return (name or "").translate(_MARKDOWN_ESCAPES)
+
 
 def normalize_speaker_name(value: str) -> str:
     """Clean one user-typed speaker name for storage and display.
+
+    The ONE boundary all three rename paths share (the live Meetings screen,
+    the Library canvas legend, the Library reader legend), so control
+    characters are stripped here rather than at each caller: a name reaches
+    `meeting.json`, the transcript render, `Media.content` and FTS, and a
+    newline or an ANSI escape in it would break the line-oriented transcript
+    render and the terminal alike (Qodo Q1). "Control character" is the same
+    set `Chat/console_roleplay_identity.normalize_chat_display_name` rejects
+    for chat display names -- stripped here instead of raised, because this
+    runs deep inside the rename write path where the only reporting channel
+    is a failed rename.
 
     Args:
         value: The raw submitted name.
 
     Returns:
-        The name stripped of surrounding whitespace and truncated to
-        `MAX_SPEAKER_NAME_CHARS`; `""` means "remove this speaker's name".
+        The name with control characters removed, stripped of surrounding
+        whitespace and truncated to `MAX_SPEAKER_NAME_CHARS`; `""` means
+        "remove this speaker's name".
     """
-    return (value or "").strip()[:MAX_SPEAKER_NAME_CHARS]
+    cleaned = "".join(
+        char
+        for char in (value or "")
+        if not (
+            unicodedata.category(char) in {"Cc", "Cs"}
+            or char in {"\u2028", "\u2029"}
+            # ZWJ/ZWNJ are load-bearing inside emoji sequences; every other
+            # format character (bidi overrides included) goes.
+            or (unicodedata.category(char) == "Cf" and char not in {"\u200c", "\u200d"})
+        )
+    )
+    return cleaned.strip()[:MAX_SPEAKER_NAME_CHARS]
 
 
 def is_widget_safe_cluster_id(cluster_id: str) -> bool:
@@ -247,7 +319,9 @@ def is_widget_safe_cluster_id(cluster_id: str) -> bool:
     return bool(cluster_id) and bool(_WIDGET_SAFE_CLUSTER_ID.match(cluster_id))
 
 
-def render_label(segment: MeetingSegment, names: dict[str, str], user_display_name: str) -> str | None:
+def render_label(
+    segment: MeetingSegment, names: dict[str, str], user_display_name: str, diarize_mic: bool = False,
+) -> str | None:
     """Display name for a segment: the user for the mic channel, else the
     named or generic speaker.
 
@@ -256,12 +330,18 @@ def render_label(segment: MeetingSegment, names: dict[str, str], user_display_na
         names: The meeting's `cluster_id -> user name` map; ids absent from
             it fall back to a generic "Speaker N".
         user_display_name: What stands in for the mic channel ("You").
+        diarize_mic: task 31743 -- when True, a "you"-labelled segment that
+            already carries a diarized `speaker_id` renders by that id
+            instead of pre-naming it as the user (a "both" segment already
+            falls through to the `speaker_id` branch below unconditionally,
+            since it never had one until this flag existed). Default False
+            keeps every existing caller's behaviour unchanged.
 
     Returns:
         The display name, or None when the segment carries no label at all
-        (room mode before diarization) or is overlap-coarse.
+        (room mode before diarization).
     """
-    if segment.label == "you":
+    if segment.label == "you" and not (diarize_mic and segment.speaker_id):
         return user_display_name
     if segment.speaker_id:
         if segment.speaker_id in names:
@@ -272,7 +352,13 @@ def render_label(segment: MeetingSegment, names: dict[str, str], user_display_na
         # recordings mint an "S" id in the worker so this only guards old data).
         n = segment.speaker_id[1:] if segment.speaker_id[:1] in ("S", "F") else segment.speaker_id
         return f"Speaker {n}"
-    if segment.label in ("others", "both"):
+    # task 31746 review (spec gap): an overlap segment still names the mic
+    # channel, so it must honour the same configured name as "you" -- bare
+    # "Others" here would silently disagree with the partial preview and
+    # `render_markdown`, which already say "Alice + Others".
+    if segment.label == "both":
+        return f"{user_display_name} + Others"
+    if segment.label == "others":
         return "Others"
     return None
 
@@ -340,12 +426,15 @@ class MeetingSession:
                 listener(kind, payload)
             except Exception as exc:  # noqa: BLE001
                 # `kind` and the listener's identity only: the payload is
-                # meeting content (transcript text) and never reaches a log.
+                # meeting content (transcript text) and never reaches a log
+                # (Q10). `str(exc)` can still embed a filesystem path though
+                # (task-31748) -- redact it, same treatment as this module's
+                # other failure logs that keep the exception's message.
                 logger.error(
                     "meeting listener error on {} from {}: {}",
                     kind,
                     getattr(listener, "__qualname__", repr(type(listener))),
-                    exc,
+                    redact_user_paths(str(exc)),
                 )
 
     def _set_state(self, state: str) -> None:
@@ -358,7 +447,10 @@ class MeetingSession:
                 try:
                     getattr(sink, method)(*args)
                 except Exception as exc:  # noqa: BLE001
-                    logger.error("meeting sink {} failed: {}", method, exc)
+                    # Sinks are caller-supplied (`MeetingSession(sinks=...)`),
+                    # so an exception's message is as unpredictable as the
+                    # payload it may embed -- type name only (task-31748).
+                    logger.error("meeting sink {} failed ({})", method, type(exc).__name__)
 
     # ---- lifecycle --------------------------------------------------------
     def start(self) -> bool:
@@ -430,7 +522,10 @@ class MeetingSession:
                 outcome = self.service.stop_dictation()
                 complete = bool(getattr(outcome, "transcription_complete", True))
             except Exception as exc:  # noqa: BLE001
-                logger.error("stop_dictation failed: {}", exc)
+                # task-31748: `str(exc)` can embed a filesystem path (e.g. a
+                # missing model file) -- redact it, same treatment as this
+                # module's other internal-operation failure logs.
+                logger.error("stop_dictation failed: {}", redact_user_paths(str(exc)))
                 complete = False
         with self._lock:
             self._closing = True
@@ -438,7 +533,9 @@ class MeetingSession:
         try:
             self.capture.stop_recording()
         except Exception as exc:  # noqa: BLE001
-            logger.error("capture stop failed: {}", exc)
+            # task-31748: `str(exc)` can embed a filesystem path (closing a
+            # WAV file, say) -- redact it.
+            logger.error("capture stop failed: {}", redact_user_paths(str(exc)))
         flagged_speakers: list[str] = []
         speaker_labels_reason: str | None = None
         if self._diarizer is not None:
@@ -452,17 +549,35 @@ class MeetingSession:
             # segments only, which nothing persisted read). Never log segment
             # text or speaker names -- lengths/types only.
             try:
-                # Diarize the SAME channel the live centroids were built from
-                # (`_on_final` used "others" in call mode, "mixed" in room
-                # mode) so reconcile compares like-for-like. Absent file ->
-                # skip, keep near-live labels, never raise.
-                wav_name = "others.wav" if self.capture.mode == "call" else "mixed.wav"
+                # Diarize the SAME channel(s) the live centroids were built
+                # from so reconcile compares like-for-like. Absent file ->
+                # skip, keep near-live labels, never raise. `_on_final` used
+                # "others" (call mode) / "mixed" (room mode) by default; with
+                # `diarize_mic_channel` on, call mode ALSO fed "you"/"mixed"
+                # into the live centroids (task 31743), so only "mixed.wav"
+                # -- which covers every channel -- reconciles like-for-like.
+                if self.capture.mode == "call" and not self.meta.diarize_mic_channel:
+                    wav_name = "others.wav"
+                else:
+                    wav_name = "mixed.wav"
                 wav_path = Path(self.meta.folder) / wav_name
-                if wav_path.exists():
+                with self._lock:
+                    meeting_segments = list(self.segments)
+                # 31749: a crashed-and-restarted backend holds NO live
+                # centroids, so its batch pass mints ids from scratch. Applied
+                # to the whole meeting it would re-label the PRE-crash
+                # segments too and silently strand the names the user typed on
+                # those ids. Re-label only from the crash on; everything
+                # before it keeps the near-live id its name is attached to.
+                crash_seq = getattr(self._diarizer, "crashed_at_seq", None)
+                start_from: float | None = 0.0
+                if crash_seq is not None:
+                    meeting_segments = [s for s in meeting_segments if s.seq >= crash_seq]
+                    # Nothing after the crash -> nothing this pass may touch.
+                    start_from = meeting_segments[0].t_audio_start if meeting_segments else None
+                if wav_path.exists() and start_from is not None:
                     duration = float(self.capture.audio_position_s)
-                    speaker_segments = self._diarizer.diarize(wav_path, 0.0, duration)
-                    with self._lock:
-                        meeting_segments = list(self.segments)
+                    speaker_segments = self._diarizer.diarize(wav_path, start_from, duration)
                     transitions: list[tuple[str | None, str]] = []
                     changed: list[MeetingSegment] = []
                     for meeting_segment in meeting_segments:
@@ -578,8 +693,25 @@ class MeetingSession:
         # any segment in room mode (label is None there). `assign` may block
         # on a subprocess in the real backend, so it MUST run off `_lock`,
         # which is already released at this point in the method.
-        if self._diarizer is not None and segment is not None and segment.label in ("others", None):
-            source = "others" if segment.label == "others" else "mixed"
+        source: str | None = None
+        if segment is not None:
+            if segment.label in ("others", None):
+                source = "others" if segment.label == "others" else "mixed"
+            elif self.capture.mode == "call" and self.meta.diarize_mic_channel:
+                # task 31743: hybrid-room mic diarization, call mode only.
+                # The mode test is explicit (final review M2) so this half of
+                # the feature reads the same shape as the Stop pass's channel
+                # choice above -- room mode has no "you"/"both" label to reach
+                # here anyway, since `_label` returns None off call mode.
+                #
+                # "you"/"both" are the mic-carrying channels, so their PCM
+                # comes from the "you" track and the mixed (overlap) track
+                # respectively.
+                if segment.label == "you":
+                    source = "you"
+                elif segment.label == "both":
+                    source = "mixed"
+        if self._diarizer is not None and segment is not None and source is not None:
             pcm = self.capture.pcm_window(source, segment.t_audio_start, segment.t_audio_end)
             sid = None
             if pcm:
@@ -632,15 +764,30 @@ class MeetingSession:
         self._emit("transcribing", False)
 
 
-def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> str:
+def render_markdown(
+    result: MeetingResult, segments: list[MeetingSegment], escape_names: bool = True,
+) -> str:
     """Render a meeting as a Markdown transcript.
 
     Used when post-meeting re-transcription is off: the Markdown, not the
     audio, is what goes to the Library.
 
+    Speaker names are user-typed and land here inside emphasis syntax, so
+    they go through `escape_markdown_name` first (Qodo Q1): the Library
+    renders this document through Textual's Markdown widget, where an
+    unescaped ``[x](http://e)`` or ``` `code` ``` in a name became live
+    markup in the persisted transcript.
+
     Args:
         result: The finished meeting.
         segments: Its segments, in order.
+        escape_names: Escape Markdown punctuation in speaker names. Always
+            True when WRITING. `rename_meeting_speaker`'s content-shape
+            guard passes False to reproduce the LEGACY render of a document
+            written before the escape existed, so such a recording is still
+            recognised as its own (and then rewritten escaped, upgrading
+            it). Escaping is a no-op for a name that needs none, so the two
+            renders differ only for the recordings that legacy case is for.
 
     Returns:
         The Markdown document, newline-terminated.
@@ -656,21 +803,17 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
         f"- Transcriber: {meta.provider} {meta.model}".rstrip(),
         "",
     ]
-    names = {"you": "You", "others": "Others", "both": "You + Others"}
+    # task 31746 review: one call to `render_label` covers every case (a
+    # diarized segment's authoritative name/"Speaker N" -- final whole-branch
+    # review I2 -- the coarse you/others/both channel label, or no label at
+    # all) instead of duplicating its precedence here with a second, literal
+    # "you"/"both" mapping that had already drifted out of sync with it once.
     speaker_names = getattr(meta, "speaker_names", {}) or {}
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
-        if segment.speaker_id:
-            # A diarized segment carries the authoritative (reconciled) speaker
-            # id; render its name/"Speaker N" so the markdown reflects the Stop
-            # pass, not the coarse You/Others label (final whole-branch review
-            # I2). Undiarized segments keep the coarse channel label below.
-            who = render_label(segment, speaker_names, names["you"])
-            lines.append(f"{stamp} **{who}:** {segment.text}" if who else f"{stamp} {segment.text}")
-        elif segment.label:
-            lines.append(f"{stamp} **{names.get(segment.label, segment.label)}:** {segment.text}")
-        else:
-            lines.append(f"{stamp} {segment.text}")
+        who = render_label(segment, speaker_names, meta.user_display_name, diarize_mic=meta.diarize_mic_channel)
+        label = escape_markdown_name(who) if escape_names else who
+        lines.append(f"{stamp} **{label}:** {segment.text}" if who else f"{stamp} {segment.text}")
     return "\n".join(lines) + "\n"
 
 

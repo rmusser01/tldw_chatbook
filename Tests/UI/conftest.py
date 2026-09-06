@@ -466,6 +466,31 @@ def mock_app_with_notes(mock_notes_service):
 
 
 @pytest.fixture
+def captured_lines():
+    """Collect every loguru message emitted during the test.
+
+    `caplog` does not see loguru's own sink (loguru does not propagate to
+    stdlib `logging`) -- mirrors `Tests/Audio/test_meeting_diarization_session.py`'s
+    fixture of the same name. Adds a sink and removes only that sink id: a
+    bare `logger.remove()` would tear down the sink `tldw_chatbook/__init__.py`
+    installs and leak that teardown into unrelated tests.
+    """
+    from loguru import logger as loguru_logger
+
+    lines: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: lines.append(message.record["message"]),
+        level="TRACE",
+        format="{message}",
+        diagnose=False,
+    )
+    try:
+        yield lines
+    finally:
+        loguru_logger.remove(sink_id)
+
+
+@pytest.fixture
 def tmp_media_db(tmp_path):
     """A real, on-disk, per-test `MediaDatabase` (repo convention: real
     SQLite, never a mock, for DB tests -- Task 8, meeting speaker rename)."""
@@ -482,25 +507,58 @@ def meeting_folder_media_item(tmp_path, tmp_media_db):
     Library `Media` row that points at its `mixed.wav`, exactly as a real
     finished meeting recording leaves them (Task 8's Interfaces section).
 
-    Returns a factory: ``factory(names: dict, segments: list[tuple[str,
-    str]], content: str | None) -> (media_id, folder)``, where each segment
-    tuple is ``(speaker_id, text)``.
+    Returns a factory: ``factory(names: dict, segments: list[tuple], content:
+    str | None, user_display_name: str, markdown: bool) -> (media_id,
+    folder)``, where each segment tuple is ``(speaker_id, text)`` (label
+    defaults to ``"others"``) or ``(speaker_id, text, label)`` to pick a
+    specific coarse label (e.g. ``"you"``).
 
-    `Media.content` defaults to the meeting's OWN render of those segments --
-    what a meeting-produced Library item holds, and what
+    `meeting.json` is the REAL `MeetingResult.to_json()` payload a finished
+    meeting writes (not a hand-built two-key stub), so anything reading it
+    back sees the fields a real recording has.
+
+    `Media.content` defaults to the meeting's OWN plain render of those
+    segments -- what a meeting-produced Library item holds, and what
     `rename_meeting_speaker` requires before it will rewrite anything (fix
-    C2). Pass `content=` to stand in for an item whose transcript came from
-    somewhere else (the ingest's offline pass, say).
+    C2). Pass `markdown=True` for the OTHER app-produced shape: the
+    `transcript.md` `LocalMeetingSink.on_stopped` writes (and the Library
+    then ingests verbatim) whenever `post_transcribe` is off. Pass
+    `content=` to stand in for an item whose transcript came from somewhere
+    else (the ingest's offline pass, say).
+
+    `user_display_name` (task 31746) is stamped into `meeting.json` exactly
+    as a real meeting would, so it feeds the default render the same way
+    `rename_meeting_speaker` reads it back.
     """
     import json as _json
 
-    def _factory(*, names: dict, segments: list[tuple[str, str]], content: str | None = None):
+    def _factory(
+        *, names: dict, segments: list[tuple], content: str | None = None,
+        user_display_name: str = "You", markdown: bool = False,
+    ):
+        from tldw_chatbook.Audio.meeting_session import MeetingMeta, MeetingResult
+
         folder = tmp_path / f"meeting-{len(segments)}-{id(segments)}"
         folder.mkdir()
         (folder / "mixed.wav").write_bytes(b"")
-        (folder / "meeting.json").write_text(_json.dumps({"speaker_names": dict(names)}))
+        result = MeetingResult(
+            meta=MeetingMeta(
+                folder=folder, mode="call", started_at="2026-01-02T09:30:00",
+                mic_device="Built-in Microphone", system_source="system",
+                provider="faster-whisper", model="tiny",
+                user_display_name=user_display_name, speaker_names=dict(names),
+            ),
+            ended_at="2026-01-02T09:31:00", duration_s=61.0,
+            segment_count=len(segments), transcription_complete=True,
+            failed_segments=0, stop_reason="user",
+        )
+        payload = result.to_json()
+        payload["schema"] = 1
+        (folder / "meeting.json").write_text(_json.dumps(payload))
         lines = []
-        for seq, (speaker_id, text) in enumerate(segments):
+        for seq, segment in enumerate(segments):
+            speaker_id, text, *rest = segment
+            label = rest[0] if rest else "others"
             lines.append(
                 _json.dumps(
                     {
@@ -509,7 +567,7 @@ def meeting_folder_media_item(tmp_path, tmp_media_db):
                         "t_audio_end": float(seq) + 1.0,
                         "t_wall_start": 0.0,
                         "t_wall_end": 0.0,
-                        "label": "others",
+                        "label": label,
                         "text": text,
                         "speaker_id": speaker_id,
                     }
@@ -517,13 +575,20 @@ def meeting_folder_media_item(tmp_path, tmp_media_db):
             )
         (folder / "transcript.jsonl").write_text("\n".join(lines) + ("\n" if lines else ""))
         if content is None:
+            from tldw_chatbook.Audio.meeting_session import render_markdown
             from tldw_chatbook.Widgets.Library.library_media_canvas import (
                 _read_meeting_transcript_segments,
                 _render_meeting_transcript,
             )
 
-            content = _render_meeting_transcript(
-                _read_meeting_transcript_segments(folder), dict(names)
+            parsed = _read_meeting_transcript_segments(folder)
+            # The real renderers, never a hand-rolled copy: these ARE the two
+            # shapes the app leaves in the Library, and the guard under test
+            # compares against them byte for byte.
+            content = (
+                render_markdown(result, parsed)
+                if markdown
+                else _render_meeting_transcript(parsed, dict(names), user_display_name)
             )
         media_id, _uuid, _msg = tmp_media_db.add_media_with_keywords(
             url=str(folder / "mixed.wav"),

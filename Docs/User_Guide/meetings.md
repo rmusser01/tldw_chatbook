@@ -108,6 +108,7 @@ flat keys only — a dotted lookup into a nested table does not work here):
 | `live_diarization` | `false` | Assign speaker ids while recording instead of only in the offline pass — feeds the Speakers legend. Requires the same diarization packages as `post_diarize` and `diarizer_backend` set to `"local"`. |
 | `diarizer_backend` | `"local"` | Which live diarizer to build when `live_diarization` is on. Only `"local"` is implemented today. |
 | `max_speakers` | `8` | Upper bound the local live diarizer uses when clustering voices into speaker ids. |
+| `diarize_mic_channel` | `false` | Hybrid rooms: also diarize the mic ("you") and overlap ("both") channels in call mode instead of always pre-naming them — see "Speaker labels" below. |
 
 Each finished meeting's folder (named by start time, e.g.
 `2026-09-04_2121/`) contains:
@@ -171,26 +172,50 @@ what happens to a meeting once it's queued.
   far, and the name map saved into `meeting.json` for the finished
   recording. This live path has automated pilot-test coverage only; it has
   not been exercised in a live session on this page's verification host.
+- **The name that stands in for you is fixed when the meeting starts.** It
+  is your configured chat display name when you have set one (otherwise
+  "You"), and it is stamped onto the recording at Start — so changing that
+  setting while a meeting is running leaves the rows already on screen, the
+  rows still to come, and the saved transcript all saying the same thing.
+  The new value applies to the next meeting you start.
+- **Hybrid rooms — someone else sharing your microphone — can also be
+  diarized, behind `meetings.diarize_mic_channel` (off by default).**
+  Normally the mic ("you") and overlap ("both") channels in call mode are
+  never sent through the diarizer: every mic-channel segment is pre-named as
+  you regardless of who is actually speaking into that mic. Turning this flag
+  on (in addition to `live_diarization`) sends those channels through the
+  diarizer too, so a "you"/"both" segment that gets a speaker id renders by
+  that id (a name, or "Speaker N") instead of your display name — the "You"
+  pre-naming no longer applies once a segment has been diarized. This only
+  changes call mode; room mode already diarizes every segment regardless of
+  this flag.
 - **Speaker names can also be renamed after the fact, on the finished
-  Library item — not only live, during the meeting.** A rename control
-  mirroring the live Speakers legend exists in the Library media item's
-  canvas for any recording whose meeting folder still holds `meeting.json`,
-  and updates the same `meeting.json` name map plus the stored, searchable
-  transcript text. As of this writing that control is not reachable by
-  clicking around Library today: it lives inside the media canvas's own
-  preview panel, which the Library shell keeps hidden in favor of its
-  separate reader pane. It is real and covered by automated tests
-  (`Tests/UI/test_library_media_speaker_rename.py`), just not yet surfaced
-  in the reader — tracked as a follow-up. Until then, renaming during the
-  meeting (the Speakers legend above) is the only way to change these names
-  from the UI. Note that this after-the-fact rename rewrites the Library
-  item's stored transcript, so it **refuses** — with a notice, changing
-  nothing on disk or in the database — whenever that stored text is not the
-  meeting's own render, which is the case whenever the offline ingest pass
-  produced the Library copy (`post_transcribe` left on). It also refuses
-  when the recording folder's `transcript.jsonl` is missing or empty. When
-  it does go through, the replaced text is kept as a document version, so
-  the change can be rolled back.
+  Library item — not only live, during the meeting.** Open the recording in
+  Library ▸ Media and scroll to the bottom of the Read tab: a **Rename
+  speakers** section lists one row per speaker with a rename box, mirroring
+  the live Speakers legend. Type a name, press Enter, and the transcript
+  above repaints with it. It appears only for a recording whose meeting
+  folder still holds `meeting.json`, and it updates that same name map plus
+  the stored, searchable transcript text. Note that this after-the-fact
+  rename rewrites the Library item's stored transcript, so it **refuses** —
+  with the notice "This transcript came from ingest; rename the live
+  transcript in Meetings.", changing nothing on disk or in the database —
+  whenever that stored text is not the meeting's own render, which is the
+  case whenever the offline ingest pass produced the Library copy
+  (`post_transcribe` left on). It **does** work on either shape the app
+  itself writes: the plain `[hh:mm:ss] Name: text` transcript, and the
+  Markdown `transcript.md` that goes to the Library when `post_transcribe`
+  is off — a rename re-renders in whichever shape the item already has, so
+  a Markdown transcript keeps its header and its `**Name:**` lines. It
+  refuses the same way when the recording folder's `transcript.jsonl` is
+  missing or empty. When it does go through, the replaced text is kept as a
+  document version, so the change can be rolled back. If the write fails —
+  a concurrent edit to the same item, say — nothing is left half-applied:
+  the name map on disk is put back, and the rename can simply be retried.
+  Whatever you type is stored as typed apart from control characters, which
+  are dropped; a name containing Markdown punctuation (`*`, `` ` ``, `[…]`)
+  shows as those characters in a Markdown transcript rather than turning
+  into formatting or a link.
 - **Each transcript row is a per-segment final, not a whole-meeting
   transcript.** Rows can lag live speech by up to roughly the length of one
   segment (up to ~10 seconds) plus however long that segment took to
@@ -222,8 +247,22 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against feat/meeting-diarization @ 14bbf2a7f + the PR #2456 fix
-wave — 2026-09-06. The rows added in that wave (the "Live speaker labels"
+*Verified against feat/meeting-followups @ 97a823256 + the PR #2471 Qodo fix
+wave — 2026-09-06. That wave added the three sentences above about the
+start-stamped display name, the retryable failed rename, and control
+characters / Markdown punctuation in a typed name; all three are covered by
+pilot/unit tests
+(`Tests/UI/test_meetings_screen.py::test_a_display_name_change_mid_meeting_never_splits_the_live_rows`,
+`Tests/UI/test_library_media_speaker_rename.py::test_a_failed_rename_restores_meeting_json_so_a_retry_can_succeed`
+and its Markdown twin, plus the two name-sanitization cases in the same
+file), not by a live session. Earlier stamp: feat/meeting-followups @
+e060f8d27 + the final-review fix wave — 2026-09-06. That wave made the "either shape the app itself writes"
+sentence above true (the rename used to refuse every `post_transcribe =
+false` recording, which this page had implied it accepted); it is covered by
+`Tests/UI/test_library_media_speaker_rename.py::
+test_rename_works_on_the_markdown_transcript_and_keeps_its_shape`, not by a
+live session. Earlier stamp: feat/meeting-diarization @ 14bbf2a7f + the PR
+#2456 fix wave — 2026-09-06. The rows added in that wave (the "Live speaker labels"
 status line, the footer's "Speaker labels unavailable" / "Speaker merge to
 resolve" copy, and the Library rename's refusal rules) are covered by pilot
 tests in `Tests/UI/test_meetings_screen.py` and
@@ -240,7 +279,9 @@ legend and rename box (task 7) and the after-the-fact Library rename (task
 `test_legend_row_mounts_and_rename_input_updates_ui` and the `_apply_rename`
 unit cases in `Tests/UI/test_meetings_screen.py`, plus
 `Tests/UI/test_library_media_speaker_rename.py` — not by a live session with
-`live_diarization` turned on. The Library rename control also carries a
-known reachability gap documented above: it works and is tested, but is not
-yet visible in the running app (task 9 doc-only update; not re-verified
-live).*
+`live_diarization` turned on. The Library reader's "Rename speakers" section
+(TASK-31745) closed the reachability gap this page used to document, and is
+itself covered only by pilot tests
+(`Tests/UI/test_library_media_viewer_speaker_rename.py`): the section, one
+submitted rename, and the refusal notice were exercised in the test suite,
+not watched in a running app.*

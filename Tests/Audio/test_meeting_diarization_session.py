@@ -67,6 +67,114 @@ def test_segment_gets_a_speaker_id_from_the_diarizer(meeting_session_with_fake_c
     assert seg.speaker_id == "S1"
 
 
+def _pcm_spy(session):
+    """Wrap `session.capture.pcm_window` to record the `source` it's called with."""
+    calls: list[str] = []
+    original = session.capture.pcm_window
+
+    def spy(source, start_s, end_s):
+        calls.append(source)
+        return original(source, start_s, end_s)
+
+    session.capture.pcm_window = spy
+    return calls
+
+
+# ---- task 31743: hybrid-room mic diarization behind a flag -----------------
+
+def test_you_segment_never_assigned_when_flag_off(meeting_session_with_fake_capture):
+    """Existing behaviour, asserted explicitly: with the flag off (default),
+    a "you" segment in call mode is never sent to `assign`."""
+    session = meeting_session_with_fake_capture(diarizer=FakeDiarizer(["S1"]), mode="call")
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="you")
+    assert calls == []
+    assert session.segments[-1].speaker_id is None
+
+
+def test_both_segment_never_assigned_when_flag_off(meeting_session_with_fake_capture):
+    session = meeting_session_with_fake_capture(diarizer=FakeDiarizer(["S1"]), mode="call")
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="both")
+    assert calls == []
+    assert session.segments[-1].speaker_id is None
+
+
+def test_you_segment_assigned_from_you_pcm_when_flag_on(meeting_session_with_fake_capture):
+    session = meeting_session_with_fake_capture(
+        diarizer=FakeDiarizer(["S1"]), mode="call", diarize_mic_channel=True,
+    )
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="you")
+    assert calls == ["you"]
+    assert session.segments[-1].speaker_id == "S1"
+
+
+def test_both_segment_assigned_from_mixed_pcm_when_flag_on(meeting_session_with_fake_capture):
+    session = meeting_session_with_fake_capture(
+        diarizer=FakeDiarizer(["S1"]), mode="call", diarize_mic_channel=True,
+    )
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="both")
+    assert calls == ["mixed"]
+    assert session.segments[-1].speaker_id == "S1"
+
+
+def test_others_segment_still_assigned_from_others_pcm_when_flag_on(meeting_session_with_fake_capture):
+    """The flag only adds "you"/"both" -- "others" keeps its existing source."""
+    session = meeting_session_with_fake_capture(
+        diarizer=FakeDiarizer(["S1"]), mode="call", diarize_mic_channel=True,
+    )
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="others")
+    assert calls == ["others"]
+    assert session.segments[-1].speaker_id == "S1"
+
+
+def test_room_mode_never_routes_a_segment_through_the_mic_channel_branch(
+    meeting_session_with_fake_capture,
+):
+    """Final review M2: `diarize_mic_channel` is a CALL-mode feature -- the
+    Stop pass's channel choice already says so explicitly, the near-live
+    branch only did so implicitly (room mode's `_label` returns None). Room
+    mode diarizes everything through the `label is None` branch and does not
+    even record a separate "you" track, so a "you"-labelled segment there must
+    not be routed to one."""
+    session = meeting_session_with_fake_capture(
+        diarizer=FakeDiarizer(["S1"]), mode="room", diarize_mic_channel=True,
+    )
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="you")
+    assert calls == []
+    assert session.segments[-1].speaker_id is None
+
+
+def test_stop_uses_mixed_wav_when_diarize_mic_flag_on_in_call_mode(tmp_path, meeting_session_with_fake_capture):
+    """task 31743: with the flag on, live centroids came from every channel,
+    so the Stop pass must reconcile against mixed.wav, not others.wav."""
+    seen = {}
+
+    class ChannelProbe(StopReconcileDiarizer):
+        def diarize(self, wav_path, start_s, end_s):
+            seen["wav"] = wav_path.name
+            return []
+
+    (tmp_path / "mixed.wav").write_bytes(b"")
+    session = meeting_session_with_fake_capture(
+        diarizer=ChannelProbe(), mode="call", diarize_mic_channel=True,
+    )
+    session.start()
+    session._on_final_for_test("hello", label="others")
+    session.stop()
+    assert seen["wav"] == "mixed.wav"
+
+
 def test_diarizer_closed_on_stop(meeting_session_with_fake_capture):
     fake = FakeDiarizer([])
     session = meeting_session_with_fake_capture(diarizer=fake, mode="call")
@@ -264,6 +372,97 @@ def test_stop_merge_of_two_named_clusters_keeps_both_names_and_flags(tmp_path, m
     persisted = read_meeting_json(tmp_path)
     assert persisted["speaker_names"]["S1"] == "Alice / Bob"
     assert persisted["flagged_speakers"] == ["S1"]
+
+
+# ---- 31749: a crash mid-meeting must not cost the pre-crash names ----------
+
+class CrashedThenBatchDiarizer:
+    """Live labelling stopped at `crashed_at_seq`; the restarted worker still
+    serves the Stop pass, and its batch labels the WHOLE file."""
+
+    crashed_at_seq = 2
+
+    def __init__(self):
+        self.seen = None
+        self.closed = False
+
+    def assign(self, pcm, sample_rate, seq):
+        return "S1" if seq < self.crashed_at_seq else None   # coarse after the crash
+
+    def diarize(self, wav_path, start_s, end_s):
+        self.seen = (start_s, end_s)
+        return [SpeakerSegment(0.0, 1e6, "S9")]              # covers every segment
+
+    def centroids(self):
+        return {}
+
+    def close(self):
+        self.closed = True
+
+
+def _advance(session, to_s: float) -> None:
+    """Move the fake capture's clocks so each final lands on its own span."""
+    session.capture.audio_position_s = to_s
+    session.capture.last_speech_position_s = to_s
+
+
+def test_stop_pass_after_a_crash_leaves_pre_crash_segments_and_names_alone(
+    tmp_path, meeting_session_with_fake_capture
+):
+    """31749: the restarted worker's clusterer is empty, so the Stop batch
+    re-labels from scratch. Applied to the whole meeting it would overwrite the
+    pre-crash ids the user had already NAMED. The pass is limited to the
+    post-crash span, both in what it diarizes and in what it overlays."""
+    (tmp_path / "others.wav").write_bytes(b"")
+    fake = CrashedThenBatchDiarizer()
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="call")
+    session.start()
+    session.meta.speaker_names["S1"] = "Alice"
+    for i in range(4):
+        _advance(session, 2.0 * (i + 1))
+        session._on_final_for_test(f"line {i}", label="others")
+    session.stop()
+
+    assert [s.speaker_id for s in session.segments[:2]] == ["S1", "S1"]   # untouched
+    assert session.meta.speaker_names["S1"] == "Alice"
+    assert all(s.speaker_id == "S9" for s in session.segments[2:])        # re-labelled
+    assert fake.seen[0] == session.segments[2].t_audio_start             # span-limited
+
+
+def test_stop_pass_without_a_crash_still_covers_the_whole_recording(
+    tmp_path, meeting_session_with_fake_capture
+):
+    """The non-crash path is unchanged: diarize from 0.0, overlay everything."""
+    (tmp_path / "others.wav").write_bytes(b"")
+    fake = CrashedThenBatchDiarizer()
+    fake.crashed_at_seq = None
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="call")
+    session.start()
+    for i in range(2):
+        _advance(session, 2.0 * (i + 1))
+        session._on_final_for_test(f"line {i}", label="others")
+    session.stop()
+
+    assert fake.seen[0] == 0.0
+    assert all(s.speaker_id == "S9" for s in session.segments)
+
+
+def test_stop_pass_ignores_a_crash_seq_past_the_last_segment(
+    tmp_path, meeting_session_with_fake_capture
+):
+    """A crash after the final segment leaves nothing to re-label -- the batch
+    pass must not index off the end (best-effort: no exception, no overlay)."""
+    (tmp_path / "others.wav").write_bytes(b"")
+    fake = CrashedThenBatchDiarizer()
+    fake.crashed_at_seq = 5
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="call")
+    session.start()
+    _advance(session, 2.0)
+    session._on_final_for_test("only line", label="others")
+    session.stop()
+
+    assert [s.speaker_id for s in session.segments] == ["S1"]   # near-live kept
+    assert fake.seen is None                                     # batch skipped
 
 
 def test_stop_captures_the_backend_coarse_reason_for_the_footer(tmp_path, meeting_session_with_fake_capture):

@@ -59,6 +59,10 @@ ASSIGN_BUDGET_S = 2.0
 #: finalize/ingest by exactly this long -- 10 minutes, not forever.
 DIARIZE_BUDGET_FLOOR_S = 60.0
 DIARIZE_BUDGET_CEILING_S = 600.0
+#: `pin` runs on the APP thread (the rename handler) and the backend lock is
+#: held by `assign` for up to `ASSIGN_BUDGET_S`; a pin that cannot get the
+#: lock within this is dropped rather than freezing the TUI (final review I1).
+_PIN_LOCK_WAIT_S = 0.05
 #: First run downloads the ECAPA model; warm-up can take a while. Nothing
 #: blocks on it -- see the module docstring.
 READY_TIMEOUT_S = 120.0
@@ -111,6 +115,15 @@ class SpeechBrainDiarizer:
         #: restarted worker still serves the Stop pass (Qodo Q10).
         self._coarse_only = False
         self._restarted = False
+        #: Highest cluster number any assign has returned ("S7" -> 7). The
+        #: restarted worker starts past it, so its ids cannot collide with a
+        #: pre-crash id the user may have NAMED (31749).
+        self.max_id_seen = 0
+        #: The `seq` of the assign in flight when the worker died; None until
+        #: (and unless) that happens. The Stop pass re-labels only segments
+        #: from this seq on -- everything before it keeps its near-live id,
+        #: and so keeps the name attached to that id.
+        self.crashed_at_seq: int | None = None
         #: Static reason the meeting is on coarse labels, for the footer.
         self.coarse_reason: str | None = None
         self._lock = threading.Lock()
@@ -133,7 +146,13 @@ class SpeechBrainDiarizer:
         """
         if getattr(sys, "frozen", False):
             logger.warning("diarizer: live diarization unsupported in frozen build; coarse labels only")
-        return [sys.executable, "-m", WORKER_MODULE]
+        cmd = [sys.executable, "-m", WORKER_MODULE]
+        if self.max_id_seen:
+            # A restart (31749): the replacement's clusterer numbers from here,
+            # so it can never re-mint an id the dead worker already gave out
+            # (and the user may have named). Absent on the first spawn.
+            cmd += ["--start-id", str(self.max_id_seen)]
+        return cmd
 
     def _mark_coarse(self, reason: str) -> None:
         """Live labelling is over; keep the FIRST reason (the root cause)."""
@@ -237,7 +256,7 @@ class SpeechBrainDiarizer:
         except Exception:  # noqa: BLE001
             logger.warning("diarizer: worker did not exit after kill")
 
-    def _fail(self) -> None:
+    def _fail(self, seq: int | None = None) -> None:
         """A DEAD worker: coarse for the rest of the meeting, one restart.
 
         Cluster ids cannot survive a restart (the centroids live in the
@@ -245,7 +264,16 @@ class SpeechBrainDiarizer:
         S1 name -- spec §7 sends the REST of the meeting to coarse labels and
         keeps the restarted worker only for the authoritative Stop pass.
         A second death degrades the backend permanently.
+
+        Args:
+            seq: The assign whose window was in flight when the death was
+                detected, if any. The FIRST such seq is remembered as
+                `crashed_at_seq`: it is the boundary the Stop pass must not
+                re-label across (31749). A death detected outside an assign
+                (during the batch pass) has no boundary and passes None.
         """
+        if seq is not None and self.crashed_at_seq is None:
+            self.crashed_at_seq = seq
         self._mark_coarse(COARSE_CRASHED)
         proc, self._proc = self._proc, None
         if proc is not None:
@@ -277,14 +305,17 @@ class SpeechBrainDiarizer:
                 return None
             proc = self._proc
             if proc is None or proc.poll() is not None:
-                self._fail()
+                self._fail(seq)
                 return None
             try:
                 self._send(proc, {"cmd": "assign", "sr": sample_rate, "seq": seq, "n": len(pcm)}, pcm)
             except (OSError, ValueError):
-                self._fail()
+                self._fail(seq)
                 return None
-            return self._await_reply(seq)
+            sid = self._await_reply(seq)
+            if sid and sid[:1] == "S" and sid[1:].isdigit():
+                self.max_id_seen = max(self.max_id_seen, int(sid[1:]))
+            return sid
 
     def _await_reply(self, seq: int) -> str | None:
         """Read this assign's reply within the budget; None means coarse.
@@ -304,7 +335,7 @@ class SpeechBrainDiarizer:
             except queue.Empty:
                 return None
             if raw is _SENTINEL:
-                self._fail()
+                self._fail(seq)
                 return None
             try:
                 reply = json.loads(raw)
@@ -375,6 +406,38 @@ class SpeechBrainDiarizer:
                 continue
             if isinstance(reply, dict) and "segments" in reply:
                 return list(reply.get("segments") or [])
+
+    def pin(self, cluster_id: str) -> None:
+        """Best-effort: tell the worker's live clusterer to pin `cluster_id`.
+
+        Fire-and-forget -- no reply is sent or awaited, and the lock is taken
+        with a short timeout, so this never blocks the caller (the screen's
+        rename handler, on the app thread) behind a subprocess round trip.
+        `assign` holds the same lock across `_await_reply` for up to
+        `ASSIGN_BUDGET_S`, so a blocking acquire here froze the TUI for up to
+        two seconds whenever a rename landed while a window was in flight
+        (final review I1). A pin dropped because the backend was busy is the
+        same best-effort miss as one dropped because there is no live worker
+        to tell (not ready, coarse-only, or degraded).
+        """
+        if self._degraded or self._coarse_only:
+            return
+        if not (self._ready.is_set() and self._ready_ok):
+            return
+        if not self._lock.acquire(timeout=_PIN_LOCK_WAIT_S):
+            return
+        try:
+            if self._degraded or self._coarse_only:
+                return
+            proc = self._proc
+            if proc is None or proc.poll() is not None:
+                return
+            try:
+                self._send(proc, {"cmd": "pin", "id": cluster_id})
+            except Exception as exc:  # noqa: BLE001 - best-effort, never raises
+                logger.warning("diarizer: pin failed ({})", type(exc).__name__)
+        finally:
+            self._lock.release()
 
     def centroids(self) -> dict[str, Any]:
         # The live centroids live in the worker (voice embeddings never cross
