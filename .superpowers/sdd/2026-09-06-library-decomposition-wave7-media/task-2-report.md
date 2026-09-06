@@ -661,3 +661,17 @@ numbers were re-derived last, after the final edit.
    the `test_library_media_return_settlement.py` pair is already task 1's
    addition; nothing new to add — every failure this task saw was already
    documented.
+
+---
+
+## 11. Erratum (recorded rather than amended)
+
+`1cf379d6c`'s commit message says it carries "the task report ... plus a
+single line-neutral figure correction". It carries only the correction: the
+report lives under `.superpowers/`, which `.gitignore:8` excludes, so it
+needed a `git add -f` and landed one commit later as `9cc6a7ad4`. The
+correction itself — 140 movers carry **3,166** source lines, not 3,155, the
+stale figure being the 141-mover measurement that fix round 1 superseded — is
+accurate as committed, in both the controller docstring and §2 above, and the
+controller still measures 4461 so no re-pin was involved. Recorded here per
+the recipe's erratum-not-amend discipline rather than rewritten.
