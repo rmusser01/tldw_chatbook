@@ -2848,3 +2848,53 @@ async def test_keyword_only_rows_paint_the_keyword_that_matched(size):
             "article · 2m",
             "article · 2m · keyword: notesandmo…",
         ], secondaries
+
+
+
+@pytest.mark.asyncio
+async def test_keyword_reason_clips_at_the_36_cell_items_floor():
+    """Fix round 1 (1): what the floor actually does, pinned honestly.
+
+    The ten-character cap keeps the line SHORT; it does not make it fit
+    here. The Items pane's 36-cell floor leaves ~29 cells after the row's
+    four-cell indent, and `article · 2m · keyword: notes` needs 29 before
+    the pane's own edge -- so at the floor a keyword row clips mid-term,
+    for the short keyword as well as the long one. The neighbouring
+    `test_analysed_secondary_survives_the_36_cell_items_floor` shows what
+    a line that DOES fit looks like there; this one is the honest contrast,
+    and it exists so nobody re-derives the false "the cap makes it fit".
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_match_reason_items())
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "notes")
+        screen._library_media_reader_preferences = dataclasses.replace(
+            screen._library_media_reader_preferences,
+            custom_widths_enabled=True,
+            items_width=36,
+        )
+        screen._sync_library_media_reader_layout_from_shell()
+        await _wait_for_condition(
+            pilot,
+            lambda: _items_pane_width(screen) == 36,
+            message="The Items pane never reached its 36-cell floor.",
+        )
+        for _ in range(3):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        # The crop at this width clips a neighbouring pane border into the
+        # right edge, so strip that before comparing the row's own text.
+        secondaries = [
+            line.strip(" │") for line in lines if "article · " in line
+        ]
+        assert secondaries == [
+            "article · 2m · keyword: not",
+            "article · 2m",
+            "article · 2m · keyword: not",
+        ], secondaries
+        # The row without a reason still paints whole -- the clipping is the
+        # suffix's own cost, not a regression in the base secondary line.
+        assert "…" not in "".join(secondaries), secondaries

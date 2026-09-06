@@ -466,13 +466,23 @@ class LocalMediaReadingService:
             "offset": offset,
             "limit": limit,
         }
-        if library_summary and query and "keywords" in (filters.get("fields") or ()):
-            # task-28008: ONE extra SELECT for the whole page, only when the
-            # keyword leg was actually part of the search. Absent (not empty)
-            # otherwise, so an unqueried browse carries no side channel.
-            payload["match_reasons"] = db.library_browse_keyword_only_matches(
-                [row["id"] for row in items], query
-            )
+        if library_summary and query:
+            # task-28008: ONE extra SELECT for the whole page, and only for
+            # the Library browse's OWN field set. Fix round 1 (2): the
+            # probe re-evaluates the title and content legs alone, but
+            # ``search_media_db``'s text branch also ORs author/type LIKE
+            # legs when those fields are asked for -- so with any wider set
+            # a row the AUTHOR leg matched would be labelled a keyword-only
+            # hit. Exact equality, not membership: this side channel is the
+            # browse's, and any other caller gets no reasons rather than
+            # wrong ones. Absent (not empty) otherwise, so an unqueried or
+            # differently-scoped search carries no channel at all.
+            from .media_reading_scope_service import LIBRARY_BROWSE_SEARCH_FIELDS
+
+            if tuple(filters.get("fields") or ()) == LIBRARY_BROWSE_SEARCH_FIELDS:
+                payload["match_reasons"] = db.library_browse_keyword_only_matches(
+                    [row["id"] for row in items], query
+                )
         return payload
 
     def list_library_media_types(self) -> list[str]:

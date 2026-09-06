@@ -581,6 +581,7 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         keyword is the one named.
         """
         reasons: dict[str, str] = {}
+        query = str(query or "").casefold()
         if not query:
             return reasons
         for index, row in enumerate(page, start=offset):

@@ -39,7 +39,11 @@ LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP = "Trash could not be loaded.
 
 LIBRARY_MEDIA_BROWSE_PAGE_SIZE = 20
 #: Characters of a match-reason keyword a row shows before eliding
-#: (task-28008). Sized for the Items pane's 36-cell floor.
+#: (task-28008). It keeps the line SHORT; it does not make it fit
+#: everywhere. At the Items pane's 36-cell floor a keyword row still clips
+#: at the pane edge (pinned by
+#: ``test_keyword_reason_clips_at_the_36_cell_items_floor``), and an
+#: analysed + keyword row clips at the default width too.
 _KEYWORD_REASON_CHARS = 10
 _SQLITE_INTEGER_MAX = 2**63 - 1
 _MEDIA_BROWSE_SORTS = frozenset(
@@ -1174,12 +1178,15 @@ def _secondary_text(
       to say what it means at the Items pane's 36-cell floor, which
       'document · 5m · analysed' (24 cells) fits.
     - task-28008 (critique #5 P2): a row the browse filter found through a
-      keyword alone gets a trailing ' · keyword: <term>'. Words again, and
-      for the same 36-cell floor the term is capped at ten characters -- a
-      long tag would otherwise push the line off the pane and take the
-      explanation with it. The cap is unconditional so the line does not
-      change under the in-place density and select-mode rebuilds, which
-      re-derive the label from this text.
+      keyword alone gets a trailing ' · keyword: <term>', the term capped
+      at ten characters so an arbitrarily long tag cannot run away with
+      the line. The cap does NOT buy a fit: at the Items pane's 36-cell
+      floor 'article · 2m · keyword: notes' already clips at the pane edge,
+      and 'type · age · analysed · keyword: term' clips at the default
+      width too -- the cap bounds the damage, it does not remove it. It is
+      unconditional (not width-aware) so the line does not change under the
+      in-place density and select-mode rebuilds, which re-derive the label
+      from this text.
     """
     has_type = bool(media_type)
     has_age = bool(age)

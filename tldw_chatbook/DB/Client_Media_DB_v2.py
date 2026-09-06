@@ -3155,11 +3155,21 @@ class MediaDatabase:
         ONE statement for the whole page, not one per row. The title and
         content legs are spelled exactly as ``search_media_db`` spells them
         (raw ``%query%`` with ``COLLATE NOCASE``) and the keyword leg exactly
-        as its own branch does (``_escape_library_like`` plus ``ESCAPE``), so
-        this probe can never disagree with the search that produced the page.
-        It deliberately ignores the FTS half of the text branch, which is
-        AND-ed with the LIKE half: skipping it can only make this answer
-        FEWER reasons, never a wrong one.
+        as its own branch does (``_escape_library_like`` plus ``ESCAPE``).
+
+        PRECONDITION: the search being explained asked for exactly the
+        Library browse's own fields (``LIBRARY_BROWSE_SEARCH_FIELDS``).
+        ``search_media_db``'s text branch is ``FTS AND (title/content LIKE OR
+        author/type LIKE)``, so with a wider field set a row the AUTHOR leg
+        matched would look keyword-only here. The one caller enforces that
+        equality; do not call this for any other field set. Within it the
+        probe cannot disagree with the search that produced the page: it
+        ignores only the FTS half of the text branch, which is AND-ed with
+        the LIKE half, and skipping that can only yield FEWER reasons.
+
+        A failure here is not a page failure. The reason is decoration on a
+        page that has already loaded, so a database error answers "no
+        reasons" rather than taking the rows down with it.
 
         Args:
             media_ids: Backing media ids of the page just fetched.
@@ -3167,14 +3177,21 @@ class MediaDatabase:
 
         Returns:
             Matched keyword per keyword-only row; empty when the page has
-            none, or when there is no query to explain.
-
-        Raises:
-            DatabaseError: If a database error occurs.
+            none, when there is no query to explain, or when the probe
+            itself failed.
         """
         ids = [int(media_id) for media_id in media_ids]
         if not ids or not query:
             return {}
+        try:
+            return self._library_browse_keyword_only_matches(ids, query)
+        except sqlite3.Error:
+            return {}
+
+    def _library_browse_keyword_only_matches(
+        self, ids: List[int], query: str
+    ) -> Dict[int, str]:
+        """Run the keyword-only match probe. See the public wrapper above."""
         placeholders = ",".join("?" * len(ids))
         like_pattern = f"%{query}%"
         keyword_pattern = f"%{self._escape_library_like(query)}%"
@@ -3193,11 +3210,8 @@ class MediaDatabase:
                AND COALESCE(m.content, '') NOT LIKE ? COLLATE NOCASE
         """
         params = [keyword_pattern, *ids, like_pattern, like_pattern]
-        try:
-            with self.transaction() as conn:
-                rows = conn.execute(sql, tuple(params)).fetchall()
-        except sqlite3.Error as e:
-            raise DatabaseError("Failed to read library keyword match reasons.") from e
+        with self.transaction() as conn:
+            rows = conn.execute(sql, tuple(params)).fetchall()
         return {
             row["media_id"]: row["keyword"]
             for row in rows

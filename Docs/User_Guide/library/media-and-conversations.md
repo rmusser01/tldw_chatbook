@@ -92,10 +92,12 @@ adds **· keyword: \<term\>** — the filter searches titles, item text and
 keywords, so without it a hit whose title and body hold nothing you typed
 reads as a mistake (`article · 2m · keyword: notes`). A row whose title or
 text carries the term already shows you why it is there and says nothing
-extra. Long tags are cut to ten characters (`keyword: quokkasand…`) so the
-line still fits the Items pane at its narrowest.
+extra. Long tags are cut to ten characters (`keyword: quokkasand…`) to keep
+the line short. It can still be too long for a narrow Items pane: at the
+pane's narrowest the row clips mid-term at the pane edge, and a row that is
+both analysed and a keyword hit can clip at the default width too.
 
-*Verified against fix/media-wave5-i @ 8da37ba63 — 2026-09-06 (tasks 28008/28009: four
+*Verified against fix/media-wave5-i @ c9838b5e4 — 2026-09-06 (tasks 28008/28009: four
 seeded `document` items, two of them analysed, live at 235x52 and 100x30.
 Both analysed rows painted `document · 5m · analysed` in full at the Items
 pane's 36-cell floor; "Review these" put `·` on every row, two `]` presses

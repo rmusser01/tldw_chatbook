@@ -1,5 +1,6 @@
 # ruff: noqa: F811
 import asyncio
+import sqlite3
 
 import pytest
 
@@ -7,6 +8,7 @@ import tldw_chatbook.DB.Client_Media_DB_v2 as media_db_module
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import (
     ALLOWED_SERVER_CREATE_SOURCE_TYPES,
+    LIBRARY_BROWSE_SEARCH_FIELDS,
     MediaReadingBackend,
     MediaReadingScopeService,
 )
@@ -7134,5 +7136,87 @@ async def test_library_browse_gives_no_reason_when_the_body_matched_too():
             sort_by="last_modified_desc",
         )
         assert "match_reasons" not in unfiltered
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_reasons_are_scoped_to_the_browse_field_set():
+    """Fix round 1 (2): a wider field set gets NO reasons, not wrong ones.
+
+    ``search_media_db``'s text branch ORs the author/type LIKE legs beside
+    title/content when those fields are asked for, while the probe only
+    re-evaluates title and content. A row the AUTHOR leg put on the page
+    would therefore look keyword-only. The channel is the Library browse's
+    own, so it is emitted for exactly its field triple and for nothing else.
+    """
+    db = Database(db_path=":memory:", client_id="library-match-reason-fields")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Session one",
+            content="A body about nothing.",
+            media_type="article",
+            keywords=["roadmap"],
+            author="Roadmap Team",
+        )
+        service = LocalMediaReadingService(db)
+
+        widened = service.search_media(
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+            fields=["title", "content", "author", "keywords"],
+        )
+        assert [row["id"] for row in widened["items"]] == [tagged_id]
+        assert "match_reasons" not in widened
+
+        browse = service.search_media(
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+            fields=list(LIBRARY_BROWSE_SEARCH_FIELDS),
+        )
+        assert browse["match_reasons"] == {tagged_id: "roadmap"}
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_page_survives_a_failing_match_reason_probe():
+    """Fix round 1 (3): the reason is decoration, never a page failure."""
+    db = Database(db_path=":memory:", client_id="library-match-reason-failure")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Opening remarks",
+            content="Transcript of the opening session.",
+            media_type="article",
+            keywords=["day2"],
+        )
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        db._library_browse_keyword_only_matches = _boom
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert [item["backing_media_id"] for item in payload["items"]] == [tagged_id]
+        assert payload["match_reasons"] == {}
     finally:
         db.close_connection()
