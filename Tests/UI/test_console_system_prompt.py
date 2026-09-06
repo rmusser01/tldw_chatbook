@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
+from Tests.UI.consolidated_css import app_css_text
 from Tests.UI.test_console_native_chat_flow import (
     _configure_native_ready_console,
     _static_plain_text,
@@ -52,7 +53,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTIC_TERMINAL = (
     REPO_ROOT / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
 )
-BUNDLED_STYLESHEET = REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 
 NO_SYSTEM_PART_COPY = 'Prompt "NoSystem" has no system part.'
 NAME_IN_USE_COPY = "Name already in use — pick another or open the existing prompt."
@@ -157,6 +157,9 @@ async def test_console_rail_system_line_click_opens_editor_modal():
 
         rail_body = console.query_one("#console-left-rail-body")
         system_line = console.query_one("#console-rail-system-line")
+        await pilot.click("#console-rail-section-header-model")
+        await pilot.pause()
+        assert system_line.region.height > 0
         rail_body.scroll_to_widget(system_line, animate=False)
         await pilot.pause(0.1)
 
@@ -903,15 +906,11 @@ def _css_block(text: str, selector: str) -> str:
 
 
 def test_system_prompt_modal_and_rail_line_css_pinned_in_source_and_bundle():
-    """The modal/rail-line ids/classes must be styled in BOTH the module
-    source (``_agentic_terminal.tcss``) and the generated bundle
-    (``tldw_cli_modular.tcss``) -- proves ``build_css.py`` was re-run after
-    the source edit, mirroring ``test_console_prompt_picker.py``'s dual-file
-    CSS-parity discipline for this feature branch."""
+    """Pin the source and generated app styling, including lazy screen sheets."""
     agentic_terminal = AGENTIC_TERMINAL.read_text(encoding="utf-8")
-    bundled_stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    generated_stylesheets = app_css_text()
 
-    for text in (agentic_terminal, bundled_stylesheet):
+    for text in (agentic_terminal, generated_stylesheets):
         for selector in (
             "ConsoleSystemPromptModal {",
             "#console-system-prompt-modal {",
