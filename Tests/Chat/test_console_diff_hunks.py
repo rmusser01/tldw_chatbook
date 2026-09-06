@@ -113,8 +113,12 @@ def test_multi_hunk_diff_segments_into_two_hunks_with_verbatim_headers(diff_fixt
     assert len(hunks) == 2
 
     all_lines = text.splitlines()
-    expected_header_1 = next(l for l in all_lines if l.startswith("@@ -3,7 +3,7 @@"))
-    expected_header_2 = next(l for l in all_lines if l.startswith("@@ -28,7 +28,7 @@"))
+    expected_header_1 = next(
+        line for line in all_lines if line.startswith("@@ -3,7 +3,7 @@")
+    )
+    expected_header_2 = next(
+        line for line in all_lines if line.startswith("@@ -28,7 +28,7 @@")
+    )
     assert hunks[0].header == expected_header_1
     assert hunks[1].header == expected_header_2
 

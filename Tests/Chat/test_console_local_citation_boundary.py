@@ -69,7 +69,6 @@ from Tests.console_provider_doubles import provider_resolution, with_destination
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Chat.citation_trace_repository import (
-    CitationFingerprintCodec,
     CitationProvenanceRuntimePolicy,
     CitationTraceRepository,
     load_local_citation_identity_context,
