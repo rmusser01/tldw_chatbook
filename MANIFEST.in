@@ -14,6 +14,7 @@ recursive-include tldw_chatbook/Evals/eval_datasets *.json
 recursive-include tldw_chatbook/Image_Generation/workflows *.json
 recursive-include tldw_chatbook/Video_Generation/workflows *.json
 recursive-include tldw_chatbook/css *.tcss *.css
+recursive-include tldw_chatbook/Web_Server/static *
 include tldw_chatbook/TTS/audio_cpp_artifact_manifest.json
 include tldw_chatbook/assets/tiktoken_cache/0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4
 include tldw_chatbook/assets/tiktoken_cache/6c7ea1a7e38e3a7f062df639a5b80947f075ffe6
@@ -57,3 +58,7 @@ recursive-exclude * .DS_Store
 global-exclude *.pyc
 global-exclude *.pyo
 global-exclude __pycache__
+
+# Bundled pixel-migu character resources.
+recursive-include tldw_chatbook/assets/characters/pixel_migu *.json *.png *.md
+recursive-include tldw_chatbook/assets/persona_visual/pixel_migu *.json *.png *.md

@@ -5,6 +5,7 @@ The bridge tests drive the real run loop with a scripted gateway whose
 streaming callback writes files mid-turn: that is literally the run-window
 side effect the feature exists to catch.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -72,9 +73,7 @@ def root(tmp_path) -> Path:
 
 @pytest.fixture()
 def tracker(tmp_path) -> ChangeTurnTracker:
-    return ChangeTurnTracker(
-        service=ShadowRepoService(data_dir=tmp_path / "appdata")
-    )
+    return ChangeTurnTracker(service=ShadowRepoService(data_dir=tmp_path / "appdata"))
 
 
 # -- tracker level ----------------------------------------------------------
@@ -133,9 +132,7 @@ def test_snapshot_preserves_a_new_ordinary_symlink(tracker, root):
     assert repo.last_oversize_excluded == ()
 
 
-def test_snapshot_drops_a_gitlink_that_appears_after_scan(
-    tracker, root, monkeypatch
-):
+def test_snapshot_drops_a_gitlink_that_appears_after_scan(tracker, root, monkeypatch):
     import subprocess as _sp
 
     handle = tracker.begin_turn([root])
@@ -253,9 +250,7 @@ def test_snapshot_drops_a_gitlink_replacing_a_tip_regular_file_after_scan(
     assert str(repo._run("ls-files", "--stage", "--", child.name).stdout) == ""
 
 
-def test_snapshot_removes_tip_entries_when_directory_becomes_nested_repo(
-    tracker, root
-):
+def test_snapshot_removes_tip_entries_when_directory_becomes_nested_repo(tracker, root):
     import subprocess as _sp
 
     child = root / "child"
@@ -298,15 +293,12 @@ def test_final_index_validation_uses_nul_delimited_force_removals(
 ):
     repo = tracker.service.repo_for_root(root)
     ordinary_paths = tuple(
-        f"nested/dir-{index:05d}/{'x' * 180}-{index:05d}.txt"
-        for index in range(20_000)
+        f"nested/dir-{index:05d}/{'x' * 180}-{index:05d}.txt" for index in range(20_000)
     )
     overlong = f"nested/{'y' * 5_000}"
     paths = (*ordinary_paths[:10_000], overlong, *ordinary_paths[10_000:])
     object_id = "a" * 40
-    stage_entries = tuple(
-        f"100644 {object_id} 0\t{path}" for path in paths
-    )
+    stage_entries = tuple(f"100644 {object_id} 0\t{path}" for path in paths)
     calls: list[tuple[tuple[str, ...], dict]] = []
 
     def fake_z_tokens(*args):
@@ -347,8 +339,7 @@ def test_exact_force_add_paths_use_nul_delimited_stdin(
     repo = tracker.service.repo_for_root(root)
     repo.snapshot("initial")
     ordinary_paths = tuple(
-        f"ignored/dir-{index:05d}/{'x' * 180}-{index:05d}.txt"
-        for index in range(2_000)
+        f"ignored/dir-{index:05d}/{'x' * 180}-{index:05d}.txt" for index in range(2_000)
     )
     overlong = f"ignored/{'y' * 5_000}"
     paths = (*ordinary_paths[:1_000], overlong, *ordinary_paths[1_000:])
@@ -417,9 +408,7 @@ def test_force_add_refreshes_ignored_executable_bytes_and_mode(tracker, root):
     target.chmod(0o755)
     repo = tracker.service.repo_for_root(root)
     first = repo.snapshot("first executable", force_paths=[target.name])
-    first_mode = str(
-        repo._run("ls-tree", first, "--", target.name).stdout
-    ).split()[0]
+    first_mode = str(repo._run("ls-tree", first, "--", target.name).stdout).split()[0]
     if first_mode != "100755":
         pytest.skip("filesystem does not expose executable bits to Git")
 
@@ -650,9 +639,7 @@ def test_snapshot_force_path_file_to_directory_swap_never_stages_descendants(
     assert tip == baseline or repo.file_bytes(tip, child_rel) is None
 
 
-def test_force_add_file_to_directory_swap_never_stages_descendants(
-    tracker, root
-):
+def test_force_add_file_to_directory_swap_never_stages_descendants(tracker, root):
     target = root / "race-target"
     child_rel = "race-target/ignored-child.txt"
     replacement = root.parent / "force-add-replacement"
@@ -939,10 +926,7 @@ def test_snapshot_force_path_drops_file_when_nested_marker_appears_during_final_
 
     def create_marker_before_index(self, *args, **kwargs):
         nonlocal exact_stages
-        if (
-            self.root == root.resolve()
-            and args[:2] == ("update-index", "--add")
-        ):
+        if self.root == root.resolve() and args[:2] == ("update-index", "--add"):
             exact_stages += 1
             if exact_stages == 2:
                 (child / ".git").mkdir()
@@ -1048,12 +1032,15 @@ def test_supplied_boundary_does_not_leak_force_paths_to_another_conversation(
     unrelated.await_baseline()
     target.write_bytes(expected)
 
-    assert tracker.end_turn(
-        continuation,
-        touched_paths=[str(target)],
-        end_shas=successor.baselines,
-        successor_handle=successor,
-    ) == []
+    assert (
+        tracker.end_turn(
+            continuation,
+            touched_paths=[str(target)],
+            end_shas=successor.baselines,
+            successor_handle=successor,
+        )
+        == []
+    )
 
     assert tracker.end_turn(unrelated) == []
     successor_records = tracker.end_turn(successor)
@@ -1083,12 +1070,15 @@ def test_supplied_sha_deferred_file_growing_before_successor_e_is_disclosed(
     supplied = successor.baselines[key]
     target.write_bytes(b"small")
 
-    assert tracker.end_turn(
-        continuation,
-        touched_paths=[str(target)],
-        end_shas=successor.baselines,
-        successor_handle=successor,
-    ) == []
+    assert (
+        tracker.end_turn(
+            continuation,
+            touched_paths=[str(target)],
+            end_shas=successor.baselines,
+            successor_handle=successor,
+        )
+        == []
+    )
     assert continuation.end_shas[key] == supplied
     repo = tracker.service.repo_for_root(root)
     assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
@@ -1127,12 +1117,15 @@ def test_supplied_sha_deferred_path_becoming_nested_before_successor_e_is_disclo
     supplied = successor.baselines[key]
     target.write_text("must stay child-owned\n")
 
-    assert tracker.end_turn(
-        continuation,
-        touched_paths=[str(target)],
-        end_shas=successor.baselines,
-        successor_handle=successor,
-    ) == []
+    assert (
+        tracker.end_turn(
+            continuation,
+            touched_paths=[str(target)],
+            end_shas=successor.baselines,
+            successor_handle=successor,
+        )
+        == []
+    )
     assert continuation.end_shas[key] == supplied
     repo = tracker.service.repo_for_root(root)
     assert str(repo._run("ls-files", "--", target_rel).stdout).strip() == ""
@@ -1171,12 +1164,15 @@ def test_supplied_sha_deferred_path_treats_pathspec_magic_as_a_literal_filename(
     target.write_bytes(expected)
     sibling.write_text("must stay ignored\n")
 
-    assert tracker.end_turn(
-        continuation,
-        touched_paths=[str(target)],
-        end_shas=successor.baselines,
-        successor_handle=successor,
-    ) == []
+    assert (
+        tracker.end_turn(
+            continuation,
+            touched_paths=[str(target)],
+            end_shas=successor.baselines,
+            successor_handle=successor,
+        )
+        == []
+    )
     successor_records = tracker.end_turn(successor)
 
     assert len(successor_records) == 1
@@ -1341,10 +1337,7 @@ def test_deferred_force_path_snapshot_failure_is_disclosed_by_successor(
     assert records[0].end_sha == supplied
     assert records[0].tracking_error == ""
     assert len(successor_records) == 1
-    assert (
-        successor_records[0].tracking_error
-        == "injected deferred snapshot failure"
-    )
+    assert successor_records[0].tracking_error == "injected deferred snapshot failure"
 
 
 def test_invalid_supplied_sha_does_not_defer_or_stage_the_path(tracker, root):
@@ -1372,9 +1365,7 @@ def test_invalid_supplied_sha_does_not_defer_or_stage_the_path(tracker, root):
     assert str(repo._run("ls-files", "--", target.name).stdout).strip() == ""
 
 
-def test_supplied_sha_preserves_nonempty_continuation_range_statistics(
-    tracker, root
-):
+def test_supplied_sha_preserves_nonempty_continuation_range_statistics(tracker, root):
     parent = tracker.begin_turn([root])
     parent.await_baseline()
     assert tracker.end_turn(parent) == []
@@ -1518,9 +1509,7 @@ class _SideEffectGateway:
     bridge test failed with an empty run.
     """
 
-    def __init__(
-        self, scripts, side_effect=None, explode=False, side_effect_on_call=1
-    ):
+    def __init__(self, scripts, side_effect=None, explode=False, side_effect_on_call=1):
         self._scripts = list(scripts)
         self._side_effect = side_effect
         self._explode = explode
@@ -1621,9 +1610,7 @@ def test_bridge_run_with_no_changes_records_no_row(tmp_path, root, tracker):
     assert db.change_snapshots_for_run(run_id) == []
 
 
-def test_bridge_returns_before_coordinated_end_snapshot_finishes(
-    tmp_path, root
-):
+def test_bridge_returns_before_coordinated_end_snapshot_finishes(tmp_path, root):
     end_entered = threading.Event()
     release_end = threading.Event()
 
@@ -1635,9 +1622,7 @@ def test_bridge_returns_before_coordinated_end_snapshot_finishes(
                 handle, touched_paths=touched_paths, end_shas=end_shas
             )
 
-    tracker = _HeldEndTracker(
-        service=ShadowRepoService(data_dir=tmp_path / "appdata")
-    )
+    tracker = _HeldEndTracker(service=ShadowRepoService(data_dir=tmp_path / "appdata"))
     gateway = _SideEffectGateway(
         [[_calc_fence()], ["done."]],
         side_effect_on_call=2,
@@ -1761,9 +1746,7 @@ def test_bridge_does_not_append_capacity_marker_after_coordinator_shutdown(
     ]
 
 
-def test_third_turn_starts_while_second_review_finalization_is_held(
-    tmp_path, root
-):
+def test_third_turn_starts_while_second_review_finalization_is_held(tmp_path, root):
     second_end_entered = threading.Event()
     release_second_end = threading.Event()
 
@@ -1825,9 +1808,7 @@ def test_third_turn_starts_while_second_review_finalization_is_held(
     second_assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    second_run_id, _second_outcome = _run(
-        bridge, session, second_assistant.id, root
-    )
+    second_run_id, _second_outcome = _run(bridge, session, second_assistant.id, root)
     bridge.record_run_assistant_message(second_run_id, "persisted-second")
     assert db.get_run(second_run_id)["assistant_message_id"] == "persisted-second"
     assert second_end_entered.wait(timeout=1)
@@ -1854,9 +1835,7 @@ def test_third_turn_starts_while_second_review_finalization_is_held(
     coordinator.shutdown(timeout=1)
 
 
-def test_cancelled_turn_still_schedules_coordinated_finalization(
-    tmp_path, root
-):
+def test_cancelled_turn_still_schedules_coordinated_finalization(tmp_path, root):
     tracker = ChangeTurnTracker(
         service=ShadowRepoService(data_dir=tmp_path / "appdata")
     )
@@ -1965,9 +1944,7 @@ def test_review_runs_before_baseline_gate_and_tool_dispatch_waits(tmp_path, root
         events.append("review-called")
         return {}
 
-    run_id, outcome = _run(
-        bridge, session, aid, root, review_tool_calls=probe_review
-    )
+    run_id, outcome = _run(bridge, session, aid, root, review_tool_calls=probe_review)
 
     assert "baseline-finished" in events and "review-called" in events
     assert events.index("review-called") < events.index("baseline-finished"), (
@@ -2126,9 +2103,7 @@ def test_carveout_survives_a_symlink_spelled_root(tmp_path):
     handle.await_baseline()
     (real_root / ".env").write_text("SECRET=1\n")
 
-    records = tracker.end_turn(
-        handle, touched_paths=[str(real_root / ".env")]
-    )
+    records = tracker.end_turn(handle, touched_paths=[str(real_root / ".env")])
 
     assert len(records) == 1 and not records[0].tracking_error
     changed = tracker.service.repo_for_root(real_root).changed_files(
@@ -2152,9 +2127,7 @@ def _tool_rows(store, session):
     ]
 
 
-def test_a_change_turn_emits_the_summary_row_with_real_counts(
-    tmp_path, root, tracker
-):
+def test_a_change_turn_emits_the_summary_row_with_real_counts(tmp_path, root, tracker):
     gateway = _SideEffectGateway(
         [[_calc_fence()], ["done."]],
         side_effect_on_call=2,
@@ -2177,9 +2150,7 @@ def test_a_clean_turn_emits_no_summary_row(tmp_path, root, tracker):
     gateway = _SideEffectGateway([["done."]])
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
     _run(bridge, session, aid, root)
-    assert not [
-        m for m in _tool_rows(store, session) if m.content.startswith("✎")
-    ]
+    assert not [m for m in _tool_rows(store, session) if m.content.startswith("✎")]
 
 
 def test_tracking_failure_emits_the_warning_row(tmp_path, root):
@@ -2192,9 +2163,7 @@ def test_tracking_failure_emits_the_warning_row(tmp_path, root):
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, broken)
     _run(bridge, session, aid, root)
     warns = [
-        m
-        for m in _tool_rows(store, session)
-        if "change tracking failed" in m.content
+        m for m in _tool_rows(store, session) if "change tracking failed" in m.content
     ]
     assert len(warns) == 1, "a tracking failure must be DISCLOSED in the transcript"
 
@@ -2219,9 +2188,7 @@ def test_skipped_review_root_emits_alias_only_warning_without_snapshot_state(
         aid,
         tmp_path / "unused-root",
         change_roots=[],
-        change_review_skipped_roots=(
-            SkippedReviewRoot(alias=alias, reason=reason),
-        ),
+        change_review_skipped_roots=(SkippedReviewRoot(alias=alias, reason=reason),),
     )
 
     assert outcome.status == "done"
@@ -2248,9 +2215,7 @@ def test_summary_row_survives_the_next_message(tmp_path, root, tracker):
     )
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
     _run(bridge, session, aid, root)
-    store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="follow-up"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="follow-up")
     rows = [m for m in _tool_rows(store, session) if m.content.startswith("✎")]
     assert len(rows) == 1, "the summary row was destroyed by the next message"
 
@@ -2265,14 +2230,10 @@ def test_resume_re_derives_the_summary_row_byte_identical(tmp_path, root, tracke
     )
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
     run_id, _ = _run(bridge, session, aid, root)
-    live = [
-        m for m in _tool_rows(store, session) if m.content.startswith("✎")
-    ]
+    live = [m for m in _tool_rows(store, session) if m.content.startswith("✎")]
     assert live, "precondition"
 
-    fresh = ConsoleAgentBridge(
-        agent_runs_db=db, store=None, provider_gateway=None
-    )
+    fresh = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     resumed = [
         m
         for _anchor, block in fresh.resume_marker_messages("conv-1")
@@ -2310,17 +2271,13 @@ def test_review_changes_action_offered_only_for_summary_rows():
         role=ConsoleMessageRole.TOOL, content="⚙ calculator → 42"
     )
     svc = ConsoleMessageActionService()
-    assert "review-changes" in [
-        a.action_id for a in svc.available_actions(summary)
-    ]
+    assert "review-changes" in [a.action_id for a in svc.available_actions(summary)]
     assert "review-changes" not in [
         a.action_id for a in svc.available_actions(plain_marker)
     ]
 
 
-def test_bridge_exposes_a_provider_for_the_review_screen(
-    tmp_path, root, tracker
-):
+def test_bridge_exposes_a_provider_for_the_review_screen(tmp_path, root, tracker):
     gateway = _SideEffectGateway(
         [[_calc_fence()], ["done."]],
         side_effect_on_call=2,
@@ -2411,8 +2368,8 @@ async def test_the_opener_pushes_the_screen_and_selects_the_turn(
         # The run-store id for the harness's session is the session id
         # itself (no persisted conversation) -- point the bridge's provider
         # at the id the run actually recorded under instead.
-        chat_screen._console_chat_controller._agent_conversation_id = (
-            lambda _sid: "conv-1"
+        chat_screen._console_chat_controller._agent_conversation_id = lambda _sid: (
+            "conv-1"
         )
 
         chat_screen._open_change_review(run_id)
@@ -2456,9 +2413,7 @@ async def test_the_summary_rows_own_review_action_opens_the_screen(
 
     run_id, outcome = await _asyncio.to_thread(_run, bridge, session, aid, root)
     assert outcome.status not in ("error",), outcome.steps
-    marker = next(
-        m for m in _tool_rows(store, session) if m.content.startswith("✎")
-    )
+    marker = next(m for m in _tool_rows(store, session) if m.content.startswith("✎"))
     assert marker.change_review_run_id == run_id
 
     class _ConsoleHarness(ConsolidatedCSSApp):
@@ -2493,8 +2448,8 @@ async def test_the_summary_rows_own_review_action_opens_the_screen(
         chat_screen._ensure_console_chat_controller()
         controller = chat_screen._console_chat_controller
         assert controller is not None
-        chat_screen._console_chat_controller._agent_conversation_id = (
-            lambda _sid: "conv-1"
+        chat_screen._console_chat_controller._agent_conversation_id = lambda _sid: (
+            "conv-1"
         )
         await chat_screen._sync_native_console_transcript()
         await pilot.pause()
@@ -2574,9 +2529,7 @@ def test_resume_re_derives_the_failure_row_too(tmp_path, root):
     ]
     assert live, "precondition: the live run disclosed the failure"
 
-    fresh = ConsoleAgentBridge(
-        agent_runs_db=db, store=None, provider_gateway=None
-    )
+    fresh = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     resumed = [
         m.content
         for _anchor, block in fresh.resume_marker_messages("conv-1")
@@ -2637,9 +2590,7 @@ class _FleetSurvivorGateway:
             with self._lock:
                 self.child_calls += 1
                 first_call = self.child_calls == 1
-                chunks = (
-                    self._child.pop(0) if self._child else ["child answer"]
-                )
+                chunks = self._child.pop(0) if self._child else ["child answer"]
             loop = asyncio.get_running_loop()
             if first_call:
                 self.child_started.set()
@@ -2676,9 +2627,7 @@ class _FleetSurvivorGateway:
 def _spawn_fence(task: str) -> str:
     return (
         f"{FENCE_OPEN}\n"
-        + json.dumps(
-            {"name": "spawn_subagent", "arguments": {"task": task}}
-        )
+        + json.dumps({"name": "spawn_subagent", "arguments": {"task": task}})
         + "\n```"
     )
 
@@ -2905,8 +2854,7 @@ def test_pending_child_before_scope_entry_keeps_ignored_write_reviewable(
     )
     assert [item.path for item in changed] == [target.name], changed
     assert (
-        repo.file_bytes(survivor_rows[0]["end_sha"], target.name)
-        == sentinel.encode()
+        repo.file_bytes(survivor_rows[0]["end_sha"], target.name) == sentinel.encode()
     )
 
 
@@ -3108,9 +3056,7 @@ def test_child_write_during_blocked_parent_e_is_retried_by_immediate_close(
         )
 
         rows = db.change_snapshots_for_run(run_id)
-        survivor_rows = [
-            row for row in rows if row["kind"] == "subagent_post_turn"
-        ]
+        survivor_rows = [row for row in rows if row["kind"] == "subagent_post_turn"]
         assert len(survivor_rows) == 1, (
             "the pre-scope child's ignored WRITE path published during E was "
             f"omitted from immediate survivor close: {rows}"
@@ -3203,15 +3149,12 @@ def test_settled_child_before_parent_e_keeps_ignored_write_reviewable(
     rows = db.change_snapshots_for_run(run_id)
     turn_rows = [row for row in rows if row["kind"] == "turn"]
     assert len(turn_rows) == 1, (
-        "the settled child's local WRITE state was omitted from parent E: "
-        f"{rows}"
+        f"the settled child's local WRITE state was omitted from parent E: {rows}"
     )
     assert not [row for row in rows if row["kind"] == "subagent_post_turn"], rows
     assert bridge._post_turn_change_windows.get("conv-1") is None
     repo = tracker.service.repo_for_root(root)
-    changed = repo.changed_files(
-        turn_rows[0]["baseline_sha"], turn_rows[0]["end_sha"]
-    )
+    changed = repo.changed_files(turn_rows[0]["baseline_sha"], turn_rows[0]["end_sha"])
     assert [item.path for item in changed] == [target.name], changed
     assert repo.file_bytes(turn_rows[0]["end_sha"], target.name) == sentinel.encode()
 
@@ -3273,7 +3216,8 @@ def test_child_write_path_normalization_failure_is_best_effort(
             len(steps) == 1
             and steps[0].kind == STEP_TOOL_CALL
             and steps[0].tool_name == "write_file"
-            and steps[0].args == {
+            and steps[0].args
+            == {
                 "file_path": target.name,
                 "content": sentinel,
             }
@@ -3440,10 +3384,7 @@ def test_a_survivors_write_after_its_turn_lands_in_a_change_record(
 
     assert (root / "survivor.txt").exists(), "precondition: the child wrote"
     rows = db.change_snapshots_for_run(run_id)
-    assert len(rows) == 1, (
-        "the survivor's write landed in NO change record: "
-        f"{rows}"
-    )
+    assert len(rows) == 1, f"the survivor's write landed in NO change record: {rows}"
     row = rows[0]
     assert row["files_changed"] == 1, row
     changed = tracker.service.repo_for_root(root).changed_files(
@@ -3525,9 +3466,7 @@ def test_a_survivors_write_during_the_next_turn_is_disclosed_on_it(
     )
 
 
-def test_a_survivors_write_racing_the_next_baseline_is_still_reviewable(
-    tmp_path, root
-):
+def test_a_survivors_write_racing_the_next_baseline_is_still_reviewable(tmp_path, root):
     """The audit's second half: a survivor's tool dispatch passes turn 1's
     ALREADY-SATISFIED `await_baseline()`, so it is gated on nothing while
     turn 2's baseline is being taken -- and a write during that window is
@@ -3604,8 +3543,7 @@ def test_a_survivors_write_racing_the_next_baseline_is_still_reviewable(
     )
     rows_1 = db.change_snapshots_for_run(run_1)
     assert len(rows_1) == 1, (
-        "a write that raced the next turn's baseline is in NO record: "
-        f"{rows_1}"
+        f"a write that raced the next turn's baseline is in NO record: {rows_1}"
     )
     changed = tracker.service.repo_for_root(root).changed_files(
         rows_1[0]["baseline_sha"], rows_1[0]["end_sha"]
@@ -3613,9 +3551,7 @@ def test_a_survivors_write_racing_the_next_baseline_is_still_reviewable(
     assert [c.path for c in changed] == ["raced.txt"], changed
 
 
-def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(
-    tmp_path, root
-):
+def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(tmp_path, root):
     """CHARACTERISATION (green before and after this task's fix): the
     mechanism behind the test above.
 
@@ -3669,9 +3605,7 @@ def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(
         return {}
 
     try:
-        run_1, outcome_1 = _run(
-            bridge, session, aid, root, review_tool_calls=review
-        )
+        run_1, outcome_1 = _run(bridge, session, aid, root, review_tool_calls=review)
         assert outcome_1.status == "done"
         assert gateway.child_started.wait(5), "the child never started"
         child_run_ids.extend(
@@ -3697,9 +3631,7 @@ def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(
         for index, event in enumerate(events)
         if event == f"review:{child_run_ids[0]}"
     ]
-    assert child_reviews, (
-        f"the survivor never dispatched a tool after turn 1: {events}"
-    )
+    assert child_reviews, f"the survivor never dispatched a tool after turn 1: {events}"
     baseline_done = events.index("baseline-finished")
     assert child_reviews[0] < baseline_done, (
         "the survivor's tool batch waited for turn 2's baseline (it does "
@@ -3795,14 +3727,8 @@ def test_the_survivor_window_ends_exactly_where_the_next_turn_begins(
     # re-derive it in -- BEFORE the next turn's own row, since it belongs
     # to the earlier turn's block. (Closing the window as a side effect of
     # opening the next one produces the same record in the wrong place.)
-    live = [
-        m.content
-        for m in _tool_rows(store, session)
-        if m.content.startswith("✎")
-    ]
-    fresh = ConsoleAgentBridge(
-        agent_runs_db=db, store=None, provider_gateway=None
-    )
+    live = [m.content for m in _tool_rows(store, session) if m.content.startswith("✎")]
+    fresh = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     resumed = [
         m.content
         for _anchor, block in fresh.resume_marker_messages("conv-1")
@@ -3839,9 +3765,7 @@ def test_a_child_that_finishes_inside_its_turn_opens_no_survivor_window(
     rows = db.change_snapshots_for_run(run_id)
     assert [r["kind"] for r in rows] == ["turn"], rows
     assert not [
-        m
-        for m in _tool_rows(store, session)
-        if "after this turn" in m.content
+        m for m in _tool_rows(store, session) if "after this turn" in m.content
     ], "a survivor row was emitted for a child that never survived"
 
 
@@ -3866,14 +3790,10 @@ def test_a_turn_without_a_foreign_survivor_is_not_stamped_concurrent(
     _join_fleet_threads()
 
     assert [r["kind"] for r in db.change_snapshots_for_run(run_id)] == ["turn"]
-    assert not [
-        m for m in _tool_rows(store, session) if "earlier turn" in m.content
-    ]
+    assert not [m for m in _tool_rows(store, session) if "earlier turn" in m.content]
 
 
-def test_resume_re_derives_the_survivor_rows_byte_identical(
-    tmp_path, root, tracker
-):
+def test_resume_re_derives_the_survivor_rows_byte_identical(tmp_path, root, tracker):
     """Both new transcript rows are re-derived from the stored `kind`.
 
     Without the column a post-turn row and a turn row are indistinguishable
@@ -3918,18 +3838,14 @@ def test_resume_re_derives_the_survivor_rows_byte_identical(
     ]
     assert len(live) >= 2, live
 
-    fresh = ConsoleAgentBridge(
-        agent_runs_db=db, store=None, provider_gateway=None
-    )
+    fresh = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     resumed = [
         m.content
         for _anchor, block in fresh.resume_marker_messages("conv-1")
         for m in block
         if m.content.startswith("✎") or "earlier turn" in m.content
     ]
-    assert resumed == live, (
-        "the survivor rows did not survive resume byte-identical"
-    )
+    assert resumed == live, "the survivor rows did not survive resume byte-identical"
 
 
 def test_opening_a_window_whose_last_child_already_left_closes_it_at_once(
@@ -4333,9 +4249,7 @@ def test_successor_b_rejects_a_completed_but_failed_fresh_close(
 
     def close_old_window() -> None:
         try:
-            owner_results.append(
-                bridge._close_post_turn_change_window("conv-1")
-            )
+            owner_results.append(bridge._close_post_turn_change_window("conv-1"))
         except BaseException as exc:  # noqa: BLE001 -- asserted below
             failures.append(exc)
 
@@ -4524,15 +4438,18 @@ def test_successor_b_freezes_paths_atomically_with_older_publication(
         if row["baseline_sha"] and row["end_sha"]
     )
     successor_rows = db.change_snapshots_for_run(run_id)
-    assert sum(
-        target.name
-        in [
-            item.path
-            for item in repo.changed_files(row["baseline_sha"], row["end_sha"])
-        ]
-        for row in successor_rows
-        if row["baseline_sha"] and row["end_sha"]
-    ) == 1
+    assert (
+        sum(
+            target.name
+            in [
+                item.path
+                for item in repo.changed_files(row["baseline_sha"], row["end_sha"])
+            ]
+            for row in successor_rows
+            if row["baseline_sha"] and row["end_sha"]
+        )
+        == 1
+    )
     assert window.close_done.is_set()
 
 
@@ -4726,8 +4643,7 @@ def test_inherited_child_write_waits_for_claimed_successor_baseline(
         ]
 
     assert not any(
-        target.name in changed_paths(row)
-        for row in db.change_snapshots_for_run(run_1)
+        target.name in changed_paths(row) for row in db.change_snapshots_for_run(run_1)
     )
     successor_rows = [
         row
@@ -4859,9 +4775,7 @@ def test_successor_e_waits_for_close_time_force_path_handoff(
     ]
     assert len(rows_with_target) == 1, successor_rows
     assert rows_with_target[0]["baseline_sha"] == baseline
-    assert (
-        repo.file_bytes(rows_with_target[0]["end_sha"], target.name) == expected
-    )
+    assert repo.file_bytes(rows_with_target[0]["end_sha"], target.name) == expected
     assert not db.change_snapshots_for_run(old_run_id)
 
 
@@ -5288,9 +5202,7 @@ def test_claim_and_close_failures_release_waiters_without_breaking_runs(
     def close_claimed_window() -> None:
         claim_close_started.set()
         try:
-            claim_close_results.append(
-                bridge._close_post_turn_change_window("conv-1")
-            )
+            claim_close_results.append(bridge._close_post_turn_change_window("conv-1"))
         except BaseException as exc:  # noqa: BLE001 -- asserted on test thread
             errors.append(exc)
         finally:
@@ -5457,9 +5369,7 @@ def test_inherited_child_state_crosses_successor_e_and_second_window_without_bac
         child_states=(inherited_state,),
     )
     bridge._post_turn_change_windows["conv-1"] = old_window
-    bridge._child_change_states["conv-1"] = {
-        inherited_state.owner_key: inherited_state
-    }
+    bridge._child_change_states["conv-1"] = {inherited_state.owner_key: inherited_state}
 
     try:
         successor_run_id, outcome = _run(

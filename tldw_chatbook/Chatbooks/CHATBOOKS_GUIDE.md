@@ -137,6 +137,9 @@ chatbook.zip
 │   ├── media/          # Media files (optional)
 │   ├── prompts/        # Custom prompts
 │   └── kept_briefings/ # Kept briefings (JSON + Markdown; scripts nested inside)
+├── canvas/               # V3 only: inert Canvas revision source entries
+│   └── <canvas-id>/
+│       └── <revision-id>.html.txt
 └── metadata/
     ├── relationships.json  # Content relationships
     └── embeddings/        # Vector embeddings (optional)
@@ -191,6 +194,68 @@ The manifest.json file contains:
 - Relationships between content items
 - Configuration settings
 - Statistics
+
+### Chatbook 3.0 Canvas extension
+
+An archive uses Chatbook format `3.0` only when it contains Canvas records.
+Exports without Canvas records remain eligible for format `2.0`, preserving
+compatibility with readers that do not know about Canvas. The root manifest's
+`canvas` member has this source-free shape:
+
+- `extension_version`: exactly `1.0` for this contract.
+- `total_source_bytes`: the exact sum of every revision's UTF-8 byte count.
+- `documents`: stable Canvas identity records.
+- `reopen_hints`: at most one local, non-authoritative last-used Canvas hint
+  per included conversation.
+
+Each document records `canvas_id`, its owning `conversation_id`, `created_at`,
+optional `deleted_at`, and its complete `revisions` graph. Each revision
+records:
+
+- `revision_id`, optional `parent_revision_id`, and its positive, contiguous
+  per-Canvas `sequence`;
+- revisioned `title` and `runtime_profile`;
+- canonical inert `source_path`, lowercase `content_sha256`, and exact
+  `source_bytes` for the separate source entry;
+- `actor_kind` (`assistant`, `user_rename`, or `user_import`),
+  `origin_message_id`, `origin_turn_id`, `created_at`, and optional
+  `deleted_at`.
+
+Canvas and revision IDs are canonical lowercase UUIDs. A source entry has the
+only accepted path `canvas/<canvas-id>/<revision-id>.html.txt`. Runnable
+`.html` names, absolute paths, backslashes, traversal, Unicode/case aliases,
+and a path that disagrees with its manifest identities are invalid. Source is
+strict UTF-8 text and remains an inert archive member: listing, previewing, or
+validating a Chatbook must never render, compile, or execute it. Manifest
+representations and errors contain metadata only, never source text.
+
+Format `3.0` applies these ceilings before database mutation:
+
+- 1,000 Canvas documents and 100 revisions per Canvas (100,000 revisions in
+  one archive);
+- 512 KiB of source per revision and 512 MiB of Canvas source in one archive;
+- 10,000 reopen hints, a 4 KiB UTF-8 title, 256-byte conversation/message/turn
+  identifiers, and a 64-byte runtime-profile identifier;
+- the archive model and durable destination both enforce per-conversation
+  limits of 10 Canvases and 50 MiB of total Canvas source.
+
+Deletion timestamps preserve tombstones; they do not remove ancestry. A
+reopen hint may name only a non-deleted Canvas owned by that same included
+conversation, is restored as a convenience only, and never grants access or
+selects a branch by itself.
+
+When restoring the same identity, an identical digest is idempotent and an
+identity with different content is a conflict. “Import as new” remaps the
+conversation, message, Canvas, revision, parent, origin, and reopen-hint IDs
+together so both graphs retain their relationships. Partial or guessed
+ancestry is forbidden.
+
+Runtime-profile syntax is validated independently from runtime support. A
+well-formed unknown profile may be retained as inert metadata and source so a
+newer archive can be preserved, but it must not be executed, guessed,
+downgraded, or rendered as `canvas-v1`. Malformed profile identifiers fail
+closed. Execution requires an explicitly supported profile or a separately
+user-approved adaptation that creates a new revision.
 
 ## Error Handling
 

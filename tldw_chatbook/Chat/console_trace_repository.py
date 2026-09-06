@@ -1966,6 +1966,80 @@ class ConsoleTraceRepository:
         ).fetchone()
         return None if row is None else self._call(row)
 
+    def get_run_origin(
+        self, cursor: sqlite3.Cursor, run_id: str
+    ) -> TraceCallRecord | None:
+        """Read a chain's unique first reservation, refusing ambiguous ownership.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            run_id: Opaque provider-call chain identity.
+
+        Returns:
+            The sole sequence-zero call, or None if missing or ambiguous.
+
+        Raises:
+            ValueError: If run_id is not a non-empty string.
+        """
+        _nonempty(run_id, "run_id")
+        rows = cursor.execute(
+            self._call_select() + " WHERE run_id = ? AND call_sequence = 0 LIMIT 2",
+            (run_id,),
+        ).fetchall()
+        return self._call(rows[0]) if len(rows) == 1 else None
+
+    def has_unresolved_call_for_turn(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        turn_id: str,
+    ) -> bool:
+        """Check one owner's saved turn without materializing its call history.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            owner_id: Exact attached trace owner.
+            turn_id: Saved user-turn identity whose replay is being considered.
+
+        Returns:
+            Whether any call for this owner and turn remains unresolved.
+        """
+        # The existing owner-order index starts with (owner_id, turn_id).
+        return cursor.execute(
+            """SELECT 1 FROM console_trace_calls
+                WHERE owner_id = ? AND turn_id = ? AND state IN (?, ?, ?, ?)
+                LIMIT 1""",
+            (
+                owner_id,
+                turn_id,
+                TraceCallState.RESERVED.value,
+                TraceCallState.DISPATCH_STARTED.value,
+                TraceCallState.DISPATCH_UNKNOWN.value,
+                TraceCallState.RESPONSE_STARTED.value,
+            ),
+        ).fetchone() is not None
+
+    def get_latest_call_boundary(
+        self, cursor: sqlite3.Cursor, segment_id: str
+    ) -> TraceEventRecord | None:
+        """Read the latest reserved call in segment event order.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            segment_id: Local trace segment, excluding inherited fork history.
+
+        Returns:
+            The latest call boundary, or None for a segment without one.
+        """
+        row = cursor.execute(
+            self._event_select()
+            + " WHERE segment_id = ? AND event_type = 'call_boundary'"
+            + " ORDER BY sequence DESC LIMIT 1",
+            (segment_id,),
+        ).fetchone()
+        return None if row is None else TraceEventRecord(*row)
+
     @staticmethod
     def _reconcile_call_reservation(
         expected: tuple[str, str, str, str, int, str, str],

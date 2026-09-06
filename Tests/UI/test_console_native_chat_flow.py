@@ -137,6 +137,10 @@ from Tests.console_provider_doubles import provider_resolution, with_destination
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 _ASYNC_SETTLE_TIMEOUT = 10.0
+#: Shared polling budget for spin-wait loops (Qodo #2449 review): one place
+#: defines how long a wait may spin and how often it samples.
+_POLL_ATTEMPTS = 200
+_POLL_INTERVAL_SECONDS = 0.05
 
 
 
@@ -1498,6 +1502,74 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
         assert app.screen.query_one(
             "#settings-provider-return-continuation"
         ).display is False
+
+
+@pytest.mark.asyncio
+async def test_warm_console_resume_consumes_staged_chat_handoff():
+    """A CHAT handoff staged while away is consumed on the WARM revisit.
+
+    ChatScreen is reusable, so ``on_mount`` (which schedules the CHAT
+    handoff consumer) fires once per app run; a revisit runs only
+    ``on_screen_resume``. Regression (task-31808): the screen-reuse arc's
+    resume-path timer list omitted ``_consume_pending_chat_handoff``, so
+    every ``open_chat_with_handoff`` caller (Library, Media, Skills,
+    Study) staged a payload against the warm screen that was never
+    consumed -- silently, with no error. This drives the production
+    router end-to-end instead of mocking ``open_chat_with_handoff``.
+    """
+
+    app = _build_production_app(configured_default="chat")
+    async with app.run_test(size=(100, 30)) as pilot:
+        console = None
+        for _ in range(_POLL_ATTEMPTS):
+            content = app._navigation_outgoing_screen()
+            if isinstance(content, ChatScreen):
+                console = content
+                break
+            await pilot.pause(_POLL_INTERVAL_SECONDS)
+        assert console is not None
+        await _wait_for_selector(
+            console,
+            pilot,
+            "#console-native-composer",
+            timeout=10.0,
+        )
+
+        # Leave Chat so the return below is a warm revisit (resume only,
+        # no second on_mount) of the same reused instance.
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        for _ in range(_POLL_ATTEMPTS):
+            if isinstance(app.screen, SettingsScreen):
+                break
+            await pilot.pause(_POLL_INTERVAL_SECONDS)
+        assert isinstance(app.screen, SettingsScreen)
+
+        payload = ChatHandoffPayload(
+            source="library",
+            item_type="note",
+            title="Warm revisit handoff",
+            body="Body staged while the Console screen was suspended.",
+        )
+        app.open_chat_with_handoff(payload, action_label="Use in Console")
+        assert app.pending_handoffs.has_pending(HandoffChannel.CHAT)
+
+        for _ in range(_POLL_ATTEMPTS):
+            await pilot.pause(_POLL_INTERVAL_SECONDS)
+            if isinstance(
+                app.screen, ChatScreen
+            ) and not app.pending_handoffs.has_pending(HandoffChannel.CHAT):
+                break
+        assert isinstance(app.screen, ChatScreen)
+        # Warm-path premise: the router must have reused the cached
+        # instance -- a fresh instance would exercise on_mount instead.
+        assert app.screen is console
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CHAT)
+        # The payload landed in the staged-context lane rather than being
+        # silently dropped with the claim.
+        launch = console._pending_console_launch_context
+        assert launch is not None
+        assert launch.title == "Warm revisit handoff"
+        assert launch.source == "library"
 
 
 @pytest.mark.asyncio

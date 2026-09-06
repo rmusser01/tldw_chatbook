@@ -133,6 +133,18 @@ _CONTROLLER_GLOB = "*_controller.py"
 #: glob in `test_every_controller_file_has_a_budget_row` the moment they
 #: exist, and get their own row at that point).
 _BUDGETS: dict[str, int] = {
+    # 2026-09-05, wave-6 final review (`origin/dev` reconciliation merge):
+    # BOTH rows below are dev-side controllers, not this wave's work. Dev
+    # created `library_character_repair_controller.py` and `library_
+    # navigation_controller.py` without adding either to this table, so
+    # `test_every_controller_file_has_a_budget_row` -- the self-defending
+    # property this file exists for -- named them the moment the merge
+    # landed them here. That is the glob doing its job on someone else's
+    # miss; they are governed at this merge rather than left to whichever
+    # branch next trips the check. Pinned at their exact measured line
+    # counts (`len(path.read_text(encoding="utf-8").splitlines())`, this
+    # file's own `_measure` expression), no headroom.
+    "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 502,
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
@@ -217,6 +229,14 @@ _BUDGETS: dict[str, int] = {
     # unchanged. 2623 -> 2721.
     "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
+    # See the dev-side-controller note above the character-repair row. Dev
+    # landed this file at 195 lines; the +3 is this merge's own port -- the
+    # `apply_navigation_context` gate read the flat `_library_prompts_
+    # mutation_in_flight` attribute the wave-6 prompts cleanup deleted, and
+    # was retargeted to `_prompts_state.mutation_in_flight` with a one-line
+    # comment naming the retarget (3 comment lines, the gate line itself
+    # replaced in place).
+    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 198,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,

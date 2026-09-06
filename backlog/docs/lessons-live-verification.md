@@ -1,5 +1,23 @@
 # Lessons: verifying against the real thing
 
+## A mount-started worker may run before is_mounted becomes true
+
+**TASK-31645 post-merge UAT, 2026-09-05.** Normal real-terminal Library entry
+stayed on Loading local recovery through reopening and restart, despite the
+earlier mounted-test passes. Temporary tracing observed the Lab load worker
+enter and exit with `is_mounted=False`, its message widget present and no
+coordinator. Textual sets the mounted flag after Mount dispatch; an inherited
+handler can yield while a worker started by the subclass already runs. The
+worker's teardown guard silently rejected this valid initialization attempt.
+A yielding inherited Mount-handler regression failed with readiness timeout;
+deferring lazy dispatch with `call_after_refresh` made it pass while retaining
+teardown protection. Real A/B, local save and force-kill recovery then worked.
+
+**What to do.** Schedule mount-sensitive background initialization after the
+mount boundary, and keep its teardown guard. Test a yielding Mount handler,
+not just an immediately completing fixture. Verify real route entry; passing
+tests that await an already-mounted screen cannot alone qualify that ordering.
+
 ## Send synthetic Paste through the app, not directly to TextArea
 
 **TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an
@@ -40,6 +58,28 @@ The subsequent UAT retention loop also sent Enter twice within Textual Button's
 waiting only for completion misreported a ten-minute operation timeout. Wait for
 the control to accept keyboard input and separately bound operation admission;
 do not infer that a server request exists just because the harness sent a key.
+
+---
+
+## Opaque-origin module-worker policy must be proven in the target browser
+
+**TASK-31226, 2026-09-03.** The Canvas renderer's first implementation used the
+obvious `new Worker(new URL("worker.js", import.meta.url), {type: "module"})`
+inside an iframe sandboxed without `allow-same-origin`. Unit reasoning said the
+worker was a packaged same-site asset, but real Chromium rejected the constructor
+because the iframe's effective origin was opaque. Wrapping that URL in a blob
+module failed for the same reason. A fixed `data:` module bootstrap could import
+the packaged CORS-enabled worker, but the next real run showed that QuickJS's
+embedded WASM also required the narrower CSP token `wasm-unsafe-eval`. Neither
+failure was visible to source checks or Python unit tests.
+
+**What to do.** Qualify worker construction and WASM compilation from the exact
+production iframe sandbox and response CSP in every mandatory browser. Record
+all startup requests before acknowledging generated execution. When a trusted
+bootstrap is unavoidable, keep its bytes and imported URL entirely renderer-owned,
+scope CSP to the minimum scheme, and prove generated input cannot influence it.
+Do not infer opaque-origin behavior from same-origin pages or substitute
+`unsafe-eval` for `wasm-unsafe-eval`.
 
 ---
 

@@ -856,6 +856,20 @@ rediscover the same red from scratch.
   unrelated `chat_screen.py` growth from other work on `dev`; reconfirmed
   pre-existing by every task in this series via the same `git stash -u`
   method.
+- `Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_
+  does_not_grow_past_its_budget[library_media_browse_controller.py]` — the
+  file is 410 lines against a 371 pin. Found by wave 6's `origin/dev`
+  reconciliation merge and confirmed pre-existing in §3's isolated baseline
+  worktree at `origin/dev` (`dfe45fbe6`): the SAME 410-line file and the
+  SAME 371 pin exist on both sides, and the stale pin already predates this
+  wave's merge-base (`7aa048790`), so no Library task introduced it. It is
+  dev-side creep, and this test's own guidance forbids re-pinning it to
+  green from a passing branch — leave it red and fix it where it was
+  written. The sibling failure the same merge surfaced,
+  `test_every_controller_file_has_a_budget_row` (dev landed `library_
+  navigation_controller.py` and `library_character_repair_controller.py`
+  with no `_BUDGETS` rows), IS fixed at that merge, because governing a new
+  file at its exact measured size is what that check asks for.
 - Wave-2 Task 2 (export state PR) found 14 more, all reconfirmed identical
   (same 14, no more/fewer) on a `git stash -u` baseline of the pre-task
   tree via a direct node-id rerun (not the xdist sweep):

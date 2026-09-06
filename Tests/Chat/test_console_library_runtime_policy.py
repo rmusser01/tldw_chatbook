@@ -161,24 +161,31 @@ def test_allowed_context_selects_exact_captured_provider(
         ephemeral=True,
     )
     assert expected_names.issubset(allowed)
-    assert frozenset(
-        entry.name for entry in registry.list_catalog() if entry.source == "library"
-    ) == expected_names
+    assert (
+        frozenset(
+            entry.name for entry in registry.list_catalog() if entry.source == "library"
+        )
+        == expected_names
+    )
 
 
 def test_provider_unavailable_or_wrong_for_captured_selector_fails_closed():
     direct = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=True)
-    assert _controller(lambda _context: None)._library_provider_for_context(direct) is None
     assert (
-        _controller(lambda _context: LibraryRagToolProvider(None))
-        ._library_provider_for_context(direct)
+        _controller(lambda _context: None)._library_provider_for_context(direct) is None
+    )
+    assert (
+        _controller(
+            lambda _context: LibraryRagToolProvider(None)
+        )._library_provider_for_context(direct)
         is None
     )
 
     rag = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=False)
     assert (
-        _controller(lambda _context: LibraryToolProvider(_DirectService()))
-        ._library_provider_for_context(rag)
+        _controller(
+            lambda _context: LibraryToolProvider(_DirectService())
+        )._library_provider_for_context(rag)
         is None
     )
 
@@ -215,12 +222,10 @@ def test_allowed_then_blocked_builds_fresh_registry_without_cached_provider():
 def test_child_authority_can_narrow_but_never_widen_parent_registry():
     context = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=True)
     provider, authority = _controller()._library_provider_for_context(context)
-    registry, parent_allowed, _builtins, _locals = (
-        _compose_run_registry_and_allowed(
-            {},
-            library_provider=provider,
-            library_authority=authority,
-        )
+    registry, parent_allowed, _builtins, _locals = _compose_run_registry_and_allowed(
+        {},
+        library_provider=provider,
+        library_authority=authority,
     )
     reserved = frozenset(LIBRARY_TOOL_DESCRIPTORS)
     child_requested = {"library_get_note", "library_future_write"}

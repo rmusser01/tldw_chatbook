@@ -890,6 +890,11 @@ def _first_request_plan_fits(
             system_content = f"{system_content}\n\n{protocol}"
     if plan.log_active:
         system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+    from .canvas_tool_provider import build_canvas_runtime_guidance
+
+    canvas_guidance = build_canvas_runtime_guidance(schemas)
+    if canvas_guidance:
+        system_content = f"{system_content}\n\n{canvas_guidance}"
     system_content = _append_workspace_context_note(
         system_content, config.workspace_context_note
     )
@@ -2247,6 +2252,11 @@ class AgentService:
                 system_content = f"{system_content}\n\n{protocol_text}"
         if log_active:
             system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+        from .canvas_tool_provider import build_canvas_runtime_guidance
+
+        canvas_guidance = build_canvas_runtime_guidance(schemas)
+        if canvas_guidance:
+            system_content = f"{system_content}\n\n{canvas_guidance}"
         from tldw_chatbook.Notes.agent_lessons import (
             build_agent_lessons_runtime_guidance,
         )
@@ -2639,6 +2649,11 @@ class AgentService:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
             if effective_log_active:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+            from .canvas_tool_provider import build_canvas_runtime_guidance
+
+            canvas_guidance = build_canvas_runtime_guidance(schemas)
+            if canvas_guidance:
+                system_content = f"{system_content}\n\n{canvas_guidance}"
             from tldw_chatbook.Notes.agent_lessons import (
                 build_agent_lessons_runtime_guidance,
             )
@@ -4278,6 +4293,7 @@ class AgentService:
         resumed_from_run_id: str | None = None,
         spawn_event_id: str | None = None,
         spawn_parent_event_id: str | None = None,
+        requested_run_id: str | None = None,
         precreated_run_id: str | None = None,
         lifecycle_owner_seq_start: int | None = None,
         on_run_id: Callable[[str], None] | None = None,
@@ -4366,6 +4382,7 @@ class AgentService:
                 definition_fingerprint=definition_fingerprint,
                 resumed_from_run_id=resumed_from_run_id,
                 spawn_event_id=spawn_event_id,
+                run_id=requested_run_id,
             )
             lifecycle_owner_seq = 0
             lifecycle_event_id = (
@@ -7147,6 +7164,11 @@ class AgentService:
                 else None,
                 run_id,
             ),
+            is_tool_call_preauthorized=(
+                lambda call: self.registry.is_canvas_reversible_conversation_local_mutation(
+                    call.name
+                )
+            ),
             before_tool_dispatch=self.before_tool_dispatch,
             prepare_tool_calls=(
                 prepare_project_instructions if project_context is not None else None
@@ -7228,6 +7250,10 @@ class AgentService:
                 else None
             ),
             on_record=on_record,
+            project_tool_record=self.registry.project_tool_record,
+            has_tool_record_projection=lambda call: self.registry.has_tool_record_projection(
+                call.name
+            ),
             continuation_context=ContinuationEventContext(
                 owner_message_id=continuation_owner_message_id,
                 run_id=run_id,
@@ -7370,6 +7396,7 @@ class AgentService:
         continuation_owner_key: str | None = None,
         first_request_schema_plan: FirstRequestSchemaPlan | None = None,
         request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
+        requested_run_id: str | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -7433,6 +7460,10 @@ class AgentService:
                 round machinery. ``None`` (the default) means neither tool
                 has an approval surface in this session, so both fail
                 closed.
+            requested_run_id: Optional server-issued identity reserved by a
+                scoped tool provider. When present, the primary Agent row is
+                created with this exact ID so tool scope and terminal
+                settlement share one authoritative run identity.
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -7479,6 +7510,12 @@ class AgentService:
             not a barrier -- it fsyncs the final segment and leaves the
             writer active, so a survivor's later appends still land.
         """
+        if requested_run_id is not None and (
+            not isinstance(requested_run_id, str)
+            or not requested_run_id
+            or len(requested_run_id.encode("utf-8")) > 256
+        ):
+            raise ValueError("requested_run_id must be a bounded non-empty string")
         if supersede_run_id:
             candidates = [
                 row
@@ -7627,6 +7664,7 @@ class AgentService:
             chain_id="primary",
             first_request_schema_plan=first_request_schema_plan,
             request_worktree_merge_confirm=request_worktree_merge_confirm,
+            requested_run_id=requested_run_id,
         )
         # Settle the children that must not outlive this turn. Must happen
         # BEFORE the manifest is written and the writer closed below: a

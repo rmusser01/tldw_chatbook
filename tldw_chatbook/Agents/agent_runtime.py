@@ -10,7 +10,7 @@ import time
 from collections import deque
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
@@ -19,6 +19,8 @@ from loguru import logger
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRestoreTarget,
+    ContinuationCall,
+    ContinuationRound,
     ContinuationResult,
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
@@ -95,8 +97,12 @@ from .agent_models import (
     ToolCallExecuting,
     ToolCallFinished,
     ToolLoadSelection,
+    ToolProjectionAudience,
+    ToolRecordProjection,
     ToolResult,
     ToolSchema,
+    default_tool_record_projection,
+    failed_tool_record_projection,
     format_steering_message,
     normalize_rationale,
     with_preamble_rationale,
@@ -429,6 +435,10 @@ class LoopDeps:
     # behavior. ``None`` (the default) is a no-op: every call proceeds,
     # byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Optional owner-authenticated exception to the review batch. A True
+    # result omits only that exact call from review and approval Trace rows;
+    # exceptions fail closed by keeping the call on the ordinary review path.
+    is_tool_call_preauthorized: Callable[[ToolCall], bool] | None = None
     # Optional post-review/pre-dispatch observation seam. The runtime calls
     # it once with only calls whose effective review verdict is `proceed`.
     # It runs after project-instruction preparation and review, but before
@@ -602,6 +612,19 @@ class LoopDeps:
     # steering keeps its pre-model-call delivery point. None = no redirect
     # surface wired (every legacy caller), byte-identical behaviour.
     has_pending_redirect: Callable[[], bool] | None = None
+    # The generic content-boundary seam. AgentService wires the catalog
+    # registry here; the default preserves every pre-projection caller.
+    project_tool_record: Callable[
+        [ToolProjectionAudience, ToolCall, ToolResult | None], ToolRecordProjection
+    ] = field(
+        default_factory=lambda: (
+            lambda _audience, call, result=None: default_tool_record_projection(call, result)
+        )
+    )
+    # The catalog owns this signal: a tool provider cannot mark its own
+    # projection as compatibility-safe and bypass the strict boundary below.
+    # Appended to preserve legacy positional LoopDeps construction.
+    has_tool_record_projection: Callable[[ToolCall], bool] = lambda _call: False
 
 
 
@@ -1082,6 +1105,127 @@ def run_agent_loop(
     context_trace_reserved = False
     current_call_correlation = ""
 
+    def projection_opt_in(call: ToolCall) -> bool | None:
+        """Return the catalog-authoritative projection mode, or None on error."""
+        try:
+            return bool(deps.has_tool_record_projection(call))
+        except Exception:  # noqa: BLE001 -- an unknown mode must fail closed
+            return None
+
+    def project_record(
+        audience: ToolProjectionAudience,
+        call: ToolCall,
+        result: ToolResult | None = None,
+    ) -> ToolRecordProjection:
+        """Project one non-model tool consumer without ever formatting raw data."""
+        opted_in = projection_opt_in(call)
+        if opted_in is None:
+            return failed_tool_record_projection(
+                call, result, "ProjectionDetectionError"
+            )
+        # Existing providers preserve their former serializer behavior,
+        # including Python JSON's NaN/Infinity spellings.  Strict JSON is an
+        # opt-in provider contract only.
+        if not opted_in:
+            return default_tool_record_projection(call, result)
+        try:
+            projected = deps.project_tool_record(audience, call, result)
+            if not isinstance(projected, ToolRecordProjection):
+                raise TypeError("tool projection returned an invalid value")
+            if (
+                not isinstance(projected.content, str)
+                or not isinstance(projected.error, str)
+                or not isinstance(projected.error_category, str)
+                or projected.ok not in {None, True, False}
+            ):
+                raise TypeError("tool projection contains invalid metadata")
+            json.dumps(dict(projected.arguments), sort_keys=True, allow_nan=False)
+            return projected
+        except Exception as exc:  # noqa: BLE001 -- consumer boundaries fail closed
+            return failed_tool_record_projection(
+                call, result, type(exc).__name__[:64] or "ProjectionError"
+            )
+
+    def projection_arguments_json(projection: ToolRecordProjection) -> str:
+        """Serialize the projection, never the original call arguments."""
+        try:
+            return json.dumps(dict(projection.arguments), sort_keys=True)
+        except Exception:  # noqa: BLE001 -- projection metadata must remain bounded
+            return "{}"
+
+    def projection_result_content(
+        projection: ToolRecordProjection, result: ToolResult
+    ) -> str:
+        """Keep the existing error-prefix contract for compatibility providers."""
+        return projection.content if result.ok else f"ERROR: {projection.error}"
+
+    def project_continuation_checkpoint(
+        checkpoint: ProviderContinuationCheckpoint,
+    ) -> ProviderContinuationCheckpoint:
+        """Remove sensitive call bodies before a checkpoint crosses durability."""
+        projected_rounds: list[ContinuationRound] = []
+        for round_ in checkpoint.rounds:
+            changed = False
+            projected_calls: list[ContinuationCall] = []
+            for continuation_call in round_.calls:
+                try:
+                    arguments = json.loads(continuation_call.arguments)
+                    if not isinstance(arguments, dict):
+                        raise ValueError
+                except Exception:
+                    arguments = {}
+                tool_call = ToolCall(
+                    name=continuation_call.name,
+                    args=arguments,
+                    call_id=continuation_call.call_id,
+                    raw_arguments=continuation_call.arguments,
+                )
+                opted_in = projection_opt_in(tool_call)
+                if opted_in is False:
+                    projected_calls.append(continuation_call)
+                    continue
+                result = None
+                if continuation_call.result is not None:
+                    if continuation_call.state == "completed":
+                        result = ToolResult(
+                            ok=True, content=continuation_call.result.value
+                        )
+                    else:
+                        result = ToolResult(
+                            ok=False, error=continuation_call.result.value
+                        )
+                projection = project_record("continuation", tool_call, result)
+                safe_arguments = projection_arguments_json(projection)
+                safe_result = (
+                    None
+                    if result is None
+                    else ContinuationResult(
+                        projection.content if result.ok else projection.error
+                    )
+                )
+                changed = changed or (
+                    safe_arguments != continuation_call.arguments
+                    or safe_result != continuation_call.result
+                )
+                projected_calls.append(
+                    replace(
+                        continuation_call,
+                        arguments=safe_arguments,
+                        result=safe_result,
+                    )
+                )
+            assistant_content = round_.assistant_content
+            if changed and projected_calls:
+                assistant_content = "; ".join(
+                    f"Tool call recorded: {call.name}" for call in projected_calls
+                )
+            projected_rounds.append(
+                replace(
+                    round_, assistant_content=assistant_content, calls=tuple(projected_calls)
+                )
+            )
+        return replace(checkpoint, rounds=tuple(projected_rounds))
+
     def claim_owner_seq() -> int:
         nonlocal owner_sequence
         if deps.next_owner_seq is not None:
@@ -1170,6 +1314,16 @@ def run_agent_loop(
 
     def persist_continuation(event: ProviderContinuationEvent) -> bool:
         try:
+            if isinstance(event, ToolBatchReady):
+                event = replace(
+                    event,
+                    checkpoint=project_continuation_checkpoint(event.checkpoint),
+                )
+            elif isinstance(event, FinalContinuation):
+                event = replace(
+                    event,
+                    checkpoint=project_continuation_checkpoint(event.checkpoint),
+                )
             deps.persist_provider_continuation(event)
         except Exception:
             return False
@@ -1896,19 +2050,35 @@ def run_agent_loop(
                 return continuation_error()
 
         if not restoring_batch:
+            # A provider tool-call turn can carry raw fence/native arguments
+            # in ``turn.text``. Keep the old full model record for ordinary
+            # providers, but fail closed for any provider that supplied a
+            # distinct log projection.
+            model_log_content = turn.text
+            model_step_summary = turn.text[:200]
+            # Fence/native tool calls are represented in model text as well as
+            # call.args.  The catalog-owned opt-in signal protects both the
+            # durable model log and the persisted/displayed STEP_MODEL row,
+            # even when a projector happens to return matching arguments.
+            if calls and any(projection_opt_in(call) is not False for call in calls):
+                safe_tool_summary = "; ".join(
+                    f"Tool call recorded: {call.name}" for call in calls
+                )
+                model_log_content = safe_tool_summary
+                model_step_summary = safe_tool_summary
             add(
                 STEP_MODEL,
                 summary=(
                     "Ephemeral tool continuation is non-resumable."
                     if ephemeral_continuation
-                    else turn.text[:200]
+                    else model_step_summary
                 ),
                 parent_step_index=model_response_step.index,
             )
             _emit_record(
                 deps,
                 "model",
-                content=turn.text,
+                content=model_log_content,
                 tool="",
                 status="",
                 call_id="",
@@ -1999,10 +2169,28 @@ def run_agent_loop(
                 else call
             )
 
+        preauthorized_call_ids: set[int] = set()
+        if deps.is_tool_call_preauthorized is not None:
+            for call in calls:
+                try:
+                    if deps.is_tool_call_preauthorized(call):
+                        preauthorized_call_ids.add(id(call))
+                except Exception:  # noqa: BLE001 - classification fails closed
+                    logger.warning(
+                        f"tool preauthorization classification failed: {call.name}"
+                    )
+        review_required_calls = [
+            review_call
+            for call, review_call in zip(calls, review_calls)
+            if id(call) not in preauthorized_call_ids
+        ]
+
         verdicts: dict[str, str] = {}
         review_hook_failed = False
-        if deps.review_tool_calls is not None and calls:
+        if deps.review_tool_calls is not None and review_required_calls:
             for call in calls:
+                if id(call) in preauthorized_call_ids:
+                    continue
                 trace_state = call_trace[id(call)]
                 proposal_step = trace_state["proposal"]
                 assert isinstance(proposal_step, AgentStep)
@@ -2018,7 +2206,7 @@ def run_agent_loop(
                 )
                 trace_state["request"] = request_step
             try:
-                verdicts = deps.review_tool_calls(review_calls) or {}
+                verdicts = deps.review_tool_calls(review_required_calls) or {}
             except Exception:  # noqa: BLE001 — policy differs by lifecycle
                 review_hook_failed = True
                 # MCP-specific fail-closed policy lives in the Task 6
@@ -2027,13 +2215,16 @@ def run_agent_loop(
                 if continuation_checkpoint is None:
                     logger.opt(exception=True).warning(
                         f"review_tool_calls hook raised for batch "
-                        f"{[c.name for c in calls]}; treating all {len(calls)} "
+                        f"{[c.name for c in review_required_calls]}; treating all "
+                        f"{len(review_required_calls)} "
                         f"calls as proceed"
                     )
                 verdicts = {}
 
             if not (review_hook_failed and continuation_checkpoint is not None):
                 for call in calls:
+                    if id(call) in preauthorized_call_ids:
+                        continue
                     trace_state = call_trace[id(call)]
                     proposal_step = trace_state["proposal"]
                     request_step = trace_state["request"]
@@ -2104,6 +2295,8 @@ def run_agent_loop(
                 )
         for call in calls:
             current_call_correlation = str(call_trace[id(call)]["correlation"])
+            display_call_projection = project_record("display", call)
+            display_call_arguments = dict(display_call_projection.arguments)
             verdict = _effective_review_verdict(
                 call,
                 verdicts,
@@ -2143,7 +2336,8 @@ def run_agent_loop(
                         ),
                     )
                 return _outcome(RUN_CANCELLED)
-            recent_calls.append((call.name, json.dumps(call.args, sort_keys=True)))
+            cycle_projection = project_record("cycle", call)
+            recent_calls.append((call.name, projection_arguments_json(cycle_projection)))
             cycle = _detect_cycle(recent_calls)
             if cycle is not None:
                 period, repeats = cycle
@@ -2202,6 +2396,7 @@ def run_agent_loop(
             # at all (`parse_tool_call`), so a name-keyed verdict must still stop
             # every matching call or the MCP gate silently opens.
             if continuation_checkpoint is not None and verdict != "proceed":
+                refusal_result = ToolResult.blocked(verdict)
                 continuation_cap = (
                     min(budget.max_tool_result_chars, 16_000)
                     if budget.max_tool_result_chars > 0
@@ -2213,12 +2408,20 @@ def run_agent_loop(
                     call.name,
                     total_limit=True,
                 )
-                if not transition_call(call, "failed", ContinuationResult(content)):
+                continuation_content = _truncate_tool_result(
+                    project_record("continuation", call, refusal_result).error,
+                    continuation_cap,
+                    call.name,
+                    total_limit=True,
+                )
+                if not transition_call(
+                    call, "failed", ContinuationResult(continuation_content)
+                ):
                     return continuation_error()
                 _emit_record(
                     deps,
                     "tool_call",
-                    content=json.dumps(call.args, sort_keys=True, default=str),
+                    content=projection_arguments_json(project_record("log", call)),
                     tool=call.name,
                     status="",
                     call_id=call.call_id,
@@ -2226,7 +2429,7 @@ def run_agent_loop(
                 _emit_record(
                     deps,
                     "tool_result",
-                    content=verdict,
+                    content=project_record("log", call, refusal_result).error,
                     tool=call.name,
                     status="refused",
                     call_id=call.call_id,
@@ -2234,7 +2437,7 @@ def run_agent_loop(
                 add(
                     STEP_TOOL_RESULT,
                     tool_name=call.name,
-                    result=content[:2000],
+                    result=project_record("display", call, refusal_result).error[:2000],
                     tool_outcome=TOOL_OUTCOME_BLOCKED,
                 )
                 if restoring_batch:
@@ -2250,7 +2453,7 @@ def run_agent_loop(
             _emit_record(
                 deps,
                 "tool_call",
-                content=json.dumps(call.args, sort_keys=True, default=str),
+                content=projection_arguments_json(project_record("log", call)),
                 tool=call.name,
                 status="",
                 call_id=call.call_id,
@@ -2320,7 +2523,7 @@ def run_agent_loop(
                                     else task[:200]
                                 ),
                                 tool_name=SPAWN_TOOL_NAME,
-                                args=dict(call.args),
+                                args=display_call_arguments,
                             )
                             if deps.spawn_at_step is not None:
                                 result = deps.spawn_at_step(
@@ -2375,7 +2578,7 @@ def run_agent_loop(
                 elif (
                     call.name == WAIT_AGENTS_TOOL_NAME and deps.wait_agents is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     # Same defensive coercion as load_tools' `ids` right
                     # below: an unreliable local model may send one bare
                     # string, a JSON null, or junk. A bare string is ONE
@@ -2397,14 +2600,14 @@ def run_agent_loop(
                     call.name == CHECK_AGENTS_TOOL_NAME
                     and deps.check_agents is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     result = deps.check_agents()
                 elif (
                     call.name == SEND_TO_AGENT_TOOL_NAME
                     and deps.send_to_agent is not None
                 ):
                     steering_step = add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args)
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
                     )
                     # Same defensive coercion as wait_agents' `ids` above:
                     # an unreliable local model may send numbers or JSON
@@ -2427,7 +2630,7 @@ def run_agent_loop(
                     call.name == MERGE_AGENT_WORKTREE_TOOL_NAME
                     and deps.merge_agent_worktree is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     raw_mode = call.args.get("mode")
                     mode = str(raw_mode) if raw_mode else "apply"
                     result = deps.merge_agent_worktree(
@@ -2437,16 +2640,16 @@ def run_agent_loop(
                     call.name == DISCARD_AGENT_WORKTREE_TOOL_NAME
                     and deps.discard_agent_worktree is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     result = deps.discard_agent_worktree(
                         str(call.args.get("handle_id", ""))
                     )
                 elif call.name == FIND_TOOLS_NAME:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     entries = deps.find_tools(str(call.args.get("query", "")))
                     result = ToolResult(ok=True, content=_catalog_lines(entries))
                 elif call.name == LOAD_TOOLS_NAME:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     if not load_batch_exclusive:
                         result = ToolResult(
                             ok=False,
@@ -2483,7 +2686,7 @@ def run_agent_loop(
                     call.name == SKILL_FILE_TOOL_NAME
                     and deps.read_skill_file is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     result = deps.read_skill_file(
                         str(call.args.get("skill_name", "")),
                         str(call.args.get("path", "")),
@@ -2492,10 +2695,10 @@ def run_agent_loop(
                     call.name == INSTALL_SKILL_TOOL_NAME
                     and deps.install_skill is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     result = deps.install_skill(str(call.args.get("url", "")))
                 elif call.name == PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     if deps.prepare_managed_skill_promotion is None:
                         result = ToolResult.blocked(
                             "Managed-skill promotion proposals are unavailable."
@@ -2509,7 +2712,7 @@ def run_agent_loop(
                     call.name == RUN_SKILL_SCRIPT_TOOL_NAME
                     and deps.run_skill_script is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     raw_args = call.args.get("args") or []
                     if not isinstance(raw_args, (list, tuple)):
                         raw_args = [raw_args]
@@ -2522,23 +2725,23 @@ def run_agent_loop(
                     call.name == SEARCH_RUN_LOG_TOOL_NAME
                     and deps.search_run_log is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     result = deps.search_run_log(dict(call.args))
                 elif (
                     call.name == RUN_LOG_STATS_TOOL_NAME
                     and deps.run_log_stats is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     result = deps.run_log_stats(dict(call.args))
                 elif (
                     call.name == RUN_LOG_SLICE_TOOL_NAME
                     and deps.run_log_slice is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
                     result = deps.run_log_slice(dict(call.args))
                 else:
                     tool_step = add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args)
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
                     )
                     if deps.invoke_tool_at_step is not None:
                         result = deps.invoke_tool_at_step(
@@ -2607,12 +2810,24 @@ def run_agent_loop(
             # that assigns it in THIS iteration (a non-"proceed" verdict
             # skips dispatch entirely, so `result` -- if it exists at all --
             # would be a stale value from a different call in this batch).
+            record_result = result if verdict == "proceed" else ToolResult.blocked(verdict)
+            display_projection = project_record("display", call, record_result)
+            display_result_content = projection_result_content(
+                display_projection, record_result
+            )
+            if verdict != "proceed":
+                display_result_content = display_projection.error
+            log_projection = project_record("log", call, record_result)
+            log_result_content = (
+                projection_result_content(log_projection, record_result)
+                if verdict == "proceed"
+                else log_projection.error
+            )
             if verdict == "proceed":
                 record_status = "ok" if result.ok else "error"
             else:
                 record_status = "refused"
             if continuation_checkpoint is not None:
-                full_content = content
                 continuation_cap = (
                     min(budget.max_tool_result_chars, 16_000)
                     if budget.max_tool_result_chars > 0
@@ -2624,19 +2839,34 @@ def run_agent_loop(
                     call.name,
                     total_limit=True,
                 )
+                continuation_projection = project_record(
+                    "continuation", call, record_result
+                )
+                continuation_content = _truncate_tool_result(
+                    projection_result_content(continuation_projection, record_result),
+                    continuation_cap,
+                    call.name,
+                    total_limit=True,
+                )
+                display_result_content = _truncate_tool_result(
+                    display_result_content,
+                    continuation_cap,
+                    call.name,
+                    total_limit=True,
+                )
                 target_state = (
                     "completed" if verdict == "proceed" and result.ok else "failed"
                 )
                 if not transition_call(
                     call,
                     target_state,
-                    ContinuationResult(content),
+                    ContinuationResult(continuation_content),
                 ):
                     return continuation_error()
                 _emit_record(
                     deps,
                     "tool_result",
-                    content=full_content,
+                    content=log_result_content,
                     tool=call.name,
                     status=record_status,
                     call_id=call.call_id,
@@ -2645,7 +2875,7 @@ def run_agent_loop(
                 record_number = _emit_record(
                     deps,
                     "tool_result",
-                    content=content,
+                    content=log_result_content,
                     tool=call.name,
                     status=record_status,
                     call_id=call.call_id,
@@ -2656,11 +2886,17 @@ def run_agent_loop(
                     call.name,
                     record_number=record_number,
                 )
+                display_result_content = _truncate_tool_result(
+                    display_result_content,
+                    budget.max_tool_result_chars,
+                    call.name,
+                    record_number=record_number,
+                )
 
             add(
                 STEP_TOOL_RESULT,
                 tool_name=call.name,
-                result=content[:2000],
+                result=display_result_content[:2000],
                 tool_outcome=tool_outcome,
             )
             if restoring_batch and continuation_checkpoint is not None:

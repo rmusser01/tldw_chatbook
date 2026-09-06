@@ -5247,7 +5247,7 @@ ConsoleExchangeExportDialog {
     color: $ds-status-blocked;
 }
 
-/* Resume is briefly disabled while Roleplay dispatches ID-only navigation.
+/* Resume is briefly disabled while Roleplay dispatches exact typed navigation.
    Neutralize the generic opacity stack and keep the busy label readable while
    the raised surface and dim treatment still distinguish the disabled state. */
 #personas-conversation-resume:disabled {
@@ -5263,9 +5263,38 @@ ConsoleExchangeExportDialog {
 #personas-conversation-resume,
 #personas-conversation-continue-console,
 #personas-conversation-back,
-#personas-conversation-open-library {
+#personas-conversation-open-library,
+#personas-conversation-back-source {
     height: 3;
     min-height: 3;
+}
+
+#personas-conversations-search {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    border: none;
+}
+
+/* At the 52x20 floor the saved-chat preview owns the single pane. Keep full
+   action labels and transcript rows visible instead of spending its cells on
+   the separate test-chat toggle, collapsed rails and nested panel border. */
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-preview-pane {
+    display: none;
+}
+
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-work-area {
+    border: none;
+    padding: 0;
+}
+
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-conversation-navigation-actions {
+    layout: vertical;
+}
+
+#personas-workbench.personas-workbench-narrow.personas-transcript-active .personas-conversation-navigation-action {
+    width: 100%;
+    padding: 0;
 }
 
 .workbench-command-strip,
@@ -16977,8 +17006,12 @@ VllmSetupView.vllm-compact.vllm-two-actions #vllm-mode-summary {
 
 /* Runs adds the shared one-row mode strip above the legacy 100%-high window.
  * Claim only the remaining screen-content height so its footer stays contained.
+ * layout: vertical -- ResearchWindow subclasses Vertical, but the global
+ * `.window` rule (layout/_windows.tcss) forces layout: horizontal, which
+ * crushed the whole Runs view into one squashed row (release P1).
  */
 ResearchScreen #research-window.window {
+    layout: vertical;
     height: 1fr;
     min-height: 0;
 }
@@ -17764,6 +17797,87 @@ ResearchNoteSwitchRecoveryModal {
     margin-top: 1;
     color: $accent;
     text-style: bold;
+}
+
+/* --- Runs window internal layout ------------------------------------------
+ * ResearchWindow's containers had no styles at all: the toolbar/create/body
+ * rows fell back to Horizontal's 1fr height and Input/Select's 100% width,
+ * so nothing usable rendered. Rows hug their content; the run list + detail
+ * body claims the rest.
+ */
+#research-toolbar,
+#research-create-row {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+}
+
+#research-source-select {
+    width: 16;
+}
+
+/* ID subjects, not `<row> Input`: the ancestor-scoped bare-type ratchet
+ * (test_textual_css_fastpath, ADR-097) taxes bare-type-subject rules.
+ */
+#research-query-input,
+#research-limits-input,
+#research-providers-input {
+    width: 1fr;
+}
+
+#research-policy-select {
+    width: 20;
+}
+
+#research-rounds-select {
+    width: 14;
+}
+
+#research-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#research-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+#research-run-list {
+    width: 30%;
+    min-width: 24;
+    height: 100%;
+    border-right: solid $surface-lighten-1;
+}
+
+#research-detail-panel {
+    width: 1fr;
+    height: 100%;
+    min-height: 0;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+#research-run-actions,
+#research-observe-actions,
+#research-checkpoint-actions,
+#research-followup-row {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+}
+
+#research-artifact-name,
+#research-followup-input {
+    width: 1fr;
+}
+
+#research-checkpoint-patch {
+    height: 6;
 }
 
 /* ===== MODULE: features/_logs.tcss ===== */

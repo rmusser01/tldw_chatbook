@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
 import json
 import re
 import threading
+from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -25,11 +25,7 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
-from .chatbook_creator import ChatbookCreator
-from .chatbook_importer import ChatbookImporter
 from .chatbook_models import ContentType
-from .conflict_resolver import ConflictResolution
-
 
 _REGISTRY_LOCKS_GUARD = threading.Lock()
 _REGISTRY_LOCKS: dict[Path, threading.RLock] = {}
@@ -37,6 +33,28 @@ _SAFE_PROVENANCE_ERROR = re.compile(r"[a-z][a-z0-9_]{0,127}\Z")
 _STALE_OWNER_REQUEST_REASONS = frozenset(
     {"artifact_owner_request_invalid", "fingerprint_key_unavailable"}
 )
+
+
+def _chatbook_creator_factory(*args: Any, **kwargs: Any) -> Any:
+    """Construct the archive creator on first export."""
+
+    from .chatbook_creator import ChatbookCreator as Creator
+
+    return Creator(*args, **kwargs)
+
+
+def _chatbook_importer_factory(*args: Any, **kwargs: Any) -> Any:
+    """Construct the archive importer on first preview/import."""
+
+    from .chatbook_importer import ChatbookImporter as Importer
+
+    return Importer(*args, **kwargs)
+
+
+# Existing callers and tests patch these names. Keep them as the stable lazy
+# compatibility seams while the implementations follow function naming style.
+ChatbookCreator = _chatbook_creator_factory
+ChatbookImporter = _chatbook_importer_factory
 
 
 def _registry_lock(path: Path) -> threading.RLock:
@@ -919,6 +937,16 @@ class LocalChatbookService:
             "message": message,
             "path": str(output_path),
             "dependency_info": dependency_info,
+            "archive_version": (
+                dependency_info.get("archive_version")
+                if isinstance(dependency_info, dict)
+                else None
+            ),
+            "canvas_included": (
+                bool(dependency_info.get("canvas_included", False))
+                if isinstance(dependency_info, dict)
+                else False
+            ),
             "name": payload.get("name") or Path(output_path).stem,
             "cancelled": cancelled,
         }
@@ -933,6 +961,8 @@ class LocalChatbookService:
         conflict_value = payload.get(
             "conflict_resolution", ChatbookImportRequest().conflict_resolution
         )
+        from .conflict_resolver import ConflictResolution
+
         conflict_resolution = ConflictResolution(str(conflict_value))
         importer = ChatbookImporter(self.db_paths)
         success, message = importer.import_chatbook(

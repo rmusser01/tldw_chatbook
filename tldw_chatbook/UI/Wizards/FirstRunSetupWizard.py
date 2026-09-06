@@ -2481,9 +2481,7 @@ class ProviderStep(SetupStep):
             if models:
                 status.update(f"Found {len(models)} model(s) for {display}.")
             elif failed:
-                status.update(
-                    f"Couldn't discover models for {display}. You can continue anyway."
-                )
+                status.update(self._discovery_failure_status(display))
             elif attempted:
                 status.update(f"Checked {display}; no models were reported.")
             else:
@@ -2492,6 +2490,34 @@ class ProviderStep(SetupStep):
             done = self._selected_discovery_done
             if done is not None and generation == self.probe_generation:
                 done.set()
+
+    def _discovery_failure_status(self, display: str) -> str:
+        """Failure copy that never promises what Next will refuse.
+
+        task-31820 (release UAT): with a keyed cloud provider and no
+        credential, this status said "You can continue anyway." while
+        commit() was simultaneously hard-blocking Next with "API key
+        required." -- both on screen at once. Promise continuation only
+        when the readiness gate would actually allow it; when it wouldn't,
+        name the unblock instead (the key input sits directly below, and
+        "go Back" matches the pinned refusal's vocabulary).
+        """
+        try:
+            readiness = self._current_provider_readiness()
+            ready = bool(readiness.ready)
+        except Exception:
+            return f"Couldn't discover models for {display}."
+        if ready:
+            return f"Couldn't discover models for {display}. You can continue anyway."
+        # Qodo (PR #2445): name the provider's OWN unblock -- "add an API
+        # key" is wrong for auth modes that need a login instead (e.g. a
+        # Claude subscription). readiness.recovery is the same string
+        # commit()'s refusal footer shows, so both surfaces speak with one
+        # vocabulary; fall back to the key-input hint only if it is empty.
+        recovery = (getattr(readiness, "recovery", None) or "").strip()
+        if not recovery:
+            recovery = "Add an API key below to continue."
+        return f"Couldn't discover models for {display}. {recovery} Or go Back."
 
     async def _models_from_selected_discovery(
         self,
@@ -6877,10 +6903,13 @@ class WelcomeStep(SetupStep):
                 "with your own documents — all in your terminal.",
                 classes="setup-subtitle",
             )
+            # task-31820: don't promise "every step can be skipped with
+            # Next" -- the Provider step refuses Next for a keyed provider
+            # until a key is supplied. Name the out that always works.
             yield Static(
                 "Quick takes about 2 minutes; Full about 10. Everything can "
-                "be changed later in Settings, and every step can be "
-                "skipped with Next.",
+                "be changed later in Settings, and most steps can be "
+                "skipped with Next — Esc exits setup.",
                 classes="setup-subtitle",
             )
             with SetupRadioSet(id="setup-track-choice", classes="setup-choice-list"):
@@ -9982,6 +10011,15 @@ class _SettlingGuardedConfirmationDialog(ConfirmationDialog):
     very first press (the "Escape -> confirm" asymmetry task-2314 asks to
     preserve is untouched: this only guards a SECOND press arriving too
     soon after the dialog itself appeared).
+
+    task-31820 extended the guard's clock: it now starts at the dialog's
+    first delivered frame (``call_after_refresh`` in ``on_mount``), not at
+    mount. On a machine choked by a concurrent pytest sweep the paint
+    lagged whole seconds behind the push, so a second Escape sent well
+    after the 0.5s wall-clock grace still dismissed a dialog that had
+    never been on screen -- the wizard read as "Escape is dead" while the
+    footer's Exit button (mouse path) worked. Until the first frame lands,
+    Escape is absorbed unconditionally; nothing else changed.
     """
 
     #: Absorbs a reflexive double-tap (typically well under 300ms apart);
@@ -10004,13 +10042,26 @@ class _SettlingGuardedConfirmationDialog(ConfirmationDialog):
         self._opened_at: Optional[float] = None
 
     def on_mount(self) -> None:
-        self._opened_at = time.monotonic()
+        # task-31820: anchor the settle clock to the first delivered FRAME,
+        # not to mount. Live release-UAT walkthrough on a loaded machine
+        # (full pytest sweep running): Escape on the Provider step opened
+        # this dialog, but the paint lagged for seconds — a second
+        # "is this thing on?" Escape landed after the 0.5s wall-clock grace
+        # and dismissed a dialog nobody had ever seen. To the user, Escape
+        # did nothing, twice, while the mouse path worked — the exact
+        # "silently ignores Escape ... feels frozen" failure this class
+        # exists to prevent. A dialog that has never painted can never be
+        # deliberately re-Escaped, so the grace must start at first paint.
+        self.call_after_refresh(self._mark_settled)
+
+    def _mark_settled(self) -> None:
+        if self._opened_at is None:
+            self._opened_at = time.monotonic()
 
     async def action_cancel_dialog_if_settled(self) -> None:
-        if (
-            self._opened_at is not None
-            and (time.monotonic() - self._opened_at) < self._escape_grace_seconds
-        ):
+        if self._opened_at is None:
+            return  # never painted yet -- a second press cannot be deliberate
+        if (time.monotonic() - self._opened_at) < self._escape_grace_seconds:
             return  # too soon to be a deliberate second press -- swallow it
         await self.action_cancel_dialog()
 

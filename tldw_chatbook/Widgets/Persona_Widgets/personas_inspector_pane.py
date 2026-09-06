@@ -9,7 +9,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
-from textual.widgets import Button, Checkbox, ListItem, ListView, Static
+from textual.widgets import Button, Checkbox, Input, ListItem, ListView, Static
 
 from ...Constants import PERSONAS_CONVERSATIONS_PAGE_SIZE
 from ..Console.console_image_viewer_modal import ClickableAvatarBox
@@ -17,6 +17,7 @@ from ..Console.console_image_viewer_modal import ClickableAvatarBox
 from .personas_messages import ActorPackExportRequested, PersonaBuddyActionRequested
 from .personas_pane_messages import (
     ConversationRowSelected,
+    ConversationSearchChanged,
     OlderConversationsRequested,
 )
 
@@ -257,6 +258,12 @@ class PersonasInspectorPane(VerticalScroll):
         )
         conversations_header.display = False
         yield conversations_header
+        conversations_search = Input(
+            placeholder="Search this character's chats",
+            id="personas-conversations-search",
+        )
+        conversations_search.display = False
+        yield conversations_search
         conversations_list = ListView(id="personas-conversations-list")
         conversations_list.display = False
         yield conversations_list
@@ -978,6 +985,9 @@ class PersonasInspectorPane(VerticalScroll):
         self.query_one(
             "#personas-conversations-list", ListView
         ).display = conversations_visible
+        self.query_one(
+            "#personas-conversations-search", Input
+        ).display = conversations_visible
         readiness = self.query_one("#personas-readiness-console", Static)
         # F-032: readiness speaks in intent (what to do next), not app
         # topology ("Console blocked: ..."). The per-intent gating is
@@ -1292,3 +1302,33 @@ class PersonasInspectorPane(VerticalScroll):
             and self._conversation_tail_actionable
         ):
             self.post_message(OlderConversationsRequested())
+
+    @on(Input.Changed, "#personas-conversations-search")
+    def _conversation_search_changed(self, event: Input.Changed) -> None:
+        event.stop()
+        self.post_message(ConversationSearchChanged(event.value))
+
+    def set_conversation_total(self, total: int) -> None:
+        """Show the complete exact-character result count."""
+
+        self.query_one("#personas-conversations-header", Static).update(
+            f"Conversations ({max(0, int(total))})"
+        )
+
+    def focus_conversation(self, conversation_id: str) -> None:
+        """Focus one exact rendered durable row without selecting another."""
+
+        list_view = self.query_one("#personas-conversations-list", ListView)
+        for index, item in enumerate(list_view.children):
+            if self._conversation_lookup.get(str(item.id or "")) == conversation_id:
+                list_view.index = index
+                list_view.focus()
+                item.scroll_visible(animate=False)
+                return
+        raise ValueError("conversation row is not rendered")
+
+    def set_conversation_snapshot(self, completed_at: str) -> None:
+        """Label Keyword results with the ready corpus's captured completion time."""
+        self.query_one("#personas-conversations-header", Static).update(
+            f"Keyword snapshot: {completed_at}"
+        )

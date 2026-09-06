@@ -1,0 +1,37 @@
+[
+  {
+    "name": "nested-visited-selector",
+    "outcome": "reject",
+    "code": "css-visited",
+    "html": "<!doctype html><html><head><style>a:not(:visited){color:red}</style></head><body><a href=\"#safe\">safe</a><p id=\"safe\">safe</p></body></html>"
+  },
+  {
+    "name": "nested-namespace-selector",
+    "outcome": "reject",
+    "code": "css-namespace",
+    "html": "<!doctype html><html><head><style>:is(svg|rect){fill:red}</style></head><body><svg><rect></rect></svg></body></html>"
+  },
+  {
+    "name": "attribute-namespace-selector",
+    "outcome": "reject",
+    "code": "css-namespace",
+    "html": "<!doctype html><html><head><style>[svg|href]{color:red}</style></head><body><p>safe</p></body></html>"
+  },
+  {
+    "name": "template-expression-dynamic-import",
+    "outcome": "reject",
+    "code": "script-module",
+    "html": "<!doctype html><html><head></head><body><script>const value = `${import('https://example.test/module.js')}`</script></body></html>"
+  },
+  {
+    "name": "standard-svg-namespace",
+    "outcome": "accept",
+    "html": "<!doctype html><html xmlns=\"http://www.w3.org/1999/xhtml\"><head></head><body><svg xmlns=\"http://www.w3.org/2000/svg\"><rect></rect></svg></body></html>"
+  },
+  {
+    "name": "xlink-namespace-declaration",
+    "outcome": "reject",
+    "code": "unsupported-namespace",
+    "html": "<!doctype html><html><head></head><body><svg xmlns:xlink=\"http://www.w3.org/1999/xlink\"><rect></rect></svg></body></html>"
+  }
+]

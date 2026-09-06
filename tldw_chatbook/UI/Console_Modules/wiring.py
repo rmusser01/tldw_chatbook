@@ -696,6 +696,7 @@ def build_console_controllers(
     #: only the bounded plain-value input delegate and DOM edges.
     screen._workspace = ConsoleWorkspaceController(
         screen,
+        notify_character_navigation=lambda message, severity: screen._notify(message, severity),
         app_instance=screen.app_instance,
         # Late-binding lambdas, not the bound methods directly -- same
         # staleness reason as `ConsoleDictationController`'s own wiring
@@ -1556,6 +1557,14 @@ def build_console_controllers(
             lambda message_id: getattr(
                 screen._session, "request_console_chat_fork", lambda _message_id: None
             )(message_id)
+        ),
+        open_canvas_block=(
+            lambda reference, source: screen._open_console_canvas_block(
+                reference, source
+            )
+        ),
+        prefill_canvas_repair=(
+            lambda repair: screen._prefill_console_canvas_repair(repair)
         ),
     )
     screen._console_fork_eligibility = screen._message.console_fork_eligibility

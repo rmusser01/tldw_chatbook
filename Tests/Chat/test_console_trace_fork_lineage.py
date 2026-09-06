@@ -346,9 +346,7 @@ def test_fork_lineage_is_stable_across_divergence_and_nested_forks(
         assert grandchild_owner.owner_id != child_owner.owner_id
         assert [
             call.call_id
-            for call in repository.read_conversation_call_lineage(
-                cursor, grandchild_id
-            )
+            for call in repository.read_conversation_call_lineage(cursor, grandchild_id)
         ] == [inherited_call, child_call]
 
 
@@ -390,11 +388,14 @@ def test_attach_fork_owner_rejects_stale_or_foreign_source_ownership(
             )
 
     with db.transaction() as cursor:
-        assert repository.capture_fork_boundary(
-            cursor,
-            conversation_id=child_id,
-            included_turn_ids=("turn-1",),
-        ) is None
+        assert (
+            repository.capture_fork_boundary(
+                cursor,
+                conversation_id=child_id,
+                included_turn_ids=("turn-1",),
+            )
+            is None
+        )
 
 
 def test_temporary_fork_propagates_durable_prefix_and_attaches_it_once_on_save(
@@ -449,18 +450,21 @@ def test_temporary_fork_propagates_durable_prefix_and_attaches_it_once_on_save(
     assert snapshot.trace_boundary == boundary
     assert child.ephemeral is True
     assert child.fork_trace_boundary == boundary
-    source_counts = db.get_connection().execute(
-        "SELECT COUNT(*) FROM console_trace_calls"
-    ).fetchone()[0]
+    source_counts = (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_trace_calls")
+        .fetchone()[0]
+    )
 
     child_conversation_id = store.promote_ephemeral_session(child.id)
 
     assert child_conversation_id is not None
     assert child.ephemeral is False
     with db.transaction() as cursor:
-        assert cursor.execute(
-            "SELECT COUNT(*) FROM console_trace_calls"
-        ).fetchone()[0] == source_counts
+        assert (
+            cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0]
+            == source_counts
+        )
         assert [
             call.call_id
             for call in repository.read_conversation_call_lineage(
@@ -479,10 +483,14 @@ async def test_durable_source_can_stage_temporary_fork_with_shared_trace_boundar
     source_id, source_owner_id, source_segment_id, policy_id, _source_head_id = (
         _root_with_surface(db, repository)
     )
-    source_message_id = db.get_connection().execute(
-        "SELECT id FROM messages WHERE conversation_id = ?",
-        (source_id,),
-    ).fetchone()[0]
+    source_message_id = (
+        db.get_connection()
+        .execute(
+            "SELECT id FROM messages WHERE conversation_id = ?",
+            (source_id,),
+        )
+        .fetchone()[0]
+    )
     db.set_conversation_active_leaf(source_id, source_message_id)
     with db.transaction(immediate=True) as cursor:
         _reserve_call(

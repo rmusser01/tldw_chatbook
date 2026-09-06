@@ -545,7 +545,25 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # (the ingest path-debounce timer's own precedent, three lines above
     # it), and +2 for the two stale comments that grew a line each when
     # their corrected text was re-wrapped. -117 - 29 - 10 + 6 + 2 = -148.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37574, 1282),
+    #
+    # 2026-09-05, wave-6 final review: `origin/dev` reconciliation merge (266
+    # commits since this branch's merge-base 7aa048790). Fresh `_measure()`:
+    # 37574/1282 -> 37537/1282. The line delta is EXACTLY dev's own delta on
+    # this file over the same range (41393 -> 41356 = -37), carried through
+    # the merge unchanged -- the branch contributed zero lines here, because
+    # the one conflict took dev's side verbatim. Dev's -37 reconciles, each
+    # term read off its own hunk: +15 for the `_navigation_controller`
+    # construction in `__init__` (kept alongside this branch's own
+    # `_prompts_state` construction 26 lines below it), +1 each for two
+    # `call_after_refresh(self._navigation_controller.present_pending_repair)`
+    # dispatches (`on_screen_resume`, `on_mount`), +1 for a blank separator,
+    # and -55 for `apply_navigation_context`'s body becoming a delegator to
+    # `library_navigation_controller.py` (63 lines -> 8). 15 + 1 + 1 + 1 - 55
+    # = -37. The METHOD count is unchanged because dev moved BODIES only: the
+    # AST method-name set on `LibraryScreen` is identical at the merge-base
+    # and at `origin/dev` (measured, not assumed -- both directions of the set
+    # difference are empty), so dev's extraction added and removed no name.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37537, 1282),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

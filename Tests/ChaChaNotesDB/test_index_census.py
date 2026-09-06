@@ -30,9 +30,17 @@ divergence the parity sweep normalizes away is also caught.
 
 UNIQUE-ness decisions (AC #2): the UNIQUE flag is pinned for ALL indexes via
 ``IndexPin.unique`` — losing UNIQUE silently legalizes duplicate rows that
-application code assumes cannot exist, so every one of the sixteen is treated
+application code assumes cannot exist, so every one of the twenty-five is treated
 as integrity-bearing:
 
+* ``idx_canvas_revisions_canvas_sequence`` — one monotonic sequence position
+  per Canvas, including sibling branches.
+* ``character_conversation_search_one_ready_generation`` — at most one ready
+  character-search projection generation per data authority (partial).
+* ``uq_canvas_documents_id_conversation`` — supports the same-owner composite
+  foreign key used by local reopen hints.
+* ``uq_canvas_revisions_id_canvas`` — supports the same-Canvas composite parent
+  foreign key used by revision ancestry.
 * ``idx_message_trajectory_conv_seq`` — (conversation_id, seq) is the
   trajectory ledger's ordering identity; duplicate seq rows would corrupt
   replay order. Also pinned by a dedicated test below so a mechanical
@@ -76,12 +84,12 @@ from typing import NamedTuple
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.ChaChaNotesDB.historical_bootstrap import (
     MINIMUM_BOOTSTRAP_VERSION,
     chachanotes_db_at_version,
     open_current_chachanotes_from_legacy,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 _THIS_FILE = "Tests/ChaChaNotesDB/test_index_census.py"
 
@@ -99,8 +107,43 @@ class IndexPin(NamedTuple):
 #: it only as part of a deliberate schema change, in the same commit as the
 #: migration that adds, drops, renames, or reshapes an index. Sorted by name.
 EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
+    "character_conversation_search_dirty_authority_revision": IndexPin(
+        "character_conversation_search_dirty",
+        False,
+        ("data_authority_id", "source_revision"),
+    ),
+    "character_conversation_search_documents_character": IndexPin(
+        "character_conversation_search_documents",
+        False,
+        ("data_authority_id", "character_id", "generation_id", "conversation_id"),
+    ),
+    "character_conversation_search_documents_revision": IndexPin(
+        "character_conversation_search_documents",
+        False,
+        ("data_authority_id", "source_revision"),
+    ),
+    "character_conversation_search_generations_authority_status": IndexPin(
+        "character_conversation_search_generations",
+        False,
+        ("data_authority_id", "status"),
+    ),
+    "character_conversation_search_one_ready_generation": IndexPin(
+        "character_conversation_search_generations", True, ("data_authority_id",)
+    ),
     "idx_actor_pack_persona_intents_state": IndexPin(
         "actor_pack_persona_intents", False, ("state", "created_at", "intent_id")
+    ),
+    "idx_canvas_documents_conversation": IndexPin(
+        "canvas_documents", False, ("conversation_id", "deleted", "created_at", "id")
+    ),
+    "idx_canvas_revisions_canvas_sequence": IndexPin(
+        "canvas_revisions", True, ("canvas_id", "sequence")
+    ),
+    "idx_canvas_revisions_origin_message": IndexPin(
+        "canvas_revisions", False, ("origin_message_id", "canvas_id", "sequence")
+    ),
+    "idx_canvas_revisions_parent": IndexPin(
+        "canvas_revisions", False, ("canvas_id", "parent_revision_id", "sequence")
     ),
     "idx_char_expr_images_char": IndexPin(
         "character_expression_images", False, ("character_id",)
@@ -467,6 +510,12 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         "rag_message_trace_owners",
         True,
         ("profile_id", "message_id", "message_revision"),
+    ),
+    "uq_canvas_documents_id_conversation": IndexPin(
+        "canvas_documents", True, ("id", "conversation_id")
+    ),
+    "uq_canvas_revisions_id_canvas": IndexPin(
+        "canvas_revisions", True, ("id", "canvas_id")
     ),
     "uq_keyword_collections_sync_id": IndexPin(
         "keyword_collections", True, ("sync_id",)

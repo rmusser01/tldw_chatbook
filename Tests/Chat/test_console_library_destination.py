@@ -334,9 +334,7 @@ def _destination(
 
 
 def test_first_external_destination_does_not_invent_an_on_device_transition() -> None:
-    external = _destination(
-        "https://api.openai.com", ConsoleEgressClass.PUBLIC_NETWORK
-    )
+    external = _destination("https://api.openai.com", ConsoleEgressClass.PUBLIC_NETWORK)
 
     state = update_console_library_destination_runtime(
         ConsoleLibraryDestinationRuntimeState(),
@@ -351,12 +349,8 @@ def test_first_external_destination_does_not_invent_an_on_device_transition() ->
 
 def test_on_device_to_external_disclosure_replaces_on_later_identity_change() -> None:
     local = _destination("http://127.0.0.1:9099", ConsoleEgressClass.ON_DEVICE)
-    public = _destination(
-        "https://api.openai.com", ConsoleEgressClass.PUBLIC_NETWORK
-    )
-    private = _destination(
-        "http://10.0.0.4:8080", ConsoleEgressClass.PRIVATE_NETWORK
-    )
+    public = _destination("https://api.openai.com", ConsoleEgressClass.PUBLIC_NETWORK)
+    private = _destination("http://10.0.0.4:8080", ConsoleEgressClass.PRIVATE_NETWORK)
     state = update_console_library_destination_runtime(
         ConsoleLibraryDestinationRuntimeState(),
         local,
