@@ -5124,6 +5124,145 @@ async def test_header_paints_checking_not_a_false_unreachable_during_mount_probe
         db.close()
 
 
+class _PolicyRefusedService(_MockSchedulingServiceMixin):
+    """task-31798: a fresh LOCAL profile whose placeholder `[tldw_api]` URL
+    makes `active_server_id` truthy, but the local runtime policy refuses the
+    capabilities probe (`ServerClientPolicyError`) before any round trip --
+    so `server_reachable` stays `None` and `server_permission_denied` is set,
+    permanently. The header must NOT sit on the transient "Checking sync
+    status…" copy in this settled state."""
+
+    server_client = _MockServerClient(notifications_service=object())
+
+    def __init__(self) -> None:
+        self.db = _MockSchedulingDB()
+        self._server_reachable = None
+        self._server_permission_denied = False
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        return [
+            ReminderTask(
+                id="task-1",
+                title="Test",
+                schedule_kind=ScheduleKind.ONE_TIME,
+                run_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            )
+        ]
+
+    async def refresh_server_reachability(self) -> bool:
+        # ServerClientPolicyError branch of the real probe: refused locally
+        # before the wire, so reachability is left None and permission-denied
+        # is recorded.
+        self._server_permission_denied = True
+        return bool(self._server_reachable)
+
+    @property
+    def server_reachable(self):
+        return self._server_reachable
+
+    @property
+    def server_permission_denied(self) -> bool:
+        return self._server_permission_denied
+
+
+@pytest.mark.asyncio
+async def test_header_resolves_local_only_when_probe_is_policy_refused():
+    """task-31798 AC#1/#2: once the mount-time reachability probe has
+    COMPLETED and could not establish a usable connection (policy-refused in
+    local mode), the destination header must resolve to the same local-only
+    status the footer already shows, not sit on "Checking sync status…"
+    forever."""
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+
+    app = WorkbenchTestApp()
+    app.scheduling_service = _PolicyRefusedService()
+    # Fresh profile: placeholder base_url -> truthy active_server_id, source
+    # still local.
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="127.0.0.1:8000")
+    )
+    async with app.run_test(size=(160, 48)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await settle_schedules_workbench(pilot)
+        header = pilot.app.screen.query_one(
+            "#schedules-destination-header", DestinationHeader
+        )
+        assert header.state.status_label == "Local only — no server connection", (
+            f"got {header.state.status_label!r} -- a settled, policy-refused "
+            "probe must read local-only (matching the footer), never the "
+            "transient 'Checking sync status…' copy"
+        )
+
+
+class _EmptyThenOneReminderService(_MockSchedulingServiceMixin):
+    """task-31799: an empty queue until the first reminder is created, so the
+    empty -> first-row transition (the one the UAT found truncated to header
+    width) is exercised through the real create path."""
+
+    server_client = _MockServerClient()
+
+    def __init__(self) -> None:
+        self.db = _MockSchedulingDB()
+        self._tasks: list[ReminderTask] = []
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        return list(self._tasks)
+
+    async def create_reminder(self, payload: dict, *, owner_id: str | None = None):
+        task = ReminderTask(
+            id="task-1",
+            title=payload.get("title", ""),
+            schedule_kind=ScheduleKind.ONE_TIME,
+            run_at=datetime(2099, 1, 1, 9, 0, tzinfo=timezone.utc),
+        )
+        self._tasks = [task]
+        return task
+
+
+@pytest.mark.asyncio
+async def test_first_row_added_to_empty_queue_is_not_truncated():
+    """task-31799: the first row inserted into a previously-empty Schedule
+    Queue must render with correctly measured column widths -- the UAT saw
+    Title clipped to the header label width ('UAT f') and Details to 'One-tim'
+    until any filter keystroke forced a re-measure. Drive the real create flow
+    (empty queue -> create the first reminder via the form) and assert the
+    painted row shows the full title, not a header-width truncation."""
+    app = WorkbenchTestApp()
+    app.scheduling_service = _EmptyThenOneReminderService()
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id=None)
+    )
+    title = "UAT first reminder title here"
+    async with app.run_test(size=(160, 48)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await settle_schedules_workbench(pilot)
+        workbench = pilot.app.screen
+
+        await workbench.action_create_reminder()
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, ReminderForm)
+        pilot.app.screen.query_one("#reminder-title", Input).value = title
+        pilot.app.screen.query_one("#reminder-run-at", Input).value = (
+            "2099-01-01T09:00:00+00:00"
+        )
+        await pilot.click("#reminder-save")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await settle_schedules_workbench(pilot, workbench)
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        assert table.row_count == 1
+        title_col = next(c for c in table.ordered_columns if c.label.plain == "Title")
+        assert title_col.content_width >= len(title), (
+            f"Title column stuck at {title_col.content_width} (header width) -- "
+            "the first row was not re-measured on insert"
+        )
+        painted = painted_glyphs_at(pilot.app, table)
+        assert title in painted, (
+            f"first row title truncated in painted output; got:\n{painted}"
+        )
+
+
 # -- Fix round 1, finding 1: _on_owner_server / action_sync_now must
 # re-probe like _run_owner_transfer already did, not trust a stale
 # mount-time `server_reachable` while the background probe is still
