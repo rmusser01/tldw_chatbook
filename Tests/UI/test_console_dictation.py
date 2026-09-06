@@ -870,9 +870,9 @@ async def test_teardown_during_real_retry_dialog_cannot_replay_retained_audio(mo
         console.app_instance.push_screen_wait = host.push_screen_wait
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep this draft")
-        console._request_console_dictation_start()
+        console._dictation._request_console_dictation_start()
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console._request_console_dictation_stop()
+        console._dictation._request_console_dictation_stop()
         await _wait_for_mounted_retry_dialog(host, pilot)
         assert fake.retry_available
         await console._dictation.teardown()
