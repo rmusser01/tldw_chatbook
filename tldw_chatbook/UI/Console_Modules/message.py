@@ -2162,7 +2162,12 @@ class ConsoleMessageController:
                     content=draft.content,
                     note_id=None,
                     version=None,
-                    user_id=getattr(self.app_instance, "current_user", None)
+                    # TASK-31759 review: notes are owned by the configured
+                    # notes identity (app.notes_user_id drives every local
+                    # note view/ingest), NOT current_user -- saving under a
+                    # different id would make the note invisible in the
+                    # library.
+                    user_id=getattr(self.app_instance, "notes_user_id", None)
                     or "default_user",
                     workspace_id=None,
                     keywords=["console"],

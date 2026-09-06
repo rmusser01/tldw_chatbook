@@ -15491,6 +15491,15 @@ class ConsoleChatController:
         or an ASSISTANT message (the More-menu action reads "up to here"),
         and no persistence requirement applies -- an unsaved conversation is
         still a valid transcript to save or summarize into a note.
+
+        Args:
+            session_id: The session whose transcript to slice.
+            message_id: The selected message bounding the span (inclusive).
+
+        Returns:
+            The span messages in transcript order, or a blocked
+            ``ConsoleSubmitResult`` when the message is off the active path
+            or no longer exists.
         """
         if message_id not in self.store.active_path_message_ids(session_id):
             return self._summarize_block(
@@ -15533,7 +15542,17 @@ class ConsoleChatController:
         return "\n".join(f"> {part}" for part in parts)
 
     def build_transcript_note(self, message_id: str) -> ConsoleNoteDraft | ConsoleSubmitResult:
-        """Format the transcript up to and including message_id as a note."""
+        """Format the transcript up to and including message_id as a note.
+
+        Args:
+            message_id: The selected message bounding the span (inclusive).
+
+        Returns:
+            A ``ConsoleNoteDraft`` carrying the note title and
+            role-prefixed Markdown content with a provenance header, or a
+            blocked ``ConsoleSubmitResult`` (no active session, active run,
+            or off-path/missing target).
+        """
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
             return active_rejection
@@ -15565,7 +15584,22 @@ class ConsoleChatController:
         session context summary / rewind boundary are never touched. An
         oversized span is BLOCKED (matching the manual path's contract)
         rather than silently trimmed, because a user-facing note must not
-        quietly omit turns.
+        quietly omit turns -- the span is counted UNTRIMMED before the
+        provider call (``_build_summary_span_text``'s oldest-turn trimming
+        is deliberately not used here).
+
+        Args:
+            message_id: The selected message bounding the span (inclusive).
+
+        Returns:
+            A ``ConsoleNoteDraft`` carrying the summary note title/content,
+            or a blocked ``ConsoleSubmitResult`` (active run, no session,
+            off-path/missing target, provider not ready, oversized span,
+            timeout, or provider failure).
+
+        Raises:
+            asyncio.CancelledError: Propagated unchanged when the caller's
+                task is cancelled, so cancellation is never swallowed.
         """
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
@@ -15599,7 +15633,14 @@ class ConsoleChatController:
         resolution = await self._auxiliary_compaction_resolution(
             configuration.provider_selection, resolution
         )
-        span_text = self._build_summary_span_text(span, None, model=resolution.model or "")
+        # Deliberately NOT _build_summary_span_text: that helper silently
+        # drops oldest turns to fit the budget, which would defeat the
+        # block-below check below (it would always see an already-fitting
+        # span) and quietly omit turns from a user-facing note.
+        span_text = "\n".join(
+            f"{'User' if m.role is ConsoleMessageRole.USER else 'Assistant'}: {m.content}"
+            for m in span
+        )
         model = resolution.model or ""
         if (
             count_console_messages_tokens(

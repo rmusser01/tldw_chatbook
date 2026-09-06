@@ -9,6 +9,7 @@ harness shape from ``test_console_rewind_summarize.py``.
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -325,3 +326,105 @@ async def test_note_actions_mid_run_notify_instead_of_summarizing(action_id):
     # The worker ran to completion and the controller's run gate produced
     # the user-visible rejection.
     assert any("run" in note.lower() for note in notices), notices
+
+
+# --- Review follow-ups (Qodo on PR #2467) -----------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+async def test_note_actions_persist_through_notes_service(action_id):
+    """End-to-end (review follow-up): driving each action's worker against
+    a stubbed notes service persists the draft with the expected title,
+    content, scope, keywords, and the app's configured notes identity."""
+    app, screen = _build_screen()
+    app.notes_user_id = "notes-owner-1"
+    saved: list[dict] = []
+
+    class StubNotesService:
+        async def save_note(self, **kwargs):
+            saved.append(kwargs)
+            return {"note_id": "n1"}
+
+    app.notes_scope_service = StubNotesService()
+    screen._ensure_console_chat_controller()
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="the question")
+    completed = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="the answer"
+    )
+    # The save tail runs through run_worker (it needs a live Textual app
+    # context); capture the coroutine instead so the save can be awaited
+    # and asserted here.
+    work: list = []
+    scheduled: list = []
+
+    def capture_worker(coroutine, **kwargs):
+        scheduled.append(kwargs)
+        work.append(coroutine)
+        return SimpleNamespace(cancel=lambda: None)
+
+    screen.run_worker = capture_worker
+    if action_id == "summarize-note":
+        # No live provider under the pytest app fixture (the stateless
+        # summary seam's contract is covered by the controller-level tests
+        # above); stub the controller boundary so this test exercises the
+        # save path end-to-end.
+        async def fake_summarize(message_id):
+            return ConsoleNoteDraft(
+                title="Summary: the question",
+                content="> Generated: test\n\nSTUB SUMMARY",
+            )
+
+        screen._ensure_console_chat_controller().summarize_span_as_note = (
+            fake_summarize
+        )
+
+    worker = (
+        screen._message._summarize_console_span_as_note(completed.id)
+        if action_id == "summarize-note"
+        else screen._message._save_console_transcript_as_note(completed.id)
+    )
+    await worker
+    assert len(scheduled) == 1
+    assert scheduled[0].get("group") == "console-note-actions"
+    for coroutine in work:
+        await coroutine
+
+    assert len(saved) == 1
+    call = saved[0]
+    assert call["scope"] == "local_note"
+    assert call["keywords"] == ["console"]
+    assert call["user_id"] == "notes-owner-1"
+    assert call["title"].startswith(
+        "Summary: " if action_id == "summarize-note" else "Transcript: "
+    )
+    if action_id == "summarize-note":
+        assert call["content"].startswith("> Generated: ")
+        assert "STUB SUMMARY" in call["content"]
+    else:
+        assert "**User:** the question" in call["content"]
+        assert "**Assistant:** the answer" in call["content"]
+
+
+@pytest.mark.asyncio
+async def test_oversized_span_blocks_at_the_real_budget(tmp_path):
+    """Review follow-up (bug fix): the budget check must see the UNTRIMMED
+    span. _build_summary_span_text silently drops oldest turns, so checking
+    after it could never fire; a >12k-token span must now block outright."""
+    controller, store, session, gateway, _db = _note_controller(tmp_path)
+    big = "word " * 13_000
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content=big, persist=True
+    )
+    target = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="short", persist=True
+    )
+
+    blocked = await controller.summarize_span_as_note(target.id)
+
+    assert isinstance(blocked, ConsoleSubmitResult)
+    assert blocked.accepted is False
+    assert "too large" in blocked.visible_copy
+    assert gateway.calls == 0
