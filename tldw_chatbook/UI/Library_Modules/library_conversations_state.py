@@ -123,6 +123,7 @@ class LibraryConversationsState:
     find_focus_intent: tuple[int, int, str] | None = None
     reader_mounted_authority: bool = False
     deleted_selection_id: str = ""
+    projection: str = ""
 
     # Placeholder defaults only -- see module docstring: the original
     # `__init__` line for each of these three still runs (assigning

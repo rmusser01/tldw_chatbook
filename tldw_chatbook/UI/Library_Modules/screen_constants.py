@@ -99,6 +99,13 @@ LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library
 LIBRARY_SERVICE_UNAVAILABLE_COPY = (
     "Library source services are unavailable in this runtime."
 )
+# task-31632 (critique #5 P1): the source snapshot's own recovery callout --
+# the copy for a missed deadline (told apart from the hard failure above),
+# the id of the one Retry rendered INSIDE the callout, and the selector the
+# landing hub mounts it under.
+LIBRARY_SOURCE_TIMEOUT_COPY = "Library sources did not answer"
+LIBRARY_SOURCE_RETRY_ID = "library-source-retry"
+LIBRARY_SOURCE_FAILURE_SELECTOR = "#library-hub-load-failure"
 LIBRARY_EMPTY_COPY = "No local Library content yet."
 # F-021: the retired inspector pane's LIBRARY_INSPECTOR_EMPTY_COPY /
 # LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY were deleted -- nothing has

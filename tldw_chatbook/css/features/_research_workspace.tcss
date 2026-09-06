@@ -11,8 +11,12 @@
 
 /* Runs adds the shared one-row mode strip above the legacy 100%-high window.
  * Claim only the remaining screen-content height so its footer stays contained.
+ * layout: vertical -- ResearchWindow subclasses Vertical, but the global
+ * `.window` rule (layout/_windows.tcss) forces layout: horizontal, which
+ * crushed the whole Runs view into one squashed row (release P1).
  */
 ResearchScreen #research-window.window {
+    layout: vertical;
     height: 1fr;
     min-height: 0;
 }
@@ -798,4 +802,85 @@ ResearchNoteSwitchRecoveryModal {
     margin-top: 1;
     color: $accent;
     text-style: bold;
+}
+
+/* --- Runs window internal layout ------------------------------------------
+ * ResearchWindow's containers had no styles at all: the toolbar/create/body
+ * rows fell back to Horizontal's 1fr height and Input/Select's 100% width,
+ * so nothing usable rendered. Rows hug their content; the run list + detail
+ * body claims the rest.
+ */
+#research-toolbar,
+#research-create-row {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+}
+
+#research-source-select {
+    width: 16;
+}
+
+/* ID subjects, not `<row> Input`: the ancestor-scoped bare-type ratchet
+ * (test_textual_css_fastpath, ADR-097) taxes bare-type-subject rules.
+ */
+#research-query-input,
+#research-limits-input,
+#research-providers-input {
+    width: 1fr;
+}
+
+#research-policy-select {
+    width: 20;
+}
+
+#research-rounds-select {
+    width: 14;
+}
+
+#research-status {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#research-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+#research-run-list {
+    width: 30%;
+    min-width: 24;
+    height: 100%;
+    border-right: solid $surface-lighten-1;
+}
+
+#research-detail-panel {
+    width: 1fr;
+    height: 100%;
+    min-height: 0;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+#research-run-actions,
+#research-observe-actions,
+#research-checkpoint-actions,
+#research-followup-row {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+}
+
+#research-artifact-name,
+#research-followup-input {
+    width: 1fr;
+}
+
+#research-checkpoint-patch {
+    height: 6;
 }

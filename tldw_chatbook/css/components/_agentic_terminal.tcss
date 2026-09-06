@@ -4773,6 +4773,71 @@ ConsoleTerminalWorkspace Button:focus {
     align: center middle;
 }
 
+/* TASK-31244: Character rows are compact, cell-clipped peers inside the
+   section's existing bounded viewport. The widget itself introduces no
+   additional scroll owner. */
+#console-character-context {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+}
+
+#console-character-search {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+}
+
+.console-character-group,
+.console-character-row,
+.console-character-action,
+#console-character-retry,
+#console-character-open-roleplay {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    padding: 0;
+    text-align: left;
+    content-align: left middle;
+    text-overflow: ellipsis;
+}
+
+.console-character-group:focus,
+.console-character-row:focus,
+.console-character-action:focus,
+#console-character-retry:focus,
+#console-character-open-roleplay:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+#console-character-context .console-character-search-row {
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+}
+
+.console-character-empty,
+#console-character-loading,
+#console-character-error,
+#console-character-unavailable-reason {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    text-overflow: ellipsis;
+}
+
+#console-character-context .console-character-row.-opening {
+    text-style: italic;
+}
+
 /* Shared direct-section body. The owner applies the measured content-row
    allocation inline; no CSS ceiling may override a smaller Context grant. */
 ConsoleBoundedSection {

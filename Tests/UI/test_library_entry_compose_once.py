@@ -31,6 +31,10 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
 from tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller import (
     LibraryPromptBrowseController,
 )
+from tldw_chatbook.UI.destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_recovery_state,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import (
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
@@ -155,6 +159,7 @@ def _landing_state(
     continue_action: LibraryLandingContinueAction | None = None,
     attention_action: LibraryLandingAttentionAction | None = None,
     recent_items: tuple[LibraryLandingRecentItem, ...] = (),
+    load_failure: DestinationRecoveryState | None = None,
 ) -> LibraryLandingCanvasState:
     """Build one explicit lifecycle presentation state for retained-owner tests."""
     return LibraryLandingCanvasState(
@@ -163,6 +168,7 @@ def _landing_state(
         continue_action=continue_action,
         attention_action=attention_action,
         recent_items=recent_items,
+        load_failure=load_failure,
         lifecycle=lifecycle,
         lifecycle_status=status,
         show_retry=show_retry,
@@ -254,6 +260,70 @@ async def test_library_returning_landing_omits_absent_optional_sections():
         assert len(app.query("#library-hub-action-import")) == 1
         assert len(app.query("#library-hub-action-new-note")) == 1
         assert len(app.query("#library-hub-action-search")) == 1
+        assert not app.query("#library-hub-load-failure")
+
+
+def _source_load_failure(kind: str = "error") -> DestinationRecoveryState:
+    """Build the source-snapshot failure state the landing hub paints."""
+    return load_failure_recovery_state(
+        what="Library sources did not answer",
+        reason="waited 5 s",
+        retry_id="library-source-retry",
+        stable_selector="#library-hub-load-failure",
+        kind=kind,
+    )
+
+
+@pytest.mark.asyncio
+async def test_library_returning_landing_failure_callout_composes_once_and_hides_continue():
+    """task-31632 AC#3: the source-snapshot wall is a recovery callout with
+    its own Retry inside it, composed ONCE -- and it withdraws Continue,
+    which was the wall's only control and led out of Library.
+    """
+    failure = _source_load_failure("error")
+    app = _LandingCanvasHarness(
+        _landing_state(
+            LibraryLifecycle.GRADUATED,
+            continue_action=LibraryLandingContinueAction(
+                label="Media · recent first",
+                row_id=LIBRARY_ROW_BROWSE_MEDIA,
+            ),
+            load_failure=failure,
+        )
+    )
+
+    async with app.run_test() as pilot:
+        landing = app.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        callouts = list(app.query("#library-hub-load-failure"))
+        assert len(callouts) == 1
+        callout = callouts[0]
+        assert callout.has_class("ds-recovery-callout")
+        assert callout.has_class("is-blocked")
+        retry = app.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button))
+        assert str(
+            app.query_one("#library-hub-load-failure-copy", Static).renderable
+        ) == failure.message
+        assert not app.query("#library-hub-continue")
+        assert not app.query("#library-hub-continue-heading")
+
+        # An in-place sync to a DIFFERENT failure patches the one callout:
+        # same widget object, new copy and tint, no second compose.
+        landing.sync_state(
+            _landing_state(
+                LibraryLifecycle.GRADUATED,
+                continue_action=LibraryLandingContinueAction(
+                    label="Media · recent first",
+                    row_id=LIBRARY_ROW_BROWSE_MEDIA,
+                ),
+                load_failure=_source_load_failure("timeout"),
+            )
+        )
+        await pilot.pause()
+        assert list(app.query("#library-hub-load-failure")) == [callout]
+        assert app.query_one("#library-source-retry", Button) is retry
+        assert not callout.has_class("is-blocked")
+        assert not app.query("#library-hub-continue")
 
 
 @pytest.mark.asyncio
@@ -412,6 +482,41 @@ async def test_library_landing_does_not_duplicate_screen_persistence_warning():
         assert (
             app.query_one("#library-hub-action-new-note", Button).disabled is False
         )
+        # Qodo PR G finding 5, third pin: a STARTER lifecycle with no
+        # source-snapshot failure paints no callout at all.
+        assert not app.query("#library-hub-load-failure")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ("timeout", "error"))
+async def test_library_landing_starter_with_a_source_failure_shows_recovery_too(
+    kind: str,
+):
+    """Qodo PR G finding 5: a new-profile (STARTER/UNKNOWN) user whose first
+    source read timed out or failed must still see the recovery callout and
+    Retry -- not silent empty counts -- and the Get-started content stays.
+    """
+    failure = _source_load_failure(kind)
+    app = _LandingCanvasHarness(
+        _landing_state(LibraryLifecycle.STARTER, load_failure=failure)
+    )
+
+    async with app.run_test():
+        callouts = list(app.query("#library-hub-load-failure"))
+        assert len(callouts) == 1
+        callout = callouts[0]
+        assert callout.has_class("ds-recovery-callout")
+        assert callout.has_class("is-blocked") == (kind == "error")
+        assert str(
+            app.query_one("#library-hub-load-failure-copy", Static).renderable
+        ) == failure.message
+        retry = app.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button))
+
+        # The starter content stays -- this is Get-started, not a wall.
+        assert app.query_one("#library-hub-heading", Static)
+        assert app.query_one("#library-hub-action-import", Button)
+        assert app.query_one("#library-hub-action-new-note", Button)
 
 
 @pytest.mark.asyncio
@@ -696,7 +801,7 @@ def _entry_worker_terminal(case: _EntryWorkerCase, screen: LibraryScreen) -> boo
     if case.name == "pending-conversations":
         return screen._selected_conversation_id == "chat-2" and selector_ready
     if case.name == "pending-prompt":
-        return screen._library_prompt_detail is not None and selector_ready
+        return screen._prompts_state.detail is not None and selector_ready
     return False
 
 

@@ -40,6 +40,12 @@ class ServerCredentialStore(Protocol):
 
     def clear_all(self) -> None: ...
 
+    def set_scoped_secret(self, scope: "ServerCredentialScope", secret: str) -> None: ...
+
+    def get_scoped_secret(self, scope: "ServerCredentialScope") -> str | None: ...
+
+    def delete_scoped_secret(self, scope: "ServerCredentialScope") -> None: ...
+
 
 class CredentialStoreUnavailable(RuntimeError):
     reason_code = "credential_store_unavailable"
@@ -96,13 +102,6 @@ def _normalize_purpose(purpose: str) -> str:
     if ":" in normalized:
         raise ValueError("purpose must not contain ':'")
     return normalized
-
-
-def _credential_ref(server_id: str, purpose: str) -> ServerCredentialRef:
-    return ServerCredentialRef(
-        server_id=_normalize_non_empty(server_id, "server_id"),
-        purpose=_normalize_purpose(purpose),
-    )
 
 
 def _username_for_scope(scope: ServerCredentialScope) -> str:
@@ -199,20 +198,47 @@ def _index_entry_for_scope(scope: ServerCredentialScope) -> dict[str, Any]:
 
 
 class InMemoryServerCredentialStore:
+    """In-memory credential store, scoped identically to the keyring store.
+
+    Storage key mirrors `KeyringServerCredentialStore`'s scope-derived
+    username: `(server_profile_id, normalized_origin, principal_id,
+    credential_type)`. The plain `set_secret`/`get_secret`/`delete_secret`
+    methods delegate through `ServerCredentialScope.legacy`, so a caller
+    using only the plain API sees identical behavior to before per-profile
+    scoping existed (task-31416) -- and a caller using the scoped API reads
+    back exactly what the plain API wrote for the same `server_id`/`purpose`.
+    """
+
     def __init__(self) -> None:
-        self._secrets: dict[tuple[str, str], str] = {}
+        self._secrets: dict[tuple[str, str, str | None, str], str] = {}
+
+    @staticmethod
+    def _key(scope: ServerCredentialScope) -> tuple[str, str, str | None, str]:
+        normalized = _normalize_scope(scope)
+        return (
+            normalized.server_profile_id,
+            normalized.normalized_origin,
+            normalized.principal_id,
+            normalized.credential_type,
+        )
 
     def set_secret(self, server_id: str, purpose: str, secret: str) -> None:
-        ref = _credential_ref(server_id, purpose)
-        self._secrets[(ref.server_id, ref.purpose)] = secret
+        self.set_scoped_secret(ServerCredentialScope.legacy(server_id, purpose), secret)
 
     def get_secret(self, server_id: str, purpose: str) -> str | None:
-        ref = _credential_ref(server_id, purpose)
-        return self._secrets.get((ref.server_id, ref.purpose))
+        return self.get_scoped_secret(ServerCredentialScope.legacy(server_id, purpose))
 
     def delete_secret(self, server_id: str, purpose: str) -> None:
-        ref = _credential_ref(server_id, purpose)
-        self._secrets.pop((ref.server_id, ref.purpose), None)
+        self.delete_scoped_secret(ServerCredentialScope.legacy(server_id, purpose))
+
+    def set_scoped_secret(self, scope: ServerCredentialScope, secret: str) -> None:
+        self._secrets[self._key(scope)] = secret
+
+    def get_scoped_secret(self, scope: ServerCredentialScope) -> str | None:
+        return self._secrets.get(self._key(scope))
+
+    def delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
+        self._secrets.pop(self._key(scope), None)
 
     def clear_server(self, server_id: str) -> None:
         normalized_server_id = _normalize_non_empty(server_id, "server_id")
@@ -244,6 +270,15 @@ class UnavailableServerCredentialStore:
         self._raise_unavailable()
 
     def clear_all(self) -> None:
+        self._raise_unavailable()
+
+    def set_scoped_secret(self, scope: ServerCredentialScope, secret: str) -> None:
+        self._raise_unavailable()
+
+    def get_scoped_secret(self, scope: ServerCredentialScope) -> str | None:
+        self._raise_unavailable()
+
+    def delete_scoped_secret(self, scope: ServerCredentialScope) -> None:
         self._raise_unavailable()
 
 

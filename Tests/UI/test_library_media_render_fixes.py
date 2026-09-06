@@ -19,6 +19,7 @@ the chooser bug needs the screen's focus-on-open):
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 
 import pytest
 from types import SimpleNamespace
@@ -2306,3 +2307,157 @@ async def test_more_stays_compact_at_the_narrow_reader_width():
         painted = _painted(host, actions.region)
         for label in _MORE_ACTION_LABELS:
             assert label in painted, painted
+
+
+async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
+    """Fail the applied Media page in place and return its call counter.
+
+    A page-1 request that fails AFTER page 1 applied is the critique's
+    exact state ("Couldn't load page 1."): the rows stay retained, the
+    pager keeps its counters, and the only recovery is Retry.
+    """
+    calls: list[int] = []
+
+    async def _fails(**_kwargs):
+        calls.append(1)
+        raise exc
+
+    host.app_instance.media_reading_scope_service.search_media = _fails
+    controller = screen._library_media_browse_controller
+    screen._request_library_media_page(1, focus_identity=None)
+    await _wait_for_condition(
+        pilot,
+        lambda: controller.failure is not None and not controller.loading,
+        message="The forced Media page failure never settled.",
+    )
+    await pilot.pause()
+    return calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_media_load_failure_paints_one_callout_with_retry_inside(size):
+    """task-31632 AC#1: the reason and its Retry, painted together.
+
+    Critique #5 P1: ``Couldn't load page 1.`` painted as a bare sentence
+    with no reason, and its only Retry 34 rows below in the pager strip.
+    """
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        callout = screen.query_one("#library-media-load-failure")
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        retry = screen.query_one("#library-media-retry", Button)
+
+        painted = " ".join(_painted(host, copy.region).split())
+        assert painted == "Couldn't load page 1 · database is locked", painted
+        assert "Retry" in _painted(host, retry.region)
+
+        # The Retry is IN the callout, on the message's own row or the one
+        # directly below it -- never the pager strip 34 rows down.
+        assert retry in callout.query(Button)
+        assert 0 <= retry.region.y - copy.region.y <= 1, (
+            copy.region,
+            retry.region,
+        )
+        assert retry.region.y - copy.region.y <= 3
+
+        # Exactly one Retry, and the pager strip does not carry a second.
+        assert len(screen.query("#library-media-retry")) == 1
+        pager = screen.query_one("#library-media-pager")
+        assert not pager.query("#library-media-retry")
+
+        # The retained rows stay exactly as they were.
+        assert len(screen.query(".library-media-row")) == 2
+
+
+@pytest.mark.asyncio
+async def test_media_load_failure_callout_retry_issues_a_new_request():
+    """task-31632 AC#1: the Retry inside the callout is the live one."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+        calls = await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+        assert len(calls) == 1
+
+        screen.query_one("#library-media-load-failure").query_one(
+            "#library-media-retry", Button
+        ).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(calls) == 2,
+            message="The callout's Retry never issued a new request.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not controller.loading,
+            message="The retried request never settled.",
+        )
+        await pilot.pause()
+
+        # Still one callout, repainted with the fresh reason -- never a
+        # silent press.
+        assert len(screen.query("#library-media-load-failure")) == 1
+        assert controller.failure is not None
+
+
+@pytest.mark.asyncio
+async def test_media_facet_failure_paints_the_same_callout():
+    """task-31632 AC#1 (Task 2 review carry-over): the type-list failure was
+    only ever covered at controller level. It reaches the SAME callout, with
+    the same single Retry, because the type list has no control of its own.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        controller = screen._library_media_browse_controller
+
+        async def _fails(**_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        host.app_instance.media_reading_scope_service.list_library_media_types = _fails
+        screen._request_library_media_facets()
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.facet_failure is not None and not controller.facet_loading,
+            message="The forced Media facet failure never settled.",
+        )
+        await pilot.pause()
+
+        assert controller.page_failure is None
+        callout = screen.query_one("#library-media-load-failure")
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        painted = " ".join(_painted(host, copy.region).split())
+        assert painted == "Couldn't load media types · database is locked", painted
+        retry = screen.query_one("#library-media-retry", Button)
+        assert retry in callout.query(Button)
+        assert len(screen.query("#library-media-retry")) == 1
+
+
+@pytest.mark.asyncio
+async def test_media_failure_callout_tint_follows_the_severity():
+    """task-31632 AC#1: a timeout and a hard failure do not paint alike."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _force_media_page_failure(host, screen, pilot, TimeoutError())
+
+        callout = screen.query_one("#library-media-load-failure")
+        copy = screen.query_one("#library-media-load-failure-copy", Static)
+        assert " ".join(_painted(host, copy.region).split()) == (
+            "Couldn't load page 1 · timed out"
+        )
+        assert not callout.has_class("is-blocked")
+        timeout_border = callout.styles.border_top
+
+        await _force_media_page_failure(host, screen, pilot, RuntimeError("boom"))
+        callout = screen.query_one("#library-media-load-failure")
+        assert callout.has_class("is-blocked")
+        assert callout.styles.border_top != timeout_border, timeout_border

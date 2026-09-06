@@ -1851,8 +1851,8 @@ class ConsolePromptsController:
 
         Always a CREATE (the Console `/system` editor never edits an
         existing Library prompt): pre-checks the name for a collision the
-        same way ``library_screen._save_library_prompt``'s own create path
-        does, so a genuine duplicate is classified via
+        same way ``LibraryPromptsController._save_library_prompt``'s own
+        create path does, so a genuine duplicate is classified via
         ``classify_prompt_save_error`` -- with ``exc=None`` and a manually
         built message -- rather than racing the DB's raw ``ConflictError``,
         and reports the SAME outcome copy that screen's own save flow shows.

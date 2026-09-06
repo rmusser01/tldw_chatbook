@@ -27,12 +27,17 @@ from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.style import Style
 from textual.timer import Timer
-from textual.widget import Widget
 from textual.visual import VisualType
+from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
 from textual_diff_view import DiffView
 
+from tldw_chatbook.Chat.assistant_generation_state import (
+    render_exported_assistant_content,
+)
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
     PROPRIETARY_THINKING_NOTICE,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
@@ -40,7 +45,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationPhase,
     ConsoleMessageRole,
     ConsoleThinkingActivityRef,
-    FEEDBACK_ACTIVE_RUN_STATUSES,
 )
 from tldw_chatbook.Chat.console_context_compaction import (
     EffectiveMemoryKind,
@@ -49,21 +53,6 @@ from tldw_chatbook.Chat.console_context_compaction import (
 from tldw_chatbook.Chat.console_context_repository import (
     MemoryCoverageKind,
     MemoryOriginKind,
-)
-from tldw_chatbook.Chat.assistant_generation_state import (
-    render_exported_assistant_content,
-)
-from tldw_chatbook.Chat.console_turn_grouping import (
-    ConsoleAssistantTurn,
-    ConsoleTranscriptUnit,
-    group_console_transcript_messages,
-    ordered_assistant_activities,
-    project_thinking_activities,
-)
-from tldw_chatbook.Chat.thinking_blocks import (
-    DisplayableThinkingBlock,
-    ProprietaryThinkingBlock,
-    ThinkingEnvelope,
 )
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
@@ -79,7 +68,6 @@ from tldw_chatbook.Chat.console_message_actions import (
     action_row_guide,
     resolve_console_header_speech,
 )
-from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
@@ -90,18 +78,39 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     resolve_console_message_presentation,
 )
+from tldw_chatbook.Chat.console_turn_grouping import (
+    ConsoleAssistantTurn,
+    ConsoleTranscriptUnit,
+    group_console_transcript_messages,
+    ordered_assistant_activities,
+    project_thinking_activities,
+)
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ProprietaryThinkingBlock,
+    ThinkingEnvelope,
+)
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
-from tldw_chatbook.Widgets.Console.console_generation_card import (
-    ConsoleGenerationCard,
-    ConsoleGenerationCardSpec,
-    generation_card_signature,
-)
 from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityActivated,
     ConsoleActivityDisclosure,
     ConsoleAssistantTurnWidget,
     raw_cli_status_copy,
+)
+from tldw_chatbook.Widgets.Console.console_canvas_card import (
+    ConsoleCanvasCard,
+    ConsoleCanvasCardPresentation,
+    canvas_card_signature,
+)
+from tldw_chatbook.Widgets.Console.console_generation_card import (
+    ConsoleGenerationCard,
+    ConsoleGenerationCardSpec,
+    generation_card_signature,
+)
+from tldw_chatbook.Widgets.Console.console_message_more_menu import (
+    ConsoleMessageMoreMenu,
+    message_more_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_selection import (
     SelectionManager,
@@ -117,15 +126,11 @@ from tldw_chatbook.Widgets.Console.console_selection import (
 )
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
-    ConsoleSelectionNoteRequested,
     ConsoleSelectionMenu,
+    ConsoleSelectionNoteRequested,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
     selection_menus_on_screen,
-)
-from tldw_chatbook.Widgets.Console.console_message_more_menu import (
-    ConsoleMessageMoreMenu,
-    message_more_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
@@ -212,6 +217,27 @@ class ConsoleMemoryBannerPresentation:
                 raise ValueError("range memory banner requires a start identity")
         elif self.start_message_id is not None:
             raise ValueError("prefix memory banner cannot carry a start identity")
+
+
+def canvas_card_presentations(
+    message: ConsoleChatMessage,
+) -> tuple[ConsoleCanvasCardPresentation, ...]:
+    """Project validated Canvas metadata without ever accepting source bytes."""
+
+    metadata = message.metadata
+    if metadata is None:
+        return ()
+    return tuple(
+        ConsoleCanvasCardPresentation(
+            canvas_id=card.canvas_id,
+            revision_id=card.revision_id,
+            label=f"{card.title} · revision {card.sequence} · {card.status}",
+            digest=card.digest,
+            reopenable=card.reopenable,
+            error_code=card.error_code,
+        )
+        for card in metadata.canvas_cards
+    )
 
 
 def derive_console_memory_banner_presentation(
@@ -1124,6 +1150,7 @@ class _TranscriptRow:
         "image",
         "generation-card",
         "video-card",
+        "canvas-card",
         "actions",
         "action-help",
         "assistant-turn",
@@ -1139,6 +1166,8 @@ class _TranscriptRow:
     image_spec: "ConsoleImageRowSpec | None" = None
     generation_card_spec: "ConsoleGenerationCardSpec | None" = None
     video_card_spec: "ConsoleVideoCardSpec | None" = None
+    canvas_card_spec: "ConsoleCanvasCardPresentation | None" = None
+    canvas_session_id: str | None = None
     assistant_turn: ConsoleAssistantTurn | None = None
     nested_rows: tuple["_TranscriptRow", ...] = ()
     activity_rows: tuple[tuple["_TranscriptRow", ...], ...] = ()
@@ -5171,7 +5200,7 @@ class ConsoleTranscript(VerticalScroll):
                 lines.append(status_line)
             if message.id == self.selected_message_id:
                 lines.append(self._plain_action_row(message))
-                lines.append(ConsoleMessageActionService().plain_action_guide(message))
+                lines.append(self._canvas_action_service().plain_action_guide(message))
 
         for unit in group_console_transcript_messages(self._messages):
             message = unit.standalone
@@ -5204,6 +5233,10 @@ class ConsoleTranscript(VerticalScroll):
                     _append_status_and_actions(activity, activity_body)
             body = _message_body(message, presentation)
             lines.append(body)
+            lines.extend(
+                f"Canvas · {card.label}"
+                for card in canvas_card_presentations(message)
+            )
             _append_status_and_actions(message, body)
         if self._messages:
             lines.append(rule)
@@ -6430,6 +6463,23 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
+            for index, card in enumerate(canvas_card_presentations(message)):
+                card_session_id = self._canvas_card_session_id()
+                rows.append(
+                    _TranscriptRow(
+                        key=f"canvas-card:{message.id}:{index}",
+                        kind="canvas-card",
+                        signature=(
+                            message.id,
+                            card_session_id,
+                            *canvas_card_signature(card),
+                        ),
+                        message=message,
+                        canvas_card_spec=card,
+                        canvas_session_id=card_session_id,
+                        renderable=f"Canvas · {card.label}",
+                    )
+                )
             if (
                 message.id in self._expanded_tool_output_ids
                 and message.tool_diff is not None
@@ -6758,6 +6808,12 @@ class ConsoleTranscript(VerticalScroll):
             self._build_row_widget(row, track=False) for row in self._transcript_rows()
         ]
 
+    def _canvas_card_session_id(self) -> str | None:
+        """Return only an explicit render-session identity for card actions."""
+
+        identity = self._session_identity
+        return identity if type(identity) is str and identity else None
+
     def _cancel_selection_if_row_removed(self, widget: Widget) -> None:
         """Drop drag-selection state when its row widget is removed/rebuilt.
 
@@ -6990,6 +7046,18 @@ class ConsoleTranscript(VerticalScroll):
             return self._build_assistant_turn_widget(row)
         if row.kind == "message" and row.message is not None:
             return self._build_message_widget(row.message, selected=row.selected)
+        if (
+            row.kind == "canvas-card"
+            and row.message is not None
+            and row.canvas_card_spec is not None
+        ):
+            card_index = int(row.key.rsplit(":", 1)[1])
+            return ConsoleCanvasCard(
+                row.canvas_card_spec,
+                session_id=row.canvas_session_id,
+                message_id=row.message.id,
+                card_index=card_index,
+            )
         if (
             row.kind == "diff"
             and row.message is not None
@@ -7835,7 +7903,7 @@ class ConsoleTranscript(VerticalScroll):
         return kwargs
 
     def _action_groups(self, message: ConsoleChatMessage):
-        return ConsoleMessageActionService().action_groups(
+        return self._canvas_action_service().action_groups(
             message,
             speaking_message_id=self._console_tts_speaking_message_id(),
             original_attempt_available=bool(
@@ -7901,9 +7969,27 @@ class ConsoleTranscript(VerticalScroll):
             classes="console-transcript-action-row",
         )
 
-    @staticmethod
-    def _plain_action_row(message: ConsoleChatMessage) -> str:
-        return ConsoleMessageActionService().plain_action_row(message)
+    def _canvas_action_service(self) -> ConsoleMessageActionService:
+        """Build actions against the app runtime's restart-latched Canvas gate."""
+
+        def enabled() -> bool:
+            try:
+                app = self.app
+            except Exception:  # noqa: BLE001 - unmounted projections fail closed
+                return False
+            runtime = getattr(app, "console_runtime", None)
+            reader = getattr(runtime, "canvas_enabled", None)
+            if not callable(reader):
+                return False
+            try:
+                return reader() is True
+            except Exception:  # noqa: BLE001 - transcript actions fail closed
+                return False
+
+        return ConsoleMessageActionService(canvas_enabled_reader=enabled)
+
+    def _plain_action_row(self, message: ConsoleChatMessage) -> str:
+        return self._canvas_action_service().plain_action_row(message)
 
     @staticmethod
     def _action_button(

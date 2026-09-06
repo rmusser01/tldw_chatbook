@@ -54,7 +54,9 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     NEXT_RUN_REFRESH_SECONDS,
     SCHEDULER_LIVENESS_REFRESH_SECONDS,
     SchedulesWorkbench,
+    _row_subtitle,
 )
+from tldw_chatbook.UI.Screens.scheduling.unified_rows import UnifiedRow
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
@@ -79,6 +81,33 @@ from Tests.UI.schedules_test_helpers import (
     rendered_row_cells,
     settle_schedules_workbench,
 )
+
+
+# task-31711 AC#1: a definition row's absolute next-run timestamp must
+# carry an explicit timezone label, never a bare "YYYY-MM-DD HH:MM"
+# (`_row_subtitle`'s definition branch had none -- unlike the reminder
+# branch, which deliberately drops it via `_format_next_run(compact=True)`,
+# task-23111).
+def test_definition_row_subtitle_carries_a_timezone_label() -> None:
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
+    row = UnifiedRow(
+        kind="definition",
+        row_id="definition:def-1",
+        title="Digest",
+        schedule_summary="Daily at 09:00 UTC",
+        next_run_at=datetime(2026, 9, 6, 9, 0, tzinfo=timezone.utc),
+        owner_id="local",
+        owner_label="Local",
+        transfer_state=None,
+        bucket="active",
+        glyph="●",
+        unread_count=0,
+        search_blob="digest",
+        source_row={},
+    )
+    subtitle = _row_subtitle(row, now)
+    assert "2026-09-06 09:00 UTC" in subtitle
+    assert subtitle == "Daily at 09:00 UTC · 2026-09-06 09:00 UTC (in 21h)"
 
 
 class WorkbenchTestApp(ConsolidatedCSSApp):
@@ -289,16 +318,14 @@ async def test_task_detail_renders_selected_task():
         assert delete_button.label.plain == "Delete"
         assert follow_button.label.plain == "Follow 'Test' in Console"
 
-        # schedules-redesign PR-1, task 3: the old combined Type/Schedule
-        # rows are hidden for a reminder now (they only remain visible for
-        # a `ScheduledTask` projection); the same "One-time"/"One-time at"
-        # facts render through the new Frequency group's Repeat/At rows
-        # instead -- painted-output assertions, not stored-attribute ones
-        # (last program's lesson), since a hidden widget's stored text
-        # would pass even if nothing were actually on screen.
-        legacy_fields = detail.query_one("#scheduling-task-detail-legacy-fields")
+        # task-31413: the old combined Type/Schedule rows (and the legacy
+        # container that held them) are deleted -- the same "One-time"/
+        # "One-time at" facts render through the new Frequency group's
+        # Repeat/At rows instead -- painted-output assertions, not
+        # stored-attribute ones (last program's lesson), since a hidden
+        # widget's stored text would pass even if nothing were actually on
+        # screen.
         groups = detail.query_one("#scheduling-task-detail-groups")
-        assert legacy_fields.display is False
         assert groups.display is True
         repeat_value = detail.query_one("#scheduling-detail-repeat", Static)
         at_value = detail.query_one("#scheduling-detail-at", Static)
@@ -321,6 +348,75 @@ class _BareTaskDetailApp(ConsolidatedCSSApp):
         yield TaskDetail()
 
 
+class _BareConflictsTabApp(ConsolidatedCSSApp):
+    """Bare app mounting one `ConflictsTab`, matching `_BareTaskDetailApp`'s
+    own pattern -- `CSS_PATH` pinned to the app bundle so `ConflictsTab`'s
+    `BUNDLED_CSS` (lifted into `css/widget_defaults_scoped.tcss` by
+    `build_css.py`) actually resolves; a bare `App` with no `CSS_PATH`
+    measures Textual's OWN built-in `Horizontal`/`Static` defaults instead
+    of this widget's own rules."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    def compose(self):
+        yield ConflictsTab(None)
+
+
+@pytest.mark.asyncio
+async def test_conflicts_tab_table_is_bounded_and_detail_pane_fills_the_rest():
+    """31713 AC#4: a `height: 1fr` DataTable used to dominate the pane with
+    blank background below a handful of conflict rows, while the detail
+    pane below it stayed capped at 9 rows regardless of how much screen
+    was free. The table now bounds itself to its own content (well under
+    its `max-height: 15` cap for 2 rows) and the detail pane grows to fill
+    what the table no longer claims.
+
+    Revert-check: against the pre-fix CSS (`table height: 1fr`, `detail
+    height: auto; max-height: 9`) the table's region height would be ~35
+    (dominating a 40-row screen) and the detail pane's would be capped at
+    9 regardless of free space -- the opposite of both assertions below.
+    """
+    async with _BareConflictsTabApp().run_test(size=(100, 40)) as pilot:
+        tab = pilot.app.query_one(ConflictsTab)
+        tab.populate(
+            [
+                {
+                    "id": "c1",
+                    "server_state": {
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "record": {"title": "Row 1"},
+                    },
+                    "local_state": {
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "record": {"title": "Row 1"},
+                    },
+                },
+                {
+                    "id": "c2",
+                    "server_state": {
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "record": {"title": "Row 2"},
+                    },
+                    "local_state": {
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "record": {"title": "Row 2"},
+                    },
+                },
+            ]
+        )
+        await pilot.pause()
+
+        table = tab.query_one("#scheduling-conflicts-table", DataTable)
+        detail = tab.query_one("#scheduling-conflict-detail", Static)
+
+        # 2 rows + header, comfortably under the 15-row cap -- not the
+        # ~35-row `1fr` fill the old CSS produced.
+        assert table.region.height <= 5, table.region
+        # The freed vertical space goes to the detail pane, not to blank
+        # DataTable background.
+        assert detail.region.height > 15, detail.region
+
+
 def _frequency_reminder(**kwargs) -> ReminderTask:
     """A representative recurring reminder covering every §5 Frequency/
     Details/History value: weekly cadence, a non-UTC timezone, and a
@@ -336,6 +432,31 @@ def _frequency_reminder(**kwargs) -> ReminderTask:
     )
     defaults.update(kwargs)
     return ReminderTask(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_set_task_rejects_a_scheduled_task_projection():
+    """task-31413: `TaskDetail.set_task` only ever renders a `ReminderTask`
+    in production (both real construction sites in `schedules_workbench.py`
+    are fed through `_update_detail_for_index`, which asserts
+    `isinstance(task, ReminderTask)` before calling `set_task` at all). This
+    pins that claim directly, rather than restating it in a comment: a
+    `ScheduledTask` projection -- the shape the deleted legacy-fields layer
+    used to render -- must raise loudly here instead of silently painting a
+    near-empty pane."""
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        projection = ScheduledTask(
+            id="watchlist:1",
+            title="Watchlist Title",
+            type="watchlist_job",
+            status=TaskStatus.WAITING,
+            schedule_summary="Every 1h",
+            next_run_at=datetime(2026, 7, 20, 11, 0, tzinfo=timezone.utc),
+            owner_id="local",
+        )
+        with pytest.raises(AssertionError):
+            detail.set_task(projection)
 
 
 @pytest.mark.asyncio
@@ -367,6 +488,108 @@ async def test_task_detail_groups_render_every_frequency_and_details_value():
         await pilot.pause()
         assert _text("scheduling-detail-last-fire") == "2026-08-24 09:00 UTC — Completed"
         assert _text("scheduling-detail-history-link") == "See list below"
+
+
+@pytest.mark.asyncio
+async def test_task_detail_notifications_row_explains_its_permanent_read_only_state():
+    """31712 AC#1: a reminder's Notifications row has no affordance glyph
+    at all (no per-reminder backing field, unlike a definition's editable
+    On/Off toggle) -- the row must say why in its own tooltip rather than
+    silently differing from the same-named definition row."""
+    async with _BareTaskDetailApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        value = detail.query_one("#scheduling-detail-notifications", Static)
+        assert value.tooltip is not None
+        assert "no per-reminder" in str(value.tooltip).lower()
+
+
+@pytest.mark.asyncio
+async def test_task_detail_frequency_group_no_longer_wastes_padding_rows():
+    """31712 AC#4: an EXPANDED `DetailGroup`'s own region height must equal
+    border(1) + title(3) + its rows' own content height -- no leftover
+    blank rows from Textual's `Collapsible`/`Contents` body chrome (the
+    widget-tier `padding-bottom: 1`, the app-wide `margin-bottom: 1` /
+    `border: tall` / `Contents { padding: 1 }` rules all leaked through
+    before this fix -- see `_scheduling.tcss`'s `DetailGroup` rule).
+
+    The Frequency group renders exactly 4 `DetailValueRow`s (Repeat/At/
+    Timezone/Notifications) for a recurring reminder -- this pins the
+    group's total height to 1 + 3 + 4 = 8, which the OLD chrome inflated
+    to 12 (revert-check: this assertion fails against the pre-fix CSS)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        group = detail.query_one("#scheduling-detail-group-frequency")
+        assert group.collapsed is False
+        assert group.region.height == 8, (
+            f"Frequency group height {group.region.height} != 8 -- "
+            "Collapsible/Contents chrome is leaking blank rows again"
+        )
+
+
+@pytest.mark.asyncio
+async def test_task_detail_stacked_labels_do_not_wrap():
+    """31712 AC#5: "Recent runs:"/"Open incidents:" are stacked labels (own
+    line, value below), not paired with a value in a shared row -- the
+    shared `.scheduling-detail-label` class's fixed 10-column width
+    bought them nothing but a wrap (12/16 chars > 10). Pinned at height 1
+    (revert-check: height was 2/3 before the `-stacked` override)."""
+    async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        for label_text in ("Recent runs:", "Open incidents:"):
+            match = next(
+                s
+                for s in detail.query(Static)
+                if str(s.renderable) == label_text
+            )
+            assert match.region.height == 1, (
+                f"{label_text!r} wrapped to height {match.region.height}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_task_detail_history_link_row_scrolls_run_history_into_view():
+    """31712 AC#5: "Run history" -> "See list below" used to be dead
+    pseudo-link text (no affordance, activation did nothing). It now
+    carries a real affordance -- activating it scrolls the "Recent runs:"
+    section it names into view, exactly what the copy promises."""
+    async with _BareTaskDetailApp().run_test(size=(80, 5)) as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_frequency_reminder())
+        await pilot.pause()
+
+        history_group = detail.query_one("#scheduling-detail-group-history")
+        history_group.collapsed = False
+        await pilot.pause()
+        detail.scroll_home(animate=False)
+        await pilot.pause()
+
+        run_history = detail.query_one(
+            "#scheduling-task-detail-run-history", Static
+        )
+        assert not (0 <= run_history.region.y < detail.size.height), (
+            "test premise broken -- run_history is already on-screen"
+        )
+
+        row = detail._history_link_row
+        assert row is not None
+        assert row.affordance is True
+        row.post_message(DetailValueRow.Activated(row))
+        for _ in range(5):
+            await pilot.pause()
+
+        assert 0 <= run_history.region.y < detail.size.height, (
+            "activating the history-link row did not scroll run_history "
+            "into view"
+        )
 
 
 @pytest.mark.asyncio
@@ -2479,16 +2702,17 @@ async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
     `input`/`notification_policy` groups round-trip through `save_
     definition`'s one-level merge untouched.
 
-    Scoped to `input`/`notification_policy` deliberately, NOT `config`'s
-    own generation_mode/scope/finding_policy trio: traced (empirically,
-    via `preview_automation_definition` -> `validate_recurring_question_
-    config`) that those three are unconditionally NORMALIZED WITH
-    DEFAULTS on every local save regardless of which row was actually
-    edited -- a PRE-EXISTING behavior of the shared preview pipeline the
-    create/edit modal never exercises (it always sends explicit values),
-    now newly reachable because task 4 is the first caller that can send
-    a payload leaving them genuinely absent. Not a task-4 regression and
-    out of this task's scope to change; flagged in the report instead."""
+    Extended by task-31414 to cover `config`'s own generation_mode/scope/
+    finding_policy trio too: `validate_recurring_question_config` used to
+    unconditionally NORMALIZE those three WITH DEFAULTS on every local
+    save regardless of which row was actually edited (traced via
+    `preview_automation_definition`), silently backfilling `scope`/
+    `finding_policy` here even though this definition's own row edits
+    `generation_mode` alone. The fix threads `mode` ("create"/"update")
+    into the validator so an edit gates the backfill on presence: the
+    edited key (`generation_mode`) is still normalized, but `scope`/
+    `finding_policy` -- genuinely absent from this row since creation --
+    stay absent in storage instead of being invented."""
     db, service = _real_scheduling_service(tmp_path)
     try:
         definition_id = db.create_automation_definition(
@@ -2500,6 +2724,15 @@ async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
             config={"generation_mode": "optional"},
             notification_policy={"on_success": True, "on_failure": False},
         )
+        # Neither `config.scope`/`config.finding_policy` NOR the dedicated
+        # `finding_policy`/`retention_policy` columns were ever set here --
+        # the latter two fall back to their SQL schema defaults. Captured
+        # before the edit so the post-edit assertions can prove those
+        # dedicated columns were left untouched, not merely re-written
+        # with the same value.
+        before = db.get_automation_definition(definition_id)
+        assert "scope" not in before["config"]
+        assert "finding_policy" not in before["config"]
         app = WorkbenchTestApp()
         app.scheduling_service = service
         async with app.run_test(size=(220, 60)) as pilot:
@@ -2545,6 +2778,25 @@ async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
                 "on_failure": False,
             }
             assert model_static.render_line(0).text.strip() == "auto"
+
+            # task-31414 AC1/AC4: editing generation_mode alone must not
+            # invent scope/finding_policy -- they stay absent in `config`.
+            assert "scope" not in stored["config"]
+            assert "finding_policy" not in stored["config"]
+            # AC1/AC3: the dedicated finding_policy/retention_policy
+            # columns (kept in sync with `config` on a write that DOES
+            # carry them) are left byte-for-byte untouched by an edit
+            # that never carried them at all -- not wiped, not re-defaulted.
+            assert stored["finding_policy"] == before["finding_policy"]
+            assert stored["retention_policy"] == before["retention_policy"]
+            # AC3: the Sources row's own "Not set" honesty (driven by
+            # `config.scope`, genuinely absent throughout) survives the
+            # same edit -- proven by the PAINTED value, not only the
+            # stored row above.
+            sources_static = detail.query_one(
+                "#scheduling-automation-detail-sources", Static
+            )
+            assert sources_static.render_line(0).text.strip() == "Not set"
     finally:
         db.close()
 
@@ -2814,6 +3066,28 @@ async def test_task_inspector_renders_metadata():
         assert "conflict" not in conflict_card.classes
 
 
+@pytest.mark.asyncio
+async def test_task_inspector_empty_state_distinguishes_no_selection():
+    """31712 AC#6: "no task selected" now shows a distinct placeholder
+    instead of a wall of "-" that reads identically to a selected task
+    with nothing to report (revert-check: before this fix the empty
+    state Static had no visibility toggle at all, so this assertion
+    fails against the pre-fix `set_task`)."""
+    async with WorkbenchTestAppWithEmptyService().run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        inspector = pilot.app.screen.query_one(
+            "#scheduling-task-inspector", TaskInspector
+        )
+        empty_state = inspector.query_one(
+            "#scheduling-task-inspector-empty-state", Static
+        )
+        metadata = inspector.query_one("#scheduling-inspector-metadata")
+        assert empty_state.display is True
+        assert metadata.display is False
+
+
 class EmptyMockSchedulingService(_MockSchedulingServiceMixin):
     """Stub service returning no reminder tasks."""
 
@@ -3077,11 +3351,10 @@ async def test_load_tasks_service_error_notifies_and_uses_empty_state():
 # expected to filter list_tasks' spans-owners result down to real
 # ReminderTask instances") retire that: the unified Queue list is
 # reminders + automation definitions only. Replaced by the single
-# exclusion test below; the detail-pane/inspector rendering for a
-# `ScheduledTask` projection stays covered directly by `task_detail.py`'s
-# own unit tests (`TaskDetail.set_task`/`TaskInspector.set_task` are
-# still general-purpose, just no longer reachable with a projection FROM
-# this table).
+# exclusion test below. task-31413 later confirmed `TaskDetail` never
+# receives a `ScheduledTask` projection at all and deleted its
+# projection-rendering layer; `TaskInspector.set_task` alone stays
+# general-purpose for a `ScheduledTask` projection today.
 @pytest.mark.asyncio
 async def test_watchlist_projection_excluded_from_unified_queue():
     """A watchlist projection never appears in the unified Queue list."""
@@ -3801,6 +4074,75 @@ async def test_liveness_strip_gets_its_own_faster_interval_timer():
         assert liveness_timers == [SCHEDULER_LIVENESS_REFRESH_SECONDS]
         assert next_run_timers == [NEXT_RUN_REFRESH_SECONDS]
         assert SCHEDULER_LIVENESS_REFRESH_SECONDS < NEXT_RUN_REFRESH_SECONDS
+
+
+class _LongTitleMockSchedulingService(MockSchedulingService):
+    """Stub service whose one reminder's title is long enough to force
+    the queue DataTable's Title column past a narrow viewport width --
+    real horizontal overflow, not a synthetic `scroll_x` assignment."""
+
+    async def list_reminders(self):
+        return [
+            ReminderTask(
+                id="task-1",
+                title="Very long reminder title padded out well beyond a "
+                "narrow terminal viewport so the Title column truly "
+                "overflows horizontally " * 2,
+                schedule_kind=ScheduleKind.ONE_TIME,
+                run_at=datetime.now(timezone.utc),
+                next_run_at=datetime.now(timezone.utc),
+            )
+        ]
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        return await self.list_reminders()
+
+
+class WorkbenchTestAppWithLongTitleService(ConsolidatedCSSApp):
+    """Test app whose queue has one reminder with an overflowing title."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.scheduling_service = _LongTitleMockSchedulingService()
+
+
+@pytest.mark.asyncio
+async def test_ticker_rerender_preserves_datatable_horizontal_scroll():
+    """31713 AC#2: `DataTable.clear()` unconditionally resets `scroll_x`
+    to 0 (`textual.widgets._data_table.DataTable.clear`) -- the 60s
+    next-run ticker's own re-render (`_refresh_next_run_rendering` ->
+    `_render_table(tick=True)`) used to yank a user reading a truncated
+    subtitle back to column 0 every minute, even though the ticker
+    changes no column layout, only cell text.
+
+    Revert-check: this fails (`scroll_x == 0` after the tick) against a
+    bare `table.clear()` with no restore -- confirmed against this exact
+    scenario before `schedules_workbench.py`'s fix.
+    """
+    app = WorkbenchTestAppWithLongTitleService()
+    async with app.run_test(size=(40, 20)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+
+        assert table.max_scroll_x > 0, (
+            "test premise broken -- the Title column does not overflow "
+            "the viewport at this size"
+        )
+        table.scroll_to(x=5, animate=False)
+        await pilot.pause()
+        assert table.scroll_x == 5
+
+        workbench._refresh_next_run_rendering()
+        await pilot.pause()
+
+        assert table.scroll_x == 5, (
+            f"scroll_x reset to {table.scroll_x} across the ticker's own "
+            "re-render -- DataTable.clear() is resetting it again"
+        )
 
 
 @pytest.mark.asyncio

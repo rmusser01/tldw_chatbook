@@ -372,11 +372,11 @@ class LibraryExportController:
                 ``set_library_destination_with_conversation_fence``/
                 ``select_library_rail_row`` above), so no setter is bound.
             library_prompts_mutation_in_flight_accessor: Reads
-                ``LibraryScreen._library_prompts_mutation_in_flight`` -- a
-                DIFFERENT subsystem's (Prompts) own state;
-                ``_open_library_export_canvas`` reads it as a guard before
-                admitting the switch (a Prompts mutation in flight blocks
-                every canvas switch, not just Export's).
+                ``LibraryScreen._prompts_state.mutation_in_flight`` (the flat
+                shim name this line used to give died with the prompts
+                cleanup, wave-6 task 3) -- a DIFFERENT subsystem's (Prompts)
+                own state; ``_open_library_export_canvas`` reads it as a guard
+                blocking EVERY canvas switch, not just Export's.
             build_library_export_state: ``LibraryScreen.
                 _build_library_export_state`` -- stays on the screen,
                 UNMOVED (module docstring round 3: reached indirectly via

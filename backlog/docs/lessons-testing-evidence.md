@@ -27,6 +27,22 @@ when moving DDL into a dedicated module. Register its source explicitly, keep
 real query-plan assertions, and verify a guard's name recognition before
 discarding evidence or weakening its inventory policy.
 
+## A test counter is neither atomic publication nor completion evidence
+
+**TASK-31742, Canvas integration, 2026-09-06.** A full Chromium run failed
+at `int('')`: the served child rewrote its call-count file with `write_text`,
+and the parent read between truncation and writing. A synchronized regression
+observed the empty value deterministically. Publishing through a sibling file
+and atomic replacement fixed that race. The next real-browser run then read an
+empty status file: the call count announced adapter entry, while the test read
+status before the child wrote it and emitted its final response.
+
+**What to do.** Atomically publish cross-process telemetry. Separately wait for
+the operation's actual completion signal before checking its resulting state;
+entry counts cannot prove completion. Keep malformed-state checks strict rather
+than retrying arbitrary parse failures. Here the existing rendered final-response
+token provides the ordering boundary, so no new polling protocol is needed.
+
 ## CSS ratchet paydown must preserve inherited subjects and specificity
 
 **PR #2419, 2026-09-05.** Re-keying three snapshot rules removed a
@@ -108,6 +124,53 @@ by its inverse before the next save; testing only distinct final values cannot
 prove first-mutation expiration or equivalent event-sensitive behavior.
 
 ---
+
+## Close operation-owned SQLite handles; a passing GC control is not implied
+
+**TASK-31732, Canvas integration, 2026-09-05.** A passing 970-test affected run
+still grew 210 descriptors at the session sentinel. A removable pytest protocol
+probe classified the growth as regular files and isolated repeated export/import
+increments. Forcing per-test GC on the 20 thinking round-trip tests still left
+83 regular descriptors. Both Chatbook conversation collectors constructed local
+`CharactersRAGDB` owners without an explicit close. Real-handle regressions
+retained those owners and found two registered connections where only a separately
+owned observer should remain. Closing the operation's own handle in `finally`
+made all four regressions and the original 20 round trips pass with zero net
+descriptor growth (12 before and after), without changing GC or sentinel limits.
+
+**What to do.** Compare complete teardown lifetimes and aggregate resource types,
+then test exact ownership: repeated operations release their own handles while a
+same-file observer remains usable. Do not assume garbage collection will close
+registered SQLite handles or that a larger warning threshold repairs a leak.
+Conversely, do not require immediate process-baseline return for every individual
+SQLite close; another live connection can legitimately retain inode reuse FDs.
+
+**TASK-31742, completed-tool trace recovery, 2026-09-05.** The next-turn repair
+exposed 227 retained descriptors after trace worker tests; forced per-test GC
+did not help. Source-private creation-stack probes identified exited factory,
+agent, settlement, Canvas and policy workers. Closing only handles created by
+each whole synchronous operation preserved borrowed transactions and an independent
+same-file observer. The trace-only 152-case run then had zero regular-file growth.
+A per-trajectory-marker close was removed because it split the real worker
+lifetime and added unnecessary checkpoint work. Broader older fixtures still
+retain handles, so this scoped result is not a claim of repository-wide cleanup.
+
+## Capture queued UI ownership in the row, not only in the event
+
+**PR #2432, Canvas review, 2026-09-05.** A queued card-open event originally
+combined an old Canvas ID with the current conversation. Adding a session to
+the event and row signature fixed ordinary clicks, but delayed construction
+still rebuilt an A-owned row with mutable transcript session B. The row
+reconciler can await removal/mount work before construction. A deterministic
+test projecting under A, switching to B, then building the retained row failed
+with B; storing the session in the row itself made that test and the real
+same-key mounted session-switch control pass. The receiver also rejects stale
+or missing ownership instead of switching conversations.
+
+**What to do.** Carry originating identity through every deferred projection,
+cache and event boundary; a cache signature alone is not the payload. Pair a
+mounted switch test with delayed old-projection construction, and preserve
+rejection at the final authority boundary.
 
 ## SQLite progress handlers must not query their active connection
 
@@ -7286,6 +7349,18 @@ unresolved. Assert both authorities after each interleaving: the in-memory
 admission/next action and the durable journal/status. A state matrix is necessary,
 but it is not concurrency or restart evidence until the edges are executed.
 
+**Second incident — TASK-31232 Canvas settings, 2026-09-04.** Tests constructed
+`ConsoleRuntime` inside an already-running pytest event loop, so its constructor
+successfully started a policy watcher. The real CLI constructs `TldwCli`
+synchronously and only then calls `run()`: the same watcher helper silently
+returned because no loop existed, leaving external disables unobserved before
+the first preview. A regression that constructs the actual app before
+`asyncio.run`, enters Textual's `run_test`, changes policy without explicitly
+reading the gate, and waits for watcher retirement failed on that code. Starting
+the existing watcher from `on_mount` made it pass and retained one owner plus
+idempotent disposal. Match production construction order when claiming startup
+coverage; an async test fixture can accidentally supply the missing lifecycle.
+
 ---
 
 ## A package AST sweep can descend into an ignored nested virtualenv (TASK-19906, 2026-08-22)
@@ -11128,6 +11203,41 @@ budget collapse, not flake — reproduce by calling
 reserve before dismissing or "fixing" the test. Structural fix tracked in
 TASK-31212.
 
+Follow-up incident (TASK-31232, Canvas Task 7.4, 2026-09-04): an actual served
+Chatbook fixture used the unknown `canvas-live-model` and scripted an immediate
+`canvas_create`. The real first request instead disclosed `find_tools` /
+`load_tools`; the tool was refused before creation. Counting `stream_chat`
+native `tools=` entries as zero also misdiagnosed fenced-mode disclosure,
+which is rendered in the system prompt. Once the synthetic gateway honored
+discovery, the real Console finalized the assistant turn and rendered the
+first revision. Provider doubles must obey the effective disclosure protocol
+or declare a realistic fixture context window; diagnose with exact tool-name
+membership and bounded refusal codes, not raw prompt/source dumps or the
+native-tools keyword alone.
+
+The same fixture then appeared to hang on the second turn. Inspection showed
+its update states fell through to final assistant text without emitting a
+tool call; after correcting that, an unsupported `title` argument caused a
+real `invalid_arguments` refusal. Direct/progressive fixture-contract tests
+and the actual served Console create/update test then passed (3 tests). A
+provider call counter proves only a model request happened, not that tool
+dispatch or settlement started. Validate the synthetic response against the
+actual advertised schema and observe the next boundary before assigning a
+timeout to production locking or scheduling.
+
+## Native-realm security sentinels must not break the host being measured
+
+Incident (TASK-31232, Canvas Task 7.4, 2026-09-05): an enumerable property added
+to native `Object.prototype` by the browser security harness prevented the
+served terminal from connecting, before any generated Canvas script ran. The
+existing TLS flow without that probe still passed. A paired run changing only
+the sentinel to non-enumerable restored terminal and Canvas readiness. Define
+probe properties explicitly as non-enumerable, writable, and configurable:
+enumerability can perturb host iteration, while non-writable sentinels can mask
+the native overwrite the probe is meant to detect. Keep the sentinel's name
+identical to the attack target and diagnose pre-execution failures separately
+from containment failures.
+
 ## A painted Textual editor can still be outside its hit-testable layout
 
 Incident (TASK-31215, 2026-09-03): demand-mounted Personas editors initially
@@ -11501,6 +11611,55 @@ widget `display`. A mounted regression proved four unwanted dispatches. Its firs
 attempt also exposed that `Screen.is_current` includes background screens. Use
 `app.screen is screen` for top-screen-only I/O, including deferred dispatch gates;
 exercise real cover/return and retained-owner refresh, not a visibility mock.
+
+## A zero-reference census does NOT license deleting a Textual `on_<Message>` handler (library wave-6 task 3, 2026-09-05)
+
+**The incident.** The prompts cleanup ran the recipe's delegator-prune census
+over 139 moved names: for each, every reference anywhere in the repo, in all
+four spellings (attribute, quoted-string, bare-assignment, patch-target
+table). Six names came back with ZERO references and were headed for
+deletion: `on_prompt_block_editor_back_requested` and its five siblings on
+`LibraryScreen`. Nothing calls them, and nothing names them in a string —
+correctly, because **Textual never calls them by reference**. `Message`
+sets `cls.handler_name = f"on_{name}"`
+(`textual/message.py:86`), and `MessagePump._get_dispatch_methods` walks
+`self.__class__.__mro__` doing a NAME lookup for exactly that string
+(`textual/message_pump.py:743-758, :817-821`). Deleting the six would have
+unhooked the screen from six messages.
+
+It would also have looked GREEN. Two of the six names are defined again, on a
+different class, in `Widgets/Library/library_prompts_canvas.py` (the canvas
+keeps handling its own copies one level down), and four more in a
+`Tests/UI/test_prompt_block_editor.py` harness — so a naive census even
+reports "code references exist", and the suite would not have noticed the
+screen going deaf.
+
+**What to do.** The recipe's transform whitelist (`@on`, `action_*`) is
+incomplete: name-convention `on_<snake_message_name>` handlers are a THIRD
+unconditional keep. Before pruning any moved name matching `^on_[a-z]`, check
+it against Textual's name dispatch, not against the reference census. And
+treat "the only 'references' are `def`s of the same name in other classes" as
+a red flag, not as evidence of use — that is the signature of name dispatch,
+not of a caller.
+
+## Check a dead-import candidate against `_SURFACE` by exact name, not by a subsystem-word grep (library wave-6 task 3, 2026-09-05)
+
+**The incident.** The recipe already requires checking every dead-import
+candidate individually against `Tests/Architecture/test_library_support_layer_
+surface.py`'s `_SURFACE` re-export contract — a rule written after that
+contract bit two earlier series. This task's first check honoured the rule
+but implemented it as a case-sensitive `grep "prompt"` over that file, which
+returned ZERO matches. It looked like a clean result. Five of the 30
+candidates are in fact pinned there — `LIBRARY_PROMPT_DIRTY_VETO_COPY`,
+`LIBRARY_PROMPT_SAVE_STATUS_COPY`, `_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP`,
+`_LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS`, `_LIBRARY_PROMPT_WRITE_WORKER_
+GROUPS` — every one spelling it `PROMPT`, uppercase. Deleting all five would
+have turned `test_screen_still_re_exports_every_moved_name` red. The re-check
+(exact-name lookup per candidate) caught them.
+
+**What to do.** "Check against `_SURFACE`" means resolve each candidate NAME
+against the contract, one at a time. A grep for the subsystem word is a
+different, weaker question, and it answers "no" for the wrong reason.
 ## Stop must drain an offloaded dispatch CAS before terminal settlement
 
 **TASK-31585, 2026-09-05.** Real DeepSeek UAT requested Stop as soon as the
@@ -11577,3 +11736,134 @@ Keep recovery retention scoped to the exact owned dialog; actual navigation and
 unmount still need unconditional cleanup. Verify both choices through a mounted
 dialog, plus teardown before a late affirmative answer. The latter regression
 failed with an unwanted replay when the post-dialog session fence was removed.
+
+## Resource-limit probes must distinguish refusal from a broken engine
+
+Incident (TASK-31232, Canvas Task 7.2, 2026-09-04): the first direct QuickJS
+quota probe turned every native exception into a successful limit refusal.
+Injected API/disposal failures therefore produced apparently valid heap/stack
+evidence. Strict error classification and positive controls exposed that real
+deep recursion instead caused an exact native engine stack trap and poisoned
+that runtime; it did not return a normal guest stack-limit error. The corrected
+probe reports guest out-of-memory refusal separately from engine-trap
+containment, closes the trapped context, and explicitly does not claim that
+the configured stack ceiling caused the trap.
+
+Rule: demonstrate a successful positive control, identify the actual failure
+mechanism, and fail qualification on unexpected host/API/disposal errors.
+A generic exception or timeout is evidence of failure, not proof that the
+resource boundary under test enforced its configured limit.
+
+## A tested quota helper is not evidence that the production owner uses it
+
+Incident (TASK-31232 final Canvas review, 2026-09-05): the standalone staging
+store enforced Canvas admission quotas, but the real Console wired its own
+controller/coordinator. That owner appended revisions without the helper's
+admission checks. A direct production-coordinator probe staged and confirmed
+11 Canvases despite the limit of 10. Repository commit checks could not protect
+temporary confirmed history or bound the earlier staged allocation.
+
+Rule: trace the actual provider-to-mutation-owner wiring before selecting a
+quota test target. Assert admission at the production owner with existing and
+concurrent work, not only on a similarly named helper or final durable commit.
+
+The same review's raw Python probe imported application configuration before
+establishing owned test directories. Logs reported loading ambient config and
+ensuring the user's chat_dicts directory; no pre-probe snapshot could determine
+whether the directory was newly created. No database/provider/browser launched,
+but that is not proof of no filesystem effect. Prefer repository pytest fixtures
+and establish owned config/data before application imports: an in-memory subject
+does not make its module's bootstrap side-effect-free. Do not delete ambient
+state afterward or suppress the deviation from the verification record.
+
+Follow-up incident (TASK-31232 six-baseline repair, 2026-09-05): the same mistake
+recurred while counting public Library descriptors with a direct Python import,
+despite an explicit isolated-pytest-only instruction. The import again reached
+ambient config and directory bootstrap. Static inspection would have answered the
+question. Executable worker probes were stopped; the coordinator took ownership
+of all subsequent pytest execution while the worker was limited to static edits.
+When a procedural warning demonstrably fails, narrow the execution workflow
+instead of repeating the warning and treating intent as isolation evidence.
+
+## Parameter IDs can accidentally activate keyword-based test gates
+
+Incident (TASK-31232 DOM-only correction, 2026-09-05): a local Chromium
+regression parameter named `live` meant an existing rendered child, not an
+external service. The repository's collection hook checks `"live" in
+item.keywords`, so the parameter case was skipped without `--run-live`.
+Renaming it `existing` exercised the intended case and exposed the expected
+duplicate-create failure. The definitive RED separately parameterized both
+selection outcomes too, preventing the first failure from masking the second.
+
+Rule: inspect collected outcomes and skip reasons, not just command success or
+test-function count. Use parameter IDs that do not collide with keyword-based
+suite gates; do not opt into external/live suites to rescue a local case.
+Independently parameterize distinct required failures when an earlier assertion
+would otherwise prevent a later one from running.
+
+## Accepted retry requests are not successful generation evidence
+
+Incident (TASK-31232 Canvas retry correction, 2026-09-05): two real-controller
+tests reported a missing committed settlement. Bounded lifecycle observations
+showed the second run never finished: `canvas_create` rejected `invalid_scope`,
+the synthetic bridge assertion raised, and the controller returned an accepted
+request with a failed assistant. The actual scope bug was a native-only SYSTEM
+failure notice being projected as a durable message ID. Both saved path nodes
+and the conversation owner were valid; changing settlement cleanup would have
+treated the downstream symptom rather than the cause.
+
+Rule: check terminal generation state and tool outcomes before diagnosing
+postcommit state. Native transcript paths may contain unsaved UI notices; test
+their projection separately from durable graph validation, without dropping
+missing user/assistant origins or weakening the validator.
+
+## An errno28 multiprocessing failure is not evidence to delete disk files
+
+Incident (TASK-31741 Canvas integration, 2026-09-05): local PR Fast Lane passed
+749 tests but six process-lease tests failed while constructing multiprocessing
+SemLock, before exercising lease behavior. The untouched dev archive reproduced
+all six failures, while the volume reported289GiB free. Joblib also warned that
+it would operate serially. No OS resources or limits were changed; protected CI
+remained required rather than calling the local selection green.
+
+Rule: identify the failing allocation and compare the unchanged baseline before
+interpreting an OS resource message. Retain environmental qualifications; do not
+delete unrelated files, weaken gates or infer resource ownership from errno alone.
+## A "dead key" report can be an invisible open-then-undo toggle
+
+**task-31820 release UAT, 2026-09-05.** A live walkthrough reported Escape
+completely dead on the wizard's Provider step after a failed model discovery
+— two presses, "nothing happens", while the footer Exit button worked. Four
+live tmux reproductions of the exact key sequence (splash on/off, idle and
+14-core-loaded CPU) plus a faithful run_test harness all showed Escape
+WORKING: the first press opened the Exit dialog, and a second press >0.5s
+later silently dismissed it. The report's machine was running a full pytest
+sweep; the dialog's paint lagged seconds behind its push, and
+`_SettlingGuardedConfirmationDialog`'s double-tap grace was anchored to
+`on_mount` wall-clock — so the "is this thing on?" second press landed after
+the grace and reverted a dialog nobody ever saw. Escape's effect existed but
+was invisible and self-undoing; the key was never dead. The fix anchors the
+settle clock to the first delivered frame (`call_after_refresh`), so an
+unpainted dialog absorbs Escape unconditionally.
+
+**What to do.** Before accepting "key X does nothing", check whether X's
+effect is a toggle whose second activation restores the prior screen — and
+capture-pane immediately AND a few seconds after each press, because "screen
+unchanged" from a single capture can just mean paint lag. Any grace-window
+guard on a modal must measure from first paint, not from mount: under load
+those diverge by seconds. Note also that the wizard's bottom hint line stays
+visible while the dialog is up, so grepping the footer proves nothing about
+whether a dialog opened.
+
+### TASK-31244: navigation completion is not completion of every app worker
+
+During the Character Context fix-round return tests, all Back, focus-paint and
+preference assertions passed, but a blanket `app.workers.wait_for_complete()`
+made all three cases fail with `WorkerCancelled`: normal navigation had
+cancelled unrelated visit-scoped workers. The covering run recorded 231 passes
+and those three fixture failures. Waiting instead for the destination's bounded
+loading/layout completion produced 19 passing ownership/return regressions.
+Do not make successful completion of every app worker a navigation assertion;
+observe the destination's completion state. Preserve genuine late-publish
+stacks separately: this incident also found and fixed an owned Character
+presentation callback running after its screen stack had been removed.

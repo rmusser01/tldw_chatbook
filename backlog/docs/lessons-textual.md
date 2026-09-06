@@ -263,6 +263,64 @@ every interleaved run.
 
 ---
 
+## `super().on_unmount()` under MRO dispatch runs the base body TWICE — the teardown-side twin of the `on_mount` trap (TASK-31418, 2026-09-05)
+
+Same mechanism as fact #1 in the `display = False` lesson above, on the
+teardown side. `MessagePump._get_dispatch_methods` walks `self.__class__.__mro__`
+and calls EVERY distinct implementation of a lifecycle handler for one event.
+So a subclass that both overrides `on_unmount` AND calls `super().on_unmount()`
+runs the base body twice — once from its explicit call, once from Textual's
+own walk.
+
+Probed on the installed Textual 8.2.8 with a two-level `Screen` subclass whose
+base and child each append their name: one Unmount event yielded
+`['child', 'base', 'base']` — the base fired twice. The identical double-fire
+reproduced for `on_mount` and `on_screen_resume`; all three MRO-dispatched
+lifecycle handlers are affected.
+
+Harmless while `BaseAppScreen.on_unmount` only logs, but the next
+non-idempotent teardown added to a base handler (a close, a release, a
+decrement, a dispatch) becomes a double-teardown bug in every subclass still
+carrying `super().on_unmount()`, and the symptom surfaces far from the line
+that caused it — which is why this was fixed while the base body was still
+idempotent rather than after a real corruption.
+
+**Convention (this repo): a subclass handler for a lifecycle event Textual
+dispatches by MRO does NOT call `super().on_*()`** — the dispatcher already
+runs the base. Every `BaseAppScreen` / `SafeModalDismissMixin` subclass follows
+this for `on_mount` / `on_unmount` / `on_screen_resume`, and each site carries a
+`# No super().on_*(): the dispatcher already invokes <Base>.on_* separately`
+comment naming the base whose handler would otherwise double-fire.
+
+**Is there ever a safe `super().on_*()`? Not to a normally-defined base
+handler.** A base `on_mount`/`on_unmount` defined in its own class `__dict__` is
+separately MRO-dispatched, so an explicit `super()` call ALWAYS runs it a second
+time — there is no "shadowing." The legitimate way to keep a base body that runs
+once *and* is invoked explicitly is the `BaseWizard.on_mount` pattern: end the
+base handler by calling a PLAIN method (`_post_mount_hook()`), and let subclasses
+override *that* plain method instead of `on_mount` — a non-dispatched method runs
+exactly once. So the convention reduces to: a subclass never calls `super().on_*()`
+for a dispatched handler; a base that needs an explicit call exposes a plain,
+non-`on_*` method for it (as `BaseWizard` does).
+
+**The mount side still carries latent instances of this exact bug**, out of this
+`on_unmount`-scoped task: ~19 live `super().on_mount()` calls remain across the
+repo — including the two Console modals and `change_review_screen.py`, whose
+docstring even misdescribes the mechanism as "ordinary attribute lookup … so
+defining one here SHADOWS the mixin's" (it does not — Textual walks the MRO and
+dispatches both, so that `super().on_mount()` double-fires
+`SafeModalDismissMixin.on_mount`). Tracked as a fast-follow; `on_unmount` is
+fully converted here. When touching any lifecycle handler, classify the site:
+redundant (base is a dispatched handler → drop the `super()` call) vs a genuine
+run-once need (→ use the plain-method pattern, never `super()`).
+
+Guarded by `Tests/UI/test_on_unmount_mro_convention.py`: a runtime count test
+pins the base `on_unmount` firing exactly once under the no-super convention,
+and an AST scan fails if any screen/modal `on_unmount` re-introduces a
+`super().on_unmount()` call.
+
+---
+
 ## A cached widget reference cannot be validated by `is_mounted` — it lags detachment, and `_pruning` marks the corpse first
 
 **TASK-23025, 2026-08-28.** To get Library resize frames and focus changes off
