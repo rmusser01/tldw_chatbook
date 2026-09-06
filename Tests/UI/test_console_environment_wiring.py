@@ -36,6 +36,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.app import TldwCli
+import tldw_chatbook.UI.Console_Modules.environment as env_mod
 from tldw_chatbook.UI.Console_Modules.environment import UNKNOWN_ROOT
 from tldw_chatbook.Chat.console_environment_state import (
     ENV_ROW_BRANCH,
@@ -917,25 +918,127 @@ async def test_refresh_view_all_forces_net_tier():
 
 
 @pytest.mark.asyncio
-async def test_refresh_shows_a_transient_acknowledgment_and_clears_on_landing():
-    """TASK-31664 AC#3, wiring seam.
+async def test_refresh_ack_persists_through_the_slow_net_tier_and_clears_when_it_lands(
+    monkeypatch,
+):
+    """TASK-31664 AC#3, wiring seam (round-1 review I1).
 
-    Pressing Refresh used to give zero visible feedback for as long as the
-    `gh` fetch it triggers takes (measured ~12s when the data comes back
-    unchanged) -- `sync_state`'s own equality guard is a no-op on a
-    content-identical landing BY DESIGN, so nothing painted. The "Refresh"
-    tail must flip to an acknowledgment the instant the request is made,
-    and the real landing path (`_land_console_environment`, wired as the
-    controller's `on_snapshot`) must clear it again -- proven here by
-    stubbing `request_refresh` to do nothing (so the button would stay
-    "Refreshing…" forever if nothing else ever cleared it) and then
-    driving a real landing by hand.
+    Replaces a prior version of this test that stubbed `request_refresh`
+    to a no-op and cleared the ack from a hand-built `_land_console_
+    environment` call -- that could not catch the ack clearing on the
+    FIRST (fast, local) landing while the SLOW `gh` tier, the actual
+    measured ~12s the control exists to cover, was still in flight (the
+    real defect a round-1 review caught in this exact area).
+
+    Drives the REAL `ConsoleEnvironmentController` with a deferred fake
+    (mirrors `test_console_environment_controller.py`'s `DeferredFixture`:
+    jobs queue instead of running inline, so this test lands each tier on
+    its own schedule): press Refresh -> only the local job is dispatched
+    (net defers -- the branch is unknown on a first press) -> land local ->
+    the ack must still be showing, and the now-unblocked net job is
+    queued -> land net -> only now does the ack clear.
+    """
+    jobs: list = []
+
+    def fake_git(path, previous=None):
+        return GitEnvState(
+            availability=EnvSourceAvailability.OK, root=str(path), branch="feat/task-1-x"
+        )
+
+    def fake_pr(path, branch, runner=None, previous=None):
+        return PrEnvState(
+            availability=EnvSourceAvailability.OK, number=7, title="T",
+            state="OPEN", url="https://x/pull/7",
+        )
+
+    monkeypatch.setattr(env_mod, "gather_git_env", fake_git)
+    monkeypatch.setattr(env_mod, "gather_pr_env", fake_pr)
+    monkeypatch.setattr(
+        env_mod.BacklogTaskScanner, "scan",
+        lambda scanner, ws, branch: TasksEnvState(
+            availability=EnvSourceAvailability.NOT_APPLICABLE
+        ),
+    )
+
+    def fake_run_worker(fn, **kwargs):
+        jobs.append(fn)  # queued -- NOT run inline
+
+    def current_label(screen) -> str:
+        # Re-queries every time, deliberately: the FIRST real landing (from
+        # PENDING's one row to the full row set) recomposes the whole
+        # section -- a cached `Button` reference would go stale and read a
+        # detached widget's last value rather than what is actually on
+        # screen, which is exactly the false-green this test must not have.
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        return str(
+            section.query_one(
+                "#console-inspector-section-environment-view-all", Button
+            ).label
+        )
+
+    async with _console_screen() as (pilot, screen):
+        controller = screen._console_environment
+        controller._run_worker = fake_run_worker
+        # The production marshal is `app.call_from_thread`, which requires
+        # being called from an actual different thread -- `jobs[0]()` below
+        # runs inline on the test's own (app) thread, so it needs the same
+        # synchronous stand-in `DeferredFixture` uses.
+        controller._marshal_to_ui = lambda fn, *args: fn(*args)
+        # Bypasses the real "is the right rail panel displayed" query (and
+        # the auto-refresh `action_toggle_console_inspector_rail` would
+        # itself trigger) -- this test only cares about the ack lifecycle,
+        # not rail visibility plumbing.
+        controller._rail_open_accessor = lambda: True
+        screen._review_selection._console_change_review_workspace_roots = (
+            lambda: ("/w/one",)
+        )
+
+        assert current_label(screen) == "Refresh"
+
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        section.post_message(ConsoleInspectorSection.ViewAllRequested("environment"))
+        await pilot.pause()
+
+        assert current_label(screen) == "Refreshing…"
+        assert len(jobs) == 1  # net deferred: local hasn't landed for this scope yet
+        assert controller.pending_ack_tiers == frozenset({"local", "net"})
+
+        jobs[0]()  # land local -> the deferred net job is now dispatched.
+        # This is ALSO the PENDING -> real-rows transition, which recomposes
+        # the whole section (round-1 review follow-on: the busy label must
+        # survive that, not just the fast/slow tier gap).
+        await pilot.pause()
+        assert current_label(screen) == "Refreshing…"  # I1: survives the fast tier
+        assert len(jobs) == 2
+        assert controller.pending_ack_tiers == frozenset({"net"})
+
+        jobs[1]()  # land net
+        await pilot.pause()
+        assert current_label(screen) == "Refresh"  # cleared only now
+        assert controller.pending_ack_tiers == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_an_unresolvable_root_never_arms_the_acknowledgment():
+    """TASK-31664 AC#3, round-1 review I2.
+
+    The ack used to be armed BEFORE calling `request_refresh`, so a press
+    that turned out to dispatch nothing (`UNKNOWN_ROOT`) still left
+    "Refreshing…" showing forever -- nothing was ever going to land to
+    clear it. Arming now happens AFTER the call, gated on
+    `pending_ack_tiers` actually being non-empty.
     """
     async with _console_screen() as (pilot, screen):
-        # Stub the dispatch so nothing else could possibly clear the busy
-        # label -- isolates this test to the screen's own two seams (set on
-        # request, cleared on landing).
-        screen._console_environment.request_refresh = lambda **kw: None
+        def _boom():
+            raise RuntimeError("roots accessor exploded")
+
+        screen._review_selection._workspace_roots_accessor = _boom
+        assert screen._console_environment_root() is UNKNOWN_ROOT
+
         section = screen.query_one(
             "#console-environment-section", ConsoleInspectorSection
         )
@@ -946,13 +1049,9 @@ async def test_refresh_shows_a_transient_acknowledgment_and_clears_on_landing():
 
         section.post_message(ConsoleInspectorSection.ViewAllRequested("environment"))
         await pilot.pause()
-        assert str(button.label) == "Refreshing…"
 
-        snapshot = _snapshot()
-        screen._console_environment.snapshot = snapshot
-        screen._land_console_environment(snapshot)
-        await pilot.pause()
-        assert str(button.label) == "Refresh"
+        assert str(button.label) == "Refresh"  # never armed
+        assert screen._console_environment.pending_ack_tiers == frozenset()
 
 
 @pytest.mark.asyncio

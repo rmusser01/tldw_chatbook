@@ -1773,21 +1773,27 @@ Button.console-inspector-action:disabled {
     color: $ds-status-ready;
 }
 
-/* TASK-31664 (a11y): this row's text must be READ (a failing-check name,
-   the "Environment unavailable" row), not merely glanced at as a status
-   dot -- so it takes the READABLE error token, not the decorative one.
-   $ds-status-error stays $error (measured 3.06:1, an AA fail per
-   `_variables.tcss`'s own guidance comment); $ds-status-error-readable is
-   Textual's per-theme-computed $text-error, tuned for exactly this. This
-   also stops "stale" ($ds-status-blocked, still $error) and "error" from
-   painting in the literal same hue on rows the user must read (critique:
-   2.53:1 on banded rows, indistinguishable from an error). */
+/* TASK-31664 (a11y), round 2 fix: this row's text must be READ (a
+   failing-check name), not merely glanced at as a status dot -- so it
+   takes the READABLE error token, not the decorative one. $ds-status-error
+   stays $error (measured 3.06:1, an AA fail per `_variables.tcss`'s own
+   guidance comment); $ds-status-error-readable is Textual's
+   per-theme-computed $text-error, tuned for exactly this. */
 .console-inspector-section-row-error .console-inspector-section-row-primary {
     color: $ds-status-error-readable;
 }
 
+/* Round-1 review correction: the row the critique actually measured at
+   2.53:1 (the "Environment unavailable — Refresh to retry" copy, and
+   every stale Changes/branch/PR row via `_git_status_class`) carries
+   status="blocked", NOT "error" -- the rule above never reached it. Both
+   "blocked" and "error" are must-be-READ states (a real failure and data
+   that might be lying, respectively), so both take the same readable
+   token; they intentionally converge on one hue rather than each getting
+   its own, which would need a second bespoke a11y-checked token for no
+   behavioral gain. */
 .console-inspector-section-row-blocked .console-inspector-section-row-primary {
-    color: $ds-status-blocked;
+    color: $ds-status-error-readable;
 }
 
 .console-inspector-section-view-all {

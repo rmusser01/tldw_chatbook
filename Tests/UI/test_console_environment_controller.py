@@ -488,6 +488,93 @@ def test_branch_change_does_not_escalate_while_the_rail_is_closed(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# TASK-31664 AC#3, round-1 review I1/I2: `pending_ack_tiers` tracks which
+# tiers an EXPLICIT (`force_net=True`) refresh is still owed, so the screen
+# can hold its "Refreshing…" acknowledgment until the slow `gh` tier lands,
+# not just the fast local one -- and never leave it wedged if something it
+# was waiting for is never coming.
+# ---------------------------------------------------------------------------
+
+
+def test_pending_ack_tiers_survives_the_local_landing_and_clears_on_net(monkeypatch):
+    """I1: the ack must not clear on the first (local) landing alone."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+    assert len(fx.jobs) == 1  # net deferred -- branch unknown on first press
+
+    fx.run_job(0)  # land local
+    assert fx.controller.pending_ack_tiers == frozenset({"net"})
+    assert len(fx.jobs) == 2  # deferred net now dispatched
+
+    fx.run_job(1)  # land net
+    assert fx.controller.pending_ack_tiers == frozenset()
+
+
+def test_pending_ack_tiers_never_set_by_a_plain_refresh(monkeypatch):
+    """Only `force_net=True` (the Refresh button) arms tracking at all --
+    the 10s poll and rail-open nudge must never leave a stale entry."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True)  # not forced
+    assert fx.controller.pending_ack_tiers == frozenset()
+    fx.controller.notify_rail_opened()  # also not forced
+    assert fx.controller.pending_ack_tiers == frozenset()
+    fx.controller.poll_tick()
+    assert fx.controller.pending_ack_tiers == frozenset()
+
+
+def test_pending_ack_tiers_empty_on_unknown_root_or_closed_rail(monkeypatch):
+    """I2: a call that dispatches NOTHING must never arm anything to wait
+    for -- these used to be reachable only by arming BEFORE the call."""
+    fx = DeferredFixture(monkeypatch)
+    fx.root = env_mod.UNKNOWN_ROOT
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset()
+    assert fx.jobs == []
+
+    fx2 = DeferredFixture(monkeypatch, rail_open=False)
+    fx2.controller.request_refresh(include_net=True, force_net=True)
+    assert fx2.controller.pending_ack_tiers == frozenset()
+    assert fx2.jobs == []
+
+
+def test_pending_ack_tiers_settles_immediately_for_an_unbound_workspace(monkeypatch):
+    """I2: `_land_unbound` lands SYNCHRONOUSLY, so by the time
+    `request_refresh` returns there is nothing left to wait for -- an ack
+    armed from this call would otherwise never clear."""
+    fx = DeferredFixture(monkeypatch, root=None)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset()
+
+
+def test_pending_ack_tiers_cleared_when_the_scope_changes_mid_flight(monkeypatch):
+    """I2: a scope change before the local tier lands must not leave the
+    OLD press's ack waiting forever for a landing that will only ever hit
+    the stale-scope guard from now on."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+
+    fx.root = "/other/repo"  # workspace switched before the local job landed
+    fx.run_job(0)  # this landing is scope-dropped
+    assert fx.controller.pending_ack_tiers == frozenset()
+
+
+def test_pending_ack_tiers_cleared_when_the_deferred_net_is_abandoned(monkeypatch):
+    """I2: mirrors `test_deferred_net_dispatch_is_dropped_when_the_rail_
+    closed_meanwhile` -- when the rail closes before the deferred net can
+    be re-issued, that fetch is never coming, so the ack must not wait for
+    it forever."""
+    fx = DeferredFixture(monkeypatch)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+
+    fx.rail_open = False  # the user collapsed the Inspect rail meanwhile
+    fx.run_job(0)  # local lands: the deferred net would be re-issued here
+    assert fx.controller.pending_ack_tiers == frozenset()
+
+
+# ---------------------------------------------------------------------------
 # TASK-31660: root-is-None is an ANSWER (UNBOUND), not a reason to skip.
 #
 # `poll_tick`/`request_refresh` used to `return` on a None root, so nothing

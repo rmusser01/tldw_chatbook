@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-05 07:00'
-updated_date: '2026-09-06 02:18'
+updated_date: '2026-09-06 03:12'
 labels:
   - console
   - inspector
@@ -142,4 +142,98 @@ completes synchronously within the same call as the press (per TASK-31660's deli
 show it there. This is a non-issue in practice: that landing is near-instant already, so
 the acknowledgment is not needed for it; it reliably shows for the actually-measured
 defect (the async `gh`/local-tier dispatch path).
+
+## Round-1 review fixes
+
+Independent review held up AC#1/#2/#5 but found 5 required defects, all fixed:
+
+I1 (Refresh ack bound to the wrong event): the ack was clearing on the FIRST
+landing (local, ~0.3s) while the `gh` fetch -- the actual measured ~12s the
+control exists to cover -- ran on silently. Fixed by having the controller
+track `pending_ack_tiers` (a `{local, net}` set populated by `request_refresh`
+BEFORE dispatch, discarded in `_land` as each tier genuinely lands); the
+screen now clears the ack only when this is empty. Verified the gh-timeout
+path cannot leak the counter: both gatherers are documented and coded "never
+raises" (`run_gh` catches `TimeoutExpired`/`OSError` into a returncode-124
+`GhResult`; `gather_pr_env`/`gather_git_env` always return a state), so the
+worker's `_marshal_to_ui(self._land, ...)` call always fires.
+
+I2 (ack could wedge forever): fixed four separate paths -- (a) arming moved
+from BEFORE `request_refresh` to AFTER it, gated on `pending_ack_tiers`
+actually being non-empty, so a call that dispatches nothing (`UNKNOWN_ROOT`,
+rail closed) never arms; (b) the UNBOUND branch pre-seeds pending with
+`{local}` right before the synchronous `_land_unbound()` call, so it's
+already empty by the time `request_refresh` returns; (c) `_land`'s
+stale-scope guard now also clears `pending_ack_tiers` (a scope change means
+no future landing will ever reach the tier-discard code for the OLD press);
+(d) `_land`'s deferred-net-abandoned branch (rail closed before the deferred
+net could be re-issued) now discards `net` from pending too. The screen's
+own clear-check moved to the TOP of `_land_console_environment`, before the
+rail-mount early return, so a landing arriving mid-recompose can't skip it
+either.
+
+Testing surfaced a fifth, unreported wedge: a STRUCTURAL row-set change
+(the PENDING -> real-rows transition is the production case) recomposes
+the whole `ConsoleInspectorSection`, rebuilding the tail Button from
+`compose()` -- which had no idea an ack was in flight and silently reset
+it to "Refresh". Fixed by tracking `_view_all_busy` as a widget attribute
+`compose()` consults on every rebuild, not just a live-widget mutation.
+
+I3 (ASCII fallback bypass): the row markers (▸/▾) were raw literals, so
+`appearance.ascii_glyphs` correctly substituted the section header's own
+chevron but printed the raw glyph on every row. Kept the projection
+(`console_environment_state.py`) pure -- per the review's own suggested
+seam split -- and resolve at the widget/render seam instead
+(`ConsoleInspectorSectionRow`, via `glyph_fallback.resolve_glyph_text`),
+matching every other consumer of that module (all are widget-layer, never
+a pure-state module). Width/shape decisions still use the unresolved text;
+every marker this repo assigns a fallback for is a 1-for-1 substitute, so
+that's never wrong once ASCII mode resolves it.
+
+I4 (a11y token missed its target rows): `$ds-status-error-readable` had
+landed on `.console-inspector-section-row-error`, but the row the critique
+actually measured (2.53:1) -- "Environment unavailable — Refresh to retry"
+and every stale Changes/branch/PR row -- carries status="blocked", not
+"error"; the fix never reached it. Applied the readable token to
+`-row-blocked` too (both converge on one hue: a real failure and
+possibly-stale data are both "must be read" states). Corrected the two
+comments (CSS + `test_console_rail_color_grammar.py`) that had asserted
+the wrong row was already fixed.
+
+I5 (mechanical): the PR/checks table rows in the User Guide had 3 cells in
+a 4-column table (the Actions cell got merged into "Enter expands to"
+without the separating pipe). Restored the header's 4-cell shape.
+
+Minor ride-alongs: `_with_surface_marker` no longer inserts a space before
+"…" (now matches Change Review's `Commit…`/`Push…` precedent exactly);
+verified clear-ack-on-row-expansion stays correct now that the clear is
+gated on `pending_ack_tiers` rather than "any landing" (a no-op when
+nothing is pending, which is the common case). Recorded follow-up path
+for AC#5's cause-distinction: `ChangeReviewConsentService.status(workspace_id)`
+exposes `capability.state`/`consent.state` directly (unlike `admit_turn`,
+which collapses them), and `list_folder_bindings` can be read regardless of
+consent -- combining the two COULD distinguish "consent off" from "nothing
+bound" without needing a folder to be ready, but isn't plumbed to this
+panel today; a real follow-up task, not done here.
+
+New/changed tests: `Tests/UI/test_console_environment_controller.py` (+7,
+`pending_ack_tiers` at the controller level via `DeferredFixture`),
+`Tests/UI/test_console_environment_wiring.py` (replaced the stubbed ack
+test with a deferred-fake one driving the REAL controller through both
+landings; added the UNKNOWN_ROOT never-arms test), `Tests/UI/
+test_console_environment_section.py` (+2: recompose-survival, ASCII
+fallback), `Tests/UI/test_console_rail_color_grammar.py` (+1: the
+-row-blocked declaration), `Tests/Chat/test_console_environment_state.py`
+(surface-marker space removed from 2 assertions), `Docs/User_Guide/
+console/context-and-rag.md` (table cell fix).
+
+Verification: the same targeted suite (environment state/section/wiring/
+controller, right_rail, focus_carriers, fleet_panel, change_review_current_
+mode, rail_color_grammar, inspector_section, console_glyphs) = 319 passed,
+2 failed. Both failures are pre-existing and unrelated: test_fresh_rail_
+compose_applies_the_agent_status_class (ConsoleLeftRail kwarg mismatch,
+untouched file, same as round 1) and test_live_work_widget_swaps_cover_
+real_twenty_twenty_one_geometry[...] (the task brief's own documented
+"known flaky... baseline before blaming" -- confirmed by re-running it
+alone: 2 passed). preflight.sh green.
 <!-- SECTION:NOTES:END -->

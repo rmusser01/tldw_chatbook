@@ -52,7 +52,7 @@ from textual.message import Message
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
-from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph, resolve_glyph_text
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
@@ -127,6 +127,20 @@ class InspectorSectionRow:
             patch in place (same ``row_id``s in the same order) or requires
             a recompose (rows added/removed/reordered).
         primary_text: First (non-dimmed) line, e.g. "glyph + name + elapsed".
+            Any glyph embedded here (a status marker, a row's own trailing
+            "▸"/"▾" affordance marker -- TASK-31664 I3) is resolved through
+            ``glyph_fallback.resolve_glyph_text`` at RENDER time
+            (``ConsoleInspectorSectionRow``), never here: callers building
+            this value (including every pure projection, e.g.
+            ``console_environment_state.py``) stay free of the
+            ``appearance.ascii_glyphs`` global, so they stay testable
+            without an app and produce the same value regardless of the
+            live glyph-mode setting. Width/shape decisions
+            (``row_fits_one_line``, the structural key) are computed on
+            this UNRESOLVED value; every marker this repo assigns a
+            fallback for happens to be a 1-for-1 character substitute
+            (``▸``→``>``, ``▾``→``v``), so that computation is never wrong
+            about a row's rendered width once ASCII mode resolves it.
         secondary_text: Dimmed detail, e.g. a truncated last-step summary.
             Where it renders depends on what it is (TASK-31662): empty
             renders no line at all, a short one shares the primary's line
@@ -313,6 +327,15 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         self.collapsible = collapsible
         self.open = True if not collapsible else bool(open)
         self.view_all_label = view_all_label
+        # TASK-31664 round-1 review (I1 follow-on, surfaced by that fix's
+        # own test): a structural row-set change (PENDING -> the real rows,
+        # or any row added/removed) recomposes the WHOLE section -- see
+        # `sync_state` -- which rebuilds the tail Button from `compose()`
+        # and would silently drop an in-flight "Refreshing…" back to
+        # "Refresh" if that state lived only as a live widget mutation.
+        # Tracked here so `compose()` can consult it on every rebuild;
+        # `set_view_all_busy` updates both this and the live widget.
+        self._view_all_busy = False
         self.suppress_summary_when_open = bool(suppress_summary_when_open)
         self.styles.height = "auto"
         self.styles.min_height = 0
@@ -419,7 +442,7 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
 
         if self.view_all_label:
             view_all = Button(
-                self.view_all_label,
+                VIEW_ALL_BUSY_LABEL if self._view_all_busy else self.view_all_label,
                 id=self._view_all_id,
                 classes="console-inspector-section-view-all",
                 compact=True,
@@ -500,13 +523,23 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         equality guard (see ``VIEW_ALL_BUSY_LABEL``'s module comment): this
         sets the mounted ``Button.label`` directly, so it works even when
         the landed state is byte-identical to what is already painted --
-        exactly the case that left Refresh looking dead. A no-op when this
-        section has no tail (``view_all_label == ""``) or isn't mounted.
+        exactly the case that left Refresh looking dead.
+
+        Round-1 review follow-on: ``busy`` is recorded on ``self`` FIRST,
+        unconditionally (even with no tail, or before/without a mount) --
+        not just applied to the live widget -- because a structural row-set
+        change (e.g. the first real landing after PENDING) recomposes the
+        WHOLE section mid-acknowledgment, which rebuilds the tail Button
+        from ``compose()`` and would otherwise silently drop "Refreshing…"
+        back to "Refresh" the moment anything else about the section
+        changed shape. ``compose()`` consults ``self._view_all_busy`` on
+        every rebuild, so the label survives.
 
         Args:
             busy: ``True`` shows ``VIEW_ALL_BUSY_LABEL``; ``False`` restores
                 ``view_all_label``. Idempotent either way.
         """
+        self._view_all_busy = busy
         if not self.view_all_label or not self.is_mounted:
             return
         try:
@@ -662,8 +695,11 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         # it too is always re-synced here, unconditionally.
         row_widget.cancellable = row.cancellable
         if row.primary_text != previous_row.primary_text:
+            # TASK-31664 I3: resolved at this render seam, not in the
+            # (pure) projection that built `row.primary_text` -- see
+            # `InspectorSectionRow.primary_text`'s docstring.
             self.query_one(f"#{self._row_primary_id(index)}", Static).update(
-                row.primary_text
+                resolve_glyph_text(row.primary_text)
             )
         if row.secondary_text != previous_row.secondary_text:
             secondary = self.query_one(f"#{self._row_secondary_id(index)}", Static)
@@ -731,7 +767,10 @@ class ConsoleInspectorSectionRow(Vertical):
         self.cancellable = row.cancellable
         self.can_focus = row.clickable or row.cancellable
         self._index = index
-        self._primary_text = row.primary_text
+        # TASK-31664 I3: resolved here (render time), not by whatever pure
+        # projection built `row.primary_text` -- see
+        # `InspectorSectionRow.primary_text`'s docstring.
+        self._primary_text = resolve_glyph_text(row.primary_text)
         self._secondary_text = row.secondary_text
         self._one_line = row_fits_one_line(row.primary_text, row.secondary_text)
         self.styles.height = "auto"

@@ -184,7 +184,30 @@ class ConsoleEnvironmentController:
         # only if its token still matches the tier's latest dispatch.
         self._dispatch_tokens: dict[str, int] = {_LOCAL_TIER: 0, _NET_TIER: 0}
 
+        # TASK-31664 AC#3, round-1 review I1/I2: tiers the most recent
+        # EXPLICIT (``force_net``) refresh is still owed. Populated by
+        # ``request_refresh`` with exactly the tiers it decided to pursue,
+        # BEFORE dispatching them; discarded in ``_land`` as each one
+        # genuinely lands (or is abandoned -- see the deferred-net-dropped
+        # comment in ``_land``). Empty almost all the time; the screen
+        # reads ``pending_ack_tiers`` to know when to clear the
+        # "Refreshing…" acknowledgment, which must survive until the SLOW
+        # tier (``gh``, up to the measured ~12s) lands -- not just the
+        # fast local one.
+        self._pending_ack_tiers: set[str] = set()
+
     # -- public API -------------------------------------------------------
+
+    @property
+    def pending_ack_tiers(self) -> frozenset[str]:
+        """Tiers the most recent explicit refresh press is still owed.
+
+        Empty except during the window between an explicit Refresh press
+        and every tier it dispatched actually landing (or being abandoned
+        -- see ``_land``). The screen clears its transient "Refreshing…"
+        acknowledgment only once this is empty again.
+        """
+        return frozenset(self._pending_ack_tiers)
 
     def request_refresh(self, *, include_net: bool = False, force_net: bool = False) -> None:
         """Dispatch a local refresh (and optionally a net refresh).
@@ -215,6 +238,17 @@ class ConsoleEnvironmentController:
         things that could ever have replaced them. It also makes the
         Refresh slot re-check the binding rather than be a visible no-op
         (TASK-31660 AC #4).
+
+        TASK-31664 round-1 review I1/I2: ``force_net`` is also the signal
+        this is the ack-worthy explicit press (every production caller of
+        ``force_net=True`` is the Refresh button; ``poll_tick`` and
+        ``notify_rail_opened`` never pass it). ``pending_ack_tiers`` is
+        recorded here, BEFORE any dispatch below, with EXACTLY the tiers
+        this call decided to pursue -- never guessed after the fact from
+        whether a dispatch "looks like" it happened, so a call that turns
+        out to do nothing (``UNKNOWN_ROOT``, rail closed, both tiers
+        backed off) simply never touches it, and the screen's post-call
+        check of ``pending_ack_tiers`` correctly finds nothing to wait for.
         """
         root = self._workspace_root_accessor()
         if not self._rail_open_accessor():
@@ -229,6 +263,12 @@ class ConsoleEnvironmentController:
         if root is None:
             if force_net:
                 self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
+                # I2: `_land_unbound` lands SYNCHRONOUSLY (see its own
+                # docstring), so `_land` will already have discarded this
+                # again by the time this method returns -- the screen's
+                # post-call check of `pending_ack_tiers` correctly finds it
+                # empty and never arms an ack nothing will ever clear.
+                self._pending_ack_tiers = {_LOCAL_TIER}
             self._land_unbound()
             return
         scope_root = root
@@ -236,10 +276,22 @@ class ConsoleEnvironmentController:
         if force_net:
             self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
 
-        if self._failures[_LOCAL_TIER] < self._MAX_FAILURES:
+        dispatch_local = self._failures[_LOCAL_TIER] < self._MAX_FAILURES
+        dispatch_net = include_net and (
+            force_net or self._failures[_NET_TIER] < self._MAX_FAILURES
+        )
+        if force_net:
+            pending: set[str] = set()
+            if dispatch_local:
+                pending.add(_LOCAL_TIER)
+            if dispatch_net:
+                pending.add(_NET_TIER)
+            self._pending_ack_tiers = pending
+
+        if dispatch_local:
             self._dispatch_local(scope_root)
 
-        if include_net and (force_net or self._failures[_NET_TIER] < self._MAX_FAILURES):
+        if dispatch_net:
             self._dispatch_net(scope_root, force_net=force_net)
 
     def poll_tick(self) -> None:
@@ -369,9 +421,23 @@ class ConsoleEnvironmentController:
             # open/refresh for the live scope requests its own fetch.
             if self._net_pending and self._net_pending_scope == scope_root:
                 self._clear_net_pending()
+            # TASK-31664 round-1 review I2: the scope an outstanding
+            # explicit refresh targeted has moved on -- nothing will ever
+            # land for it through THIS guard again, so any acknowledgment
+            # still waiting on it would otherwise wedge forever. The next
+            # legitimate landing (for the NEW scope, imminent -- a root
+            # change always triggers its own immediate refresh) will find
+            # this already empty and clear the screen's ack right away.
+            self._pending_ack_tiers.clear()
             return
         if token != self._dispatch_tokens[tier]:
             return  # stale-dispatch guard: a newer dispatch of this tier already landed/is in flight
+
+        # I1: discard BEFORE the tier-specific branch below, unconditionally
+        # -- a landing counts for the acknowledgment regardless of what it
+        # lands AS (UNBOUND, ERROR, or a real result all satisfy "this
+        # tier is now current").
+        self._pending_ack_tiers.discard(tier)
 
         if tier == _LOCAL_TIER:
             git_result, tasks_result = result
@@ -407,6 +473,13 @@ class ConsoleEnvironmentController:
                     force or self._failures[_NET_TIER] < self._MAX_FAILURES
                 ):
                     self._dispatch_net(scope_root, force_net=force)
+                else:
+                    # TASK-31664 round-1 review I2: the deferred net fetch
+                    # is being ABANDONED (rail closed, or backed off since
+                    # it was requested) -- nothing will ever land for it,
+                    # so an outstanding acknowledgment must not wait
+                    # forever for a fetch that is never coming.
+                    self._pending_ack_tiers.discard(_NET_TIER)
             elif self._branch_change_needs_net(scope_root):
                 self._dispatch_net(scope_root, force_net=False)
         else:

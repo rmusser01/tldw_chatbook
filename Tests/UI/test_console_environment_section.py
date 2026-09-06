@@ -37,6 +37,8 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
     RAIL_CONTENT_WIDTH_MIN,
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
+    ConsoleInspectorSectionState,
+    InspectorSectionRow,
 )
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
@@ -129,6 +131,93 @@ async def test_view_all_busy_flips_the_tail_label_and_restores_it():
         section.set_view_all_busy(False)
         await pilot.pause()
         assert str(button.label) == "Refresh"
+
+
+@pytest.mark.asyncio
+async def test_view_all_busy_survives_a_mid_ack_recompose():
+    """TASK-31664 round-1 review follow-on (surfaced by I1's own test).
+
+    ``set_view_all_busy`` used to be a pure live-widget mutation with no
+    backing state on the section itself -- so a structural row-set change
+    (the PENDING -> real-rows transition is the production case, but ANY
+    row added/removed/reordered while an explicit Refresh is still in
+    flight has the same shape) triggers ``sync_state``'s full recompose,
+    which rebuilds the tail Button from ``compose()`` and silently
+    reverted "Refreshing…" to "Refresh" while the press it was
+    acknowledging was still outstanding. The busy flag must now be
+    consulted by ``compose()`` itself, so a fresh rebuild reproduces it.
+    """
+    from textual.widgets import Button
+
+    app = _EnvironmentSectionHarness()
+    async with app.run_test(size=(70, 24)) as pilot:
+        await pilot.pause()
+        section = app.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        section.set_view_all_busy(True)
+        await pilot.pause()
+        button = app.query_one(
+            "#console-inspector-section-environment-view-all", Button
+        )
+        assert str(button.label) == "Refreshing…"
+
+        # A structurally DIFFERENT row set (different row_ids) forces
+        # `sync_state` down the recompose path, not the in-place patch one.
+        section.sync_state(
+            ConsoleInspectorSectionState(
+                rows=(InspectorSectionRow(row_id="a-brand-new-row", primary_text="new"),),
+                summary="",
+            )
+        )
+        await pilot.pause()
+
+        # Re-queried, deliberately: the recompose means the ORIGINAL
+        # `button` reference is now a detached, orphaned widget -- reading
+        # it again would be exactly the false-green this test exists to
+        # rule out.
+        rebuilt_button = app.query_one(
+            "#console-inspector-section-environment-view-all", Button
+        )
+        assert str(rebuilt_button.label) == "Refreshing…"
+
+        section.set_view_all_busy(False)
+        await pilot.pause()
+        assert str(
+            app.query_one(
+                "#console-inspector-section-environment-view-all", Button
+            ).label
+        ) == "Refresh"
+
+
+@pytest.mark.asyncio
+async def test_row_markers_resolve_through_ascii_glyph_fallback():
+    """TASK-31664 round-1 review I3.
+
+    The section header's own chevron already resolves through
+    ``glyph_fallback`` (``appearance.ascii_glyphs``); the row-level "▸"/"▾"
+    affordance markers TASK-31664 added did not, so a narrow-font terminal
+    that correctly showed ">"/"v" on the header would print the raw ▸/▾ on
+    every row -- exactly the terminals the fallback exists for. Resolution
+    lives at this render seam (``ConsoleInspectorSectionRow``), not in the
+    (pure) projection that built the row's ``primary_text``.
+    """
+    from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+    app = _EnvironmentSectionHarness()
+    set_ascii_glyph_mode(True)
+    try:
+        async with app.run_test(size=(70, 24)) as pilot:
+            await pilot.pause()
+            primaries = [
+                str(static.renderable)
+                for static in app.query(".console-inspector-section-row-primary")
+            ]
+            changes_row = next(t for t in primaries if t.startswith("Changes"))
+            assert changes_row == "Changes >"  # not the raw "Changes ▸"
+            assert "▸" not in changes_row and "▾" not in changes_row
+    finally:
+        set_ascii_glyph_mode(False)
 
 
 @pytest.mark.asyncio

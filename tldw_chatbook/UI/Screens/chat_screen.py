@@ -2347,18 +2347,25 @@ class ChatScreen(BaseAppScreen):
         "Refresh" (task-9), so this is the panel's explicit re-fetch: it
         busts the 60s ``gh`` TTL, which is the entire point of pressing it.
 
-        TASK-31664 AC#3: the button flips to "Refreshing…" immediately, so
-        the ~12 measured seconds a fresh `gh` fetch can take are never
-        indistinguishable from a dead control. `_land_console_environment`
-        (the controller's `on_snapshot`, which fires on EVERY landing,
-        changed or not) clears it -- never armed here by the 10s automatic
-        poll, so that cadence never flickers it.
+        TASK-31664 AC#3 (round-1 review I1/I2): the button flips to
+        "Refreshing…" only if the controller actually dispatched something
+        (checked AFTER the call, via ``pending_ack_tiers`` -- never armed
+        unconditionally BEFORE it, which is what let the ack wedge forever
+        on an ``UNKNOWN_ROOT``/rail-closed no-op call that would never
+        land). It stays up until every tier the press dispatched has
+        landed -- not just the fast local one -- so the ~12 measured
+        seconds a fresh `gh` fetch can take are never indistinguishable
+        from a dead control. ``_land_console_environment`` clears it once
+        ``pending_ack_tiers`` is empty. Never armed here by the 10s
+        automatic poll (which never sets ``force_net``), so that cadence
+        never flickers it.
         """
         if message.section_id != ENVIRONMENT_SECTION_ID:
             return
         message.stop()
-        self._set_console_environment_refresh_busy(True)
         self._console_environment.request_refresh(include_net=True, force_net=True)
+        if self._console_environment.pending_ack_tiers:
+            self._set_console_environment_refresh_busy(True)
 
     def _set_console_environment_refresh_busy(self, busy: bool) -> None:
         """Flip the Environment section's Refresh tail to a transient
@@ -8151,6 +8158,22 @@ class ChatScreen(BaseAppScreen):
         """
         from datetime import datetime as _datetime, timezone as _timezone
 
+        # TASK-31664 AC#3 (round-1 review I1/I2): clear the transient
+        # "Refreshing…" acknowledgment FIRST and UNCONDITIONALLY relative
+        # to everything below -- including the rail-not-mounted early
+        # return two lines down -- so a landing that arrives while the
+        # rail is mid-recompose (or gone) can never wedge the label
+        # forever. Gated on `pending_ack_tiers` (not "any landing", which
+        # is what this used to check): that set is empty except during the
+        # window between an explicit Refresh press and every tier IT
+        # dispatched landing, so this only actually clears once the SLOW
+        # tier (`gh`) has also landed, not just the fast local one.
+        # `_set_console_environment_refresh_busy` no-ops harmlessly when
+        # the rail isn't mounted or busy was never armed (row-expansion
+        # re-renders also reach here and hit this same no-op).
+        if not self._console_environment.pending_ack_tiers:
+            self._set_console_environment_refresh_busy(False)
+
         expanded = frozenset(self._console_environment_expanded)
         environment_state = project_environment_section(
             snapshot, expanded, now=_datetime.now(_timezone.utc)
@@ -8203,13 +8226,6 @@ class ChatScreen(BaseAppScreen):
                 row_id,
                 previous_row_ids,
             )
-
-        # TASK-31664 AC#3: clear any transient "Refreshing…" acknowledgment
-        # unconditionally -- this runs on EVERY landing (the controller's
-        # `on_snapshot` callback fires whether or not anything above just
-        # changed), which is exactly what makes it a truthful "a landing
-        # arrived" signal rather than a guess about which landing.
-        environment_section.set_view_all_busy(False)
 
     def _console_environment_focused_row_in_section(
         self, section_id: str

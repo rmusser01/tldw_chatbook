@@ -386,7 +386,7 @@ def test_changes_expansion_lists_files_with_per_file_counts():
     # navigates elsewhere and carries the "…" marker.
     assert not file_row.clickable
     assert by_id[ENV_ROW_CHANGES].primary_text == "Changes ▾"
-    assert by_id["env-changes-review"].primary_text == "Review in Change Review …"
+    assert by_id["env-changes-review"].primary_text == "Review in Change Review…"
 
 
 def test_pr_rows_absent_without_pr_and_present_with_actions_when_expanded():
@@ -413,7 +413,7 @@ def test_pr_rows_absent_without_pr_and_present_with_actions_when_expanded():
     # carry the "+ " marker, distinct from the "…" navigation marker.
     assert by_id_expanded[ENV_ROW_PR].primary_text == "PR #2281 · Open ▾"
     assert by_id_expanded[ENV_ROW_CHECKS].primary_text == "1 failing check ▾"
-    assert by_id_expanded[ENV_ROW_PR_OPEN].primary_text == "Open in browser …"
+    assert by_id_expanded[ENV_ROW_PR_OPEN].primary_text == "Open in browser…"
     assert by_id_expanded[ENV_ROW_PR_ADD].primary_text == "+ Add to chat"
     assert by_id_expanded[ENV_ROW_CHECKS_FIX].primary_text == (
         "+ Fix — add failure summary to chat"

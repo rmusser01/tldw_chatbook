@@ -199,12 +199,12 @@ the composer draft. A row with none of these is inert — Enter does nothing.
 
 | Row | Shows | Enter expands to | Actions |
 | --- | --- | --- | --- |
-| **Changes ▸** | `+adds −dels` for the working tree vs `HEAD` | one row per changed file with its own ± counts (long lists end with "… N more — Review opens all"), then **Review in Change Review …** | — |
+| **Changes ▸** | `+adds −dels` for the working tree vs `HEAD` | one row per changed file with its own ± counts (long lists end with "… N more — Review opens all") | **Review in Change Review…** |
 | **Local ▸** | the execution target for this instance | `Local instance ✓` and a greyed `Remote tldw_server — not configured` (both inert) | none — remote execution is a placeholder, not a feature |
 | **branch ▸** | the branch name, plus `↑n ↓n` divergence and a `wt:<name>` marker inside a linked worktree | the full branch name and `upstream <ref> (↑↓ vs last fetch)`, plus the worktree name and its path (inert) | none |
 | **Review & commit… · N files** | shown when the tree is dirty; `Push ↑n…` when it is only ahead — **absent when the tree is clean and in sync** | — | opens Change Review directly on its working-tree mode |
-| **PR #N · Open ▸** (or `· Draft`, `· Merged`, with `Merged 6d ago` beside a merged one) | the PR title with its ± counts (inert), then **Open in browser …** and **+ Add to chat** (pastes a PR summary into the composer) | — |
-| **checks ▸** (`3 failing checks`, `2 pending checks`, or `12 checks passed`) | the failing check names (inert), then **+ Fix — add failure summary to chat** (pastes the failing check names and their details URLs into the composer) | — |
+| **PR ▸** | `PR #N · Open` / `· Draft` / `· Merged`, with `Merged 6d ago` beside a merged one | the PR title with its ± counts (inert) | **Open in browser…**, **+ Add to chat** (pastes a PR summary into the composer) |
+| **checks ▸** | `3 failing checks`, `2 pending checks`, or `12 checks passed` | the failing check names (inert) | **+ Fix — add failure summary to chat** (pastes the failing check names and their details URLs into the composer) |
 
 Large counts compact rather than wrap: a seven-digit pair reads
 `+1.7M −278k` in the rail's 30-column width, and the exact figures stay one

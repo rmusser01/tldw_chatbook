@@ -360,11 +360,16 @@ def _with_expand_marker(
 
 
 def _with_surface_marker(label: str, *, budget: int = SINGLE_LINE_ROW_BUDGET) -> str:
-    """Append the "opens another surface" marker (in-app nav or the browser)."""
-    room = budget - len(ENV_MARKER_OPENS_SURFACE) - 1
+    """Append the "opens another surface" marker (in-app nav or the browser).
+
+    No separating space -- matches Change Review's own `Commit…`/`Push…`/
+    `Narrow…` precedent, which butts the ellipsis directly against the verb
+    (round-1 review: the space here didn't match that precedent).
+    """
+    room = budget - len(ENV_MARKER_OPENS_SURFACE)
     if room <= 0:
         return ENV_MARKER_OPENS_SURFACE
-    return f"{_ellipsize(label, room)} {ENV_MARKER_OPENS_SURFACE}"
+    return f"{_ellipsize(label, room)}{ENV_MARKER_OPENS_SURFACE}"
 
 
 def _with_insert_marker(label: str) -> str:
