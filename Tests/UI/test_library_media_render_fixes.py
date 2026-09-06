@@ -2156,3 +2156,153 @@ async def test_reader_focus_changes_border_glyphs_not_only_colour():
         assert unfocused.startswith("┌") and "─" in unfocused, unfocused
         assert focused.startswith("┏") and "━" in focused, focused
         assert "─" not in focused, focused
+
+
+# --- task-31633 AC#3: More is one row, not a push -------------------------
+#
+# Critique #5 P1 (capture 10): the Reader's "More" disclosure composed a
+# bare ``Vertical`` above the mode row. An unstyled Vertical defaults to
+# ``1fr``, so it claimed 19 rows for three one-row buttons -- pushing the
+# tab row and the whole reading body down and leaving ~16 painted-blank
+# rows before the content resumed. These pin the row, not the widget: the
+# painted tab-row offset at both the wide and the compact size.
+
+_MORE_ACTION_LABELS = (
+    "Edit metadata",
+    "Open original",
+    "Open manager",
+    "Move to trash",
+)
+
+
+def _four_action_host() -> LibraryProductionCSSHarness:
+    """A Reader whose items carry a URL, so More renders all four actions.
+
+    ``Open original`` is composed only when the item has an original
+    source, and the shared fixture has none -- without a URL the row this
+    test measures would be three buttons wide and the "all four readable"
+    assertion would be vacuous.
+    """
+    app = _build_media_test_app()
+    items = [
+        {**item, "url": f"https://example.test/{item['id']}"}
+        for item in _two_media_items()
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+async def _open_reader_more(screen, pilot):
+    screen.query_one("#library-media-reader-more", Button).press()
+    actions = await _wait_for_selector(
+        screen, pilot, "#library-media-reader-more-actions"
+    )
+    await pilot.pause()
+    await pilot.pause()
+    return actions
+
+
+def _reader_row_tops(screen) -> tuple[int, int]:
+    """The painted top row of the tab strip and of the reading body."""
+    return (
+        screen.query_one("#library-media-reader-mode-toolbar").region.y,
+        screen.query_one("#library-media-reader-mode-read").region.y,
+    )
+
+
+@pytest.mark.asyncio
+async def test_more_opens_one_row_and_moves_the_reader_body_by_one():
+    """At 235x52 More costs exactly one row, and all four actions paint on it."""
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        closed_tabs, closed_body = _reader_row_tops(screen)
+
+        actions = await _open_reader_more(screen, pilot)
+        open_tabs, open_body = _reader_row_tops(screen)
+
+        assert actions.region.height == 1, actions.region
+        assert open_tabs - closed_tabs == 1, (closed_tabs, open_tabs)
+        assert open_body - closed_body == 1, (closed_body, open_body)
+
+        painted = _painted(host, actions.region)
+        assert "\n" not in painted.strip("\n"), painted
+        for label in _MORE_ACTION_LABELS:
+            assert label in painted, painted
+
+
+@pytest.mark.asyncio
+async def test_more_reads_as_an_open_disclosure_while_it_is_open():
+    """The primary row paints "More ▴" while open and "More" when closed."""
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        primary = screen.query_one("#library-media-reader-primary-toolbar")
+        assert "More ▴" not in _painted(host, primary.region)
+
+        await _open_reader_more(screen, pilot)
+        primary = screen.query_one("#library-media-reader-primary-toolbar")
+        assert "More ▴" in _painted(host, primary.region)
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="More never closed.",
+        )
+        primary = screen.query_one("#library-media-reader-primary-toolbar")
+        assert "More ▴" not in _painted(host, primary.region)
+
+
+@pytest.mark.asyncio
+async def test_more_toggle_leaves_focus_on_the_more_button():
+    """Toggling the disclosure never hands focus to the row it opened.
+
+    The Reader recomposes on this toggle, so the focused identity is
+    whatever the restore seam last saw (the Items row that opened the
+    Reader). The disclosure owns its own focus target explicitly.
+    """
+    host = _four_action_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        await _open_reader_more(screen, pilot)
+        await pilot.pause()
+        assert getattr(screen.focused, "id", None) == "library-media-reader-more", (
+            screen.focused
+        )
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-reader-more-actions"),
+            message="More never closed.",
+        )
+        await pilot.pause()
+        assert getattr(screen.focused, "id", None) == "library-media-reader-more", (
+            screen.focused
+        )
+
+
+@pytest.mark.asyncio
+async def test_more_stays_compact_at_the_narrow_reader_width():
+    """At 100x30 the four actions fit or wrap once; the body moves <= 2 rows."""
+    host = _four_action_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        closed_tabs, closed_body = _reader_row_tops(screen)
+
+        actions = await _open_reader_more(screen, pilot)
+        open_tabs, open_body = _reader_row_tops(screen)
+
+        assert actions.region.height <= 2, actions.region
+        assert 1 <= open_tabs - closed_tabs <= 2, (closed_tabs, open_tabs)
+        assert 1 <= open_body - closed_body <= 2, (closed_body, open_body)
+
+        painted = _painted(host, actions.region)
+        for label in _MORE_ACTION_LABELS:
+            assert label in painted, painted

@@ -38313,7 +38313,24 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_reader_session = set_more_open(
             session, not session.more_open
         )
+        viewer = self._mounted_library_media_viewer()
         self._sync_library_media_viewer_or_recompose()
+        # task-31633 AC#3: the disclosure owns its own focus target -- PR F's
+        # restore seam otherwise leaves focus wherever it already was (the
+        # Items row that opened the Reader), so More could not be closed
+        # again without hunting for it.
+        #
+        # Queued on the VIEWER's post-recompose hook, never
+        # ``screen.call_after_refresh``: this rebuild runs on the viewer's
+        # message pump and the two have no ordering. Measured with the
+        # screen-level callback -- it ran BEFORE the new children mounted,
+        # focused the More button that was about to be detached, and left
+        # focus on an orphan with no parent chain, which swallowed every
+        # subsequent key (Escape stopped closing anything at all).
+        if viewer is not None:
+            viewer.queue_after_recompose(
+                partial(self._focus_library_control, "#library-media-reader-more")
+            )
 
     @on(Button.Pressed, "#library-media-image-preview-toggle")
     def handle_library_media_image_preview_toggle(self, event: Button.Pressed) -> None:

@@ -1799,10 +1799,12 @@ ConsoleRunLogModal {
 /* Reader toolbars can be as narrow as 50 columns while Items remains open.
    Textual Button's default 16-column minimum pushed More and Info beyond the
    painted Reader at that width even though both widgets stayed mounted. Keep
-   these two compact, label-sized rows fully reachable without changing their
-   text or focus geometry. */
+   these compact, label-sized rows fully reachable without changing their
+   text or focus geometry. task-31633 AC#3 added the More disclosure's own
+   row: its four labels only fit the narrow Reader as label-sized buttons. */
 #library-media-reader-primary-toolbar > Button,
-#library-media-reader-mode-toolbar > Button {
+#library-media-reader-mode-toolbar > Button,
+#library-media-reader-more-actions > Button {
     width: auto;
     min-width: 0;
     margin: 0;

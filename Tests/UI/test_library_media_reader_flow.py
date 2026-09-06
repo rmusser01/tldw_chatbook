@@ -1957,8 +1957,15 @@ async def test_reader_recompose_returns_focus_to_the_content_not_a_grip(size):
         assert _focused_id(screen) == "library-media-viewer-content"
         assert _top_border_row(host, content).startswith("┏")
 
-        # A real in-Reader recompose (the "More" toggle rebuilds the viewer).
-        screen.query_one("#library-media-reader-more", Button).press()
+        # A real in-Reader recompose. task-31633 AC#3 re-anchored this off
+        # the "More" toggle: that control now claims focus itself (its
+        # one-row disclosure has to stay operable from the keyboard), so it
+        # can no longer stand in for a focus-NEUTRAL recompose. Arming the
+        # inline delete ("t") flips a compose input the same way and claims
+        # no focus of its own, so the seam is still the only thing that can
+        # decide where focus lands.
+        await pilot.press("t")
+        await _wait_for_selector(screen, pilot, "#library-media-delete-cancel")
         await _settle(pilot)
 
         assert _focused_id(screen) not in _MEDIA_GRIP_IDS, screen.focused
@@ -2001,7 +2008,12 @@ async def test_find_input_keeps_focus_through_a_reader_recompose(size):
 
         screen.set_focus = MethodType(counting_set_focus, screen)
         try:
-            screen.query_one("#library-media-reader-more", Button).press()
+            # task-31633 AC#3: same re-anchor as the sibling test above.
+            # The action is invoked rather than typed because the focused
+            # Find Input swallows the "t" key -- this is the exact method
+            # that binding fires.
+            screen.action_library_media_move_to_trash()
+            await _wait_for_selector(screen, pilot, "#library-media-delete-cancel")
             await _settle(pilot)
         finally:
             del screen.set_focus
