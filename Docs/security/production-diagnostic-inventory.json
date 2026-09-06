@@ -134,6 +134,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 5,
+      "diagnostic_digest": "4a85e320f2a6d93c6005",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Audio/diarizer_local.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "a5dd63999ebb7d778ddb",
       "owner": "TASK-494",
@@ -162,15 +169,15 @@
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "663d7f140f078cc4d6e2",
+      "call_count": 5,
+      "diagnostic_digest": "37343ec1648761f9360f",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/meeting_owner.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
     },
     {
-      "call_count": 7,
-      "diagnostic_digest": "f55309e92202597924a9",
+      "call_count": 10,
+      "diagnostic_digest": "6e631714c032f112595b",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/meeting_session.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
@@ -2885,8 +2892,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "27f964117a07593a82e2",
+      "call_count": 4,
+      "diagnostic_digest": "b6b2106c3ce0a6da3933",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/UI/Screens/meetings_screen.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
@@ -3659,6 +3666,13 @@
       "diagnostic_digest": "1611ec4e4fc58d77013a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/Library/library_canvas_sync.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "9a1cb4a6ac92a5716650",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/Library/library_media_canvas.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -11450,11 +11464,11 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 580,
+    "owner_files": 582,
     "path_privacy_candidate_calls": 716,
     "persistent_sink_files": 12,
-    "task_31551_calls": 30,
+    "task_31551_calls": 35,
     "task_492_calls": 1336,
-    "task_494_calls": 7615
+    "task_494_calls": 7621
   }
 }
