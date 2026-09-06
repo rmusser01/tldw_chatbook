@@ -3244,6 +3244,15 @@ or Textual will reject the duplicate even when the route signature matches.
 
 ## Adding a resource of a GUARDED KIND obliges you to run that kind's inventory suite, not just your feature's tests
 
+**Follow-up incident (TASK-31758 / PR #2437, 2026-09-05).** Forty-five
+pixel-migu seed, resource, and installed-distribution checks passed after a
+rebase, but the required generated-artifact job still failed: two new startup
+diagnostics in `app.py` and `config.py` were absent from the production
+diagnostic inventory. The missing local inventory check cost another complete
+CI cycle. Inspect added logger statements with the checker's `--statements`
+mode, regenerate the reviewed inventory, and run the derived-artifact checks
+before pushing; passing feature and packaging tests does not cover that pin.
+
 **Hybrid-fusion cluster (TASK-3996) Task 5, 2026-08-09.** The new notes/conversations
 keyword sub-legs opened SQLite directly:
 `sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)`. The choice was deliberate and
