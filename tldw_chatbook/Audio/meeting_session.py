@@ -128,9 +128,22 @@ class MeetingSink(Protocol):
 
 
 class Diarizer(Protocol):
-    """Phase-2 seam: MOSS or the server plugs in here (spec §3.3)."""
+    """Phase-2 seam: MOSS or the server plugs in here (spec §3.3).
+
+    The backend owns reconciliation: it holds the live online centroids and
+    the batch centroids and applies `OnlineClusterer.reconcile` internally.
+    The session never calls `reconcile` and never touches centroids -- every
+    id `assign`/`diarize` hands back is already the reconciled live cluster
+    id.
+    """
 
     def diarize(self, wav_path: Path, start_s: float, end_s: float) -> list[SpeakerSegment]: ...
+
+    def assign(self, pcm: bytes, sample_rate: int, seq: int) -> str | None: ...
+
+    def centroids(self) -> dict[str, Any]: ...
+
+    def close(self) -> None: ...
 
 
 def write_meeting_json(folder: Path, payload: dict) -> None:
@@ -220,12 +233,14 @@ class MeetingSession:
         dictation_factory: Callable[[Any], Any],
         sinks: Sequence[MeetingSink],
         clock: Callable[[], float] = time.time,
+        diarizer: Diarizer | None = None,
     ) -> None:
         self.meta = meta
         self.capture = capture
         self._dictation_factory = dictation_factory
         self._sinks = list(sinks)
         self._clock = clock
+        self._diarizer = diarizer
         self.service: Any | None = None
         self.state = "idle"
         self.segments: list[MeetingSegment] = []
@@ -363,6 +378,33 @@ class MeetingSession:
             self.capture.stop_recording()
         except Exception as exc:  # noqa: BLE001
             logger.error("capture stop failed: {}", exc)
+        if self._diarizer is not None:
+            # Best-effort batch reconciliation pass (spec §3.3): a failure
+            # here must never block the meeting result. `assign` above
+            # already labelled what it could near-live; this overlay fills
+            # in (and can correct) speaker ids from the full recording.
+            # Never log segment text or speaker names -- lengths/types only.
+            try:
+                wav_path = Path(self.meta.folder) / "mixed.wav"
+                if wav_path.exists():
+                    duration = float(self.capture.audio_position_s)
+                    speaker_segments = self._diarizer.diarize(wav_path, 0.0, duration)
+                    with self._lock:
+                        meeting_segments = list(self.segments)
+                    for meeting_segment in meeting_segments:
+                        midpoint = (meeting_segment.t_audio_start + meeting_segment.t_audio_end) / 2.0
+                        for speaker_segment in speaker_segments:
+                            if speaker_segment.start_s <= midpoint <= speaker_segment.end_s:
+                                with self._lock:
+                                    meeting_segment.speaker_id = speaker_segment.speaker
+                                break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("meeting: diarizer stop pass failed ({})", type(exc).__name__)
+            finally:
+                try:
+                    self._diarizer.close()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("meeting: diarizer close failed ({})", type(exc).__name__)
         result = MeetingResult(
             meta=self.meta,
             ended_at=datetime.now().isoformat(timespec="seconds"),
@@ -431,6 +473,46 @@ class MeetingSession:
             return
         self._emit("segment", segment)
         self._each_sink("on_segment", segment)
+        # Near-live speaker labelling (spec §3.3): "others" in call mode, or
+        # any segment in room mode (label is None there). `assign` may block
+        # on a subprocess in the real backend, so it MUST run off `_lock`,
+        # which is already released at this point in the method.
+        if self._diarizer is not None and segment is not None and segment.label in ("others", None):
+            source = "others" if segment.label == "others" else "mixed"
+            pcm = self.capture.pcm_window(source, segment.t_audio_start, segment.t_audio_end)
+            sid = None
+            if pcm:
+                try:
+                    sid = self._diarizer.assign(pcm, 16000, segment.seq)  # OFF the lock
+                except Exception as exc:  # noqa: BLE001 - best-effort, never breaks the meeting
+                    logger.warning("meeting: diarizer assign failed ({})", type(exc).__name__)
+            if sid is not None:
+                with self._lock:
+                    segment.speaker_id = sid
+                self._emit("segment", segment)
+                self._each_sink("on_segment", segment)
+
+    def _on_final_for_test(self, text: str, *, label: str | None = None) -> None:
+        """Test-only: drive `_on_final`, optionally forcing its label.
+
+        A thin wrapper over the real `_on_final` -- when `label` is given it
+        temporarily overrides `_label` (the coarse-source lookup) so tests
+        don't need a fake capture that reproduces exact dominant-source
+        timing math to exercise the "others"/room-mode diarizer paths.
+        """
+        if label is None:
+            self._on_final(text)
+            return
+        original = self._label
+        self._label = lambda *_a, **_kw: label
+        try:
+            self._on_final(text)
+        finally:
+            self._label = original
+
+    def _lock_is_held_for_test(self) -> bool:
+        """Test-only: True if the CURRENT thread holds `self._lock` right now."""
+        return self._lock._is_owned()
 
     def _on_service_state(self, state: str) -> None:
         self._emit("service_state", state)
