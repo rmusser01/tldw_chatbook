@@ -21,8 +21,9 @@ producing `438f6e9122188c5a92d445715d90ce36cff1b140`. The tree delta from the
 preceding checkpoint is exactly dev's six files for Persona Inspector avatar
 clearing and boot-worker warning handling. Backlog and diagnostic inventory
 checks pass again on this revision. The bounded PR Fast Lane plus those two
-newly landed test files is being verified in
-`/private/tmp/pr2427-latest-dev-fast-lane.xml` and its matching log.
+newly landed test files completed with 840 passed and eight failures in 331.25s:
+all eight are the new boot-worker warning probe's premature Loguru sink lifetime.
+Evidence: `/private/tmp/pr2427-latest-dev-fast-lane.xml` and its matching log.
 
 ## Review-only task renumbering
 
@@ -140,3 +141,58 @@ approval. Media browse remains 107 lines over its unchanged ceiling; its recover
 and independent page/facet fences must be preserved in any separately reviewed
 ownership reduction. Publication is a progress/review checkpoint, not permission
 to merge with these failures.
+
+## First published review follow-up
+
+Checkpoint `71389e02b13644654fe1a131d04c1a7027b2ed6e` was published with the exact
+lease on the former PR head, and PR 2427 was opened for normal review. Qodo
+posted five findings on that revision. CodeRabbit's success status is a skipped
+review because the base is not the default branch; it is not an approval.
+
+The new boot-worker capture repeats the already repaired TASK-31901 lifecycle
+bug: app startup removes the sink installed before mount. It now captures only
+inside the mounted observation window, preserving all three worker state probes
+and the positive unknown-worker control. Worker factory imports are hoisted to
+module scope so existing exact-app cleanup adapters can capture their products.
+The unmounted smoke app remains a real TldwCli constructor and additionally
+registers its exact prompts/media handles for current-thread close. The complete
+worker/smoke files plus shared fault controls pass **42 tests**, 3 warnings,
+33.96s (`/private/tmp/pr2427-worker-smoke-resources.xml` and matching log).
+
+Resource qualification is **not complete**: the same log still attributes
+workspace/collections handles to 12 worker cases and prompts/media handles to
+smoke initialization. Existing callbacks removed the other auxiliaries. The DB
+APIs close only the caller thread's connection; app initialization opens the
+smoke databases in its own thread pool, and mounted workers also acquire
+thread-local connections. No global closure, GC workaround, threshold relaxation,
+or new cross-thread lifecycle implementation was added. A separately reviewed
+owner-lifecycle solution is still required.
+
+Qodo triage:
+
+- `3944734941`: modal-transfer diagnostic context — open, needs privacy-safe
+  failure-path design and regression verification.
+- `3944734944`: settings-durability diagnostic context — open; raw exception text,
+  credentials, drafts, and user-entered provider/model labels must not be added
+  merely to satisfy a logging recommendation.
+- `3944734946`: submission import ordering — corrected to stdlib, third-party,
+  then local groups without altering imported symbols.
+- `3944734948`: app accessor documentation — added its borrowed-instance return
+  contract; runtime access remains unchanged.
+- `3944734949`: alleged historical disclosure callback slot — the suggested
+  reversal would restore the regression. Commit `8e1d9c72b6` introduced the
+  disclosure callback before the established eighth continuation slot on Aug 30;
+  its parent has `call_model_with_continuation` immediately after `clock`.
+  TASK-31765 restores that older contract while retaining keyword disclosure.
+  Do not silently undo that repair on the basis of the current-base diff alone.
+
+The complete first-review checkpoint selection (incremental agent persistence,
+tool disclosure, settings durability/navigation, dispatch recovery, worker events,
+smoke, and cleanup fault controls) has **152 passed**, 3 warnings, 47.91s.
+Evidence: `/private/tmp/pr2427-first-qodo-checkpoint.xml` and matching log.
+It verifies the positional continuation and keyword disclosure contracts and
+the non-behavioral Qodo corrections. Its native probe reports 42 retained-path
+cases: 29 incremental agent-persistence cases, 12 worker cases, and smoke
+initialization. These remain resource findings, not a resource-clean
+qualification. Agent-persistence ownership still needs targeted attribution;
+the worker/smoke cross-thread findings above have been diagnosed.
