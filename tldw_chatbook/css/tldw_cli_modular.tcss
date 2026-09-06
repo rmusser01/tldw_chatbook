@@ -17816,7 +17816,12 @@ ResearchNoteSwitchRecoveryModal {
     width: 16;
 }
 
-#research-create-row Input {
+/* ID subjects, not `<row> Input`: the ancestor-scoped bare-type ratchet
+ * (test_textual_css_fastpath, ADR-097) taxes bare-type-subject rules.
+ */
+#research-query-input,
+#research-limits-input,
+#research-providers-input {
     width: 1fr;
 }
 
@@ -17866,8 +17871,8 @@ ResearchNoteSwitchRecoveryModal {
     min-height: 0;
 }
 
-#research-observe-actions Input,
-#research-followup-row Input {
+#research-artifact-name,
+#research-followup-input {
     width: 1fr;
 }
 
