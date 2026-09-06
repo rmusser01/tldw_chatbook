@@ -80,7 +80,9 @@ class SkillImportChoiceModal(SafeModalDismissMixin, ModalScreen[str | None]):
                 yield Button("Cancel", id="skill-import-choice-cancel")
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         choices = self.query_one("#skill-import-choice-list", OptionList)
         choices.highlighted = 0
         choices.focus()
