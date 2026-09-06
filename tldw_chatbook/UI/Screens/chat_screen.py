@@ -21491,11 +21491,19 @@ class ChatScreen(BaseAppScreen):
             # inside the 0.15s window must not consume handoffs against the
             # hidden screen (Qodo #2420 finding 4).
             self._console_resume_handoff_timers = [
+                # task-31808: this screen is reusable, so on_mount fires once
+                # per app run and a warm revisit runs only this hook. The
+                # CHAT and VLLM_CONSOLE consumers were missing here, so
+                # `open_chat_with_handoff` payloads and vLLM "Use in
+                # Console" targets staged against a warm Chat screen were
+                # never applied. Same 0.15s settle hedge as on_mount.
+                self.set_timer(0.15, self._consume_pending_chat_handoff),
                 self.set_timer(0.15, self._consume_pending_console_prompt_insert),
                 self.set_timer(0.15, self.consume_pending_console_provider_intent),
                 self.set_timer(
                     0.15, self._consume_pending_conversation_settings_return
                 ),
+                self.set_timer(0.15, self.consume_pending_vllm_console_intent),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on
                 # resume too.
