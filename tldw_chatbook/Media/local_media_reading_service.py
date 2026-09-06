@@ -477,7 +477,14 @@ class LocalMediaReadingService:
             # browse's, and any other caller gets no reasons rather than
             # wrong ones. Absent (not empty) otherwise, so an unqueried or
             # differently-scoped search carries no channel at all.
-            from .media_reading_scope_service import LIBRARY_BROWSE_SEARCH_FIELDS
+            #
+            # Absolute, not relative: Tests/Media loads this module by file
+            # path (``spec_from_file_location``), where a relative import has
+            # no parent package. In-function because the scope service is
+            # the module that imports THIS one's consumers, not vice versa.
+            from tldw_chatbook.Media.media_reading_scope_service import (
+                LIBRARY_BROWSE_SEARCH_FIELDS,
+            )
 
             if tuple(filters.get("fields") or ()) == LIBRARY_BROWSE_SEARCH_FIELDS:
                 payload["match_reasons"] = db.library_browse_keyword_only_matches(
