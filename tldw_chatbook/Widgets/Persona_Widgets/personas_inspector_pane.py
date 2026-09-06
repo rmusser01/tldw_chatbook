@@ -418,6 +418,11 @@ class PersonasInspectorPane(VerticalScroll):
         self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
         self.query_one("#personas-selected-kind", Static).update("Type: -")
+        # TASK-31804: the rail must never show a face that belongs to a
+        # cleared selection. show_selection paths for non-character kinds
+        # already blank the portrait; deselection must too, or the "Selected:
+        # none" summary contradicts a lingering avatar.
+        self.set_avatar_thumbnail(None)
         await self.show_conversations(())
         self.show_validation(())
         self._apply_action_state()
