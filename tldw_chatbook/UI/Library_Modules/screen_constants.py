@@ -390,3 +390,25 @@ _LIBRARY_HELP_SURFACE_LABELS: dict[str, str] = {
     LIBRARY_ROW_CREATE_PROMPT: "New prompt",
     LIBRARY_ROW_CREATE_SKILL: "New skill",
 }
+
+
+# --- relocated from ``library_screen.py`` by wave-7 task 2 (media series
+# --- 2/3): four constants moved bodies read as bare module globals, moved
+# --- verbatim so the single-source guarantee each of them exists to give is
+# --- preserved rather than re-spelled in a second file. ``library_screen.py``
+# --- imports them back, so ``library_screen_module._ANALYZE_ORIGIN_MEDIA``
+# --- and ``..._IMPORT`` still resolve for their two pinning assertions in
+# --- ``Tests/UI/test_library_ingest_analyze_skipped.py``.
+
+#: Qodo on #2386: the two ``_library_media_view`` values this branch's
+#: surface helpers compare against. Introduced with those helpers; the
+#: file's older sites still carry the literals.
+_MEDIA_VIEW_LIST = "list"
+_MEDIA_VIEW_VIEWER = "viewer"
+# task-28007 (Qodo review round, PR #2400 #1): the two surfaces a bulk-
+# Analyze run can start from. Named once so the init default
+# (``_library_media_analyze_origin``), its assignment in
+# ``_start_library_media_analyze``, and its two readers (the unmount
+# notice, the receipt-fields guard) cannot drift apart from one another.
+_ANALYZE_ORIGIN_MEDIA = "media"
+_ANALYZE_ORIGIN_IMPORT = "import"

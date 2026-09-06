@@ -229,6 +229,26 @@ _BUDGETS: dict[str, int] = {
     # unchanged. 2623 -> 2721.
     "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
+    # 2026-09-06, wave-7 task 2 (media controller PR, media series 2/3): born
+    # governed the moment this file existed (task-31203 AC#4's glob-based
+    # discovery, recipe §17) -- 141 moved methods (byte-for-byte; every one
+    # verified TEXT-identical AND AST-identical to its pre-move screen body,
+    # in both directions) plus the constructor/property scaffolding the canon
+    # requires, pinned at its exact measured line count. Constructor arity
+    # MEASURED with `inspect.signature(LibraryMediaController.__init__)`,
+    # never hand-counted: 84 parameters including `self` -- 1 positional
+    # (`screen`) + 82 keyword-only named dependencies (1 state accessor + 11
+    # read-only shared-shell-state accessors + 5 read/write pairs = 10 + 2
+    # media-wiring-controller accessors + 24 shell helpers + 34 late-binding
+    # callables for the exclusions). 173 class-level `property` objects: 91
+    # hand-written bindings + the 82 generated flat-name state shims. See the
+    # module's own docstring for the full 251-candidate / 110-exclusion
+    # derivation and the single-controller decision (one connected component
+    # of 213 by call graph, 238 once shared-state edges are added, out of
+    # 251 -- no second component of any size, and the plan's own candidate
+    # browse-vs-trash seam measured at 16 cross-call edges and 6 shared state
+    # fields).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4474,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
