@@ -65,6 +65,49 @@ def resolve_effective_config() -> "EffectiveConfig | None":
     return resolve()
 
 
+def meeting_user_display_name(get_display_name: Callable[[str], str] | None = None) -> str:
+    """The one shared display name for the mic ("you") channel (task 31746).
+
+    Deliberately NOT a bare `chat_defaults.user_display_name` read: that
+    section's own factory default ships as the literal "User" (`config.py`'s
+    `DEFAULT_CONFIG_FROM_TOML`), so a fresh install has no way to tell "never
+    touched this setting" apart from "chose User" -- returning it unconditio-
+    nally would silently turn every untouched install's "You:" rows into
+    "User:" rows. Only a value that actually DIFFERS from that shipped
+    default counts as a deliberate choice; everything else falls back to
+    Meetings' own already-shipped "You".
+
+    Reuses `config.get_chat_defaults_user_display_name` (task 31746 review)
+    rather than reading the raw config value: that getter is already the
+    validated read for this exact key, normalizing via
+    `console_roleplay_identity.normalize_chat_display_name` (strips
+    whitespace, rejects control characters, caps length) the same way
+    Console does -- so a whitespace-only or hostile configured value can
+    never leak through here as a literal display name (a raw comparison
+    used to return "   " verbatim).
+
+    Args:
+        get_display_name: `(default) -> str` validated getter, injectable
+            for tests; defaults to the real
+            `config.get_chat_defaults_user_display_name`.
+
+    Returns:
+        The configured, normalized `chat_defaults.user_display_name` when it
+        differs from the shipped factory default, else "You".
+    """
+    if get_display_name is None:
+        from tldw_chatbook.config import get_chat_defaults_user_display_name
+
+        get_display_name = get_chat_defaults_user_display_name
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    factory_default = DEFAULT_CONFIG_FROM_TOML.get("chat_defaults", {}).get("user_display_name", "User")
+    configured = get_display_name(factory_default)
+    if configured and configured != factory_default:
+        return configured
+    return "You"
+
+
 class MeetingSettings(BaseModel):
     """Validated `[meetings]` configuration for one meeting session.
 
@@ -87,6 +130,10 @@ class MeetingSettings(BaseModel):
     post_transcribe: bool = True
     post_diarize: bool = True
     live_diarization: bool = False
+    #: Hybrid-room mic diarization (task 31743): in call mode, also diarize
+    #: the mic ("you") and overlap ("both") segments instead of leaving them
+    #: pre-named as the user. Off by default -- see `meetings.md`.
+    diarize_mic_channel: bool = False
     diarizer_backend: str = "local"
     #: Qodo Q7: 0 or a negative value silently disabled the Stop pass (the
     #: clusterer can hold no clusters), so it is refused at the boundary
@@ -144,6 +191,7 @@ class MeetingSettings(BaseModel):
             post_transcribe=get_setting("meetings", "post_transcribe", True),
             post_diarize=get_setting("meetings", "post_diarize", True),
             live_diarization=get_setting("meetings", "live_diarization", False),
+            diarize_mic_channel=get_setting("meetings", "diarize_mic_channel", False),
             diarizer_backend=get_setting("meetings", "diarizer_backend", "local") or "local",
             max_speakers=get_setting("meetings", "max_speakers", 8),
         )
@@ -436,7 +484,9 @@ class MeetingSessionOwner:
             probe_recorder = self._mic_factory(use_vad=False, retain_audio=False, chunk_size=320)
             devices = tuple(str(d.get("name", "")) for d in probe_recorder.get_audio_devices() if d.get("name"))
         except Exception as exc:  # noqa: BLE001 - no backend: pickers stay empty
-            logger.info("meeting device enumeration unavailable: {}", exc)
+            # task-31748: `str(exc)` can embed a filesystem path (a missing
+            # backend module's path, say) -- redact it.
+            logger.info("meeting device enumeration unavailable: {}", redact_user_paths(str(exc)))
             capture_error = _missing_recorder_message(exc)
         self.prepared = PrepareResult(
             tap_mode=tap_mode, provider=provider, model=model or "",
@@ -516,6 +566,8 @@ class MeetingSessionOwner:
                     mic_device=self.settings.mic_device or "default",
                     system_source=self.prepared.tap_mode.reason,
                     provider=self.prepared.provider, model=self.prepared.model,
+                    user_display_name=meeting_user_display_name(),
+                    diarize_mic_channel=self.settings.diarize_mic_channel,
                 )
                 # Two independent mechanisms, deliberately NOT conflated
                 # (Qodo Q12): the live backend's authoritative Stop pass is

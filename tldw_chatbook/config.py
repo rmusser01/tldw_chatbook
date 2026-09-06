@@ -1400,13 +1400,20 @@ def is_valid_provider_api_key(value: object) -> bool:
 
 
 def resolve_tldw_api_auth_token(value: object) -> Optional[str]:
-    """Return `value` stripped, or None if blank, a provider-key placeholder,
-    or `TLDW_API_PLACEHOLDER_AUTH_TOKEN` -- the value the app's own config
-    load synthesizes into `[tldw_api]` when a profile's file omits
-    `auth_token` (task-31417). Reuses `resolve_provider_api_key`'s existing
-    blank/placeholder screening rather than duplicating the rule; adds only
-    the one extra rejected literal this credential's boot-rewrite is known
-    to produce.
+    """Return `value` stripped, or None if blank/placeholder/synthesized.
+
+    Reuses `resolve_provider_api_key`'s existing blank/placeholder screening
+    rather than duplicating the rule; adds only the one extra rejected
+    literal this credential's boot-rewrite is known to produce.
+
+    Args:
+        value: Raw `[tldw_api] auth_token` config value of any type.
+
+    Returns:
+        `value` stripped, or None if it is blank, a known provider-key
+        placeholder, or `TLDW_API_PLACEHOLDER_AUTH_TOKEN` -- the value the
+        app's own config load synthesizes into `[tldw_api]` when a
+        profile's file omits `auth_token` (task-31417).
     """
     resolved = resolve_provider_api_key(value)
     if resolved is None or resolved == TLDW_API_PLACEHOLDER_AUTH_TOKEN:
@@ -5215,6 +5222,11 @@ diarizer_backend = "local"
 # Upper bound the local live diarizer uses when clustering voices into
 # speaker ids.
 max_speakers = 8
+# Hybrid rooms (a call where more than one person shares the mic): also
+# diarize the mic ("you") and overlap ("both") channels in call mode instead
+# of always pre-naming them as you. Off by default -- turning it on means a
+# mic segment may render as a diarized speaker instead of your own name.
+diarize_mic_channel = false
 
 [transcription]
 # Default transcription provider

@@ -66,22 +66,25 @@ class FakeDictation:
         return SimpleNamespace(transcription_complete=self.complete)
 
 
-def _meta(tmp_path, mode: str = "call") -> MeetingMeta:
+def _meta(tmp_path, mode: str = "call", diarize_mic_channel: bool = False) -> MeetingMeta:
     return MeetingMeta(
         folder=tmp_path, mode=mode, started_at="2026-09-04T14:30:00",
         mic_device="MacBook Pro Microphone", system_source="Native (macOS tap)",
         provider="faster-whisper", model="base.en",
+        diarize_mic_channel=diarize_mic_channel,
     )
 
 
 @pytest.fixture
 def meeting_session_with_fake_capture(tmp_path):
-    """Factory fixture: `meeting_session_with_fake_capture(mode=..., diarizer=...)`."""
+    """Factory fixture: `meeting_session_with_fake_capture(mode=..., diarizer=..., diarize_mic_channel=...)`."""
 
-    def _build(*, mode: str = "call", diarizer: Any = None, sinks: Any = None) -> MeetingSession:
+    def _build(
+        *, mode: str = "call", diarizer: Any = None, sinks: Any = None, diarize_mic_channel: bool = False,
+    ) -> MeetingSession:
         capture = FakeCapture(mode)
         return MeetingSession(
-            meta=_meta(tmp_path, mode),
+            meta=_meta(tmp_path, mode, diarize_mic_channel),
             capture=capture,
             dictation_factory=lambda cap: FakeDictation(cap),
             sinks=sinks or [],

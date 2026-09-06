@@ -32,6 +32,20 @@ def test_pinned_cluster_still_joined_by_a_similar_voice():
     a = c.assign(_v(1, 0, 0)); c.assign(_v(0, 1, 0)); c.pin(a)
     assert c.assign(_v(0.98, 0.02, 0)) == a  # a near-match still joins the pinned cluster
 
+def test_start_id_mints_past_the_pre_crash_ids():
+    # 31749: a worker restarted after a crash starts from the pre-crash
+    # high-water mark, so its first cluster can never be handed an id the user
+    # already named on a pre-crash segment.
+    c = OnlineClusterer(start_id=3)
+    assert c.assign(_v(1, 0, 0)) == "S4"
+    assert c.max_id == 4                       # the batch pass mints past this
+
+
+def test_start_id_defaults_to_the_first_worker_numbering():
+    c = OnlineClusterer()
+    assert c.assign(_v(1, 0, 0)) == "S1" and c.max_id == 1
+
+
 def test_reconcile_maps_final_to_live_by_nearest_centroid():
     live = {"S1": _v(1, 0, 0), "S2": _v(0, 1, 0)}
     final = [("F0", _v(0, 0.9, 0)), ("F1", _v(0.9, 0, 0))]

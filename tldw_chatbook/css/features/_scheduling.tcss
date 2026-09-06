@@ -264,6 +264,21 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
    handoff spec §6, PR-5 task 7) is retired along with its buttons -- the
    Runs-on row's own dropdown/mini-bar is the one transfer surface now. */
 
+/* task-31823: the reminder pane's second compact action row (Duplicate ·
+ * View runs · View results) -- the rest of spec §5's deferred kebab
+ * list, same auto-height shape as the lifecycle row above. */
+#scheduling-task-detail-secondary-actions {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+/* task-31823: shared by BOTH panes' secondary-actions buttons (reminder
+ * + definition) -- a plain class on each Button, never an
+ * ancestor-scoped bare-type rule. */
+.detail-secondary-action-button {
+    margin: 0 1 0 0;
+}
+
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {
     margin-top: 1;
@@ -294,6 +309,13 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 
 #scheduling-automation-detail-lifecycle .detail-lifecycle-button {
     margin: 0 1 0 0;
+}
+
+/* task-31823: the definitions pane's own second compact action row --
+ * `.detail-secondary-action-button` above already covers the buttons. */
+#scheduling-automation-detail-secondary-actions {
+    height: auto;
+    padding: 0 0 1 0;
 }
 
 /* Same pair as the reminder pane's rule above: docked + pushed instance. */

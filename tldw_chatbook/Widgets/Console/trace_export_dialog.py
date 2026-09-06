@@ -185,7 +185,9 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
                 )
 
     async def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         await self.select_profile(self._selected_profile)
         self.query_one("#trace-export-path", Input).focus()
 

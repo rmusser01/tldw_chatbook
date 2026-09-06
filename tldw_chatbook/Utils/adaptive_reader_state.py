@@ -40,18 +40,40 @@ PaneName = Literal["library", "items"]
 class AdaptiveReaderLayoutProfile:
     """Destination-specific list and work-pane width policy.
 
-    ``list_grows`` is opt-in per destination (task-31633): when set, a
-    comfortable Reader shares its surplus width with the list -- up to
-    ``list_comfort_width`` -- instead of absorbing every extra cell. It
-    applies to automatic widths only; a custom width is obeyed as typed.
-    Only Media opts in today.
+    One frozen profile per reader destination. Every field is a width in
+    terminal cells, and the two task-31633 fields are opt-in: their defaults
+    reproduce the pre-task behaviour exactly, so a destination that does not
+    name them is unaffected.
 
-    ``grip_width`` is the width of EACH of the two pane grips, in cells --
-    both what they paint and what the resolver holds back for them, so the
-    two can never disagree. It is opt-in per destination for the same reason
-    (task-31633 AC#2): Media's two five-column grips left ten dead columns
-    around the Items pane, so Media narrows them to one cell each while every
-    other destination keeps ``PANE_GRIP_WIDTH``.
+    Attributes:
+        list_min_width: Floor for the list (Items) pane. The resolver
+            collapses the pane rather than paint it narrower.
+        list_target_width: Not read by the resolver. The list's automatic
+            width comes from ``preferences.items_width`` (defaulted from
+            ``ITEMS_TARGET_WIDTH``); the field is retained only so profiles
+            can be constructed with it in tests.
+        list_comfort_width: Ceiling for ``list_grows``. Surplus width stops
+            flowing into the list here and goes to the work pane instead.
+        list_max_width: Hard ceiling for the list pane, including a width the
+            user typed.
+        work_min_width: Floor for the work (Reader) pane; below it the shell
+            drops the list pane rather than squeeze the document.
+        work_comfort_width: Not read by the resolver. The ``list_grows``
+            gate is ``max(work_min_width, READER_COMFORT_WIDTH)``; only
+            Collections sets this field (56), to no effect.
+        list_grows: When ``True``, a work pane already at
+            ``max(work_min_width, READER_COMFORT_WIDTH)`` shares half of any
+            further surplus with the list, up to ``list_comfort_width``,
+            instead of absorbing every extra cell.
+            Automatic widths only: a custom width is obeyed as typed. Default
+            ``False`` (every extra cell goes to the work pane); only Media
+            opts in today.
+        grip_width: Width of EACH of the two pane grips -- both what a grip
+            paints and what the resolver holds back for it, so the two can
+            never disagree. Defaults to ``PANE_GRIP_WIDTH`` (5). Media passes
+            1: its two five-column grips left ten dead columns around the
+            Items pane (task-31633 AC#2). A grip narrower than four cells
+            paints the one-cell guillemet instead of the ``<---`` run.
     """
 
     list_min_width: int = 32
