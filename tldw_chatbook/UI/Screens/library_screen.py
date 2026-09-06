@@ -6632,20 +6632,39 @@ class LibraryScreen(BaseAppScreen):
         self._disarm_library_list_entry_focus()
 
     @on(LibraryMediaViewer.SpeakerRenamed)
-    async def _handle_library_media_speaker_renamed(
+    def _handle_library_media_speaker_renamed(
         self, event: LibraryMediaViewer.SpeakerRenamed
     ) -> None:
-        """Re-fetch the renamed item so the memoized detail stops being stale.
+        """Re-read the renamed item so the memoized detail stops being stale.
 
         TASK-31745: the reader repaints itself the moment the rename lands,
-        but this screen's viewer state is memoized per detail ARRIVAL -- the
+        but this screen's viewer state is memoized by detail IDENTITY -- the
         next sync would otherwise repaint the pre-rename transcript over the
-        new name (and re-derive the legend labels from it).
+        new name (and re-derive the legend labels from it). Storing a NEW
+        detail dict carrying the rewritten content is what clears that memo;
+        a full ``_refresh_library_media_detail`` would re-run the reader
+        session's request/supersede machinery to change the one field the
+        rename touched.
+
+        Touches no widget, so it needs no ``is_mounted`` guard -- the DB read
+        is the only thing that can fail here, and a torn-down screen just
+        drops the assignment.
         """
         event.stop()
-        media_id = self._selected_media_id
-        if media_id:
-            await self._refresh_library_media_detail(media_id)
+        if event.media_id != self._library_media_selected_backing_id():
+            # The selection moved on mid-rename; the next detail load reads
+            # the renamed text from the DB anyway.
+            return
+        detail = self._library_media_detail
+        db = getattr(self.app_instance, "media_db", None)
+        if not isinstance(detail, Mapping) or db is None:
+            return
+        try:
+            row = db.get_media_by_id(event.media_id)
+        except Exception:  # noqa: BLE001 - a closed/failed DB just means no patch
+            return
+        if row is not None:
+            self._library_media_detail = {**detail, "content": row["content"] or ""}
 
     @on(LibraryMediaRowGeometryChanged)
     def _handle_library_media_row_geometry_changed(

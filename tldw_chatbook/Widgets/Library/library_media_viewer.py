@@ -10,7 +10,7 @@ from rich.color import Color
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalGroup
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.widget import Widget
@@ -21,6 +21,8 @@ from tldw_chatbook.Audio.meeting_session import (
     normalize_speaker_name,
 )
 from tldw_chatbook.Library.meeting_speaker_rename import (
+    RENAME_REFUSED_EMPTY_TRANSCRIPT,
+    RENAME_REFUSED_NOT_MEETING_CONTENT,
     SpeakerRenameResult,
     _meeting_speaker_legend_rows,
     rename_meeting_speaker,
@@ -501,23 +503,31 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             yield raw_button
 
     # ---- TASK-31745: rename a finished meeting's speakers, from the reader --
-    #: What a REFUSED rename means in the user's terms. Both refusal reasons
-    #: say the same thing to a reader: this item's stored transcript is not
-    #: the meeting's own render, so rewriting it would destroy the ingest's
-    #: text. Static copy -- never a path, a name, or transcript text.
-    _RENAME_REFUSED_COPY = (
-        "This transcript came from ingest; rename the live transcript in Meetings."
-    )
+    #: What each refusal means in the user's terms, keyed by the reason
+    #: ``rename_meeting_speaker`` returns. Static copy -- never a path, a
+    #: name, or transcript text.
+    _RENAME_REFUSAL_COPY = {
+        RENAME_REFUSED_NOT_MEETING_CONTENT: (
+            "This transcript came from ingest; rename the live transcript in Meetings."
+        ),
+        RENAME_REFUSED_EMPTY_TRANSCRIPT: (
+            "This meeting's local transcript is missing or empty; nothing to rename."
+        ),
+    }
     _SPEAKER_INPUT_PREFIX = "library-media-speaker-input-"
 
     class SpeakerRenamed(Message):
-        """A meeting speaker was renamed on this item; its detail is stale.
+        """A meeting speaker was renamed on ``media_id``; its detail is stale.
 
         The reader repaints itself immediately (below), but the SCREEN's
-        memoized viewer state is still built from the pre-rename detail --
-        the next viewer sync would repaint that stale content over the new
-        name. The screen re-fetches the detail on this message.
+        viewer state is memoized per detail ARRIVAL and still built from the
+        pre-rename content -- the next viewer sync would repaint that over
+        the new name. The screen re-reads the item on this message.
         """
+
+        def __init__(self, media_id: int) -> None:
+            super().__init__()
+            self.media_id = media_id
 
     def _compose_speaker_legend(self) -> ComposeResult:
         """Render one rename row per speaker of a finished meeting recording.
@@ -526,22 +536,30 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         speakers to rename (the screen resolves that into
         ``viewer.can_rename_speakers``).
 
-        Label above input, each full-width in this ``Vertical`` -- the same
-        render-verified shape ``_compose_edit_form`` uses, so the legend
-        needs no CSS of its own (a ``Horizontal`` mixing an auto-width
-        ``Static`` with a ``1fr`` ``Input`` is this canvas's known
-        non-rendering failure mode, and re-keying it would spend two more
-        ancestor-scoped bare-type rules against ADR-097's ratchet).
+        ``VerticalGroup``, never a bare ``Vertical``: Textual's ``Vertical``
+        defaults to ``height: 1fr``, so as a direct sibling of the ``1fr``
+        content body this legend would claim HALF the reading pane (the
+        task-31222/31276 trap). ``VerticalGroup`` is ``height: auto`` in
+        upstream's own CSS, so the section costs exactly its rows and needs
+        no rule here.
+
+        Label above input, each full-width -- the shape ``_compose_edit_form``
+        uses; the labels reuse its ``.library-media-edit-label`` styling. A
+        ``Horizontal`` row mixing an auto-width ``Static`` with a ``1fr``
+        ``Input`` is this canvas's known non-rendering failure mode, and
+        re-keying that would spend two more ancestor-scoped bare-type rules
+        against ADR-097's ratchet.
 
         Returns:
             ComposeResult for the legend, or nothing when there is none.
         """
         if not self.viewer.can_rename_speakers or not self.viewer.speaker_legend_rows:
             return
-        with Vertical(id="library-media-speaker-legend"):
+        with VerticalGroup(id="library-media-speaker-legend"):
             yield Static(
                 "Rename speakers",
                 id="library-media-speaker-legend-title",
+                classes="library-media-edit-label",
                 markup=False,
             )
             for cluster_id, label in self.viewer.speaker_legend_rows:
@@ -554,7 +572,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     label,
                     id=f"library-media-speaker-label-{cluster_id}",
                     markup=False,
-                    classes="library-media-speaker-label",
+                    classes="library-media-edit-label library-media-speaker-label",
                 )
                 yield Input(
                     placeholder="Rename…",
@@ -577,19 +595,30 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
         name = normalize_speaker_name(event.value)
         event.input.value = ""
-        if self.media_db is None or self.speaker_rename_media_id is None:
+        media_id = self.speaker_rename_media_id
+        if self.media_db is None or media_id is None:
             return
         # The rename reads the transcript file, runs several DB writes, FTS
         # maintenance and a post-ingest dispatch -- all of which would freeze
         # the reader on a large transcript or a busy database.
+        # ``exclusive`` keeps two fast submits from piling up in this group.
+        # (Textual cannot interrupt a THREAD worker mid-flight, so a genuine
+        # overlap still ends at the row's optimistic lock -- which fails safe,
+        # writing nothing and reporting the conflict.)
+        # The id is captured here, not read in the worker: a selection change
+        # mid-rename must not retarget the write. The legend the user typed
+        # into belongs to this id, so the rename lands on it either way.
         self.run_worker(
-            lambda: self._rename_speaker_off_thread(cluster_id, name),
+            lambda: self._rename_speaker_off_thread(media_id, cluster_id, name),
             group="library-media-speaker-rename",
             thread=True,
+            exclusive=True,
             exit_on_error=False,
         )
 
-    def _rename_speaker_off_thread(self, cluster_id: str, name: str) -> None:
+    def _rename_speaker_off_thread(
+        self, media_id: int, cluster_id: str, name: str
+    ) -> None:
         """Rename on a worker thread, then repaint on the UI one.
 
         The post-rename re-reads (content + legend labels) happen HERE, on
@@ -599,16 +628,12 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         rows: tuple[tuple[str, str], ...] = ()
         try:
             outcome = rename_meeting_speaker(
-                self.media_db, self.speaker_rename_media_id, cluster_id, name
+                self.media_db, media_id, cluster_id, name
             )
             if outcome.ok:
-                row = self.media_db.get_media_by_id(self.speaker_rename_media_id)
+                row = self.media_db.get_media_by_id(media_id)
                 content = (row["content"] if row else "") or ""
-                rows = tuple(
-                    _meeting_speaker_legend_rows(
-                        self.media_db, self.speaker_rename_media_id
-                    )
-                )
+                rows = tuple(_meeting_speaker_legend_rows(self.media_db, media_id))
         except Exception as exc:  # noqa: BLE001 - a rename must not crash the reader
             # A filesystem failure's ``str()`` embeds the meeting folder path.
             logger.warning(
@@ -617,22 +642,21 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             )
             outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
         self.app.call_from_thread(
-            self._apply_speaker_rename_outcome, outcome, content, rows
+            self._apply_speaker_rename_outcome, media_id, outcome, content, rows
         )
 
     def _apply_speaker_rename_outcome(
         self,
+        media_id: int,
         outcome: SpeakerRenameResult,
         content: str,
         rows: tuple[tuple[str, str], ...],
     ) -> None:
         """Explain a refused/failed rename, or repaint after a successful one."""
         if not outcome.ok:
-            detail = (
-                outcome.reason
-                if outcome.reason.startswith("unexpected error")
-                else self._RENAME_REFUSED_COPY
-            )
+            # ``reason`` is documented static, user-safe copy, so an
+            # unmapped one (a failure, not a refusal) is shown as it stands.
+            detail = self._RENAME_REFUSAL_COPY.get(outcome.reason, outcome.reason)
             self.app.notify(
                 f"Couldn't rename this speaker. {detail}", severity="warning"
             )
@@ -642,11 +666,14 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         # Recompose, not an in-place patch: the content body holds an
         # immutable document (a content change builds a new body by design),
         # and the same pass repaints the legend's labels from ``rows``.
+        # A selection that moved on during the write self-corrects: the screen
+        # rebuilds this viewer from the NEW item's detail, and the message
+        # below names the id that was actually renamed.
         self.viewer = dataclasses.replace(
             self.viewer, content=content, speaker_legend_rows=rows
         )
         self.refresh(recompose=True)
-        self.post_message(self.SpeakerRenamed())
+        self.post_message(self.SpeakerRenamed(media_id))
 
     def sync_loading_state(self, *, loading: bool, message: str) -> None:
         """Patch the mounted loading placeholder without rebuilding the body.

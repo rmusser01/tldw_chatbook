@@ -25,7 +25,12 @@ def _library_screen(tmp_media_db):
 
 
 def _viewer_app(tmp_media_db, media_id, *, rows=(("S1", "Speaker 1"),)):
-    """A one-widget harness holding the real viewer over a real meeting item."""
+    """A one-widget harness holding the real viewer over a real meeting item.
+
+    The app records every ``SpeakerRenamed`` that bubbles out of the viewer.
+    """
+    from textual import on
+
     from Tests.UI.consolidated_css import ConsolidatedCSSApp
     from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 
@@ -37,6 +42,10 @@ def _viewer_app(tmp_media_db, media_id, *, rows=(("S1", "Speaker 1"),)):
     )
 
     class _App(ConsolidatedCSSApp):
+        def __init__(self):
+            super().__init__()
+            self.renamed_ids: list[int] = []
+
         def compose(self):
             yield LibraryMediaViewer(
                 state,
@@ -44,6 +53,10 @@ def _viewer_app(tmp_media_db, media_id, *, rows=(("S1", "Speaker 1"),)):
                 speaker_rename_media_id=media_id,
                 id="library-media-viewer",
             )
+
+        @on(LibraryMediaViewer.SpeakerRenamed)
+        def _record(self, event) -> None:
+            self.renamed_ids.append(event.media_id)
 
     return _App()
 
@@ -95,6 +108,27 @@ async def test_reader_renders_one_legend_row_per_speaker(
 
 
 @pytest.mark.asyncio
+async def test_legend_container_is_height_auto_not_a_half_pane_vertical(
+    tmp_media_db, meeting_folder_media_item
+):
+    """A bare ``Vertical`` here is ``height: 1fr`` with no rule to say
+    otherwise, so as a sibling of the ``1fr`` content body the legend would
+    claim HALF the reading pane (the task-31222/31276 trap)."""
+    from textual.containers import VerticalGroup
+
+    media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hi")])
+
+    app = _viewer_app(tmp_media_db, media_id)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        legend = app.query_one("#library-media-speaker-legend")
+        assert isinstance(legend, VerticalGroup)
+        assert legend.styles.height.is_auto
+        body = app.query_one("#library-media-viewer-content")
+        assert legend.size.height < body.size.height
+
+
+@pytest.mark.asyncio
 async def test_reader_rename_rewrites_the_item_and_refreshes_the_shown_content(
     tmp_media_db, meeting_folder_media_item
 ):
@@ -114,8 +148,69 @@ async def test_reader_rename_rewrites_the_item_and_refreshes_the_shown_content(
         assert "Alice:" in viewer.viewer.content
         label = app.query_one("#library-media-speaker-label-S1", Static)
         assert str(label.renderable) == "Alice"
+        # The screen needs to know WHICH item to re-read, not just that
+        # something was renamed.
+        assert app.renamed_ids == [media_id]
 
     assert "Alice:" in tmp_media_db.get_media_by_id(media_id)["content"]
+
+
+def test_a_later_viewer_sync_keeps_the_new_name(
+    tmp_media_db, meeting_folder_media_item
+):
+    """The regression the ``SpeakerRenamed`` seam exists for.
+
+    The screen memoizes viewer state by detail IDENTITY, so after a rename
+    the next sync rebuilds from the PRE-rename detail and repaints the old
+    speaker name over the new one. Negative control first: without the
+    handler the stale text is exactly what comes back.
+    """
+    from tldw_chatbook.Library.meeting_speaker_rename import rename_meeting_speaker
+    from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
+
+    media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hello")])
+    screen = _library_screen(tmp_media_db)
+    screen._selected_media_id = f"local:media:{media_id}"
+    screen._library_media_detail = dict(tmp_media_db.get_media_by_id(media_id))
+    assert "Speaker 1:" in screen._build_library_media_viewer_display_state(
+        screen._library_media_detail
+    ).content
+
+    rename_meeting_speaker(tmp_media_db, media_id, "S1", "Alice")
+
+    # Negative control: the memo still holds the pre-rename render.
+    assert "Speaker 1:" in screen._build_library_media_viewer_display_state(
+        screen._library_media_detail
+    ).content
+
+    screen._handle_library_media_speaker_renamed(
+        LibraryMediaViewer.SpeakerRenamed(media_id)
+    )
+
+    refreshed = screen._build_library_media_viewer_display_state(
+        screen._library_media_detail
+    )
+    assert "Alice:" in refreshed.content
+    assert refreshed.speaker_legend_rows == (("S1", "Alice"),)
+
+
+def test_a_rename_for_another_item_leaves_the_loaded_detail_alone(
+    tmp_media_db, meeting_folder_media_item
+):
+    """The message names an id; a stale one (selection moved on) is ignored."""
+    from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
+
+    media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hello")])
+    screen = _library_screen(tmp_media_db)
+    screen._selected_media_id = f"local:media:{media_id}"
+    detail = dict(tmp_media_db.get_media_by_id(media_id))
+    screen._library_media_detail = detail
+
+    screen._handle_library_media_speaker_renamed(
+        LibraryMediaViewer.SpeakerRenamed(media_id + 999)
+    )
+
+    assert screen._library_media_detail is detail
 
 
 @pytest.mark.asyncio
