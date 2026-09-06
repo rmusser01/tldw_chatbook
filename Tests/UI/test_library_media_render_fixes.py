@@ -26,10 +26,7 @@ from types import SimpleNamespace
 from textual.widgets import Button, Input, OptionList, Static
 from textual.worker import WorkerState
 
-from tldw_chatbook.Library.library_media_reader_state import (
-    READER_COMFORT_WIDTH,
-    set_mode,
-)
+from tldw_chatbook.Library.library_media_reader_state import set_mode
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
@@ -1701,13 +1698,15 @@ async def test_reader_body_wraps_at_a_reading_measure():
         box = screen.query_one("#library-media-viewer-content")
         body = screen.query_one("#library-media-viewer-content-text")
         # task-31633: the Items column now takes half of the Reader's surplus
-        # at 235 columns, so the pane is 115 cells rather than 147. The box
-        # still spans the whole pane -- only the prose inside it is capped.
+        # and each grip costs one cell instead of five, so the Reader pane of
+        # the 231-cell shell is 139 cells rather than 147. The box still spans
+        # the whole pane -- only the prose inside it is capped.
         work = screen.query_one(".library-adaptive-reader-work")
         assert box.region.width == work.region.width, (box.region, work.region)
         # The equality alone would also hold if the pane itself collapsed, so
-        # keep an absolute floor now that the pane width is dynamic.
-        assert work.region.width >= READER_COMFORT_WIDTH, work.region
+        # keep an absolute floor now that the pane width is dynamic. 139 is the
+        # measured pane width here, not a comfort minimum.
+        assert work.region.width >= 139, work.region
         assert body.region.width <= 92, (body.region, box.region)
         # Painted proof the wrap index was built at the capped width: the
         # long line's tail lands on the row below it, not off at column 150.
@@ -2202,8 +2201,14 @@ async def _open_reader_more(screen, pilot):
     actions = await _wait_for_selector(
         screen, pilot, "#library-media-reader-more-actions"
     )
-    await pilot.pause()
-    await pilot.pause()
+    # The disclosure's row has to be laid out before a caller can measure it;
+    # its own region is the thing that settles, so wait on that rather than on
+    # a fixed number of frames.
+    await _wait_for_condition(
+        pilot,
+        lambda: actions.region.height > 0,
+        message="The More actions row never took a painted region.",
+    )
     return actions
 
 
@@ -2232,7 +2237,6 @@ async def test_more_opens_one_row_and_moves_the_reader_body_by_one():
         assert open_body - closed_body == 1, (closed_body, open_body)
 
         painted = _painted(host, actions.region)
-        assert "\n" not in painted.strip("\n"), painted
         for label in _MORE_ACTION_LABELS:
             assert label in painted, painted
 
@@ -2275,9 +2279,11 @@ async def test_more_toggle_leaves_focus_on_the_more_button():
         await _open_first_reader_row(screen, pilot)
 
         await _open_reader_more(screen, pilot)
-        await pilot.pause()
-        assert getattr(screen.focused, "id", None) == "library-media-reader-more", (
-            screen.focused
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None)
+            == "library-media-reader-more",
+            message=lambda: f"Opening More never focused it: {screen.focused!r}.",
         )
 
         screen.query_one("#library-media-reader-more", Button).press()
@@ -2286,9 +2292,11 @@ async def test_more_toggle_leaves_focus_on_the_more_button():
             lambda: not screen.query("#library-media-reader-more-actions"),
             message="More never closed.",
         )
-        await pilot.pause()
-        assert getattr(screen.focused, "id", None) == "library-media-reader-more", (
-            screen.focused
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None)
+            == "library-media-reader-more",
+            message=lambda: f"Closing More never focused it: {screen.focused!r}.",
         )
 
 

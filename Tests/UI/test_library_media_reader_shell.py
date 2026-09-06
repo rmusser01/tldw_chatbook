@@ -108,7 +108,7 @@ async def _open_media_shell(
 
 
 @pytest.mark.asyncio
-async def test_media_shell_mounts_library_items_reader_and_two_five_column_grips():
+async def test_media_shell_mounts_library_items_reader_and_its_two_grips():
     host = LibraryProductionCSSHarness(_build_media_test_app())
 
     async with host.run_test(size=(170, 48)) as pilot:
@@ -438,7 +438,7 @@ class _SixtyColumnMediaShellApp(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
-async def test_two_grips_leave_fifty_columns_for_reader_at_sixty_shell_columns():
+async def test_two_grips_leave_fifty_eight_columns_for_reader_at_sixty_shell_columns():
     app = _SixtyColumnMediaShellApp()
 
     async with app.run_test(size=(60, 24)) as pilot:
