@@ -170,14 +170,17 @@ are deleted outright:
   single-source-of-truth that constant's own comment demands rather than
   re-spelling ``"media"`` here.
 
-Every OTHER field's original line is deleted outright -- 75 in total: 71
-static literals plus four pure no-argument/one-literal-argument factory calls
-folded into ``default_factory`` (``RowSelection("media")``,
-``LibraryMediaReaderSessionState()``, ``MediaBrowseScope()`` and the
-``object()`` memo sentinel -- all four are frozen dataclasses or a plain
-accumulator with no side effects, so calling them at the earlier construction
-point is behaviorally transparent, matching Prompts' own
-``PromptSelectionBasket``/``local_prompt_capabilities`` folds).
+Every OTHER field's original line is deleted outright -- 75 in total (74
+``__init__`` assignments plus ``arrival_note``'s class-body one): **70** are
+static literals or empty collection displays, and **5** are pure
+no-argument/one-literal-argument factory calls folded into ``default_factory``
+-- ``RowSelection("media")``, ``LibraryMediaReaderSessionState()``,
+``MediaBrowseScope()``, ``set()`` and the ``object()`` memo sentinel. Two of
+those are frozen dataclasses, one is a plain accumulator whose ``__init__``
+only stores its argument and an empty set, and two are builtins; none has a
+side effect, so calling them at the earlier construction point is
+behaviorally transparent, matching Prompts' own
+``PromptSelectionBasket``/``local_prompt_capabilities`` folds.
 
 One moved attribute, ``arrival_note``, was never assigned in
 ``LibraryScreen.__init__`` at all -- it was a plain class-level annotated
