@@ -434,3 +434,27 @@ row. Dependency/source warnings remain recorded. These are selected behavioral
 results, not full-suite, warning-free, resource-closure or merge qualification.
 All other previously recorded failure families and the two pending task-ID
 renumbering decisions remain open.
+
+## Remaining SQLite census repairs
+
+TASK-31779 and TASK-31780 resolve the two SQLite inventory failures recorded
+above. Recovery now uses a module-owned, source-mode-preserving read-only
+connection without creating or migrating the database. Real tests exposed and
+repair symlink/shared-parent bypasses and a failed-setup connection leak.
+Independent review also caught constructor canonicalization hiding initial
+aliases; leaf and parent alias regressions failed before that correction, and
+the lexical absolute path now reaches the shared no-follow boundary.
+
+The backup census distinguishes the exact existing quiescence wrapper from a
+new backup operation, retaining qualified symbol, receiver and multiplicity
+checks. Five negative controls reject new or altered call sites. Real backup
+tests prove exclusion during callbacks and release after success or failure;
+process-local missing-reservation and missing-release mutations each failed
+both variants. Production backup logic and authority are unchanged.
+
+Final seven complete recovery/private-SQLite/inventory/core-owner/quiescence/
+compaction files: **434 passed / 2 Windows-only skips in 88.89 seconds**,
+with two existing dependency warnings. Evidence:
+`/private/tmp/tldw-sqlite-recovery-backup-reviewed.xml`. Whole changed-file Ruff
+and formatting, diff checks and independent re-review pass. These results
+precede any subsequent dev rebase and do not close broader review failures.
