@@ -15,6 +15,8 @@ from typing import Any, Iterator, Never
 import pytest
 import requests
 from loguru import logger
+from urllib3.exceptions import ReadTimeoutError
+from urllib3.util import Retry
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
@@ -276,6 +278,8 @@ def _configure_qwencloud_transport(
 
 def _track_real_transport_resources(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    connect_timeout: float | None = None,
 ) -> tuple[list[str], list[requests.Response], set[int]]:
     post_urls: list[str] = []
     returned_responses: list[requests.Response] = []
@@ -287,6 +291,12 @@ def _track_real_transport_resources(
         session: requests.Session, url: str, **kwargs: Any
     ) -> requests.Response:
         post_urls.append(url)
+        if connect_timeout is not None:
+            read_timeout = kwargs.get("timeout")
+            assert isinstance(read_timeout, (int, float)) and not isinstance(
+                read_timeout, bool
+            )
+            kwargs["timeout"] = (connect_timeout, float(read_timeout))
         response = real_post(session, url, **kwargs)
         returned_responses.append(response)
         return response
@@ -2610,8 +2620,28 @@ def test_direct_adapter_rejects_unresolved_placeholders_before_network(
 def test_retry_policy_counts_status_connection_and_timeout_attempts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    retry_errors: list[requests.exceptions.RequestException] = []
+    real_advance_retry_policy = qwencloud._advance_retry_policy
+
+    def record_retry_error(
+        retry_policy: Retry,
+        *,
+        api_url: str,
+        response: requests.Response | None = None,
+        error: requests.exceptions.RequestException | None = None,
+    ) -> tuple[Retry, float]:
+        if error is not None:
+            retry_errors.append(error)
+        return real_advance_retry_policy(
+            retry_policy,
+            api_url=api_url,
+            response=response,
+            error=error,
+        )
+
+    monkeypatch.setattr(qwencloud, "_advance_retry_policy", record_retry_error)
     post_urls, returned_responses, closed_response_ids = (
-        _track_real_transport_resources(monkeypatch)
+        _track_real_transport_resources(monkeypatch, connect_timeout=1.0)
     )
     _configure_qwencloud_transport(monkeypatch, retries=2)
 
@@ -2628,6 +2658,11 @@ def test_retry_policy_counts_status_connection_and_timeout_attempts(
     assert len(post_urls[post_start:]) == 3
     assert len(timeout_responses) == 3
     assert all(id(response) in closed_response_ids for response in timeout_responses)
+    assert len(retry_errors) == 2
+    assert all(
+        any(isinstance(arg, ReadTimeoutError) for arg in error.args)
+        for error in retry_errors
+    )
 
     post_start = len(post_urls)
     response_start = len(returned_responses)
@@ -2889,10 +2924,10 @@ def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(
     for index, response in enumerate(responses):
         session = _RecordingSession(response)
         monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: session,
-    )
+            qwencloud,
+            "create_default_session",
+            lambda: session,
+        )
         monkeypatch.setattr(
             qwencloud,
             "get_runtime_config_snapshot",
@@ -3070,10 +3105,10 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         )
         status_session = _RecordingSession(status_response)
         monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: status_session,
-    )
+            qwencloud,
+            "create_default_session",
+            lambda: status_session,
+        )
         with (
             _captured_qwencloud_logs() as status_logs,
             pytest.raises(expected_type) as status_exc,
@@ -3099,10 +3134,10 @@ def test_qwencloud_errors_and_logs_redact_private_values(
     ):
         network_session = _RecordingSession(_TransportResponse({}), error=network_error)
         monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: network_session,
-    )
+            qwencloud,
+            "create_default_session",
+            lambda: network_session,
+        )
         with (
             _captured_qwencloud_logs() as network_logs,
             pytest.raises(ChatProviderError) as network_exc,

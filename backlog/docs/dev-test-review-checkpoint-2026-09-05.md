@@ -935,3 +935,87 @@ expecting the retired screen dictation delegate instead of the existing
 qualified; AC3, the broader census/resource work and task-ID decisions remain
 open. The earlier design-approval hold is resolved. PR remains draft, not
 merge-ready; no full-suite completion is claimed.
+
+## Remaining inventory and resource/process qualification (2026-09-06)
+
+The remaining Console inventory is now reconciled by exact current node identity,
+not by subtracting raw report counts. The 83-path affected manifest contains one
+support module and 82 executable files (3,286 current nodes). The interrupted
+pass-three report matches 1,755 current nodes; later passing reports qualify 183
+of the 1,531 unreached nodes. **1,348 nodes lack later passing evidence** across
+68 complete files containing 1,698 tests. One has only historical failing evidence;
+the other 1,347 have no later record. Obsolete unparameterized names are not silently
+mapped to their newer parameterized cases. All seven original pass-three failures
+have later passing reports. Historical evidence is not claimed as a fresh HEAD run.
+Machine inventory: `/private/tmp/tldw-31750-remaining-inventory.json`;
+collection hash `236f6c20e66f572571d99a047992ab8d06877f4bf6f5b3fcbfb9f7f8da9934fa`.
+The first selection stopped at its 20-failure limit: **1,071 passed / 20 failed
+in 813.51s**, plus a new 475-descriptor growth warning that is not yet attributed
+(`/private/tmp/tldw-console-remaining-inventory-current.xml`). The **607 unreached
+nodes** are being run in 31 complete files (611 cases, including four repeated
+launch-wake cases) without another failure-count cutoff. This is not a new
+repository-wide sweep; the new aggregate warning is separate from the diagnosed
+and repaired resource groups below.
+
+### Reproduced SQLite retention and verified repair: TASK-31812 / TASK-31814
+
+Before repair, complete selections passed behaviorally but retained exact fixture
+SQLite handles after finalizers: rewind/parent **78 passed, +209 descriptors**;
+durable/recovery **108 passed, +378**; boundary **54 passed, +234**. Native Darwin
+`F_GETPATH` per-test attribution identifies database/WAL/SHM handles, not merely
+an aggregate warning. Reports: `tldw-rewind-descriptor-attribution-quiet.xml`,
+`tldw-durable-descriptor-attribution.xml`, and
+`tldw-boundary-descriptor-attribution-current.xml`, all under `/private/tmp`.
+
+The explicitly imported `Tests/console_resource_fixtures.py` retains canonical
+constructors, tracks the importing test's controllers and only its tmp_path
+ChaChaNotes instances, drains controllers before exact-database quiescence, then
+asserts zero registered connections. References are released before the existing
+cleanup fixture; no additional GC, threshold change or global conftest edit.
+The agent-only summary test now owns its real workspace registry and AgentRuns
+database instead of creating a process-global registry. No foreign cache is closed.
+
+The shutdown-only negative control produced two zero-registry teardown errors.
+Review found that an individual teardown error could skip later owners: a new
+five-case regression was **1 passed / 4 failed** before per-owner exception
+collection and **5 passed** afterward. Errors remain visible as an ExceptionGroup;
+all controller attempts precede database cleanup and active handles are not forced
+closed. Final complete combined selection: **245 passed in 139.55s**, three
+existing dependency warnings, **no retained SQLite descriptor lines and no FD
+growth warning** (`/private/tmp/tldw-owned-console-resources-final.xml`).
+
+Final review additionally tested cancellation, which derives from BaseException:
+two cancellation variants failed before collection was extended to preserve these
+errors in BaseExceptionGroup. Both original cancellation identities remain visible,
+ordinary errors still narrow to ExceptionGroup, and later cleanup attempts occur.
+Final seven-control plus complete-file verification: **247 passed in 147.85s**,
+three dependency warnings, no retained SQLite descriptors and no FD-growth warning
+(`/private/tmp/tldw-owned-console-resources-cancellation-final.xml`). Independent
+review findings are addressed; scoped lint/format/diff checks pass.
+
+### Real-transport retry and real-child reaping: TASK-31813 / TASK-31815
+
+Qwen's combined retry test used a 50ms scalar timeout for both connection setup
+and intentionally stalled reads. The reproduced failure spent one of its three
+attempts on ConnectTimeout before the scripted server action, exhausting the
+budget before success. Test-only opt-in now gives connection setup 1 second and
+preserves the original read deadline. Both failed attempts must contain actual
+urllib3 ReadTimeoutError; real POST, retry-policy advancement, budgets and response
+closure assertions remain intact. A widened-read negative control fails the new
+phase check. Ten fresh exact-case runs pass; independent complete-file verification:
+**150 passed in 8.86s**, two dependency warnings
+(`/private/tmp/tldw-qwen-resource-review-final.xml`).
+
+MCP's real-child kill-permission case retained ownership correctly but gave wait
+completion only 10ms. A deterministic 20ms delay delivering the real child.wait
+result reproduced the second disconnect refusal with the old deadline. Immediate
+and delayed variants pass with a bounded **test-only 250ms reap allowance**;
+the hanging-close allowance remains 10ms and production deadlines are unchanged.
+The first denied kill still retains the live child and registry, and the second
+disconnect must verify actual reaping before registry removal. Twenty repeated
+variant runs pass; independent complete-file verification: **145 passed in 3.57s**,
+two dependency warnings (`/private/tmp/tldw-mcp-reap-review-final.xml`).
+
+These results close the specifically reproduced resource/retry races, not the
+remaining inventory or architecture guards. No production code changed in these
+four tasks; existing lifecycle/retry interfaces require no new ADR.

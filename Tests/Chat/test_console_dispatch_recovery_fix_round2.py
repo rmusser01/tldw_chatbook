@@ -8,6 +8,10 @@ from typing import Any
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
 from Tests.Chat.test_console_dispatch_recovery import (
     _SettlementFaultGateway,
     _acceptance,

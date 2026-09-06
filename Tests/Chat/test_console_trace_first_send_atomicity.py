@@ -10,6 +10,10 @@ from typing import Any
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
 from Tests.Chat.test_console_first_send_atomicity import _controller
 from Tests.Chat.test_console_dispatch_recovery import _restored_store
 from tldw_chatbook.Chat import console_chat_controller as controller_module
