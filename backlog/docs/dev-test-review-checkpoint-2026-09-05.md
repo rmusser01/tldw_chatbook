@@ -1337,8 +1337,12 @@ assertions are unchanged; no shared fixture implementation was modified.
 All **34 attributed cases pass in 56.38s with no retained SQLite handles**
 (`/private/tmp/tldw-31750-2-native-fd-green.{xml,log}`); all **13** existing
 cleanup-owner failure/isolation controls also pass. Independent review found
-no issues in this fixture wiring. The complete native rerun remains in progress
-at this checkpoint; this is not a new full-repository sweep.
+no issues in this fixture wiring. The final complete native rerun passes
+**349 in 431.25s**, four dependency warnings, zero failures/errors/skips and
+**no retained SQLite handles or resource warnings**
+(`/private/tmp/tldw-31750-2-native-final.{xml,log}`). The three approved
+qualifications and their affected-file resource checks are complete; this is
+not a new full-repository sweep.
 
 The publication Backlog guard separately reports duplicate IDs **31714, 31737,
 and 31758**. All six conflicting filenames are already present in `d09868e74b`

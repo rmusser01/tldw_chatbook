@@ -9,6 +9,21 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## An exact-owner fixture must see every alias of the test factory
+
+**TASK-31750.2, 2026-09-06.** The complete native Console flow file passed
+349 tests but retained app/SQLite handles in 34 cases. The existing opt-in
+resource fixture wraps only the importing module's `_build_test_app`; seven
+tests called the identical factory under `_build_production_app`, bypassing
+that owner. Normalizing those calls to the same canonical name and importing
+the existing fixtures preserved every argument and assertion. The attributed
+34 cases and the complete 349-test rerun then reported no retained SQLite
+handles with the unchanged native descriptor observer.
+
+**What to do.** Before applying an exact-factory cleanup fixture, inventory
+all construction aliases and prove their identity. Route identical factories
+through the existing owner; do not replace exact ownership with global cleanup.
+
 ## Qualify temporary filesystem metadata and use payload-specific privacy canaries
 
 **Dev test review / TASK-31719, 2026-09-05.** A fresh pytest root under
