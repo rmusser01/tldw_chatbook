@@ -30,6 +30,9 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import (
     StaticConversationTreeService,
@@ -65,6 +68,41 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
 CONVERSATION_ID = "conv-fixture"
+
+
+@pytest.fixture(autouse=True)
+async def _close_hydration_app_resources(monkeypatch, close_owned_console_resources):
+    """Drain only this module's app runtimes before their exact DBs close."""
+    apps = []
+    build_app = _build_test_app
+
+    def build_owned_app(*args, **kwargs):
+        app = build_app(*args, **kwargs)
+        apps.append(app)
+        for database in (
+            app.local_workspace_db,
+            app.subscriptions_db,
+            app.local_library_collections_db,
+            app.evaluation_orchestrator.db if app.evaluation_orchestrator else None,
+        ):
+            if database is not None:
+                close_owned_console_resources.callback(database.close)
+        return app
+
+    monkeypatch.setattr(f"{__name__}._build_test_app", build_owned_app)
+    yield
+
+    errors = []
+    try:
+        for app in reversed(apps):
+            try:
+                await app._shutdown_console_runtime()
+            except BaseException as exc:
+                errors.append(exc)
+    finally:
+        apps.clear()
+    if errors:
+        raise BaseExceptionGroup("Hydration app runtime cleanup failed", errors)
 
 
 def test_resume_restores_the_complete_versioned_console_settings_snapshot() -> None:

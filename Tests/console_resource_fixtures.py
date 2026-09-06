@@ -1,5 +1,6 @@
 """Explicit ownership cleanup for real Console integration fixtures."""
 
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 async def close_owned_console_resources(
     monkeypatch, tmp_path, cleanup_file_descriptors
 ):
-    """Drain this test's controllers before closing its own SQLite handles."""
+    """Drain controllers and SQLite, then close explicitly registered auxiliaries."""
     controllers, databases = [], []
     for cls, instances in (
         (ConsoleChatController, controllers),
@@ -31,7 +32,8 @@ async def close_owned_console_resources(
 
         monkeypatch.setattr(cls, "__init__", record_instance)
 
-    yield
+    auxiliary = ExitStack()
+    yield auxiliary
 
     errors: list[BaseException] = []
     try:
@@ -47,6 +49,10 @@ async def close_owned_console_resources(
                 assert database.registered_connection_count() == 0
             except BaseException as exc:
                 errors.append(exc)
+        try:
+            auxiliary.close()
+        except BaseException as exc:
+            errors.append(exc)
     finally:
         controllers.clear()
         databases.clear()
