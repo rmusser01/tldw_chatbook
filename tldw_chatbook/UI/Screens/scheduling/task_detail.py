@@ -81,20 +81,6 @@ _RUNS_ON_EDITOR_ID = "scheduling-detail-runs-on-editor"
 _RUNS_ON_CANCEL_ID = "scheduling-detail-runs-on-cancel"
 _RUNS_ON_RETRY_ID = "scheduling-detail-runs-on-retry"
 
-#: task-31823: the spec §5 kebab's `View results` action has no target
-#: for a reminder -- automation results (`automation_results` table) are
-#: keyed by `definition_id`, a `recurring_question` concept a reminder
-#: has no equivalent of. Permanently disabled with this reason (UX-073:
-#: text, not just a tooltip), never re-evaluated per task the way the
-#: lifecycle lock is. task-23106: user-facing copy says "scheduled
-#: task", never the internal "reminder" noun (`test_schedules_
-#: terminology.py`'s AST sweep).
-_VIEW_RESULTS_UNAVAILABLE_REASON = (
-    "Scheduled tasks don't produce automation results — that's specific "
-    "to recurring questions."
-)
-
-
 SCHEDULES_EMPTY_CONSOLE_RECOVERY = DestinationRecoveryState(
     status_label="Select an active run",
     unavailable_what="Console follow for Schedules",
@@ -655,9 +641,12 @@ class TaskDetail(Vertical):
             # doc, finding 2). It carries the one Edit-in-full affordance
             # this pane has (no kebab -- plan ruling 1), so it now composes
             # FIRST, mirroring `DefinitionDetail`'s own Pause/Run-now row.
-            # task-31823: the REST of spec §5's kebab list (Duplicate ·
-            # View runs · View results) lands as a second compact button
-            # row right below -- same "no popup menu" ruling, still.
+            # task-31823: the REST of spec §5's kebab list this pane can
+            # actually use (Duplicate · View runs) lands as a second
+            # compact button row right below -- same "no popup menu"
+            # ruling, still. `View results` has no reminder-pane target
+            # and is not rendered here at all (final review F2) -- see
+            # that row's own comment below.
             yield Horizontal(
                 Button(
                     "Edit",
@@ -711,10 +700,18 @@ class TaskDetail(Vertical):
             # otherwise have). `View runs` reuses 31712 AC#5's existing
             # scroll-to-"Recent runs:" affordance -- reminders have no
             # separate run-history VIEW to push, only this inline
-            # section. `View results` has no target at all for a
-            # reminder (`_VIEW_RESULTS_UNAVAILABLE_REASON`) and is
-            # permanently disabled, UX-073 reason in both the tooltip and
-            # the always-visible Static below.
+            # section. `View results` is NOT rendered here at all (final
+            # review F2): a reminder has no results target
+            # (`automation_results` is keyed by `definition_id`, a
+            # `recurring_question`-only concept) and never will, so a
+            # permanently-disabled button plus its own always-visible
+            # reason Static was pure standing weight on a pane whose one
+            # outstanding problem is running out of vertical room at the
+            # 24-row floor -- not a *conditionally* unavailable action
+            # UX-073's disabled+reason idiom is for. AC#1 only requires
+            # the action be reachable from a reminder OR definition pane;
+            # the definition pane's own View results (always meaningful
+            # there) satisfies it.
             yield Horizontal(
                 Button(
                     "Duplicate",
@@ -728,19 +725,7 @@ class TaskDetail(Vertical):
                     tooltip="Scroll to this task's recent runs.",
                     classes="detail-secondary-action-button",
                 ),
-                Button(
-                    "View results",
-                    id="scheduling-view-results-task",
-                    disabled=True,
-                    tooltip=_VIEW_RESULTS_UNAVAILABLE_REASON,
-                    classes="detail-secondary-action-button",
-                ),
                 id="scheduling-task-detail-secondary-actions",
-            )
-            yield Static(
-                _VIEW_RESULTS_UNAVAILABLE_REASON,
-                id="scheduling-task-detail-secondary-why",
-                classes="follow-why",
             )
             yield Horizontal(
                 Static("Title:", classes="scheduling-detail-label"),

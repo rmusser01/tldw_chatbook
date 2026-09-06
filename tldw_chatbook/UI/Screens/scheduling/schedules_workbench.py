@@ -2651,7 +2651,17 @@ class SchedulesWorkbench(BaseAppScreen):
         schedule with no further user action. Only an active source
         duplicates active; every other state collapses to paused (see
         `source_lifecycle` below and `_duplicate_definition_payload`'s
-        own docstring for why the create path itself can't carry this).
+        own docstring for why the create path itself can't carry this)
+        via a follow-up `set_definition_lifecycle` call.
+
+        That follow-up is deliberately OUTSIDE the create's own
+        try/except (final review F1): its failure -- a non-`saved`
+        outcome, or a raise -- is not a duplicate failure (a real local
+        row already exists), so it gets its own honest warning path
+        instead of either the create's "Failed to duplicate" error
+        (which would report the opposite of what happened) or a silent
+        fall-through to the plain success toast (which would contradict
+        a warning already shown).
         """
         event.stop()
         definition = event.definition
@@ -2688,32 +2698,6 @@ class SchedulesWorkbench(BaseAppScreen):
         async def _duplicate_and_refresh() -> None:
             try:
                 outcome = await service.save_definition(payload, owner_id="local")
-                if (
-                    outcome.status == "saved"
-                    and outcome.definition_id is not None
-                    and source_lifecycle != "configured"
-                ):
-                    pause_outcome = await service.set_definition_lifecycle(
-                        outcome.definition_id, "pause"
-                    )
-                    if pause_outcome.status != "saved":
-                        logger.warning(
-                            "Duplicate of automation definition {} created "
-                            "but could not be paused to match its paused "
-                            "source: {}",
-                            name,
-                            pause_outcome.errors,
-                        )
-                        # Honest copy on the rare error path: the plain
-                        # "Duplicated..." success toast (keyed off the
-                        # create outcome) would silently leave an ACTIVE
-                        # copy of a paused source (task-31823 re-review).
-                        self.app_instance.notify(
-                            f"Duplicated '{name}', but the copy could not "
-                            "be paused — it is active. Pause it from its "
-                            "detail pane if you don't want it to run.",
-                            severity="warning",
-                        )
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "Failed to duplicate automation definition {}", name
@@ -2732,11 +2716,46 @@ class SchedulesWorkbench(BaseAppScreen):
                 self.app_instance.notify(
                     f"Could not duplicate '{name}': {message}", severity="error"
                 )
-            else:
-                self.app_instance.notify(
-                    f"Duplicated '{name}' as a new local automation.",
-                    severity="information",
-                )
+                self._request_tasks_refresh()
+                return
+            # Create succeeded -- everything below is the SEPARATE
+            # pause follow-up for a non-active source, never folded into
+            # the create's own try/except (final review F1): its
+            # failure (a non-`saved` outcome OR a raise) is not a
+            # duplicate failure -- a real local row now exists -- so it
+            # must never be reported through the "Failed to duplicate"
+            # path above, which would claim the opposite of what
+            # actually happened. A pause failure notifies its own honest
+            # warning and returns WITHOUT falling through to the plain
+            # success toast below (which would otherwise contradict it:
+            # one toast saying the copy needs attention, the very next
+            # saying it simply worked).
+            if source_lifecycle != "configured" and outcome.definition_id is not None:
+                try:
+                    pause_outcome = await service.set_definition_lifecycle(
+                        outcome.definition_id, "pause"
+                    )
+                    paused = pause_outcome.status == "saved"
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Duplicate of automation definition {} created "
+                        "but its pause follow-up raised",
+                        name,
+                    )
+                    paused = False
+                if not paused:
+                    self.app_instance.notify(
+                        f"Duplicated '{name}', but the copy could not "
+                        "be paused — it is active. Pause it from its "
+                        "detail pane if you don't want it to run.",
+                        severity="warning",
+                    )
+                    self._request_tasks_refresh()
+                    return
+            self.app_instance.notify(
+                f"Duplicated '{name}' as a new local automation.",
+                severity="information",
+            )
             self._request_tasks_refresh()
 
         self.run_worker(

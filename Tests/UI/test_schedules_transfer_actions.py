@@ -171,22 +171,30 @@ async def test_duplicate_button_posts_duplicate_task_requested():
 
 
 @pytest.mark.asyncio
-async def test_view_results_is_permanently_disabled_with_a_reason():
-    """AC#2 (UX-073): reminders have no automation-results surface at
-    all (results are keyed by `definition_id`, a `recurring_question`
-    concept), so `View results` is disabled unconditionally -- unlike
-    the mid-transfer gates above, this never re-evaluates per task. The
-    reason lives in an always-visible Static, not just the tooltip."""
+async def test_view_results_is_not_rendered_on_the_reminder_pane():
+    """final review F2: a reminder has no results target at all
+    (results are keyed by `definition_id`, a `recurring_question`
+    concept) and never will -- a permanently-disabled button plus its
+    own always-visible reason Static was pure standing weight on a pane
+    whose one outstanding problem is running out of vertical room at
+    the 24-row floor, not the *conditionally* unavailable case UX-073's
+    disabled+reason idiom is for. AC#1 only requires the action be
+    reachable from a reminder OR definition pane; the definition pane's
+    own `View results` (always meaningful there, still gated on the
+    transfer lock like Pause/Resume) satisfies it -- see
+    test_schedules_workbench.py's own
+    `test_view_results_button_posts_the_same_message_the_unread_row_
+    does`."""
     async with _DetailHarnessApp().run_test() as pilot:
         detail = pilot.app.query_one(TaskDetail)
         detail.set_task(_reminder(owner_id="local"))
         await pilot.pause()
 
-        button = detail.query_one("#scheduling-view-results-task", Button)
-        assert button.disabled is True
-        assert "recurring questions" in str(button.tooltip)
-        why = detail.query_one("#scheduling-task-detail-secondary-why", Static)
-        assert "recurring questions" in why.visual.plain
+        assert not detail.query("#scheduling-view-results-task")
+        assert not detail.query("#scheduling-task-detail-secondary-why")
+        # The row's other two buttons are unaffected by the removal.
+        assert detail.query_one("#scheduling-duplicate-task", Button)
+        assert detail.query_one("#scheduling-view-runs-task", Button)
 
 
 @pytest.mark.asyncio

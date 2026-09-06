@@ -5393,6 +5393,149 @@ async def test_duplicate_button_keeps_an_active_source_active_and_due_for_select
 
 
 @pytest.mark.asyncio
+async def test_duplicate_pause_followup_returning_non_saved_warns_without_a_success_toast(
+    tmp_path,
+):
+    """final review F1(a): when the pause follow-up returns a non-`saved`
+    outcome, the handler must emit ONLY the honest warning -- never also
+    fall through to the plain "Duplicated ... as a new local automation"
+    success toast (a contradictory pair). Revert-check: against the
+    pre-fix shape (`b3ad92e18`, the warning added but the success branch
+    left unconditional), this test's `len(notify_calls) == 1` assertion
+    fails (both toasts fire, 2 calls)."""
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SaveDefinitionOutcome,
+    )
+
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        source_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Morning brief",
+            lifecycle="paused",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+
+        async def _failing_set_lifecycle(row_id, action):
+            return SaveDefinitionOutcome(
+                status="error",
+                errors=[{"field": "_lifecycle", "code": "boom", "message": "boom"}],
+                definition_id=row_id,
+            )
+
+        service.set_definition_lifecycle = _failing_set_lifecycle
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            notify_calls: list[tuple[str, str]] = []
+            pilot.app.notify = lambda message, severity="information", **_: (
+                notify_calls.append((severity, str(message)))
+            )
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            source = db.get_automation_definition(source_id)
+            detail.set_definition(source)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-duplicate", Button)
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert len(notify_calls) == 1, notify_calls
+            severity, message = notify_calls[0]
+            assert severity == "warning"
+            assert "could not be paused" in message
+            assert "Failed to duplicate" not in message
+
+            rows = db.list_automation_definitions(owner_id=None)
+            assert len(rows) == 2
+            copy = next(row for row in rows if row["id"] != source_id)
+            assert copy["lifecycle"] == "configured"  # pause failed, still active
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_pause_followup_raising_warns_and_never_reports_failed_to_duplicate(
+    tmp_path,
+):
+    """final review F1(b): a RAISING pause follow-up must land on the
+    SAME honest warning path, never the create's own "Failed to
+    duplicate" error -- that would misreport the exact harm `624189b9d`
+    fixed as its own opposite, while an ACTIVE copy sits on disk.
+    Revert-check: against the pre-fix shape (the pause call inside the
+    create's own try/except), this test's message assertion fails
+    (`notify_calls[0]` reads "Failed to duplicate ...", and the raise
+    is otherwise indistinguishable from the create itself failing)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        source_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Morning brief",
+            lifecycle="paused",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+
+        async def _raising_set_lifecycle(row_id, action):
+            raise RuntimeError("boom")
+
+        service.set_definition_lifecycle = _raising_set_lifecycle
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            notify_calls: list[tuple[str, str]] = []
+            pilot.app.notify = lambda message, severity="information", **_: (
+                notify_calls.append((severity, str(message)))
+            )
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            source = db.get_automation_definition(source_id)
+            detail.set_definition(source)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-duplicate", Button)
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert len(notify_calls) == 1, notify_calls
+            severity, message = notify_calls[0]
+            assert severity == "warning"
+            assert "could not be paused" in message
+            assert "Failed to duplicate" not in message
+
+            rows = db.list_automation_definitions(owner_id=None)
+            assert len(rows) == 2
+            copy = next(row for row in rows if row["id"] != source_id)
+            assert copy["lifecycle"] == "configured"  # pause raised, still active
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_definition_filtered_overlay_heading_escapes_the_definition_name(
     tmp_path,
 ):
