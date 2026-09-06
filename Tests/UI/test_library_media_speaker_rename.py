@@ -176,7 +176,10 @@ async def test_rename_failure_log_carries_no_path(
     """TASK-31748: `rename_meeting_speaker` reads/writes `meeting.json`, and
     a filesystem failure's `str()` embeds the meeting folder path -- the
     canvas's rename-failure log must redact it."""
-    import tldw_chatbook.Widgets.Library.library_media_canvas as canvas_module
+    # TASK-31745: `rename_meeting_speaker` (and its `update_meeting_json`
+    # lookup) moved to `Library/meeting_speaker_rename.py`; patch it THERE
+    # -- patching the canvas's re-export would leave this test vacuous.
+    import tldw_chatbook.Library.meeting_speaker_rename as canvas_module
     from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
     from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState, LibraryMediaRow
     from Tests.UI.consolidated_css import ConsolidatedCSSApp
