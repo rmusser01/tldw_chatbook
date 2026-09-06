@@ -1,10 +1,10 @@
 // Closed adapter over the two pinned Jison parsers. No upstream renderer/DB.
 function cleanComments(source, budget) {
   // Discard only comment suffixes; retain newlines and token line/columns.
-  let out = "", quoted = false, depth = 0;
+  let out = "", quoted = false, pipeLabel = false, depth = 0;
   for (let i = 0; i < source.length; i += 1) {
     const c = source[i];
-    if (!quoted && depth === 0 && c === "%" && source[i + 1] === "%") {
+    if (!quoted && !pipeLabel && depth === 0 && c === "%" && source[i + 1] === "%") {
       let end = source.indexOf("\n", i);
       if (end < 0) end = source.length;
       if (/^%%\s*\{/.test(source.slice(i, end))) budget.fail("unsupported-syntax");
@@ -12,8 +12,11 @@ function cleanComments(source, budget) {
     }
     if (c === '"') quoted = !quoted;
     if (!quoted) {
-      if ("[({".includes(c)) depth += 1;
-      if ("])}".includes(c)) depth = Math.max(0, depth - 1);
+      if (c === "|" && depth === 0) pipeLabel = !pipeLabel;
+      if (!pipeLabel) {
+        if ("[({".includes(c)) depth += 1;
+        if ("])}".includes(c)) depth = Math.max(0, depth - 1);
+      }
     }
     out += c;
   }
@@ -22,7 +25,7 @@ function cleanComments(source, budget) {
 function plainLabel(value, budget) {
   if (typeof value !== "string") budget.fail("unsupported-label");
   if (/<\/?[A-Za-z!][^>]*>|`|\*\*|__|~~|\[[^\]]*\]\s*\(/u.test(value)) budget.fail("unsupported-label");
-  if (/(^|\s)[*_][^*_]+[*_](?=\s|$)/u.test(value)) budget.fail("unsupported-label");
+  if (/\*(?=\S)(?:[^*\n]*\S)?\*|(^|[\s\p{P}])_(?=\S)(?:[^_\n]*\S)?_(?=$|[\s\p{P}])/u.test(value)) budget.fail("unsupported-label");
   if (/[\u0000-\u0008\u000b-\u001f\u007f]/u.test(value)) budget.fail("invalid-text");
   return value;
 }
@@ -39,16 +42,22 @@ function configureParser(original, budget, allowedTokens, allowedProductions) {
   parser.performAction = function (...args) {
     if (!allowedProductions.has(args[4])) refuse();
     // A -> B -> C is compound shorthand even though each callback has one pair.
-    if (original === flowParser && args[4] === 46 && args[5][args[5].length - 3].nodes.length !== 1) refuse();
+    if (original === flowParser && (args[4] === 46 || args[4] === 47)) {
+      const offset = args[4] === 46 ? 3 : 4;
+      if (args[5][args[5].length - offset].nodes.length !== 1) refuse();
+    }
     return action.apply(this, args);
   };
   const lexAction = original.lexer.performAction;
   parser.lexer.performAction = function (...args) {
     const raw = this.yytext;
-    // Catch directives before the upstream lexer can discard them as comments.
-    if (/^%%\s*\{/.test(raw) || /^---/.test(raw)) refuse();
     const token = lexAction.apply(this, args);
-    if (original === sequenceParser && token === undefined && raw.trim() && !raw.trimStart().startsWith("%%")) refuse();
+    // Only skipped comment tokens are directives. Percent pairs inside a
+    // sequence TXT/restOfLine token are literal label content.
+    if (original === sequenceParser && token === undefined && raw.trim()) {
+      const skipped = raw.trimStart();
+      if (!skipped.startsWith("%%") || /^%%\s*\{/.test(skipped)) refuse();
+    }
     const name = typeof token === "number" ? original.terminals_[token] : token;
     if (token !== undefined && !allowedTokens.has(name)) budget.fail("unsupported-syntax", this.yylloc?.first_line, (this.yylloc?.first_column ?? -1) + 1);
     return token;
@@ -191,9 +200,18 @@ function parseSequence(source, budget) {
 }
 function parseMermaid(source, budget) {
   budget.beginDiagram(source);
-  const clean = cleanComments(source, budget);
-  const first = clean.trimStart();
-  if (/^flowchart[ \t]+(?:TD|TB|LR)(?=[ \t\r\n;]|$)/.test(first)) return parseFlow(clean, budget);
-  if (/^sequenceDiagram(?=[ \t\r\n;]|$)/.test(first)) return parseSequence(clean, budget);
+  let first = "";
+  for (const line of source.split("\n")) {
+    const text = line.trimStart();
+    if (text.startsWith("%%")) {
+      if (/^%%\s*\{/.test(text)) budget.fail("unsupported-syntax");
+      continue;
+    }
+    if (text.trim()) { first = text; break; }
+  }
+  if (/^flowchart[ \t]+(?:TD|TB|LR)(?=[ \t\r\n;]|$)/.test(first)) return parseFlow(cleanComments(source, budget), budget);
+  // The pinned sequence lexer already distinguishes comments from label tokens.
+  // Giving it the original source avoids a second, incompatible label scanner.
+  if (/^sequenceDiagram(?=[ \t\r\n;]|$)/.test(first)) return parseSequence(source, budget);
   budget.fail(first ? "unsupported-syntax" : "empty-diagram");
 }

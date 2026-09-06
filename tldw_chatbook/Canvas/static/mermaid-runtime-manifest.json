@@ -26,8 +26,8 @@
   "mermaid_candidate": {
     "inputs_sha256": "a752af0d16458944596bec569bbb68db8ece98171fecd4d034ca45aa5e952857",
     "qualification": "not-qualified",
-    "source_bytes": 150571,
-    "source_sha256": "aa6f3349bd77512a4a9bda00c95d961a68ed803499643f5444033904e2b5b377"
+    "source_bytes": 151279,
+    "source_sha256": "a3f9f75462e28999af5b5c49837964a78314493ef34fa7b8c8ee2ac150b5d4a2"
   },
   "outputs": {
     "THIRD_PARTY_LICENSES.txt": {
@@ -129,7 +129,7 @@
     },
     "grammar": {
       "id": "mermaid-11.17.2-jison-0.4.18-canvas-subset-1",
-      "sha256": "aa6f3349bd77512a4a9bda00c95d961a68ed803499643f5444033904e2b5b377"
+      "sha256": "a3f9f75462e28999af5b5c49837964a78314493ef34fa7b8c8ee2ac150b5d4a2"
     },
     "layout": {
       "id": "canvas-v1-layout-1",
