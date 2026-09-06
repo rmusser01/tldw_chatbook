@@ -2398,6 +2398,28 @@ class ConsoleCompactionService:
                 memory=record,
             )
 
+    async def summarize_span_to_text(
+        self,
+        *,
+        resolution: ConsoleProviderResolution,
+        messages: tuple[Mapping[str, Any], ...],
+        max_output_tokens: int,
+    ) -> str:
+        """One stateless summary completion; no attempt ledger, no commit.
+
+        Serves user-facing "summarize into a note" actions that must not
+        touch compaction state: no auxiliary-attempt rows, no branch-memory
+        admission, no context-summary boundary move. Raises whatever the
+        bounded auxiliary call raises (e.g. TimeoutError) so the caller can
+        surface a notice.
+        """
+        completion, _engine = await self._summary_completion(
+            resolution=resolution,
+            messages=messages,
+            max_output_tokens=max_output_tokens,
+        )
+        return completion.text.strip()
+
     async def _summary_completion(
         self,
         *,

@@ -116,7 +116,11 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 from textual.widgets import Button
 
-from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.console_chat_controller import (
+    ConsoleChatController,
+    ConsoleNoteDraft,
+    ConsoleSubmitResult,
+)
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -1489,6 +1493,22 @@ class ConsoleMessageController:
             )
             return True
 
+        if action_id == "summarize-note":
+            self.run_worker(
+                self._summarize_console_span_as_note(message_id),
+                exclusive=True,
+                group="console-note-actions",
+            )
+            return True
+
+        if action_id == "save-transcript-note":
+            self.run_worker(
+                self._save_console_transcript_as_note(message_id),
+                exclusive=True,
+                group="console-note-actions",
+            )
+            return True
+
         if action_id == "fork":
             eligibility = self.console_fork_eligibility(message_id)
             if not eligibility.eligible:
@@ -2114,6 +2134,107 @@ class ConsoleMessageController:
         # FB-07 (TASK-2154.17): success confirmations read as success.
         self.app_instance.notify("Saved message as Note.", severity="success")
 
+    def _save_console_note_draft(
+        self, draft: "ConsoleNoteDraft", *, action_id: str, saved_copy: str
+    ) -> None:
+        """Persist a controller-built note draft; notify either way.
+
+        Shared tail of the TASK-31759 More-menu note actions: the draft
+        already carries title/content (and its provenance header); this
+        writes it through the same notes seam as save-as Note.
+        """
+
+        async def _run() -> None:
+            notes_scope_service = getattr(
+                self.app_instance, "notes_scope_service", None
+            )
+            save_note = getattr(notes_scope_service, "save_note", None)
+            if not callable(save_note):
+                self.app_instance.notify(
+                    "Saving as a Note is unavailable: Notes service is not ready.",
+                    severity="warning",
+                )
+                return
+            try:
+                result = save_note(
+                    scope=ScopeType.LOCAL_NOTE.value,
+                    title=draft.title,
+                    content=draft.content,
+                    note_id=None,
+                    version=None,
+                    user_id=getattr(self.app_instance, "current_user", None)
+                    or "default_user",
+                    workspace_id=None,
+                    keywords=["console"],
+                )
+                if inspect.isawaitable(result):
+                    result = await result
+            except Exception as exc:
+                logger.opt(exception=True).warning("Console note action failed.")
+                self.app_instance.notify(
+                    f"Saving as a Note failed: {exc}", severity="error"
+                )
+                return
+            if not result:
+                self.app_instance.notify("Saving as a Note failed.", severity="error")
+                return
+            self._last_console_action = ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy=saved_copy,
+            )
+            self.app_instance.notify(saved_copy, severity="success")
+
+        self.run_worker(_run(), exclusive=True, group="console-note-actions")
+
+    async def _summarize_console_span_as_note(self, message_id: str) -> None:
+        """Summarize the active-path span up to message_id into a Note.
+
+        The controller call is stateless with respect to compaction: no
+        attempt ledger, no branch memory, and the /rewind context summary
+        boundary is never moved (TASK-31759).
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            self.app_instance.notify(
+                "Summarization is unavailable: Console is not ready.",
+                severity="warning",
+            )
+            return
+        draft = await controller.summarize_span_as_note(message_id)
+        if isinstance(draft, ConsoleSubmitResult):
+            self.app_instance.notify(
+                draft.visible_copy or "Summarization was blocked.", severity="warning"
+            )
+            return
+        self._save_console_note_draft(
+            draft,
+            action_id="summarize-note",
+            saved_copy="Saved summary as Note.",
+        )
+
+    async def _save_console_transcript_as_note(self, message_id: str) -> None:
+        """Save the formatted active-path span up to message_id as a Note."""
+        controller = self._console_chat_controller
+        if controller is None:
+            self.app_instance.notify(
+                "Saving as a Note is unavailable: Console is not ready.",
+                severity="warning",
+            )
+            return
+        draft = controller.build_transcript_note(message_id)
+        if isinstance(draft, ConsoleSubmitResult):
+            self.app_instance.notify(
+                draft.visible_copy or "Saving the transcript was blocked.",
+                severity="warning",
+            )
+            return
+        self._save_console_note_draft(
+            draft,
+            action_id="save-transcript-note",
+            saved_copy="Saved transcript as Note.",
+        )
+
     async def _save_console_message_as_media(self, message_id: str) -> None:
         """Persist one selected Console message as a Library media item."""
         media_db = getattr(self.app_instance, "media_db", None)
@@ -2434,6 +2555,8 @@ class ConsoleMessageController:
             ("console-message-action-keep-", "keep"),
             ("console-message-action-review-changes-", "review-changes"),
             ("console-message-action-save-as-", "save-as"),
+            ("console-message-action-save-transcript-note-", "save-transcript-note"),
+            ("console-message-action-summarize-note-", "summarize-note"),
             ("console-message-action-save-image-", "save-image"),
             ("console-message-action-video-play-", "video-play"),
             ("console-message-action-video-save-copy-", "video-save-copy"),
