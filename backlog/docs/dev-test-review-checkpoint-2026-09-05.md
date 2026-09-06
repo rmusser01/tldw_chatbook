@@ -802,3 +802,23 @@ warnings remain. Next step: deterministic late-invalidation reproduction before
 changing readiness handling, preserving physical geometry and exact owner-pass
 assertions. The other UI failures, resource/architecture work, unexecuted census
 remainder and pending task-ID decisions remain open; the PR stays draft.
+
+## Right-rail timing qualification completed
+
+TASK-31733's open timing failure is now reproduced and repaired without runtime
+changes. Four real late-geometry invalidations (initial/swapped phase in both
+directions) failed the old post-wait paint ordering; the two ordinary variants
+passed (`/private/tmp/tldw-rail-late-geometry-red.xml`). Paint now precedes the
+final bounded predicate wait, so assertions consume qualified state without
+another yield. Exact geometry, widget identity, local/outer ordering, logical
+owner-pass counts and existing timeout bounds remain unchanged.
+
+The final two complete right-rail and workbench files pass **112 tests in 241.61
+seconds**, with three existing dependency warnings
+(`/private/tmp/tldw-rail-late-geometry-final.xml`). Full-file lint,
+changed-region formatting and diff checks pass; independent review found no
+actionable issues. The readiness lesson records this incident and its deterministic
+control. TASK-31733 is qualified; its earlier 416-test session-settings result is
+historical, not rerun here. Other UI, resource/architecture and unexecuted census
+work, plus pending task-ID decisions, remain open. No full-suite or merge-ready
+claim is made.
