@@ -2905,11 +2905,13 @@
         width: 100%;
         height: auto;
     }
-    LibraryMediaCanvas .library-media-speaker-row Static {
+    /* Class-keyed (not `.row Static`): ancestor-scoped bare-type subjects
+     * are ratcheted by test_textual_css_fastpath (ADR-097). */
+    LibraryMediaCanvas Static.library-media-speaker-label {
         width: auto;
         min-width: 0;
     }
-    LibraryMediaCanvas .library-media-speaker-row Input {
+    LibraryMediaCanvas Input.library-media-speaker-input {
         width: 1fr;
     }
 
