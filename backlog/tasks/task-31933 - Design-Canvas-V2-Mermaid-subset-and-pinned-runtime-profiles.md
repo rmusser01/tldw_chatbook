@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 18:16'
-updated_date: '2026-09-06 18:22'
+updated_date: '2026-09-06 21:53'
 labels:
   - canvas
   - design
@@ -30,6 +30,7 @@ Define the first offline diagram library experience without weakening Canvas iso
 - [x] #2 A canonical ADR and durable spike evidence explain runtime profile ownership, security refusal, and compatibility trade-offs.
 - [x] #3 The design specifies measurable qualification gates for native and served delivery, resource limits, lifecycle, and archives.
 - [ ] #4 The written design is self-reviewed and the user approves it before implementation planning begins.
+- [x] #5 The revised spec defines restart-required policy updates, complete profile compatibility, assistant subset guidance, and bounded geometry and typography.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,10 +40,11 @@ ADR required: yes
 ADR path: backlog/decisions/124-canvas-mermaid-subset-and-immutable-runtime-profiles.md
 Reason: Extend ADR-121 with a pinned library/runtime boundary, exact-profile portability, and security refusal policy.
 
-1. Verify the merged Canvas contracts and preserve the disposable spike findings as bounded evidence.
-2. Draft the architectural spec and proposed ADR incorporating all seven approved review corrections.
-3. Self-review scope, ambiguity, contradictions, links, task hygiene, and documentation diff.
-4. Commit only design documentation and request written-spec approval before implementation planning.
+1. Verify merged Canvas contracts and retain bounded spike evidence.
+2. Draft the spec and proposed ADR with the seven original corrections.
+3. Incorporate the four additionally approved review findings: restart-required policy updates, engine/facade/Unicode profile identity, assistant guidance, and geometry/typography bounds.
+4. Self-review consistency, scope, links, task hygiene and documentation diff; commit documentation only.
+5. Request review of the revised written spec before implementation planning.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -53,6 +55,10 @@ Drafted the Canvas V2 Mermaid subset spec, proposed ADR-124 extending ADR-121, r
 Self-review checked contradictions, scope, placeholders and error/recovery semantics. Local-link and fence validation passed for the three new documents (14 links); Backlog guard passed across 3383 task files. Product tests were not run for this documentation-only change; the spike results are explicitly historical, not V2 qualification. Final staged whitespace/scope verification precedes commit.
 
 Awaiting user review of the written spec, including proposed numeric admission ceilings. AC4 remains open and this task remains In Progress; implementation planning has not begun.
+
+Follow-up design review (2026-09-06): incorporated all four approved findings into the spec and ADR-124. Packaged policy updates now require complete host/server restart with snapshot mismatch refusal; existing explicit disable remains immediate containment. Profiles pin engine/facade/plan and Unicode compatibility, with new identities for changed pinned inputs and separate nonsemantic security-validation identity. Added requirements for bounded profile-aware assistant guidance, executable example fixtures and source-free repair hints, plus geometry/area ceilings, explicit typography, scrolling and CSS-override limits.
+
+Validation: documentation whitespace check passed; 14 local links, code fences, table columns and placeholder checks passed across the three design/evidence documents; Backlog guard passed across 3383 task files. Only spec, proposed ADR and design task changed; no product tests or implementation work. AC4 remains open for review of the revised written spec.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

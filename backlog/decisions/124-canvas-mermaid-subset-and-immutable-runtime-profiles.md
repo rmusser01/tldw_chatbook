@@ -31,11 +31,20 @@ demonstrated storage problem.
    Mermaid fences use the existing Open in Canvas import workflow with text-node
    escaping. All declarations parse, validate and prepare once at startup before
    authored scripts. No mutation observer or public diagram-update API is added.
+   Tool parameters stay unchanged; bounded, profile-aware model guidance includes
+   tested flow/sequence examples and source-free repair hints. Historical updates
+   receive their exact profile's guide, not the creation default. Browser errors
+   never become automatic assistant submissions.
 3. Reuse verified upstream grammar inputs where practical, with a closed semantic
    adapter and bounded Canvas layout. Accepting the upstream grammar is not
    accepting every feature: reject unsupported operations/configuration explicitly
    before drawing. Layout guarantees semantic/geometry determinism under pinned
    text metrics, not full Mermaid aesthetics or cross-platform pixel equality.
+   Pin Unicode segmentation/width data and rules. Default 16 px monospace text
+   with 24 px line spacing uses scrollable intrinsic-size output, not automatic
+   shrink-to-fit. Cap diagram width, height and aggregate logical area as specified
+   in the design; reject invalid/nonfinite geometry before patches. Authored CSS/JS
+   overrides remain possible under V1 and are outside default-layout fidelity.
 4. Execute parser, adapter and layout only in the existing QuickJS-WASM worker.
    Load the fixed verified packaged asset closure before generated execution;
    expose no native realm, new DOM/SVG privileges, network, filesystem, cookies,
@@ -44,9 +53,13 @@ demonstrated storage problem.
    and patch budgets. Additional diagram admission/work limits do not raise V1
    ceilings and are not a guarantee that all individual maxima fit together.
 5. An immutable short `runtime_profile` ID references a packaged immutable manifest
-   with exact grammar/build/adapter/layout identities, full integrity hashes and
-   semantic quotas. Never reuse an ID for different bytes. One Canvas-domain
-   resolver serves all creation, update, staging, promotion, delivery and load
+   with exact grammar/build/adapter/layout identities, engine build, facade/plan
+   compatibility versions, Unicode rules/data, full integrity hashes and semantic
+   quotas. Changing pinned inputs requires a new profile even for an engine
+   security fix; nonsemantic host/compiler security validation can tighten under
+   separate build/policy identity with compatibility evidence. Never reuse an ID
+   for different bytes. One Canvas-domain resolver serves all creation, update,
+   staging, promotion, delivery and load
    paths. New Mermaid content can create a V2 child of V1; existing V2 updates
    retain their exact profile, even when diagrams are removed. Renames and
    historical loads preserve profile identity. Derived-plan schemas are closed
@@ -54,10 +67,14 @@ demonstrated storage problem.
 6. Security policy overrides execution availability. Unknown, missing, tampered,
    retired or revoked profiles remain source-only without substitution, even if
    their immutable revision is valid. Source/history/export remain available.
-   Installed policy changes invalidate active execution and bridge reservations;
-   no online policy service is added. Repair under a current profile is an explicit
-   new Canvas, not an automatic revision upgrade. Compiler security checks may
-   tighten without rewriting a stored semantic profile; cache identity includes
+   Catalog/policy snapshots last for the process lifetime. Application and packaged
+   policy updates require stopping/restarting the native host or served parent and
+   all children; browser refresh is insufficient. Restart invalidates old loads and
+   reservations, and parent/child snapshot mismatches fail closed. No hot-reload
+   watcher or online policy service is added. The existing explicit Canvas-disable
+   latch remains the immediate live containment action. Repair under a current
+   profile is an explicit new Canvas, not an automatic revision upgrade. Compiler
+   security checks may tighten without rewriting a stored semantic profile; cache identity includes
    compiler/security policy as well as exact source and profile manifest.
 7. Artifact acceptance and preview success are independent. Host validation can
    reject before staging, but browser parsing/layout may fail after commit. Keep
@@ -81,6 +98,7 @@ demonstrated storage problem.
 | Dependency database plus executable archive bundles | Existing profile storage is sufficient; imported executable bytes would create an unnecessary installation/trust boundary. |
 | Host JavaScript preflight before every save | Adds a second evaluator/runtime boundary merely to conflate save with rendering. Keep honest independent statuses and browser validation. |
 | Live declaration observation or new JS library API | Adds lifecycle, mutation and quota-reentry complexity outside the approved preview-first initial scope. |
+| Hot-reload installed runtime/revocation policy | Introduces cross-process update races and mutable-asset/cache coordination. V2 requires an orderly host/server restart; explicit Canvas disable remains available for immediate containment. |
 
 ## Consequences and release gate
 
@@ -92,6 +110,12 @@ upstream generated modules are not a stable public integration API.
 Older profiles may become non-executable while their source/history remain
 portable. Source-only HTML exports with declarations are not standalone diagram
 applications. No new storage migration or archive schema is planned.
+
+Security updates to pinned engine/semantic inputs may require new Canvases under
+a new profile; old vulnerable profiles stay source-only rather than being silently
+patched in place. Operators must restart the complete serving process group after
+updates, not just reload a browser. Diagram defaults favor readable scrolling;
+custom authored styles can change appearance without rerunning layout.
 
 Implementation requires reproducible/licensed assets, useful mixed-document
 examples within unchanged budgets, adversarial real-browser qualification,
