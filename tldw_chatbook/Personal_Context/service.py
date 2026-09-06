@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -151,6 +152,7 @@ class PersonalContextService:
         self._locked_reason = locked_reason
         self._profile_present_hint = profile_present_hint
         self._destructive_lifecycle_lock = Lock()
+        self._absent_storage_signature: tuple | None = None
 
     @classmethod
     def locked(
@@ -169,6 +171,21 @@ class PersonalContextService:
         if self._repository is None or self._locked_reason is not None:
             raise ProfileLockedError("Personal Context profile is locked.")
         return self._repository
+
+    @contextmanager
+    def read_operation(self) -> Iterator[None]:
+        """Bound synchronous read reuse without caching live agent authority.
+
+        Returns:
+            A context manager yielding None within the repository read lifetime,
+            or a no-op context when this service is unavailable or locked.
+        """
+
+        if self._repository is None or self._locked_reason is not None:
+            yield
+            return
+        with self._repository.operation():
+            yield
 
     def _new_profile_id(self, label: str) -> str:
         """Issue a canonical identity for one service-owned collaborator."""
@@ -306,6 +323,14 @@ class PersonalContextService:
                 False,
                 self._locked_reason or "profile_locked",
             )
+        cached_signature = self._absent_storage_signature
+        self._absent_storage_signature = None
+        signature = self._repository.storage_signature()
+        if cached_signature == signature:
+            self._absent_storage_signature = signature
+            return ProfileOperationalStatus(
+                ProfileOperationalState.ABSENT, False, False, False, "profile_absent"
+            )
         if self._repository.is_destroyed():
             return ProfileOperationalStatus(
                 ProfileOperationalState.REMOVED,
@@ -323,6 +348,8 @@ class PersonalContextService:
                 ProfileOperationalState.LOCKED, True, True, False, "profile_locked"
             )
         if manifest is None:
+            if signature == self._repository.storage_signature():
+                self._absent_storage_signature = signature
             return ProfileOperationalStatus(
                 ProfileOperationalState.ABSENT, False, False, False, "profile_absent"
             )
@@ -349,6 +376,7 @@ class PersonalContextService:
         )
 
     def create_profile(self) -> ProfileManifest:
+        self._absent_storage_signature = None
         repository = self._repo()
         if repository.is_destroyed():
             raise ValueError(
@@ -527,6 +555,7 @@ class PersonalContextService:
     def start_fresh_profile(self) -> ProfileManifest:
         """Create a new profile only after an explicit local-removal transition."""
 
+        self._absent_storage_signature = None
         with self._destructive_lifecycle_lock:
             repository = self._repo()
             if not repository.is_destroyed():
@@ -1538,6 +1567,18 @@ class PersonalContextService:
         view.
         """
 
+        with self.read_operation():
+            return self._authorized_context_view(
+                active_workspace_id=active_workspace_id,
+                active_workspace_scope_id=active_workspace_scope_id,
+            )
+
+    def _authorized_context_view(
+        self,
+        *,
+        active_workspace_id: str | None,
+        active_workspace_scope_id: str | None,
+    ) -> AuthorizedProfileContextView:
         if active_workspace_id is not None and active_workspace_scope_id is not None:
             raise ValueError("Specify one active workspace identity, not both.")
         status = self.status()

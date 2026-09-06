@@ -2818,24 +2818,27 @@ def _compose_profile_tool_provider(
         None if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID else workspace_id
     )
     try:
-        first_view = service.authorized_context_view(
-            active_workspace_id=active_workspace_id
-        )
-        scopes = service.list_scopes()
-        scope_id = first_view.workspace_scope_id or next(
-            scope.scope_id for scope in scopes if scope.kind.value == "global"
-        )
-        authority = service.get_scope_authority(scope_id)
-        stable_view = service.authorized_context_view(
-            active_workspace_id=active_workspace_id
-        )
-        if (
-            stable_view.generation != first_view.generation
-            or stable_view.authority_revision != first_view.authority_revision
-            or stable_view.workspace_scope_id != first_view.workspace_scope_id
-        ):
-            return None
-        manifest = service.get_manifest()
+        with service.read_operation():
+            first_view = service.authorized_context_view(
+                active_workspace_id=active_workspace_id
+            )
+            scopes = service.list_scopes()
+            scope_id = first_view.workspace_scope_id or next(
+                scope.scope_id for scope in scopes if scope.kind.value == "global"
+            )
+            authority = service.get_scope_authority(scope_id)
+            # Both views stay: the second fences the separately read scope and
+            # authority. Reusing a connection must not turn this into a snapshot.
+            stable_view = service.authorized_context_view(
+                active_workspace_id=active_workspace_id
+            )
+            if (
+                stable_view.generation != first_view.generation
+                or stable_view.authority_revision != first_view.authority_revision
+                or stable_view.workspace_scope_id != first_view.workspace_scope_id
+            ):
+                return None
+            manifest = service.get_manifest()
     except Exception:  # noqa: BLE001 - optional profile tools fail soft
         return None
 
