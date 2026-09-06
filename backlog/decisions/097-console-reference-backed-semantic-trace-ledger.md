@@ -235,6 +235,37 @@ It resolves the stale tombstone expectation discovered during TASK-31232's
 baseline repair. See the [accepted mutation boundary](../../Docs/superpowers/specs/2026-08-28-console-reference-backed-semantic-trace-ledger-design.md#semantic-message-revisions)
 and [TASK-23113.2](../tasks/task-23113.2%20-%20Enforce-semantic-revisions-for-every-model-visible-mutation.md).
 
+### Amendment recorded 2026-09-05: completed tool-turn surface transition
+
+TASK-31742's real production-factory integration probes exposed a missing composed
+operation: a completed run's bounded tool suffix must become the exact saved
+assistant revision while the next saved user is appended. The owner approved the
+focused repair and its review corrections before implementation.
+
+Permit one explicitly typed replacement-plus-append for eligible `AGENT_FIRST`
+and `FRESH` next sends, not arbitrary multi-item replacement. The same attached
+owner, lineage, frozen policy, completed prior run, exact response-revision link,
+unchanged prefix and bounded active tool suffix must be proven. Response linkage
+alone is never authority. Recheck the predecessor and call witness when persisting
+both operations, header and dispatch binding in the existing atomic transaction;
+historical call heads remain unchanged. Keep the 256-node range limit, existing
+schema, disclosure rules, and growth/latency gates.
+
+Pre-dispatch Retry must prove and reuse its exact still-unbound reservation via
+accepted-turn recovery ownership. Never skip unrelated reservations or revive a
+terminal call. A write exception is not proof of rollback: reconcile the exact
+call and expected head/header to committed, rolled-back or unknown. Preserve
+committed dispatch state, invalidate stale capabilities, and allow no automatic
+redispatch on uncertainty. Only the original live invocation retaining its exact
+unconsumed gateway entry grant may proceed after a proven commit.
+
+The [approved repair contract](../../Docs/superpowers/specs/2026-09-05-console-tool-turn-surface-transition-design.md)
+defines exclusions and recovery proofs; the
+[implementation plan](../../Docs/superpowers/plans/2026-09-05-console-tool-turn-surface-transition.md)
+defines staged verification. This amendment authorizes the contract, not a claim
+that implementation or merge verification is complete. It adds no Canvas
+privileges, dependency, synchronization contract or new persistence registry.
+
 ## Consequences
 
 - Safe remains diagnostically useful because the stored trace can explain provider-

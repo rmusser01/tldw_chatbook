@@ -58,6 +58,14 @@ well as AGENT_FIRST. Add real recovery, post-commit error and route-transition
 tests to the subsequent implementation plan. These are design requirements,
 not implemented or passing behavior; AC4 through AC8 remain unchecked.
 
+The user approved continuation after those corrections. Execute
+[the repair implementation plan](../../Docs/superpowers/plans/2026-09-05-console-tool-turn-surface-transition.md)
+serially: (1) verified compound shape/persistence and reconstruction, (2) exact
+owned Retry and three-way commit reconciliation, (3) growth/integration checks,
+review, latest-base protected PR completion. The existing trace-ledger ADR-097
+now records the approved amendment before product changes. Root alone runs
+isolated targeted tests and Git operations; independent task review is required.
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->

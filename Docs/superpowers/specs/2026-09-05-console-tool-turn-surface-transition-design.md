@@ -2,7 +2,7 @@
 
 Date: 2026-09-05
 
-Status: repair direction approved; requested review corrections incorporated.
+Status: approved for implementation after requested review corrections.
 
 Owner: TASK-31742, integration follow-up for PR2432.
 
