@@ -185,7 +185,9 @@ source-free cross-process identity, not a browser credential.
 
 ### Task 2 / TASK-31935: Reproducible grammar, Unicode and semantic admission
 
-**Files:** Create the vendor/input/semantic/text/entry files in the ownership map,
+**Files:** Create `scripts/vendor_canvas_mermaid.py`,
+`tldw_chatbook/Canvas/mermaid/{inputs.json,semantic.js,text.js,entry.js,budget.js}`,
+generated `tldw_chatbook/Canvas/static/mermaid-subset.json`,
 `Tests/Canvas/test_mermaid_semantics.py`, `Tests/Canvas/mermaid_probe.mjs`,
 `Tests/Canvas/mermaid_probe.py` and `Tests/Canvas/fixtures/mermaid/semantics.json`.
 Modify `Tests/Canvas/test_runtime_assets.py`, notices and package-data rules.

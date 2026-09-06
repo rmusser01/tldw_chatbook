@@ -191,7 +191,8 @@ def test_packaged_snapshot_admits_only_v1_until_v2_is_qualified():
 
     assert snapshot.default_diagram_profile is None
     assert [(record.profile_id, record.executable) for record in snapshot.profiles] == [
-        ("canvas-v1", True)
+        ("canvas-v1", True),
+        ("canvas-v2-mermaid-1", False),
     ]
     assert snapshot.profiles[0].library_bytes == 0
 

@@ -11869,6 +11869,16 @@ mechanism, and fail qualification on unexpected host/API/disposal errors.
 A generic exception or timeout is evidence of failure, not proof that the
 resource boundary under test enforced its configured limit.
 
+**TASK-31935, 2026-09-06.** Mermaid comment preprocessing initially replaced a
+6,000-byte ordinary comment with 6,000 spaces to preserve offsets. The aggregate
+input-budget test hit a real QuickJS `InternalError: interrupted` in the pinned
+flow lexer before reaching the expected third-diagram byte refusal. The strict
+probe failed instead of reporting quota success. Removing only the comment
+suffix while retaining its newline avoided pointless lexer work and preserved
+the line/column positions of actual tokens. Raw input bytes are still charged
+before preprocessing; the corrected test reaches the third-diagram input limit
+under the unchanged shared startup deadline.
+
 ## A tested quota helper is not evidence that the production owner uses it
 
 Incident (TASK-31232 final Canvas review, 2026-09-05): the standalone staging

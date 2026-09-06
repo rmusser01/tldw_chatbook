@@ -541,6 +541,15 @@ exclude = [
     "static/canvas_runtime_worker.js",
     "static/runtime-manifest.json",
     "static/THIRD_PARTY_LICENSES.txt",
+    "static/profile-catalog.json",
+    "static/mermaid-subset.json",
+    "static/mermaid-runtime-manifest.json",
+    "static/MERMAID_THIRD_PARTY_LICENSES.txt",
+    "mermaid/inputs.json",
+    "mermaid/budget.js",
+    "mermaid/text.js",
+    "mermaid/semantic.js",
+    "mermaid/entry.js",
 ]
 "tldw_chatbook.Web_Server" = [
     "static/served_shell.html",
