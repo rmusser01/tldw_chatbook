@@ -776,3 +776,29 @@ with two existing dependency warnings
 formatting and diff checks pass. Broader behavioral/architecture failures and
 the two pending task-ID decisions remain open; no full-suite or merge-readiness
 claim is made.
+
+## Workbench ordering follow-up and right-rail timing evidence
+
+TASK-31733 was reopened for the workbench mirror missed by the earlier
+session-settings repair. The baseline complete workbench file was **71 passed /
+1 failed** (`/private/tmp/tldw-workbench-contract-baseline.xml`). Its exact
+Environment/Tasks/Subagents/staged-context order now matches production, while
+left-rail exclusion, pinned authority parentage and staged-before-live-work
+assertions remain unchanged. No production or CSS changes were needed.
+
+The complete workbench + right-rail run returned **107 passed / 1 failed in
+199.23 seconds** (`/private/tmp/tldw-workbench-ordering-final.xml`): all **72
+workbench tests** pass, but the right-rail readiness-to-pending geometry test
+failed its post-poll recheck with correct demand/viewport/hint and a newly
+pending outer reconcile. Its extra `pilot.pause()` yields between the successful
+predicate wait and the assertion. The unchanged complete right-rail file then
+passed **36 tests in 95.38 seconds** in isolation
+(`/private/tmp/tldw-right-rail-isolated-baseline.xml`). This does not establish
+the timing failure is fixed. TASK-31733 remains In Progress for qualification.
+
+Independent review of the ordering correction found no actionable issues;
+lint, changed-region formatting and diff checks pass. Three existing dependency
+warnings remain. Next step: deterministic late-invalidation reproduction before
+changing readiness handling, preserving physical geometry and exact owner-pass
+assertions. The other UI failures, resource/architecture work, unexecuted census
+remainder and pending task-ID decisions remain open; the PR stays draft.
