@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
+from tldw_chatbook.Chat.console_trace_final_values import CompletedToolTurnWitness
 from tldw_chatbook.Chat.console_trace_models import TraceCallState, new_opaque_id
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
@@ -265,6 +266,36 @@ class ConsoleTraceBoundaryFactory:
                 continuation_values = tuple(
                     group.checkpoint for group in request.continuation_groups
                 )
+                completed_tool_turn = None
+                if (
+                    route_record.route
+                    in {ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.FRESH}
+                    and len(provenance.messages_payload) >= 2
+                    and all(
+                        type(item) is SavedRevisionTraceProvenance
+                        for item in provenance.messages_payload[-2:]
+                    )
+                ):
+                    latest = self.repository.get_latest_call_boundary(
+                        cursor, owner.root_segment_id
+                    )
+                    terminal = (
+                        None
+                        if latest is None or latest.call_id is None
+                        else self.repository.get_call(cursor, latest.call_id)
+                    )
+                    origin = (
+                        None
+                        if terminal is None
+                        else self.repository.get_run_origin(cursor, terminal.run_id)
+                    )
+                    if terminal is not None and origin is not None:
+                        completed_tool_turn = CompletedToolTurnWitness(
+                            origin.call_id,
+                            terminal.call_id,
+                            provenance.messages_payload[-2].revision_id,
+                            current_revision_id,
+                        )
                 admission, surface_boundary = (
                     self.service.prepare_current_surface_delta(
                         cursor,
@@ -274,6 +305,9 @@ class ConsoleTraceBoundaryFactory:
                         preparation_identity=preparation_identity,
                         provenance=provenance,
                         values=tuple(request.messages_payload) + continuation_values,
+                        completed_tool_turn=completed_tool_turn,
+                        current_turn_id=turn_id,
+                        current_policy_id=policy.policy_id,
                     )
                 )
                 reserved = self.repository.reserve_call(

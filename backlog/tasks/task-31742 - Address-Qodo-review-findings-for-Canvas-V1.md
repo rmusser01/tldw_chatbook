@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 21:37'
-updated_date: '2026-09-05 23:02'
+updated_date: '2026-09-06 00:40'
 labels:
   - canvas
   - review
@@ -30,6 +30,7 @@ Resolve every finding posted on PR 2432 with verified corrections or evidence-ba
 - [ ] #6 Pre-dispatch Retry proves and reuses its exact owned reservation without admitting unrelated calls, reviving terminal calls or duplicating dispatch; real controller/gateway recovery tests cover repeated failure and stale authority.
 - [ ] #7 Commit reconciliation distinguishes committed, rolled-back and unknown outcomes; post-commit failures cannot duplicate surface writes or provider entry, or incorrectly mark a dispatched call not dispatched.
 - [ ] #8 Both agent-mode and ordinary fresh next-message sends support the verified transition after a completed tool turn; other routes gain no implicit permission.
+- [ ] #9 Short-lived trace worker operations release only their owned database handles on completion, failure and cancellation; repeated real agent and settlement operations do not accumulate exited-thread handles, and caller-owned or same-file observer connections remain usable.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,6 +38,16 @@ Resolve every finding posted on PR 2432 with verified corrections or evidence-ba
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR for direct review corrections. ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md; ADR-097 governs startup costs. Reason: preserve existing security and ownership boundaries; stop for design approval if a suggestion requires new authority or architecture. 1. Read every Qodo review body and inline comment; record stable comment IDs and evaluate against actual call paths and approved contracts. 2. Reproduce verified behavioral defects before changes, starting with stale card session routing; use one bounded correction at a time and retain first-use/strict-zero-egress coverage. 3. For path, transactions, bridge validation and configuration findings, use existing shared mechanisms only when semantics remain exact; document justified disagreement instead of inventing containment roots or loosening validation. 4. Correct public helper documentation, compatibility wrapper naming and bounded operational log context; audit diagnostic inventory before regeneration. 5. Run targeted checks and independent review, reply to every original thread with evidence, update the PR and wait for current-head protected CI and Qodo completion. Root exclusively executes isolated pytest/browser checks; no full sweep, OS resource changes or V2 work before merge.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented all eight initial Qodo corrections under ADR-121 (Canvas ownership, zero-egress and privacy) and the existing startup-budget ADR. Captured transcript-row session ownership survives queued actions and delayed construction; archive sources use shared lexical validation without inventing a workspace root; reads use owned deferred transactions while preserving caller rollback; bridge shape validation uses a lazy strict shared Pydantic envelope with unchanged domain limits; strict environment preferences preserve fail-closed recovery and the process latch. Public limit contracts, lazy compatibility aliases and bounded diagnostic attempt context are corrected. Targeted evidence: card50, archive56, reads140 plus16, wire176, config71 and final cleanup66 passing tests; these are overlapping focused runs, not a full suite. All scoped independent reviews pass; one final prose-only depth clarification was applied. Reviewed diagnostic inventory changes are two moved archive log statements and two fixed Canvas error statements with host-owned attempt integers; existing path candidates remain legacy/unreviewed. Current-head CI, original-thread replies and the final dev rebase remain pending before Done/merge. See Docs/Canvas/V1_VERIFICATION.md for commands, warnings and root-owned execution evidence.
+
+Published reviewed corrections at b87f7ac31 after a 127-commit rebase onto dev8e9d1128d; only append-only lessons context conflicted and both sides were preserved. Replied in all eight original Qodo threads (reply IDs3942331184,3942331194,3942331230,3942331284,3942331319,3942331344,3942331384,3942331424). Post-rebase derived preflight passes; Chromium native/served/zero-egress89passed2optionalbrowser skips; trace/provider/Canvas/startup/mount538passed, census967/972. A test-only production trace plus Canvas composition control is still under verification; it initially omitted required progressive tool discovery, which the product correctly rejected. Current-head protected CI and final integration qualification remain pending.
+
+Final integration is blocked, not Done: after a genuinely completed progressive Canvas turn, the next saved AGENT_FIRST request fails before transport with unsupported_surface_change. Runtime diagnostic proves prefix1/suffix0, six active tool artifacts versus two incoming saved revisions (assistant plus user): 1failed1warning1.80s. An ordinary successful calculator turn reproduces the next-turn failure; plain-history positive and changed-history negative still pass (1failed2passed1warning2.06s). These probes run on the feature tree, not untouched dev. No existing compound admission path composes bounded replacement plus append; implementing one changes the shared trace-admission/persistence contract governed by backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md. Per this task's plan, pause for design approval before that expansion. Retain the failing uncommitted diagnostic tests, all recovery refs and evidence; no capture bypass, weakened guard, merge or V2 work. All eight original Qodo replies are posted, but AC4 remains unchecked.
+<!-- SECTION:NOTES:END -->
 
 ### Approved integration expansion, 2026-09-05
 
@@ -65,13 +76,3 @@ owned Retry and three-way commit reconciliation, (3) growth/integration checks,
 review, latest-base protected PR completion. The existing trace-ledger ADR-097
 now records the approved amendment before product changes. Root alone runs
 isolated targeted tests and Git operations; independent task review is required.
-
-## Implementation Notes
-
-<!-- SECTION:NOTES:BEGIN -->
-Implemented all eight initial Qodo corrections under ADR-121 (Canvas ownership, zero-egress and privacy) and the existing startup-budget ADR. Captured transcript-row session ownership survives queued actions and delayed construction; archive sources use shared lexical validation without inventing a workspace root; reads use owned deferred transactions while preserving caller rollback; bridge shape validation uses a lazy strict shared Pydantic envelope with unchanged domain limits; strict environment preferences preserve fail-closed recovery and the process latch. Public limit contracts, lazy compatibility aliases and bounded diagnostic attempt context are corrected. Targeted evidence: card50, archive56, reads140 plus16, wire176, config71 and final cleanup66 passing tests; these are overlapping focused runs, not a full suite. All scoped independent reviews pass; one final prose-only depth clarification was applied. Reviewed diagnostic inventory changes are two moved archive log statements and two fixed Canvas error statements with host-owned attempt integers; existing path candidates remain legacy/unreviewed. Current-head CI, original-thread replies and the final dev rebase remain pending before Done/merge. See Docs/Canvas/V1_VERIFICATION.md for commands, warnings and root-owned execution evidence.
-
-Published reviewed corrections at b87f7ac31 after a 127-commit rebase onto dev8e9d1128d; only append-only lessons context conflicted and both sides were preserved. Replied in all eight original Qodo threads (reply IDs3942331184,3942331194,3942331230,3942331284,3942331319,3942331344,3942331384,3942331424). Post-rebase derived preflight passes; Chromium native/served/zero-egress89passed2optionalbrowser skips; trace/provider/Canvas/startup/mount538passed, census967/972. A test-only production trace plus Canvas composition control is still under verification; it initially omitted required progressive tool discovery, which the product correctly rejected. Current-head protected CI and final integration qualification remain pending.
-
-Final integration is blocked, not Done: after a genuinely completed progressive Canvas turn, the next saved AGENT_FIRST request fails before transport with unsupported_surface_change. Runtime diagnostic proves prefix1/suffix0, six active tool artifacts versus two incoming saved revisions (assistant plus user): 1failed1warning1.80s. An ordinary successful calculator turn reproduces the next-turn failure; plain-history positive and changed-history negative still pass (1failed2passed1warning2.06s). These probes run on the feature tree, not untouched dev. No existing compound admission path composes bounded replacement plus append; implementing one changes the shared trace-admission/persistence contract governed by backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md. Per this task's plan, pause for design approval before that expansion. Retain the failing uncommitted diagnostic tests, all recovery refs and evidence; no capture bypass, weakened guard, merge or V2 work. All eight original Qodo replies are posted, but AC4 remains unchecked.
-<!-- SECTION:NOTES:END -->

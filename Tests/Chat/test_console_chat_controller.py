@@ -7530,13 +7530,35 @@ async def test_durable_capture_on_composes_exact_trace_request_through_real_agen
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change_history", [False, True])
+@pytest.mark.parametrize(
+    ("change_history", "ordinary_tool_loop", "next_fresh", "recreate_factory"),
+    [
+        (False, False, False, False),
+        (True, False, False, False),
+        (False, True, False, False),
+        (False, True, True, False),
+        (False, True, False, True),
+        (False, True, True, True),
+    ],
+    ids=[
+        "unchanged-history",
+        "changed-history",
+        "ordinary-tool-loop",
+        "tool-loop-next-fresh",
+        "tool-loop-cold-agent",
+        "tool-loop-cold-fresh",
+    ],
+)
 async def test_two_saved_turns_keep_history_references_through_production_trace(
     tmp_path,
     monkeypatch,
     change_history,
+    ordinary_tool_loop,
+    next_fresh,
+    recreate_factory,
 ):
     """Ordinary history must extend the real trace surface on the next send."""
+    from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
     from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
     from tldw_chatbook.Chat.console_trace_provenance import SavedRevisionTraceProvenance
     from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
@@ -7545,13 +7567,41 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
     runs_db = AgentRunsDB(tmp_path / "two-turn-runs.sqlite", client_id="task31714")
     factory = ConsoleTraceBoundaryFactory(chat_db)
     requests = []
+    adapter_entries = 0
+    boundary_failures = []
+    calculator_results = []
+    tool_requested = False
 
     def boundary(request, resolution, route):
-        result = factory(request, resolution, route)
+        try:
+            result = factory(request, resolution, route)
+        except ValueError as exc:
+            boundary_failures.append((route.value, str(exc)))
+            raise
         requests.append(request)
         return result
 
     def adapter(**_kwargs):
+        nonlocal adapter_entries, tool_requested
+        adapter_entries += 1
+        if ordinary_tool_loop and tool_requested:
+            calculator_results.extend(
+                str(row.get("content", ""))
+                for row in _kwargs["messages_payload"]
+                if str(row.get("content", "")).startswith("Tool result for calculator:")
+            )
+        if (
+            ordinary_tool_loop
+            and controller._agent_runtime_enabled
+            and not tool_requested
+        ):
+            tool_requested = True
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps({"name": "calculator", "arguments": {"expression": "6*7"}})
+                + "\n```"
+            )
+            return {"choices": [{"message": {"content": content}}]}
         return {"choices": [{"message": {"content": "Observations recorded."}}]}
 
     gateway = ConsoleProviderGateway(
@@ -7600,7 +7650,23 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
     try:
         first = await controller.submit_draft("Observe the sky.", session_id=session.id)
         assert first.accepted
-        assert len(requests) == 1
+        first_call_count = 2 if ordinary_tool_loop else 1
+        assert len(requests) == first_call_count
+        assert adapter_entries == first_call_count
+        assert first.terminal_status is ConsoleRunStatus.COMPLETED
+        assert first.visible_copy == "Observations recorded."
+        first_assistant = next(
+            message
+            for message in reversed(store.messages_for_session(session.id))
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+        assert first_assistant.status == "complete"
+        assert store.preparation_for_session(session.id) is None
+        assert store.pending_provider_trace_settlement_count(first_assistant.id) == 0
+        if ordinary_tool_loop:
+            assert len(calculator_results) == 1, calculator_results
+            assert "42" in calculator_results[0], calculator_results
+            assert "ERROR" not in calculator_results[0], calculator_results
         with chat_db.transaction() as connection:
             first_call = tuple(
                 connection.execute("SELECT * FROM console_trace_calls").fetchone()
@@ -7608,7 +7674,7 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
         first_user_id = store.messages_for_session(session.id)[0].persisted_message_id
         reader = ConsoleTraceNativeReader(chat_db)
         first_trace = reader.read_calls(first_user_id)
-        assert len(first_trace) == 1
+        assert len(first_trace) == first_call_count
         assert first_trace[0].capture.request.get("omitted") is None
         if change_history:
             substitute = controller._apply_skill_substitution
@@ -7621,6 +7687,11 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
             monkeypatch.setattr(
                 controller, "_apply_skill_substitution", changed_history
             )
+        if recreate_factory:
+            factory = ConsoleTraceBoundaryFactory(chat_db)
+        if next_fresh:
+            controller.update_agent_runtime(enabled=False, bridge=bridge)
+        tool_requested = False
         # Equal text is deliberate: different saved owners must remain distinct.
         second = await controller.submit_draft(
             "Observe the sky.", session_id=session.id
@@ -7633,19 +7704,71 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
             ]
         assert reader.read_calls(first_user_id) == first_trace
         if change_history:
-            assert len(requests) == 1
+            assert len(requests) == first_call_count
             assert (
                 controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
             )
             return
-        assert len(requests) == 2
+        second_call_count = 2 if ordinary_tool_loop and not next_fresh else 1
+        assert len(requests) == first_call_count + second_call_count, boundary_failures
+        assert adapter_entries == first_call_count + second_call_count
         assert controller.run_state_for(session.id).status is ConsoleRunStatus.COMPLETED
         first_user = requests[0].provenance.messages_payload[-1]
         assert isinstance(first_user, SavedRevisionTraceProvenance)
-        assert first_user in requests[1].provenance.messages_payload
-        second_user = requests[1].provenance.messages_payload[-1]
+        assert first_user in requests[-1].provenance.messages_payload
+        second_user = requests[first_call_count].provenance.messages_payload[-1]
         assert isinstance(second_user, SavedRevisionTraceProvenance)
         assert first_user != second_user
+        second_request = requests[first_call_count]
+        assert [row["role"] for row in second_request.messages_payload] == [
+            "user",
+            "assistant",
+            "user",
+        ]
+        second_saved_user = next(
+            message
+            for message in reversed(store.messages_for_session(session.id))
+            if message.role is ConsoleMessageRole.USER
+        )
+        second_trace = reader.read_calls(second_saved_user.persisted_message_id)
+        assert second_trace[0].capture.request["messages_payload"] == [
+            {"role": "user", "content": "Observe the sky."},
+            {"role": "assistant", "content": "Observations recorded."},
+            {"role": "user", "content": "Observe the sky."},
+        ]
+        if ordinary_tool_loop:
+            controller.update_agent_runtime(enabled=True, bridge=bridge)
+            tool_requested = False
+            if recreate_factory:
+                factory = ConsoleTraceBoundaryFactory(chat_db)
+            third = await controller.submit_draft(
+                "One more calculation.", session_id=session.id
+            )
+            assert third.terminal_status is ConsoleRunStatus.COMPLETED, (
+                boundary_failures
+            )
+            assert third.visible_copy == "Observations recorded."
+            assert adapter_entries == first_call_count + second_call_count + 2
+            third_saved_user = next(
+                message
+                for message in reversed(store.messages_for_session(session.id))
+                if message.role is ConsoleMessageRole.USER
+            )
+            third_trace = reader.read_calls(third_saved_user.persisted_message_id)
+            assert [
+                row["role"]
+                for row in third_trace[0].capture.request["messages_payload"]
+            ] == ["user", "assistant", "user", "assistant", "user"]
+            assert len(calculator_results) == (2 if next_fresh else 3)
+            assert all(
+                "42" in result and "ERROR" not in result
+                for result in calculator_results
+            )
+            assert reader.read_calls(first_user_id) == first_trace
+            assert (
+                reader.read_calls(second_saved_user.persisted_message_id)
+                == second_trace
+            )
         assert all(
             not any(key.startswith(("_native", "_tldw")) for key in row)
             for request in requests
@@ -7654,6 +7777,345 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
     finally:
         runs_db.close()
         await gateway.aclose()
+        chat_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_production_trace_factory_keeps_canvas_tool_loops_on_their_saved_turns(
+    tmp_path,
+    monkeypatch,
+):
+    """Each saved turn must own its trace chain and promoted Canvas revision."""
+    from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
+    from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+    from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+
+    chat_db = CharactersRAGDB(tmp_path / "canvas-trace-chat.sqlite", "canvas-trace")
+    runs_db = AgentRunsDB(
+        tmp_path / "canvas-trace-runs.sqlite", client_id="canvas-trace"
+    )
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=chat_db))
+    store = runtime.ensure_chat_store()
+    canvas = runtime.canvas_controller
+    assert canvas is not None
+    repository = store.persistence.console_trace_repository
+    production_factory = ConsoleTraceBoundaryFactory(chat_db, repository=repository)
+    routes = []
+    boundary_failures = []
+
+    def boundary(request, resolution, route):
+        routes.append(route)
+        try:
+            return production_factory(request, resolution, route)
+        except Exception as exc:
+            boundary_failures.append((route, type(exc).__name__, str(exc)))
+            raise
+
+    canvas_identity = {}
+    adapter_calls = 0
+
+    def tool_result(messages, name):
+        prefix = f"{FENCE_TOOL_RESULT_PREFIX}{name}: "
+        content = next(
+            str(message.get("content", ""))
+            for message in reversed(messages)
+            if str(message.get("content", "")).startswith(prefix)
+        )
+        payload = json.loads(content.removeprefix(prefix))
+        assert payload["status"] == "staged"
+        return payload["canvas"]
+
+    def adapter(**kwargs):
+        nonlocal adapter_calls
+        adapter_calls += 1
+        if adapter_calls in {1, 5}:
+            assert "use find_tools, then load_tools" in kwargs["system_message"]
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps({"name": "find_tools", "arguments": {"query": "canvas"}})
+                + "\n```"
+            )
+        elif adapter_calls in {2, 6}:
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps(
+                    {
+                        "name": "load_tools",
+                        "arguments": {
+                            "ids": [
+                                "canvas:canvas_create",
+                                "canvas:canvas_update",
+                            ]
+                        },
+                    }
+                )
+                + "\n```"
+            )
+        elif adapter_calls == 3:
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps(
+                    {
+                        "name": "canvas_create",
+                        "arguments": {
+                            "title": "Two-turn trace",
+                            "html": "<p>first synthetic revision</p>",
+                        },
+                    }
+                )
+                + "\n```"
+            )
+        elif adapter_calls == 4:
+            created = tool_result(kwargs["messages_payload"], "canvas_create")
+            canvas_identity.update(
+                canvas_id=created["canvas_id"],
+                revision_id=created["revision_id"],
+            )
+            content = "Created the first revision."
+        elif adapter_calls == 7:
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps(
+                    {
+                        "name": "canvas_update",
+                        "arguments": {
+                            "canvas_id": canvas_identity["canvas_id"],
+                            "expected_parent_revision_id": canvas_identity[
+                                "revision_id"
+                            ],
+                            "html": "<p>second synthetic revision</p>",
+                        },
+                    }
+                )
+                + "\n```"
+            )
+        else:
+            assert adapter_calls == 8
+            updated = tool_result(kwargs["messages_payload"], "canvas_update")
+            canvas_identity["updated_revision_id"] = updated["revision_id"]
+            content = "Updated the second revision."
+        return {"choices": [{"message": {"content": content}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=boundary,
+    )
+
+    async def resolve_for_send(_selection):
+        return ConsoleProviderResolution(
+            ready=True,
+            provider="openai",
+            model="test-model",
+            base_url="https://api.openai.com/v1",
+            execution_key="openai",
+            streaming=False,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="openai",
+                model="test-model",
+                endpoint_identity="https://api.openai.com/v1",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    monkeypatch.setattr(gateway, "resolve_for_send", resolve_for_send)
+    original_preparation = controller_module.ConsoleTurnPreparation
+
+    def capture_on(**kwargs):
+        kwargs["capture_mode"] = ConsoleTraceCaptureMode.CAPTURE_ON
+        return original_preparation(**kwargs)
+
+    monkeypatch.setattr(controller_module, "ConsoleTurnPreparation", capture_on)
+    session = _arm_session(store)
+    session.settings = ConsoleSessionSettings(provider="openai", model="test-model")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=runs_db,
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="openai",
+        model="test-model",
+        agent_runtime_enabled=True,
+        agent_bridge=bridge,
+    )
+    try:
+        first = await controller.submit_draft(
+            "Create the synthetic Canvas.", session_id=session.id
+        )
+
+        # The production runtime submits trace settlement to its owned worker.
+        # A drained per-message handoff queue alone does not mean SQLite sealed
+        # the calls; include queued, running, and failed scheduler work.
+        async def wait_for_trace_settlement():
+            for _ in range(200):
+                if store.pending_provider_trace_settlement_work_count() == 0:
+                    break
+                await asyncio.sleep(0.01)
+            assert store.pending_provider_trace_settlement_work_count() == 0
+
+        await wait_for_trace_settlement()
+        first_messages = store.messages_for_session(session.id)
+        first_user = next(
+            message
+            for message in first_messages
+            if message.role is ConsoleMessageRole.USER
+        )
+        first_assistant = next(
+            message
+            for message in first_messages
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+        assert first.accepted is True
+        assert first.visible_copy == "Created the first revision."
+        assert first.terminal_status is ConsoleRunStatus.COMPLETED
+        assert adapter_calls == 4
+        assert first_assistant.status == "complete"
+        assert controller.run_state_for(session.id) == ConsoleRunState(
+            ConsoleRunStatus.COMPLETED, "Response complete."
+        )
+        assert store.preparation_for_session(session.id) is None
+        assert boundary_failures == []
+        assert store.pending_provider_trace_settlement_count(first_assistant.id) == 0
+        second = await controller.submit_draft(
+            "Update the synthetic Canvas.", session_id=session.id
+        )
+        await wait_for_trace_settlement()
+        second_messages = store.messages_for_session(session.id)
+        second_user = next(
+            message
+            for message in reversed(second_messages)
+            if message.role is ConsoleMessageRole.USER
+        )
+        second_assistant = next(
+            message
+            for message in reversed(second_messages)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+
+        assert second.accepted is True
+        second_facts = {
+            "visible_copy": second.visible_copy,
+            "terminal_status": second.terminal_status,
+            "run_state": controller.run_state_for(session.id),
+            "adapter_calls": adapter_calls,
+            "routes": routes,
+            "boundary_failures": boundary_failures,
+        }
+        assert second.visible_copy == "Updated the second revision.", repr(second_facts)
+        assert second.terminal_status is ConsoleRunStatus.COMPLETED, second_facts
+        assert controller.run_state_for(session.id) == ConsoleRunState(
+            ConsoleRunStatus.COMPLETED, "Response complete."
+        ), second_facts
+        assert adapter_calls == 8, second_facts
+        assert routes == [
+            ConsoleRequestRoute.AGENT_FIRST,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.AGENT_FIRST,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.TOOL_LOOP,
+        ]
+        assert first_user.persisted_message_id is not None
+        assert second_user.persisted_message_id is not None
+        assert first_assistant.persisted_message_id is not None
+        assert second_assistant.persisted_message_id is not None
+        assert second_assistant.status == "complete"
+        assert canvas.settlement_for_assistant(first_assistant.id).state.value == (
+            "committed"
+        )
+        assert canvas.settlement_for_assistant(second_assistant.id).state.value == (
+            "committed"
+        )
+
+        revisions = chat_db.execute_query(
+            "SELECT id, canvas_id, parent_revision_id, html, origin_message_id, "
+            "origin_turn_id FROM canvas_revisions ORDER BY sequence"
+        ).fetchall()
+        assert [row["id"] for row in revisions] == [
+            canvas_identity["revision_id"],
+            canvas_identity["updated_revision_id"],
+        ]
+        assert [row["canvas_id"] for row in revisions] == [
+            canvas_identity["canvas_id"],
+            canvas_identity["canvas_id"],
+        ]
+        assert revisions[0]["parent_revision_id"] is None
+        assert revisions[1]["parent_revision_id"] == revisions[0]["id"]
+        assert [row["html"] for row in revisions] == [
+            "<p>first synthetic revision</p>",
+            "<p>second synthetic revision</p>",
+        ]
+        assert [row["origin_message_id"] for row in revisions] == [
+            first_assistant.persisted_message_id,
+            second_assistant.persisted_message_id,
+        ]
+
+        assert session.persisted_conversation_id is not None
+        with chat_db.transaction() as cursor:
+            owner = repository.get_attached_owner_by_conversation(
+                cursor, session.persisted_conversation_id
+            )
+            assert owner is not None
+            calls = repository.read_calls(cursor, owner.owner_id)
+        assert len(calls) == 8
+        assert all(call.state is TraceCallState.COMPLETE for call in calls), [
+            (call.call_sequence, call.route_identity, call.state) for call in calls
+        ]
+        by_run = {}
+        for call in calls:
+            by_run.setdefault(call.run_id, []).append(call)
+        assert len(by_run) == 2
+        ordered_runs = sorted(by_run.values(), key=lambda run: run[0].turn_id)
+        assert {run[0].turn_id for run in ordered_runs} == {
+            first_user.persisted_message_id,
+            second_user.persisted_message_id,
+        }
+        for run in ordered_runs:
+            assert len({call.turn_id for call in run}) == 1
+            assert [call.call_sequence for call in run] == [0, 1, 2, 3]
+            assert [call.route_identity for call in run] == [
+                ConsoleRequestRoute.AGENT_FIRST.value,
+                ConsoleRequestRoute.TOOL_LOOP.value,
+                ConsoleRequestRoute.TOOL_LOOP.value,
+                ConsoleRequestRoute.TOOL_LOOP.value,
+            ]
+        assert [row["origin_turn_id"] for row in revisions] == [
+            canvas.settlement_for_assistant(first_assistant.id).run_id,
+            canvas.settlement_for_assistant(second_assistant.id).run_id,
+        ]
+        assert revisions[0]["origin_turn_id"] != revisions[1]["origin_turn_id"]
+        # Canvas owns its registration ID; trace runs own opaque actor/chain
+        # IDs. Their durable relationship is the saved user/assistant pair.
+        with chat_db.transaction() as cursor:
+            for saved_user, saved_assistant in (
+                (first_user, first_assistant),
+                (second_user, second_assistant),
+            ):
+                terminal = next(
+                    call
+                    for call in calls
+                    if call.turn_id == saved_user.persisted_message_id
+                    and call.call_sequence == 3
+                )
+                link = repository.get_response_link(cursor, terminal.call_id)
+                assert link.verification_outcome == "verified_equal"
+                revision = repository.get_semantic_revision(
+                    cursor, link.semantic_revision_id
+                )
+                assert (
+                    revision.source_message_id == saved_assistant.persisted_message_id
+                )
+        assert store.pending_provider_trace_settlement_count(second_assistant.id) == 0
+    finally:
+        runs_db.close()
+        await gateway.aclose()
+        await runtime.dispose()
         chat_db.close_connection()
 
 

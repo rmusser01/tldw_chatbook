@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_semantic_revision import (
 )
 from tldw_chatbook.Chat.console_trace_final_values import (
     _SURFACE_VERIFICATION_ISSUER,
+    CompletedToolTurnWitness,
     FinalValueBinding,
     ProviderCredentialSource,
     ProviderOverlayProvenance,
@@ -850,7 +851,12 @@ class _ProjectionRoot:
             tree = _persistent_insert_entries(
                 tree,
                 position,
-                ((sequence, key, None) for sequence, key in self.appended),
+                ((sequence, key, None) for sequence, key in self.appended[:1]),
+            )
+            tree = _persistent_insert_entries(
+                tree,
+                _persistent_size(tree),
+                ((sequence, key, None) for sequence, key in self.appended[1:]),
             )
         object.__setattr__(self, "_tree", tree)
         object.__setattr__(self, "size", _persistent_size(tree))
@@ -921,7 +927,15 @@ class _DescriptorRoot:
                 position,
                 (
                     (sequence, descriptor, appended_domains.get(sequence))
-                    for sequence, descriptor in self.appended
+                    for sequence, descriptor in self.appended[:1]
+                ),
+            )
+            tree = _persistent_insert_entries(
+                tree,
+                _persistent_size(tree),
+                (
+                    (sequence, descriptor, appended_domains.get(sequence))
+                    for sequence, descriptor in self.appended[1:]
                 ),
             )
         object.__setattr__(self, "_tree", tree)
@@ -1080,8 +1094,9 @@ class _ProjectedProviderValues(Sequence[object]):
             parent = [entry for entry in parent if not start <= entry[0] <= end]
             combined = [(sequence, key, None) for sequence, key in parent]
             combined[insert_at:insert_at] = [
-                (sequence, None, value) for sequence, value in inserted
+                (sequence, None, value) for sequence, value in inserted[:1]
             ]
+            combined.extend((sequence, None, value) for sequence, value in inserted[1:])
         domains = dict(self._descriptor_root.iter_domains())
         selected = tuple(
             (sequence, key, value)
@@ -1289,6 +1304,7 @@ class _ChildState:
     descriptors: _DescriptorRoot
     surface_structure: Mapping[str, object]
     surface_policies: tuple[FrozenTracePolicy, ...]
+    completed_tool_turn: CompletedToolTurnWitness | None = None
 
 
 class _ParentSurfaceCapability:
@@ -1561,6 +1577,7 @@ class ConsoleTraceService:
         with trace_critical_write_checkpoint_policy(database):
             try:
                 with database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+                    reserved_call = self.repository.get_call(cursor, call_id)
                     persisted = self.persist_request(
                         cursor,
                         owner_id=owner_id,
@@ -1568,6 +1585,7 @@ class ConsoleTraceService:
                         provenance=provenance,
                         bundle=bundle,
                         surface_delta=surface_delta,
+                        reserved_call=reserved_call,
                     )
                     self.repository.bind_call(
                         cursor,
@@ -1593,6 +1611,11 @@ class ConsoleTraceService:
                         ),
                     )
             except Exception:
+                if surface_delta.completed_tool_turn is not None:
+                    self._surface_ref_cache.pop(segment_id, None)
+                    self._child_capabilities.pop(id(surface_delta.child_binding), None)
+                    self._pending_child_uses.pop(id(surface_delta.child_binding), None)
+                    self._prune_unreferenced_parents()
                 raise TraceCallPersistenceError() from None
 
     def persist_request(
@@ -1604,6 +1627,7 @@ class ConsoleTraceService:
         provenance: ProviderRequestProvenance,
         bundle: ProviderRequestShadowBundle,
         surface_delta: VerifiedSurfaceDelta,
+        reserved_call: TraceCallRecord | None = None,
     ) -> PersistedTraceRequest:
         """Persist one verified request boundary in the caller-owned transaction."""
 
@@ -1669,13 +1693,43 @@ class ConsoleTraceService:
         if bundle.available and child_state is None:
             raise ValueError("surface_child_binding")
         delta_items = (
-            (replacement.item,) if replacement is not None else surface_delta.items
+            ((replacement.item,) + surface_delta.items)
+            if replacement is not None
+            else surface_delta.items
         )
         descriptors, values = (
             self._resolve_child_items(bundle, delta_items)
             if child_state is not None
             else self._resolve_delta_items(provenance, bundle, delta_items)
         )
+        if surface_delta.completed_tool_turn is not None:
+            if reserved_call is None or replacement is None:
+                raise ValueError("completed_tool_turn_unavailable")
+            issued_boundary = bundle.surface_boundary
+            if (
+                type(issued_boundary) is not _PreparedSurfaceBoundary
+                or issued_boundary._service is not self
+                or issued_boundary.provenance is not provenance
+            ):
+                raise ValueError("surface_child_binding")
+            issued_messages = issued_boundary._provider_request_surface_values()[
+                "messages_payload"
+            ]
+            canonical_values = tuple(
+                issued_messages[item.ordinal] for item in delta_items
+            )
+            self._validate_completed_tool_turn(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                witness=surface_delta.completed_tool_turn,
+                plan=replacement,
+                descriptors=descriptors,
+                values=canonical_values,
+                current_turn_id=reserved_call.turn_id,
+                current_policy_id=reserved_call.policy_id,
+                reserved_call=reserved_call,
+            )
         saved_delta_pairs = tuple(
             (reference_key, value)
             for descriptor, value in zip(descriptors, values, strict=True)
@@ -1857,13 +1911,16 @@ class ConsoleTraceService:
                     owner_id=owner_id,
                     segment_id=segment_id,
                     tail=tail,
-                    descriptors=descriptors,
-                    values=values,
+                    descriptors=descriptors[:1],
+                    values=values[:1],
                     plan=replacement,
                 )
                 appended.append(tail)
-        else:
-            for descriptor, value in zip(descriptors, values, strict=True):
+        if replacement is None or surface_delta.completed_tool_turn is not None:
+            offset = 1 if replacement is not None else 0
+            for descriptor, value in zip(
+                descriptors[offset:], values[offset:], strict=True
+            ):
                 tail = self._append_descriptor(
                     cursor,
                     owner_id=owner_id,
@@ -2080,6 +2137,9 @@ class ConsoleTraceService:
         preparation_identity: str,
         provenance: ProviderRequestProvenance,
         values: tuple[object, ...],
+        completed_tool_turn: CompletedToolTurnWitness | None = None,
+        current_turn_id: str | None = None,
+        current_policy_id: str | None = None,
     ) -> tuple[SurfaceDeltaAdmission, object]:
         """Plan an append, no-op, or one-item bounded surface replacement.
 
@@ -2150,6 +2210,7 @@ class ConsoleTraceService:
             prefix += 1
 
         replacement_range: VerifiedSurfaceReplacementRange | None = None
+        compound = False
         admitted_from = prefix
         admitted_to = len(descriptors)
         if prefix < len(active):
@@ -2162,15 +2223,21 @@ class ConsoleTraceService:
                 suffix += 1
             incoming_changed = len(descriptors) - prefix - suffix
             active_changed = len(active) - prefix - suffix
+            compound = (
+                incoming_changed == 2
+                and completed_tool_turn is not None
+                and route_identity in {"agent_first", "fresh"}
+                and domains[prefix : prefix + 2]
+                == ("messages_payload", "messages_payload")
+            )
             if incoming_changed == 1 and active_changed == 0:
                 # A later turn adds a message before an unchanged provider
                 # continuation. Append only that message: descriptor domains
                 # reconstruct provider order without rewriting the suffix.
                 admitted_to = prefix + 1
             elif (
-                incoming_changed != 1
-                or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN
-            ):
+                incoming_changed != 1 and not compound
+            ) or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
                 raise ValueError("unsupported_surface_change")
             else:
                 changed_entries = active[prefix : len(active) - suffix]
@@ -2210,7 +2277,21 @@ class ConsoleTraceService:
                         domain == domains[prefix] for domain in domains[:prefix]
                     ),
                 )
-                admitted_to = prefix + 1
+                admitted_to = prefix + (2 if compound else 1)
+
+        if compound:
+            assert replacement_range is not None and completed_tool_turn is not None
+            self._validate_completed_tool_turn(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                witness=completed_tool_turn,
+                plan=replacement_range,
+                descriptors=descriptors[admitted_from:admitted_to],
+                values=values[admitted_from:admitted_to],
+                current_turn_id=current_turn_id,
+                current_policy_id=current_policy_id,
+            )
 
         predecessor = None if tail is None else tail.node_id
         checkpoint = self.current_surface_checkpoint(
@@ -2219,6 +2300,23 @@ class ConsoleTraceService:
             expected_route=route_identity,
         )
         bootstrap = checkpoint is None and predecessor is not None
+        if compound and bootstrap:
+            assert tail is not None and current_policy_id is not None
+            assert completed_tool_turn is not None
+            terminal = self.repository.get_call(
+                cursor, completed_tool_turn.terminal_call_id
+            )
+            assert terminal is not None
+            checkpoint = self._completed_tool_turn_parent(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                tail=tail,
+                projection=projection,
+                route=route_identity,
+                policy_id=terminal.policy_id,
+            )
+            bootstrap = False
         admitted = descriptors[admitted_from:admitted_to]
         admission = SurfaceDeltaAdmission(
             owner_id=owner_id,
@@ -2229,6 +2327,7 @@ class ConsoleTraceService:
             descriptors=admitted,
             projection_checkpoint=checkpoint,
             replacement_range=replacement_range,
+            completed_tool_turn=completed_tool_turn if compound else None,
         )
         if replacement_range is not None and bootstrap:
             raise ValueError("surface_replacement_checkpoint_unavailable")
@@ -2274,6 +2373,298 @@ class ConsoleTraceService:
             values=delta_values,
         )
         return admission, boundary
+
+    def _validate_completed_tool_turn(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        witness: CompletedToolTurnWitness,
+        plan: VerifiedSurfaceReplacementRange | VerifiedSurfaceReplacement,
+        descriptors: tuple[TraceProvenance, ...],
+        values: tuple[object, ...],
+        current_turn_id: str | None,
+        current_policy_id: str | None,
+        reserved_call: TraceCallRecord | None = None,
+    ) -> None:
+        """Recheck bounded run evidence; a response link alone grants nothing."""
+        self._validate_owner(cursor, owner_id=owner_id, segment_id=segment_id)
+        owner = self.repository.get_owner(cursor, owner_id)
+        origin = self.repository.get_call(cursor, witness.origin_call_id)
+        terminal = self.repository.get_call(cursor, witness.terminal_call_id)
+        tail = self._effective_surface_tail(cursor, segment_id)
+        latest = self.repository.get_latest_call_boundary(cursor, segment_id)
+        if reserved_call is not None:
+            durable = self.repository.get_call(cursor, reserved_call.call_id)
+            if (
+                durable != reserved_call
+                or latest is None
+                or latest.call_id != reserved_call.call_id
+                or (reserved_call.owner_id, reserved_call.segment_id)
+                != (owner_id, segment_id)
+                or reserved_call.state is not TraceCallState.RESERVED
+                or any(
+                    value is not None
+                    for value in (
+                        reserved_call.surface_node_id,
+                        reserved_call.request_header_id,
+                        reserved_call.dispatch_started_at,
+                        reserved_call.response_started_at,
+                        reserved_call.settled_at,
+                    )
+                )
+            ):
+                raise ValueError("completed_tool_turn_reservation")
+            previous = cursor.execute(
+                """SELECT call_id FROM console_trace_events
+                   WHERE segment_id = ? AND event_type = 'call_boundary'
+                     AND sequence < ? ORDER BY sequence DESC LIMIT 1""",
+                (segment_id, latest.sequence),
+            ).fetchone()
+            latest_id = None if previous is None else previous[0]
+        else:
+            latest_id = None if latest is None else latest.call_id
+        if (
+            owner is None
+            or origin is None
+            or terminal is None
+            or tail is None
+            or latest_id != terminal.call_id
+            or terminal.state is not TraceCallState.COMPLETE
+            or terminal.route_identity != "tool_loop"
+            or origin.route_identity != "agent_first"
+            or origin.call_sequence != 0
+            or self.repository.get_run_origin(cursor, terminal.run_id) != origin
+            or (
+                origin.owner_id,
+                origin.segment_id,
+                origin.turn_id,
+                origin.run_id,
+                origin.policy_id,
+            )
+            != (
+                terminal.owner_id,
+                terminal.segment_id,
+                terminal.turn_id,
+                terminal.run_id,
+                terminal.policy_id,
+            )
+            or (terminal.owner_id, terminal.segment_id) != (owner_id, segment_id)
+            or terminal.turn_id == current_turn_id
+            or terminal.surface_node_id != tail.node_id
+            or plan.predecessor_head_id != tail.node_id
+        ):
+            raise ValueError("completed_tool_turn_unavailable")
+        boundary_events = cursor.execute(
+            """SELECT call_id, sequence FROM console_trace_events
+                WHERE segment_id = ? AND event_type = 'call_boundary'
+                  AND call_id IN (?, ?) ORDER BY sequence LIMIT 3""",
+            (segment_id, origin.call_id, terminal.call_id),
+        ).fetchall()
+        if tuple(row[0] for row in boundary_events) != (
+            origin.call_id,
+            terminal.call_id,
+        ):
+            raise ValueError("completed_tool_turn_lineage")
+        origin_event_sequence = boundary_events[0][1]
+        terminal_event_sequence = boundary_events[1][1]
+        previous_policy = self.repository.get_policy(cursor, terminal.policy_id)
+        current_policy = (
+            None
+            if current_policy_id is None
+            else self.repository.get_policy(cursor, current_policy_id)
+        )
+        if (
+            previous_policy is None
+            or current_policy is None
+            or (
+                previous_policy.credential_filter_version,
+                previous_policy.pii_redaction_enabled,
+                previous_policy.pii_ruleset_revision_id,
+            )
+            != (
+                current_policy.credential_filter_version,
+                current_policy.pii_redaction_enabled,
+                current_policy.pii_ruleset_revision_id,
+            )
+        ):
+            raise ValueError("completed_tool_turn_policy")
+        origin_head = (
+            None
+            if origin.surface_node_id is None
+            else self.repository.get_surface_node(cursor, origin.surface_node_id)
+        )
+        if (
+            origin_head is None
+            or plan.start_sequence != origin_head.sequence + 1
+            or plan.end_sequence != tail.sequence
+            or not 1
+            <= plan.end_sequence - plan.start_sequence + 1
+            <= MAX_SURFACE_REPLACEMENT_SPAN
+        ):
+            raise ValueError("completed_tool_turn_range")
+        assistant = self.repository.get_semantic_revision(
+            cursor, witness.assistant_revision_id
+        )
+        user = self.repository.get_semantic_revision(cursor, witness.user_revision_id)
+        link = self.repository.get_response_link(cursor, terminal.call_id)
+        if (
+            assistant is None
+            or user is None
+            or link is None
+            or link.link_kind != "revision"
+            or link.verification_outcome != "verified_equal"
+            or link.semantic_revision_id != witness.assistant_revision_id
+            or assistant.normalized_role != "assistant"
+            or user.normalized_role != "user"
+            or assistant.source_conversation_id != owner.conversation_id
+            or user.source_conversation_id != owner.conversation_id
+            or user.source_message_id != current_turn_id
+            or descriptors
+            != (
+                SavedRevisionTraceProvenance(witness.assistant_revision_id),
+                SavedRevisionTraceProvenance(witness.user_revision_id),
+            )
+            or len(values) != 2
+        ):
+            raise ValueError("completed_tool_turn_revision")
+        for descriptor, value in zip(descriptors, values, strict=True):
+            expected = self._resolve_reference_value(
+                cursor,
+                ("message", "revision", descriptor.revision_id),
+                owner_id=owner_id,
+            )
+            if _artifact_bytes(expected) != _artifact_bytes(value):
+                raise ValueError("completed_tool_turn_value")
+        projection = self._surface_projection(cursor, segment_id, tail)
+        suffix = tuple(
+            (sequence, key)
+            for sequence, key in projection.entries
+            if sequence > origin_head.sequence
+        )
+        if tuple(sequence for sequence, _ in suffix) != tuple(
+            range(plan.start_sequence, plan.end_sequence + 1)
+        ) or any(
+            key[0] not in {"tool_call", "tool_result"} or key[1] != "artifact"
+            for _, key in suffix
+        ):
+            raise ValueError("completed_tool_turn_range")
+        # Every removed node must have been appended under a durable call from
+        # this run; generic artifact rows or later unrelated reservations do not
+        # establish that ownership. The output is bounded by the removed span.
+        rows = cursor.execute(
+            """SELECT n.sequence, c.owner_id, c.segment_id, c.turn_id, c.run_id,
+                      c.policy_id, c.route_identity, c.call_sequence
+                 FROM console_trace_surface_nodes n
+                 JOIN console_trace_events e ON e.surface_node_id = n.node_id
+                      AND e.segment_id = n.segment_id AND e.event_type = 'surface_append'
+                 JOIN console_trace_calls c ON c.call_id = (
+                     SELECT b.call_id FROM console_trace_events b
+                      WHERE b.segment_id = e.segment_id AND b.event_type = 'call_boundary'
+                        AND b.sequence < e.sequence ORDER BY b.sequence DESC LIMIT 1)
+                WHERE n.segment_id = ? AND n.sequence BETWEEN ? AND ?
+                ORDER BY n.sequence LIMIT 257""",
+            (segment_id, plan.start_sequence, plan.end_sequence),
+        ).fetchall()
+        if len(rows) != len(suffix) or any(
+            tuple(row[1:7])
+            != (
+                owner_id,
+                segment_id,
+                terminal.turn_id,
+                terminal.run_id,
+                terminal.policy_id,
+                "tool_loop",
+            )
+            or not 1 <= row[7] <= terminal.call_sequence
+            for row in rows
+        ):
+            raise ValueError("completed_tool_turn_lineage")
+        foreign = cursor.execute(
+            """SELECT 1 FROM console_trace_events e
+                 JOIN console_trace_calls c ON c.call_id = e.call_id
+                WHERE e.segment_id = ? AND e.event_type = 'call_boundary'
+                  AND e.sequence > ? AND e.sequence <= ?
+                  AND (c.owner_id != ? OR c.run_id != ? OR c.turn_id != ? OR c.policy_id != ?)
+                LIMIT 1""",
+            (
+                segment_id,
+                origin_event_sequence,
+                terminal_event_sequence,
+                owner_id,
+                terminal.run_id,
+                terminal.turn_id,
+                terminal.policy_id,
+            ),
+        ).fetchone()
+        if foreign is not None:
+            raise ValueError("completed_tool_turn_lineage")
+
+    def _completed_tool_turn_parent(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        tail: SurfaceNodeRecord,
+        projection: _SurfaceProjection,
+        route: str,
+        policy_id: str,
+    ) -> object:
+        """Build a cold compound parent entirely from committed references."""
+        policy = self.repository.get_policy(cursor, policy_id)
+        if policy is None:
+            raise ValueError("trace_policy_mismatch")
+        entries = []
+        domains = []
+        tool_loop = []
+        message_ordinal = 0
+        for sequence, key in projection.entries:
+            domain = _surface_reference_domain(key)
+            if key[1] == "revision":
+                descriptor = SavedRevisionTraceProvenance(key[2])
+                if domain == "provider_continuations":
+                    descriptor = DerivedTraceProvenance(
+                        TraceTransformKind.CONTINUATION_ATTACHMENT,
+                        inputs=(descriptor,),
+                    )
+            elif key[1] == "artifact":
+                descriptor = ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource(key[0]), policy
+                )
+            else:
+                raise ValueError("completed_tool_turn_parent_unavailable")
+            entries.append((sequence, descriptor))
+            domains.append((sequence, domain))
+            if domain == "messages_payload":
+                if key[0] in {"tool_call", "tool_result"}:
+                    tool_loop.append(message_ordinal)
+                message_ordinal += 1
+        # Resolve every retained reference, including the removed tool suffix;
+        # the incoming prefix cannot substitute for unavailable durable bytes.
+        self._resolve_reference_values(
+            cursor, tuple(key for _, key in projection.entries), owner_id=owner_id
+        )
+        structure, policies = _surface_projection_metadata(item for _, item in entries)
+        capability = self._promote_surface_capability(
+            owner_id=owner_id,
+            segment_id=segment_id,
+            head_id=tail.node_id,
+            route=route,
+            root=projection.root,
+            descriptors=_DescriptorRoot(
+                None, base=tuple(entries), base_domains=tuple(domains)
+            ),
+            next_sequence=tail.sequence + 1,
+            tool_loop=tuple(tool_loop),
+            active_domains=dict(domains),
+            lineage_domains=dict(projection.lineage_domains),
+            surface_structure=structure,
+            surface_policies=policies,
+        )
+        assert capability is not None
+        return capability
 
     def _bootstrap_surface_parent(
         self,
@@ -2461,6 +2852,25 @@ class ConsoleTraceService:
         ):
             raise ValueError("surface_checkpoint_identity")
         replacement_component_ordinal: int | None = None
+        if admission.completed_tool_turn is not None:
+            if replacement_range is None:
+                raise ValueError("completed_tool_turn_unavailable")
+            witness = admission.completed_tool_turn
+            terminal = self.repository.get_call(cursor, witness.terminal_call_id)
+            user = self.repository.get_semantic_revision(
+                cursor, witness.user_revision_id
+            )
+            self._validate_completed_tool_turn(
+                cursor,
+                owner_id=parent.owner_id,
+                segment_id=parent.segment_id,
+                witness=witness,
+                plan=replacement_range,
+                descriptors=admitted,
+                values=values,
+                current_turn_id=None if user is None else user.source_message_id,
+                current_policy_id=None if terminal is None else terminal.policy_id,
+            )
         if replacement_range is not None:
             replacement_position = parent.root.first_position_in_range(
                 replacement_range.start_sequence,
@@ -2495,7 +2905,7 @@ class ConsoleTraceService:
                     current_ordinal=replacement_range.current_ordinal,
                     item=replacement_item,
                 ),
-                descriptor_count=len(admitted),
+                descriptor_count=1,
             )
         for descriptor in admitted:
             for saved in _saved_descriptors(descriptor):
@@ -2534,11 +2944,9 @@ class ConsoleTraceService:
             )
         )
         if replacement_range is not None:
-            prepared_items = (
-                replace(
-                    prepared_items[0],
-                    ordinal=cast(int, replacement_component_ordinal),
-                ),
+            prepared_items = tuple(
+                replace(item, ordinal=cast(int, replacement_component_ordinal) + offset)
+                for offset, item in enumerate(prepared_items)
             )
         if replacement_range is None:
             appended = tuple(
@@ -2554,16 +2962,22 @@ class ConsoleTraceService:
                 ),
             )
         else:
-            if len(admitted) != 1:
+            if len(admitted) != (2 if admission.completed_tool_turn is not None else 1):
                 raise ValueError("surface_delta_shape")
             descriptor_root = _DescriptorRoot(
                 parent.descriptors,
-                appended=((parent.next_sequence, admitted[0]),),
+                appended=tuple(
+                    (parent.next_sequence + offset, item)
+                    for offset, item in enumerate(admitted)
+                ),
                 replacement=(
                     int(getattr(replacement_range, "start_sequence")),
                     int(getattr(replacement_range, "end_sequence")),
                 ),
-                appended_domains=((parent.next_sequence, admitted_domains[0]),),
+                appended_domains=tuple(
+                    (parent.next_sequence + offset, domain)
+                    for offset, domain in enumerate(admitted_domains)
+                ),
                 removed_domain_counts=tuple(replaced_domain_counts.items()),
             )
         message_delta = tuple(provenance.messages_payload)
@@ -2775,6 +3189,15 @@ class ConsoleTraceService:
                 for policy in (*parent.surface_policies, *delta_policies)
             }
             policies = tuple(policies_by_id[key] for key in sorted(policies_by_id))
+            if (
+                cast(SurfaceDeltaAdmission, prepared.admission).completed_tool_turn
+                is not None
+            ):
+                # Removed tool artifacts no longer contribute disclosure policy
+                # or structural metadata to the composed request.
+                structure, policies = _surface_projection_metadata(
+                    descriptor for _, descriptor in prepared.descriptors.iter_entries()
+                )
             self._prepared_capabilities[id(provenance)] = replace(
                 prepared,
                 verified=True,
@@ -2880,6 +3303,7 @@ class ConsoleTraceService:
             prepared.descriptors,
             prepared.surface_structure or _structural_provenance((), {}),
             prepared.surface_policies,
+            admission.completed_tool_turn,
         )
         self._child_capabilities[id(binding)] = state
         self._prepared_capabilities.pop(id(provenance), None)
@@ -2901,7 +3325,7 @@ class ConsoleTraceService:
             return None
         child = self._child_capabilities.get(id(binding))
         items = (
-            (delta.replacement.item,) if delta.replacement is not None else delta.items
+            ((delta.replacement.item,) + delta.items) if delta.replacement is not None else delta.items
         )
         signature = tuple(
             (item.component_name, item.ordinal, item.provenance) for item in items
@@ -2919,6 +3343,7 @@ class ConsoleTraceService:
             or child.provenance is not provenance
             or child.item_signature != signature
             or child.replacement != delta.replacement
+            or child.completed_tool_turn != delta.completed_tool_turn
         ):
             raise ValueError("surface_child_binding")
         return child
@@ -3162,7 +3587,7 @@ class ConsoleTraceService:
         result = list(entries)
         for node in appended:
             key = ConsoleTraceService._node_reference_key(node)
-            if replacement is None or node.node_id != appended[-1].node_id:
+            if replacement is None or node.node_id != appended[0].node_id:
                 result.append((node.sequence, key))
                 continue
             insert_at = ConsoleTraceService._active_replacement_position(

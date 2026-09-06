@@ -251,6 +251,14 @@ both operations, header and dispatch binding in the existing atomic transaction;
 historical call heads remain unchanged. Keep the 256-node range limit, existing
 schema, disclosure rules, and growth/latency gates.
 
+Across saved turns, policy agreement compares every persisted disclosure setting
+(credential-filter version, PII enabled state, and exact ruleset revision), with
+both records required. Accepted turns allocate fresh opaque policy IDs even for
+identical settings. Exact prior-run policy identity and exact incoming reservation
+and retry identity remain required; historical artifacts are never relabeled.
+This clarification follows the real-controller regression and does not admit
+changed disclosure settings or replace final-value verification.
+
 Pre-dispatch Retry must prove and reuse its exact still-unbound reservation via
 accepted-turn recovery ownership. Never skip unrelated reservations or revive a
 terminal call. A write exception is not proof of rollback: reconcile the exact

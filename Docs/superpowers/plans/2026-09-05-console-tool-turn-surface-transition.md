@@ -18,6 +18,7 @@ Reason: the compound surface and recovery handoff extend cross-module contracts.
 
 - `MAX_SURFACE_REPLACEMENT_SPAN = 256` is unchanged.
 - Exactly one replacement and one append, in that order, under one verified predecessor.
+- Cross-turn policy agreement compares all persisted disclosure settings, not freshly allocated opaque IDs; exact within-run and incoming reservation/retry policy identity remains required.
 - Eligible next-send routes are `AGENT_FIRST` and `FRESH`; other routes gain no compound permission.
 - No Canvas privilege, tool approval, conversation storage, synchronization or V2 change.
 - No migration, additional dependency, raw payload logs, transcript-sized durable ID lists, or relaxed startup/performance budgets.
@@ -78,11 +79,15 @@ Reason: the compound surface and recovery handoff extend cross-module contracts.
 - Modify: `tldw_chatbook/Chat/console_trace_runtime.py`
 - Modify: `tldw_chatbook/Chat/console_trace_service.py`
 - Test: `Tests/Chat/test_console_chat_controller.py`, `Tests/Chat/test_console_provider_gateway.py`, `Tests/Chat/test_console_trace_runtime.py`, `Tests/Chat/test_console_trace_call_lifecycle.py`
+- Modify only if required by the proven worker cleanup boundary: `tldw_chatbook/Chat/console_agent_bridge.py`, `tldw_chatbook/Chat/console_chat_store.py` and the existing trace settlement worker module.
 
 **Interfaces:**
 - Consume Task 1's witness-bearing boundary and the existing `ConsoleTraceCallBoundary.identity`, reservation, preparation identity and gateway one-shot adapter-entry grant.
 - Produce a narrow recovery path from the controller's existing `_trace_call_boundaries_by_preparation` ownership to the gateway/factory. The handoff carries the exact failed boundary and accepted frozen preparation, never a loose conversation ID or bypass boolean.
 - Produce exact dispatch-outcome reconciliation inside the trace boundary/service, returning the existing `TraceCallRecord` on proven commit and preserving an owned persistence failure on proven rollback or unknown outcome.
+- Release trace database connections owned by short-lived worker operations before their threads exit. Preserve pre-existing caller-thread connections and other same-file owners; no blanket registry sweep or changed database-wide close semantics.
+
+- [ ] **Step 0: Reproduce and correct short-lived worker handle ownership.** Task 1's root probe measured regular-file growth after completed and disposed operations: runtime compound +4, three-turn calculator +16, Canvas +18; forced per-test GC did not change it. The surviving handles belong to the exact test chat databases, and agent lifeline and settlement threads end after the run/runtime. Add exact registered-handle regression tests with real gateway/controller/settlement operations and an independently owned same-file observer. Root records RED before correction. Close only operation-created current-thread handles in the owning worker's `finally`, including error/cancel paths, while preserving pre-existing borrowed connections and active transactions. Reuse existing lifecycle seams; do not fix this by quiescing the entire database in fixture teardown. Re-run per-test resource probes and historical reconstruction. ADR required: no new ADR for this lifecycle bug fix; existing ADR-097 transaction/ownership boundaries apply. A new shared ownership policy would require a separate design decision.
 
 - [ ] **Step 1: Write real recovery regressions first.** Inject a one-shot pre-commit failure after Task 1 replacement/append, drive the actual controller Retry action, and assert stable call ID/idempotency key, a single call-boundary event and one eventual adapter entry. Repeat failures twice before success. Negative cases substitute another preparation's boundary, mutate the saved request/route/destination, introduce an unrelated reservation, retain a stale child capability, and present a terminal `NOT_DISPATCHED` call; each refuses transport.
 

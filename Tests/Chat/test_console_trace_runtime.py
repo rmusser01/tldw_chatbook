@@ -19,7 +19,11 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderStreamSignals,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_models import (
+    FrozenTracePolicy,
+    TraceCallState,
+    new_opaque_id,
+)
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
     ConsoleTraceCaptureMode,
@@ -142,6 +146,331 @@ async def test_console_runtime_wires_production_boundary_for_durable_database(
         assert lazy_factory._get_delegate().repository is repository
     finally:
         await runtime.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "valid",
+        "cold",
+        "equal_policy_fresh_id",
+        "credential_value",
+        "wrong_policy",
+        "wrong_pii_enabled",
+        "wrong_ruleset_revision",
+        "wrong_response_revision",
+        "incomplete_terminal",
+        "unrelated_reservation",
+        "non_tool_artifact",
+        "changed_prefix",
+        "changed_assistant_envelope",
+        "extra_new_item",
+        "unsupported_route",
+        "foreign_assistant",
+        "rollback_replace",
+        "rollback_append",
+        "rollback_bind",
+    ],
+)
+async def test_completed_tool_turn_compound_admission_checks_durable_proof(
+    tmp_path,
+    make_database,
+    make_gateway,
+    monkeypatch,
+    scenario,
+):
+    """Only the completed run's exact saved answer may collapse its tool suffix."""
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+
+    database = make_database(tmp_path / "completed-tool.sqlite", "completed-tool")
+    conversation = database.add_conversation({"title": "completed tool"})
+    user_id, user = _saved_message(database, conversation, "calculate")
+    answer_id, answer = _saved_message(database, conversation, "42", sender="assistant")
+    next_text = (
+        "Bearer sk-proj-" + "x" * 48 if scenario == "credential_value" else "next"
+    )
+    _, next_user = _saved_message(database, conversation, next_text)
+    policy = FrozenTracePolicy(
+        new_opaque_id(), "credentials-v1", False,
+        new_opaque_id() if scenario == "wrong_pii_enabled" else None,
+    )
+    actor, chain = new_opaque_id(), new_opaque_id()
+    factory = ConsoleTraceBoundaryFactory(database)
+    boundaries, adapter_entries = [], []
+
+    def boundary(request, resolution, route):
+        result = factory(request, resolution, route)
+        boundaries.append(result)
+        return result
+
+    def adapter(**kwargs):
+        adapter_entries.append(kwargs["messages_payload"])
+        return {"choices": [{"message": {"content": "42"}}]}
+
+    gateway = make_gateway(
+        chat_api_call_fn=adapter, trace_call_boundary_factory=boundary
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True,
+        provider="openai",
+        model="gpt-test",
+        execution_key="openai",
+        base_url="https://api.openai.com/v1",
+        streaming=False,
+    )
+
+    def prepare(messages, descriptors, route, selected_policy=policy):
+        routed_actor = (
+            actor
+            if route in {ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.TOOL_LOOP}
+            else None
+        )
+        routed_chain = chain if routed_actor is not None else None
+        return gateway.prepare_chat_request(
+            resolution,
+            _semantic_request(
+                messages,
+                descriptors,
+                selected_policy,
+                route=route,
+                actor_id=routed_actor,
+                chain_id=routed_chain,
+            ),
+            route=route,
+            route_actor_id=routed_actor,
+            route_chain_id=routed_chain,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+
+    async def dispatch(prepared, route, canonical_id=None):
+        signals = ConsoleProviderStreamSignals()
+        if canonical_id is not None:
+
+            def settle(handoff):
+                if scenario != "incomplete_terminal":
+                    assert handoff.settle(canonical_id)
+                return True
+
+            signals.bind_trace_settlement_sink(settle)
+        return [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                route=route,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                signals=signals,
+            )
+        ]
+
+    first_messages = [{"role": "user", "content": "calculate"}]
+    assert await dispatch(
+        prepare(first_messages, [user], ConsoleRequestRoute.AGENT_FIRST),
+        ConsoleRequestRoute.AGENT_FIRST,
+    ) == ["42"]
+    source = (
+        TraceProvenanceSource.ACTIVE_REQUEST
+        if scenario == "non_tool_artifact"
+        else TraceProvenanceSource.TOOL_RESULT
+    )
+    tool_count = 2
+    tool_messages = [
+        {"role": "tool", "content": f"result-{index}", "tool_call_id": f"call-{index}"}
+        for index in range(tool_count)
+    ]
+    tool_descriptors = [ProviderArtifactTraceProvenance(source, policy)] * tool_count
+    if scenario == "non_tool_artifact":
+        tool_messages = [
+            {"role": "assistant", "content": f"ordinary-{index}"}
+            for index in range(tool_count)
+        ]
+    assert await dispatch(
+        prepare(
+            first_messages + tool_messages,
+            [user] + tool_descriptors,
+            ConsoleRequestRoute.TOOL_LOOP,
+        ),
+        ConsoleRequestRoute.TOOL_LOOP,
+        answer_id,
+    ) == ["42"]
+    terminal = boundaries[-1].reserve()
+    repository = factory.repository
+    with database.transaction() as cursor:
+        terminal = repository.get_call(cursor, terminal.call_id)
+        assert terminal.state is (
+            TraceCallState.RESPONSE_STARTED
+            if scenario == "incomplete_terminal"
+            else TraceCallState.COMPLETE
+        )
+        link = repository.get_response_link(cursor, terminal.call_id)
+        if scenario == "incomplete_terminal":
+            assert link is None
+        else:
+            assert link.semantic_revision_id == answer.revision_id
+            assert link.verification_outcome == "verified_equal"
+    reader = ConsoleTraceNativeReader(database)
+    original = reader.read_calls(user_id)
+    assert len(original) == (1 if scenario == "incomplete_terminal" else 2)
+    incoming = first_messages + [
+        {"role": "assistant", "content": "42"},
+        {"role": "user", "content": next_text},
+    ]
+    descriptors = [user, answer, next_user]
+    next_policy = policy
+    route = ConsoleRequestRoute.AGENT_FIRST
+    chain = new_opaque_id()
+    if scenario == "cold":
+        factory = ConsoleTraceBoundaryFactory(database)
+    elif scenario == "equal_policy_fresh_id":
+        next_policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    elif scenario == "wrong_policy":
+        next_policy = FrozenTracePolicy(new_opaque_id(), "credentials-v2", False, None)
+    elif scenario == "wrong_pii_enabled":
+        next_policy = FrozenTracePolicy(
+            new_opaque_id(), "credentials-v1", True, policy.pii_ruleset_revision_id
+        )
+    elif scenario == "wrong_ruleset_revision":
+        next_policy = FrozenTracePolicy(
+            new_opaque_id(), "credentials-v1", False, new_opaque_id()
+        )
+    elif scenario == "wrong_response_revision":
+        _, descriptors[1] = _saved_message(
+            database, conversation, "42", sender="assistant"
+        )
+    elif scenario == "foreign_assistant":
+        foreign = database.add_conversation({"title": "foreign"})
+        _, descriptors[1] = _saved_message(database, foreign, "42", sender="assistant")
+    elif scenario == "changed_prefix":
+        incoming[0] = {"role": "user", "content": "changed"}
+    elif scenario == "changed_assistant_envelope":
+        incoming[1] = {"role": "assistant", "content": "42", "name": "different"}
+    elif scenario == "extra_new_item":
+        _, extra = _saved_message(database, conversation, "extra")
+        descriptors.insert(2, extra)
+        incoming.insert(2, {"role": "user", "content": "extra"})
+    elif scenario == "unsupported_route":
+        route = ConsoleRequestRoute.REGENERATE
+    elif scenario == "unrelated_reservation":
+        with database.transaction() as cursor:
+            unrelated = repository.reserve_call(
+                cursor,
+                owner_id=terminal.owner_id,
+                segment_id=terminal.segment_id,
+                turn_id=user_id,
+                run_id=new_opaque_id(),
+                call_sequence=0,
+                idempotency_key=new_opaque_id(),
+                policy_id=policy.policy_id,
+            )
+            event_tail = repository.get_event_tail(cursor, terminal.segment_id)
+            repository.append_event(
+                cursor,
+                segment_id=terminal.segment_id,
+                sequence=event_tail.sequence + 1,
+                event_type="call_boundary",
+                call_id=unrelated.call_id,
+            )
+    prepared = prepare(incoming, descriptors, route, next_policy)
+    with database.transaction() as cursor:
+        before_calls = tuple(
+            tuple(row) for row in cursor.execute("SELECT * FROM console_trace_calls")
+        )
+        before_nodes = tuple(
+            tuple(row)
+            for row in cursor.execute("SELECT * FROM console_trace_surface_nodes")
+        )
+    if scenario.startswith("rollback_"):
+        from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+        target = repository if scenario == "rollback_bind" else factory.service
+        operation = {
+            "rollback_replace": "_replace_surface",
+            "rollback_append": "_append_descriptor",
+            "rollback_bind": "bind_call",
+        }[scenario]
+        real_operation = getattr(type(target), operation)
+        hits = []
+
+        def fail_after_write(instance, *args, **kwargs):
+            result = real_operation(instance, *args, **kwargs)
+            if instance is not target:
+                return result
+            hits.append(True)
+            if scenario != "rollback_append" or len(hits) == 2:
+                raise RuntimeError("synthetic precommit failure")
+            return result
+
+        monkeypatch.setattr(type(target), operation, fail_after_write)
+        with pytest.raises(TraceCallPersistenceError):
+            await dispatch(prepared, route)
+        assert len(hits) == (2 if scenario == "rollback_append" else 1)
+        assert len(adapter_entries) == 2
+        with database.transaction() as cursor:
+            assert (
+                tuple(
+                    tuple(row)
+                    for row in cursor.execute(
+                        "SELECT * FROM console_trace_surface_nodes"
+                    )
+                )
+                == before_nodes
+            )
+            assert (
+                cursor.execute(
+                    "SELECT COUNT(*) FROM console_trace_surface_replacements"
+                ).fetchone()[0]
+                == 0
+            )
+            reserved = repository.get_call(cursor, boundaries[-1].reserve().call_id)
+            assert reserved.state is TraceCallState.RESERVED
+            assert reserved.surface_node_id is None
+            assert reserved.request_header_id is None
+        assert reader.read_calls(user_id) == original
+    elif scenario in {"valid", "cold", "equal_policy_fresh_id", "credential_value"}:
+        assert await dispatch(prepared, route) == ["42"]
+        assert [dict(row) for row in adapter_entries[-1]] == [
+            {"role": "user", "content": "calculate"},
+            {"role": "assistant", "content": "42"},
+            {"role": "user", "content": next_text},
+        ]
+        with database.transaction() as cursor:
+            assert (
+                cursor.execute(
+                    "SELECT COUNT(*) FROM console_trace_surface_replacements"
+                ).fetchone()[0]
+                == 1
+            )
+            assert (
+                cursor.execute(
+                    "SELECT COUNT(*) FROM console_trace_surface_nodes"
+                ).fetchone()[0]
+                == 5
+            )
+        assert reader.read_calls(user_id) == original
+    else:
+        with pytest.raises(ValueError):
+            factory(prepared, resolution, route)
+        assert len(adapter_entries) == 2
+        with database.transaction() as cursor:
+            assert (
+                tuple(
+                    tuple(row)
+                    for row in cursor.execute("SELECT * FROM console_trace_calls")
+                )
+                == before_calls
+            )
+            assert (
+                tuple(
+                    tuple(row)
+                    for row in cursor.execute(
+                        "SELECT * FROM console_trace_surface_nodes"
+                    )
+                )
+                == before_nodes
+            )
 
 
 @pytest.mark.asyncio

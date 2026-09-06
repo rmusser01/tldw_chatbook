@@ -85,6 +85,16 @@ lineage, predecessor, range, policy or final-value verification. The proof must
 also be reconstructable with a fresh factory from committed references; a warm
 process cache is an optimization, not authorization.
 
+Cross-turn policy agreement means equality of all persisted disclosure settings:
+credential-filter version, PII-redaction enabled state and exact PII ruleset
+revision. Both policy records must exist. The controller allocates a fresh opaque
+policy ID for every accepted saved turn, so equal settings need not share that ID.
+Within the previous run, retain exact origin/terminal/artifact policy identity;
+the new reservation and any retry remain bound to the exact incoming policy ID.
+Never relabel historical artifacts with the new ID or treat policy agreement as
+a substitute for complete final-value verification. Tests distinguish fresh IDs
+with identical settings from actual setting changes, which remain rejected.
+
 ### Owned pre-dispatch Retry
 
 Retry of a failed bind must not blindly call the factory to allocate another
