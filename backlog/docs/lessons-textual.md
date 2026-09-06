@@ -292,13 +292,27 @@ this for `on_mount` / `on_unmount` / `on_screen_resume`, and each site carries a
 `# No super().on_*(): the dispatcher already invokes <Base>.on_* separately`
 comment naming the base whose handler would otherwise double-fire.
 
-The one exception is a `super().on_*()` whose base target is NOT itself a
-dispatched handler — a plain method reachable ONLY through the explicit
-`super()` call (e.g. `change_review_screen.py`'s `super().on_mount()`, whose
-docstring marks it "mandatory, not politeness"). There, removing the call
-DROPS the teardown, so it stays. **Classify each site before touching it:**
-redundant (base is a dispatched handler → remove the super call) vs
-load-bearing (base is reachable only via super → keep it).
+**Is there ever a safe `super().on_*()`? Not to a normally-defined base
+handler.** A base `on_mount`/`on_unmount` defined in its own class `__dict__` is
+separately MRO-dispatched, so an explicit `super()` call ALWAYS runs it a second
+time — there is no "shadowing." The legitimate way to keep a base body that runs
+once *and* is invoked explicitly is the `BaseWizard.on_mount` pattern: end the
+base handler by calling a PLAIN method (`_post_mount_hook()`), and let subclasses
+override *that* plain method instead of `on_mount` — a non-dispatched method runs
+exactly once. So the convention reduces to: a subclass never calls `super().on_*()`
+for a dispatched handler; a base that needs an explicit call exposes a plain,
+non-`on_*` method for it (as `BaseWizard` does).
+
+**The mount side still carries latent instances of this exact bug**, out of this
+`on_unmount`-scoped task: ~19 live `super().on_mount()` calls remain across the
+repo — including the two Console modals and `change_review_screen.py`, whose
+docstring even misdescribes the mechanism as "ordinary attribute lookup … so
+defining one here SHADOWS the mixin's" (it does not — Textual walks the MRO and
+dispatches both, so that `super().on_mount()` double-fires
+`SafeModalDismissMixin.on_mount`). Tracked as a fast-follow; `on_unmount` is
+fully converted here. When touching any lifecycle handler, classify the site:
+redundant (base is a dispatched handler → drop the `super()` call) vs a genuine
+run-once need (→ use the plain-method pattern, never `super()`).
 
 Guarded by `Tests/UI/test_on_unmount_mro_convention.py`: a runtime count test
 pins the base `on_unmount` firing exactly once under the no-super convention,

@@ -60,12 +60,17 @@ carried it — `BaseAppScreen` subclasses (`chat_screen`, `library_screen`,
 comment naming the base whose handler Textual dispatches separately. Zero
 `super().on_unmount()` calls remain in the package.
 
-**Load-bearing exception preserved:** a `super().on_*()` whose base target is NOT
-a dispatched handler (reachable only via the explicit call — e.g.
-`change_review_screen.py`'s `super().on_mount()`, "mandatory, not politeness")
-was left untouched. Each site was classified redundant-vs-load-bearing before
-editing; `SafeModalDismissMixin.on_unmount` (an MRO-dispatched handler) confirms
-both Console modals' removals are safe.
+**Classification:** every removed `super().on_unmount()` was verified redundant —
+its base (`BaseAppScreen.on_unmount` or `SafeModalDismissMixin.on_unmount`, both
+defined in their own class `__dict__`) is separately MRO-dispatched, so the base
+teardown still runs exactly once after removal. No `on_unmount` site was
+load-bearing. (Correction after review: there is no "safe `super().on_*()` to a
+dispatched handler" — an explicit call always double-fires; the genuine
+run-once-with-explicit-invocation pattern is `BaseWizard`'s plain
+`_post_mount_hook()`, not `super()`. The repo's remaining `super().on_mount()`
+calls — `change_review_screen.py`, the two Console modals, ~19 total — are latent
+instances of the same bug on the mount side, out of this `on_unmount`-scoped task
+and filed as a follow-up.)
 
 **Guard (AC#2):** `Tests/UI/test_on_unmount_mro_convention.py` — a runtime count
 test pins the base `on_unmount` firing exactly once under the no-super
