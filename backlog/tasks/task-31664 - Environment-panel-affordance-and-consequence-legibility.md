@@ -35,7 +35,7 @@ rows). Repo precedent for the fix: the left rail's System line trailing ▸
 - [x] #1 A consistent trailing-marker convention distinguishes expand rows, rows that open another surface, and rows that modify the composer draft; inert rows carry none
 - [x] #2 "Commit or push · N files" is renamed to name what it does (e.g. "Review & commit… · N files")
 - [x] #3 Refresh shows a transient acknowledgment (e.g. "Refreshing…") even when the data comes back unchanged
-- [x] #4 Stale state carries a text marker alongside color, and stale/error no longer share an identical hue on rows a user must read
+- [x] #4 Stale state carries a text marker alongside color; failure/stale rows a user must read render the readable error hue (>=4.5:1 on both banded backgrounds). AMENDED at final review: the shipped design deliberately converges stale and error on $ds-status-error-readable and differentiates via the "(stale)" text marker — better than the hue-split originally worded here (controller ruling, whole-branch review)
 - [x] #5 The UNBOUND copy names the true cause or goes cause-agnostic: workspace_roots == () also occurs when Change Review consent is not ENABLED for a bound folder (the common default), when the consent service is absent/raises, and when all bound roots are skipped — "No folder is bound" is wrong in those cases (31660 re-review obs; the "changes are not tracked here" clause stays true). Distinguish consent-off if the admission data allows; also restore the remediation half of Change Review's copy (bind/enable path)
 <!-- AC:END -->
 
