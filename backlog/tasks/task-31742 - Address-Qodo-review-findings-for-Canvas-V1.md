@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 21:37'
-updated_date: '2026-09-06 02:50'
+updated_date: '2026-09-06 03:13'
 labels:
   - canvas
   - review
@@ -50,6 +50,8 @@ Published reviewed corrections at b87f7ac31 after a 127-commit rebase onto dev8e
 Final integration is blocked, not Done: after a genuinely completed progressive Canvas turn, the next saved AGENT_FIRST request fails before transport with unsupported_surface_change. Runtime diagnostic proves prefix1/suffix0, six active tool artifacts versus two incoming saved revisions (assistant plus user): 1failed1warning1.80s. An ordinary successful calculator turn reproduces the next-turn failure; plain-history positive and changed-history negative still pass (1failed2passed1warning2.06s). These probes run on the feature tree, not untouched dev. No existing compound admission path composes bounded replacement plus append; implementing one changes the shared trace-admission/persistence contract governed by backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md. Per this task's plan, pause for design approval before that expansion. Retain the failing uncommitted diagnostic tests, all recovery refs and evidence; no capture bypass, weakened guard, merge or V2 work. All eight original Qodo replies are posted, but AC4 remains unchecked.
 
 Completed the approved Task 2 recovery repair under backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md in c388c2bd7 and ed86d6a90: exact accepted-owner reservation reuse, verifier retirement with recoverable preparation faults, atomic bind outcome read-back, cancellation and uncertain-delivery handling, cold/new-invocation replay refusal, and operation-owned worker connection cleanup. Independent task review and scoped I1 re-review are clean. Root verification: 983 affected passes (one known custom-API exclusion, Requests and descriptor warnings), 207 focused passes with zero regular-file descriptor growth, then 169 fix-covering passes with only Requests warning. Same affected baseline has 885 passes and descriptor growth345 versus current204; this is not global resource-cleanliness evidence. Ordinary Ruff remains baseline-qualified with no new fix findings. Growth/latency/startup/browser release gates, current-dev rebase, Qodo, protected CI and merge remain pending; task stays In Progress.
+
+Task3 checkpoint ffb934ce9: compound-growth file7passed; corrected observed test-harness counter publication and completion ordering with deterministic RED before atomic publication. Final three Chromium files90passed2optionalbrowser skips1Requests warning184.52s; startup/Canvas110passed4warnings40.72s after an unchanged isolated/full rerun; census967/972 and import635/660 remain within budgets. All six derived preflight categories pass after source-private fixed-warning inventory review. Three changed test/fixture files pass Ruff and formatter checks. Numeric latency gate has18passes1failure solely at reference-hardware identity: actual M5 Max18CPU128GiB differs from pinned M4Pro14CPU48GiB; thresholds not applied and no waiver. Independent checkpoint review, actual-dev migration-number reconciliation/rebase, new Qodo/current-headCI and merge remain pending. No merge or V2; AC4 stays unchecked.
 <!-- SECTION:NOTES:END -->
 
 ### Approved integration expansion, 2026-09-05

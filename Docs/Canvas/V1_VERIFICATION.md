@@ -52,8 +52,9 @@ Task 3 current-tree commands (root execution, repository test isolation):
   passes that regression; the live rerun then exposed status reads before final
   response completion. Moving those exact assertions after the existing rendered
   completion token yields **4 passed, 1 Requests warning, 35.16s** for the original
-  live failure, counter regression and both scripted controls. Full browser rerun
-  is pending. Firefox/WebKit absences are not coverage.
+  live failure, counter regression and both scripted controls. The full three-file
+  rerun on `ffb934ce9` passes **90 tests, 2 optional-browser skips, 1 Requests
+  warning, 184.52s**. Firefox/WebKit absences are not coverage.
 - First startup/Canvas selection: **109 passed, 1 failed, 4 warnings, 79.07s**.
   Census967/972 and import635/660 meet unchanged budgets. The optional-services
   readiness test timed out in Textual Pilot; isolated rerun passes in5.02s.
@@ -71,7 +72,10 @@ Task 3 current-tree commands (root execution, repository test isolation):
 PR2432 remains open on published `b87f7ac31`; that head's protected CI is green
 and Qodo's eight original findings are resolved. Neither applies to the unpublished
 repair. Actual dev advanced to `c0fa6639a`; rebase, final review, fresh Qodo/CI and
-verified merge remain pending. TASK-31742 stays In Progress; V2 has not started.
+verified merge remain pending. Latest dev also now owns migration65→66 for
+character search, colliding with the unpublished Canvas65→66/66→67 sequence;
+this is a substantive rebase integration requirement, not a conflict to discard.
+TASK-31742 stays In Progress; V2 has not started.
 
 ## Historical merge blocker — production trace after a tool turn
 
