@@ -1,5 +1,5 @@
 ---
-id: TASK-31825
+id: TASK-31861
 title: Correct four post-merge Canvas V1 review defects
 status: Done
 assignee:
@@ -36,7 +36,7 @@ Reason: direct corrections to accepted behavior; no new authority, schema, or ru
 
 ### Task 1: Correct the four verified V1 findings
 
-Scope: all acceptance criteria of TASK-31825. Base: 017cf826c, repair branch codex/canvas-v1-review-fixes in .worktrees/canvas-v1. Spec: Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md (runtime profiles, sections 8.2, 9 and 14); existing ADR-121 applies.
+Scope: all acceptance criteria of TASK-31861. Historical pre-rebase base: 017cf826c, repair branch codex/canvas-v1-review-fixes in .worktrees/canvas-v1. Spec: Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md (runtime profiles, sections 8.2, 9 and 14); existing ADR-121 applies.
 
 Global Constraints: strict zero egress; no native global, parent DOM, network, filesystem, cookies or new runtime powers. No profile guessing/conversion. Preserve source inspection/export, exact owner/incarnation/branch/expected-parent fences, atomic archives, existing quotas and scheduling boundaries. No V2, unrelated refactoring, schema or dependency changes. Preserve all existing worktrees, refs and ignored evidence. Root alone executes Git, tests, interpreters, browser and formatters. Workers use static reads and apply_patch only, no subagents. Targeted tests only, no full suite or user database.
 
@@ -55,3 +55,24 @@ Report concerns before expanding architectural authority. Do not commit/push/mer
 <!-- SECTION:NOTES:BEGIN -->
 Corrected all four post-merge V1 findings under existing ADR-121 (no new ADR, schema, dependency, authority, quotas, or scheduling changes): native/served stored-profile gates; live historical selection with stale-owner and atomic-promotion fences; canonical conversation/message/Canvas archive equality under writer transactions; and virtual textarea/select defaults, dirty state and reflected disabled controls. Native screen and dispatch now share the existing durable-only SYSTEM-row projection rule via ConsoleChatStore. Permanent regressions were observed RED then GREEN. Independent scoped review addressed the four findings; its two new regressions were reproduced, fixed, and independently re-reviewed with spec compliance pass and code quality approval, no remaining findings. Local repair commits:40cd4e653 and53ae7d5bd. Consolidated targeted Python verification:413 passed. Final Chromium security/native workflows:34 passed,2 optional browser-engine skips (Firefox/WebKit unavailable). Asset verification:21 passed including cached reproducibility; final formatted control regressions:6 passed. Counts overlap and are not summed. Existing RequestsDependencyWarning remains. Static comparison found no new lint diagnostic signatures (622 inherited/current across touched Python files); changed ranges formatted, diff-check and runtime integrity passed. Updated runtime compatibility docs; preserved all worktrees, refs and ignored reports/probes. No full repository sweep, user database operations, remote publication, PR or merge. Mermaid V2 remains next after integration.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-31825 to TASK-31861 on 2026-09-06 before PR publication.
+The refreshed remote branch `origin/codex/dev-test-review-20260904` already
+claims TASK-31825 for synthesized leading-system trace provenance. A sweep of
+396 local/remote refs and 68 worktrees found 31860 as the highest task ID.
+The original review reports and recovery refs retain their historical task ID
+and commit hashes intentionally. Rebase onto dev `5894f4755` preserved the
+repair patches: `40cd4e653` became `2c575574c`, and `53ae7d5bd` became
+`c306d3be7`. No Canvas behavior changed during renumbering or rebase.
+
+## PR preparation verification
+
+Rebased onto dev `5894f4755`; `git range-diff` confirms all four replayed
+commits preserve their original patches. Post-rebase verification passed:
+413 targeted Python tests, eight Chromium native-workflow/form cases, and all
+six repository preflight guards. The existing Requests dependency warning is
+unchanged. Earlier statements about no publication describe the implementation
+checkpoint; the user subsequently authorized pushing and creating a PR against
+dev. Merge and Mermaid V2 implementation are not part of this publication step.
