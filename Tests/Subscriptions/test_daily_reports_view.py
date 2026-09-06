@@ -5,11 +5,16 @@ persist seams are the ones production uses); the only faked collaborator is
 the path-safety guard, and only in the test that pins its effect.
 """
 
+import re
+
 import pytest
 
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import daily_reports_view
-from tldw_chatbook.Subscriptions.daily_reports_view import list_recent_reports
+from tldw_chatbook.Subscriptions.daily_reports_view import (
+    format_report_timestamp,
+    list_recent_reports,
+)
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
 pytestmark = pytest.mark.unit
@@ -119,8 +124,6 @@ def test_report_rows_label_watchlist_status_and_audio(tmp_path, monkeypatch):
 
 # --- TASK-31803: human-facing timestamps, not raw microsecond ISO -----------
 
-import re
-
 # Local-zone minute precision: `YYYY-MM-DD HH:MM` with an optional trailing
 # zone token. Seconds, microseconds, or an ISO `T` separator all break it.
 _MINUTE_PRECISION = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?: \S+)?$")
@@ -129,10 +132,6 @@ _MINUTE_PRECISION = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?: \S+)?$")
 def test_format_report_timestamp_renders_local_minute_precision():
     """An aware microsecond ISO stamp (the demo/accept write path) collapses
     to local-zone minute precision -- no seconds, no microseconds, no `T`."""
-    from tldw_chatbook.Subscriptions.daily_reports_view import (
-        format_report_timestamp,
-    )
-
     rendered = format_report_timestamp("2026-09-05T23:10:20.123456+00:00")
     assert _MINUTE_PRECISION.fullmatch(rendered), rendered
     assert ".123456" not in rendered
@@ -142,10 +141,6 @@ def test_format_report_timestamp_renders_local_minute_precision():
 def test_format_report_timestamp_handles_naive_db_default_and_blank():
     """The DB-default `CURRENT_TIMESTAMP` naive form parses too; None/blank
     degrade to a readable placeholder, never a crash."""
-    from tldw_chatbook.Subscriptions.daily_reports_view import (
-        format_report_timestamp,
-    )
-
     naive = format_report_timestamp("2026-09-05 23:10:20")
     assert _MINUTE_PRECISION.fullmatch(naive), naive
     assert format_report_timestamp(None) == "unknown time"

@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@Robert'
 created_date: '2026-09-05 19:15'
-updated_date: '2026-09-06 14:50'
+updated_date: '2026-09-06 15:12'
 labels:
   - bug
   - ux
@@ -45,4 +45,6 @@ Fix: added the _has_complete_report property and, in the reports-exist branch, k
 Tests (Tests/UI/test_artifacts_screen_reports.py): test_failed_report_keeps_demo_retry_cta (RED->GREEN) and control test_completed_report_hides_demo_cta. The existing test_seeded_reports_list_rows_with_open_button (complete report -> no CTA) still passes.
 
 Files: tldw_chatbook/UI/Screens/artifacts_screen.py, Tests/UI/test_artifacts_screen_reports.py, Docs/User_Guide/artifacts.md.
+
+PR #2460 Qodo review follow-up: (#4) the retry-CTA gate initially used 'any report ever completed', which suppressed the CTA when an older success preceded a fresh failure; replaced with _latest_report_failed (newest row's status == failed, rows are newest-first). (#5) the detached demo refreshed rows only on START, so a retry that succeeded while Artifacts stayed open left the stale failed row + CTA until resume; added a task done-callback (_on_demo_task_done, is_attached-guarded) that re-reads rows on completion. Tests added: test_older_success_then_new_failure_keeps_retry_cta, test_successful_retry_refreshes_rows_and_drops_cta. Existing demo-CTA stub updated to return a real asyncio.Task per the run_demo_detached contract.
 <!-- SECTION:NOTES:END -->

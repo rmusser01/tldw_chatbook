@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@Robert'
 created_date: '2026-09-05 19:15'
-updated_date: '2026-09-06 14:50'
+updated_date: '2026-09-06 15:12'
 labels:
   - bug
   - ux
@@ -44,4 +44,6 @@ Fix (TASK-31803): added format_report_timestamp() to Subscriptions/daily_reports
 Tests (Tests/Subscriptions/test_daily_reports_view.py): format_report_timestamp aware/naive/blank cases + label-uses-formatted-stamp (minute-precision regex, RED->GREEN).
 
 Files: tldw_chatbook/Subscriptions/daily_reports_view.py, tldw_chatbook/UI/Screens/artifacts_screen.py, Tests/Subscriptions/test_daily_reports_view.py, Docs/User_Guide/artifacts.md.
+
+PR #2460 Qodo review follow-up (#3): added test_report_preview_header_uses_formatted_timestamp asserting the preview renderable formats the timestamp (guards against a silent regression in the preview header path, separate from the list-label test).
 <!-- SECTION:NOTES:END -->
