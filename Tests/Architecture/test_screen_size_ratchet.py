@@ -632,8 +632,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # block (NEVER module level -- `Tests/Packaging/test_library_preimport_
     # closure.py` and the `_ui_ready` module census both enforce this); and
     # +249 for the construction site (`self._media_controller =
-    # LibraryMediaController(...)`, 92 named dependencies, under a 3-line
-    # comment). -3166 + 343 - 12 + 4 + 3 + 249 = -2579.
+    # LibraryMediaController(...)`, 83 keyword arguments, under a 3-line
+    # comment; 83 is the CONSTRUCTION-SITE count -- the 92 in the sibling
+    # controller-ratchet comment is the binding SURFACE, i.e. hand-written
+    # properties, and the two are different numbers on purpose).
+    # -3166 + 343 - 12 + 4 + 3 + 249 = -2579.
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 34754, 1282),
 }
 

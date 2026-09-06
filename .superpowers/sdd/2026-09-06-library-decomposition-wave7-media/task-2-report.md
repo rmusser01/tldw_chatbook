@@ -132,8 +132,8 @@ candidate partitions, measured:
 
 The trash partition is the least entangled and still carries 16 cross-call
 edges and 6 shared state fields — a seam is *zero* of both, not "fewer". And
-after the exclusions only **19 of the 140 movers** are trash-named: a second
-controller for 19 methods, still coupled through six shared fields, buys
+after the exclusions only **20 of the 140 movers** are trash-named: a second
+controller for 20 methods, still coupled through six shared fields, buys
 nothing the per-file `_BUDGETS` governance does not already give.
 
 **The plan's size worry did not materialise.** It feared "~8-9k lines" for a
@@ -157,7 +157,7 @@ Movers: **48 `@on` + 5 `action_*` + 3 `@staticmethod` + 84 plain.**
 | Class | N | Names (or method) |
 |---|---|---|
 | unbound-fake-self | **73** | see §3.1 |
-| instance-attribute-monkeypatch | **16** | `_analyze_one_library_media_item`, `_arm_library_media_return_settlement`, `_exit_library_media_select_mode`, `_focus_library_media_grip_if_current`, `_library_media_content_signature`, `_library_media_layout_signature`, `_library_media_settlement_tree`, `_library_media_unanalyzed_ids`, `_notify_library_media_analysis_warning`, `_open_selected_media_handoff`, `_reconcile_library_media_stage_presentation`, `_request_library_media_browse`, `_request_library_media_type`, `_start_library_media_analyze`, `_sync_library_media_browse_state`, `_sync_library_media_trash_state` |
+| instance-attribute-monkeypatch (see §3.5) | **16** | `_analyze_one_library_media_item`, `_arm_library_media_return_settlement`, `_exit_library_media_select_mode`, `_focus_library_media_grip_if_current`, `_library_media_content_signature`, `_library_media_layout_signature`, `_library_media_settlement_tree`, `_library_media_unanalyzed_ids`, `_notify_library_media_analysis_warning`, `_open_selected_media_handoff`, `_reconcile_library_media_stage_presentation`, `_request_library_media_browse`, `_request_library_media_type`, `_start_library_media_analyze`, `_sync_library_media_browse_state`, `_sync_library_media_trash_state` |
 | source-census (`inspect.getsource`) | **8** | `_claim_library_media_mutation`, `handle_library_media_row`, and the six-handler tuple `handle_library_media_{bulk_delete_confirm, bulk_delete_undo, delete_confirm, edit_save, trash_restore, trash_delete_confirm}` |
 | module-globals-coupling (ACTIVE) | **4** | `_dispatch_library_media_analysis`, `_library_media_analysis_provider_reason`, `handle_library_media_analysis_generate`, `_library_media_viewer_state_cached` |
 | screen-identity, MEMBERSHIP form | **3** | `_commit_library_media_return`, `_library_media_focus_target_matches_receipt`, `_resolve_library_media_settlement_target` |
@@ -198,6 +198,35 @@ measured:
   `test_library_media_reader_flow.py:1362`.
 
 Union = 73 distinct names.
+
+### 3.5 The instance-attribute-monkeypatch class — the governing rule, restated
+
+The 16 are held by recipe §3's **opening** rule — *a name a test monkeypatches
+on `LibraryScreen` keeps its whole call graph routed through the screen until
+that subsystem's cleanup PR retargets the tests* — not by the narrower "a
+mover calls it, so the patch is bypassable" test. A caller map re-derived at
+the parent tree splits them:
+
+- **9 DO have a direct mover caller** (`_arm_library_media_return_settlement`,
+  `_library_media_content_signature`, `_library_media_layout_signature`,
+  `_library_media_settlement_tree`, `_open_selected_media_handoff`,
+  `_reconcile_library_media_stage_presentation`,
+  `_request_library_media_browse`, `_sync_library_media_browse_state`,
+  `_sync_library_media_trash_state`) — for these the patch is directly
+  bypassable by a moved body.
+- **7 do NOT** (`_analyze_one_library_media_item`,
+  `_exit_library_media_select_mode`, `_focus_library_media_grip_if_current`,
+  `_library_media_unanalyzed_ids`, `_notify_library_media_analysis_warning`,
+  `_request_library_media_type`, `_start_library_media_analyze`): every
+  in-cluster caller they have is itself excluded, so nothing a moved body does
+  can reach past the patch today. They are correct exclusions under the
+  conservative rule, and they are MOVE candidates for a later series once
+  their fixtures retarget.
+
+*(An earlier draft of the controller docstring asserted the narrower condition
+for all 16. It was false for those 7 and would have shipped as precedent; the
+docstring now states the governing rule and the 9/7 split. The exclusion set
+itself is unchanged.)*
 
 ### 3.2 The source-census exclusions, and what they also protect
 
@@ -406,10 +435,28 @@ signature assertion `AssertionError: assert 'layout-settlement-failed' ==
 **The standing correction:** census bare `self` as an operand of ANY
 comparison operator — and, stronger and cheaper, census **EVERY bare `self`
 `ast.Name` in a moved body that is not the receiver of an attribute access**.
-That form is exhaustive by construction. Over the final mover set it returns
-exactly 10 occurrences: 3 `getattr(self, "<literal>")` reads (bound), 4
-`_sync_library_canvas(self, ...)` duck-typed forwards (bound), 3 `ancestors`
-membership tests (excluded). Whole class, proven rather than sampled.
+That form is exhaustive by construction. Run **at the moment of the finding**
+— over the then-current mover set, with the three `ancestors` methods still
+in it — it returned **10** occurrences: 3 `getattr(self, "<literal>")` reads,
+4 `_sync_library_canvas(self, ...)` duck-typed forwards, and the 3 `ancestors`
+membership tests it exists to catch. Re-run over the **final 140 movers**,
+with those 3 now excluded, it returns **7**: the 3 `getattr` reads and the 4
+canvas forwards, every one of them bound. Both figures belong in the record —
+10 is what the census found, 7 is what survives — and quoting only the second
+would make the census look like it found nothing.
+
+**The shape has FOUR sites in the cluster, not three.** The fourth is
+`_library_media_settlement_tree` (`library_screen.py:5872` at HEAD, `:5646` at
+the parent `3dd7a745a`), which is already excluded under the
+instance-attribute-monkeypatch class and so is not reclassified. It matters
+for the wave-close recipe entry rather than for this move: a subsystem can
+carry this shape in a method whose exclusion is over-determined, so a census
+that counts only the methods it had to NEWLY exclude will understate how
+common the shape is. Enumerated by `ast.Compare` with an `In`/`NotIn` operator
+and `self` as the left operand, over all 251 candidates: `_commit_library_
+media_return` (`:6292`), `_library_media_focus_target_matches_receipt`
+(`:5917`), `_resolve_library_media_settlement_target` (`:6119`),
+`_library_media_settlement_tree` (`:5872`) — all four screen-resident at HEAD.
 
 ### 5.3 Callback identity (1 name) — fix round 1
 
@@ -594,12 +641,12 @@ Line delta **−2579**, reconciled term by term off measurements, not estimates:
 
 | Term | Lines |
 |---|---|
-| moved mover blocks (first decorator → `end_lineno`) | −3202 |
+| moved mover blocks (first decorator → `end_lineno`) | −3166 |
 | delegator lines (2–7 each; 3 staticmethods carry a 4-line function-local import) | +343 |
 | four relocated module constants (with comments) | −12 |
 | those four names added to the `screen_constants` import block | +4 |
 | born-lazy `LibraryMediaController` import | +3 |
-| construction site (92 named dependencies, under a 3-line comment) | +249 |
+| construction site (**83 keyword arguments**, under a 3-line comment) | +249 |
 | **net** | **−2579** |
 
 All three in-file copies of each figure were updated together (row, arithmetic
@@ -655,9 +702,20 @@ numbers were re-derived last, after the final edit.
    module" constant — true of the ATTRIBUTE (it is imported back and still
    resolves at that path) but no longer of the DEFINITION. A one-phrase
    correction for task 3's stale-prose sweep.
-5. **`library_media_browse_controller.py`'s standing red is still standing.**
+5. **Seven of the 16 instance-monkeypatch exclusions are MOVE candidates**
+   once their fixtures retarget (`_analyze_one_library_media_item`,
+   `_exit_library_media_select_mode`, `_focus_library_media_grip_if_current`,
+   `_library_media_unanalyzed_ids`, `_notify_library_media_analysis_warning`,
+   `_request_library_media_type`, `_start_library_media_analyze`): each is
+   patched on a real screen but has zero MOVER callers today, so it is held by
+   §3's conservative rule rather than by a demonstrated bypass (§3.5). An
+   observation for whoever plans the next media move, **not an obligation on
+   task 3** — retargeting those fixtures is cleanup-PR work only if that PR
+   wants it, and moving the methods afterwards would be a fourth PR, not a
+   cleanup-PR transform.
+6. **`library_media_browse_controller.py`'s standing red is still standing.**
    This task edited no controller file other than the new one.
-6. **Recipe §7 additions this task earned** (task 3 or 4's scope to write):
+7. **Recipe §7 additions this task earned** (task 3 or 4's scope to write):
    the `test_library_media_return_settlement.py` pair is already task 1's
    addition; nothing new to add — every failure this task saw was already
    documented.
@@ -675,3 +733,22 @@ stale figure being the 141-mover measurement that fix round 1 superseded — is
 accurate as committed, in both the controller docstring and §2 above, and the
 controller still measures 4461 so no re-pin was involved. Recorded here per
 the recipe's erratum-not-amend discipline rather than rewritten.
+
+**A second commit-message figure, same class.** `40fe1f5bc`'s message says
+"140 movers (was 141), 111 exclusions, **92 constructor bindings**". 92 is the
+binding SURFACE (the hand-written property count); the CONSTRUCTION SITE
+passes **83 keyword arguments**, and the two are deliberately different
+numbers. `40fe1f5bc` is recorded in `.git-blame-ignore-revs`, so amending it
+would orphan that entry (recipe §6/§10) — the correction of record is here and
+in the tracked ratchet comments, both of which now say 83 for the construction
+site and 92 only for the property surface. Its sibling in the screen ratchet
+(`test_screen_size_ratchet.py`) carried the same mislabel in a TRACKED comment
+and was corrected in place, since a tracked comment is not hash-load-bearing.
+
+**Fix round 2 (this review round) re-pinned the controller.** The docstring
+corrections below are comment-only and touch no moved body (all 140 re-verified
+TEXT- and AST-identical afterwards), but they add 35 lines, so
+`_BUDGETS[".../library_media_controller.py"]` moves **4461 → 4496** in the same
+commit, per §17's re-pin-at-move flow. The screen's own row is untouched at
+34754/1282 — the only screen-side edit in this round is a comment inside a
+`Tests/` file.

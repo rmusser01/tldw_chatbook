@@ -248,7 +248,26 @@ _BUDGETS: dict[str, int] = {
     # 251 -- no second component of any size, and the plan's own candidate
     # browse-vs-trash seam measured at 16 cross-call edges and 6 shared state
     # fields).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4461,
+    #
+    # 2026-09-06, wave-7 task 2 fix round 2 (post-review, docstring only):
+    # comment growth, no method body touched (140 movers unchanged, all still
+    # byte-for-byte, re-verified TEXT- and AST-identical after the edit).
+    # Three census claims in this module's own docstring were corrected in
+    # place: exclusion class 2 asserted that all 16 instance-monkeypatch names
+    # have a MOVER calling them, which a re-derived caller map shows is true
+    # of 9 and false of 7 (those 7 are held by recipe §3's OPENING rule --
+    # a patched name keeps its whole call graph screen-routed until cleanup --
+    # not by a demonstrated bypass, so the exclusions stand and only the
+    # stated reason changes); the generalized bare-`self` census returns 7
+    # over the FINAL 140 movers, not the 10 it returned at the moment of the
+    # finding when the three `ancestors` methods were still movers (both
+    # figures now stated, because only the pair shows the census working);
+    # and the `self in <widget>.ancestors` shape has FOUR sites in the
+    # 251-candidate cluster, not three -- `_library_media_settlement_tree` is
+    # the fourth and is already excluded under class 2, which is exactly how
+    # a census that stops at newly-excluded methods undercounts the shape.
+    # 4461 -> 4496.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4496,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

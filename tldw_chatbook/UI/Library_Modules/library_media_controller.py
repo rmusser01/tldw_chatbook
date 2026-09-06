@@ -71,7 +71,7 @@ of 238 plus 11 singletons**. There is no second component of any size, so
 there is no seam to split on. The plan's own candidate seam (browse/viewer
 vs trash/maintenance) was probed directly and does not hold: the 35
 trash-named candidates carry **16 cross-call edges** to the rest and share
-**6 media state fields** with it, and only 19 of the 140 movers are
+**6 media state fields** with it, and only 20 of the 140 movers are
 trash-named -- a second controller for 20 methods, still coupled through six
 shared fields, buys nothing the ratchet's per-file governance does not
 already give. The feared size did not materialise either: the hazard
@@ -126,10 +126,31 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
    ``_library_media_settlement_tree``, ``_open_selected_media_handoff``,
    ``_reconcile_library_media_stage_presentation``,
    ``_request_library_media_browse``) and eight more via a bare
-   ``screen.<name> = ...`` assignment -- and each has at least one MOVER that
-   calls it as ``self.<name>(...)``, which is the condition that makes the
-   patch bypassable. Verified per name against the caller map, not assumed
-   from the grep.
+   ``screen.<name> = ...`` assignment. The governing rule is recipe §3's
+   OPENING one, not a narrower dependency test: a name a test patches on a
+   real ``LibraryScreen`` keeps its whole in-cluster call graph
+   screen-routed until that subsystem's cleanup PR retargets the fixtures.
+   Under a mover-caller map re-derived at the parent tree, **9 of the 16 do
+   have a direct MOVER calling them as ``self.<name>(...)``** --
+   ``_arm_library_media_return_settlement``,
+   ``_library_media_content_signature``, ``_library_media_layout_signature``,
+   ``_library_media_settlement_tree``, ``_open_selected_media_handoff``,
+   ``_reconcile_library_media_stage_presentation``,
+   ``_request_library_media_browse``, ``_sync_library_media_browse_state``,
+   ``_sync_library_media_trash_state`` -- so for those the patch is directly
+   bypassable by a moved body. The other **7**
+   (``_analyze_one_library_media_item``,
+   ``_exit_library_media_select_mode``,
+   ``_focus_library_media_grip_if_current``,
+   ``_library_media_unanalyzed_ids``,
+   ``_notify_library_media_analysis_warning``,
+   ``_request_library_media_type``, ``_start_library_media_analyze``) have
+   only EXCLUDED in-cluster callers today, so they are held by §3's
+   conservative rule rather than by a demonstrated bypass -- correct as
+   exclusions, and MOVE candidates for a later series once their fixtures
+   retarget. An earlier draft of this paragraph asserted the narrower
+   condition for all 16; it was false for those 7 and is corrected here
+   rather than left as precedent.
 
 3. **8 source-census exclusions** -- the shape recipe §3 records as "a
    hardcoded-file-path census, not a monkeypatch bypass, ships red", here in
@@ -285,11 +306,25 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
    operator, not just ``Is``/``IsNot`` -- and, stronger and cheaper, census
    EVERY bare ``self`` ``ast.Name`` in a moved body that is not the receiver
    of an attribute access.** That stronger form is exhaustive by
-   construction; run over the final mover set here it returns exactly 10
-   occurrences -- 3 ``getattr(self, "<literal>")`` reads (bound), 4
-   ``_sync_library_canvas(self, ...)`` duck-typed forwards (bound), and 3
-   ``ancestors`` membership tests (excluded) -- which is the whole class,
-   proven rather than sampled.
+   construction. Run at the moment of the finding -- over the then-current
+   mover set, the three ``ancestors`` methods still in it -- it returned 10
+   occurrences: 3 ``getattr(self, "<literal>")`` reads, 4
+   ``_sync_library_canvas(self, ...)`` duck-typed forwards, and the 3
+   ``ancestors`` membership tests it exists to catch. Re-run over the FINAL
+   140 movers, with those 3 excluded, it returns **7** -- the 3 ``getattr``
+   reads and the 4 canvas forwards, every one of them bound. Both figures
+   are stated because only the pair shows the census working: 10 is what it
+   found, 7 is what survives.
+
+   **The shape is more common than one incident suggests: there are FOUR
+   ``self in/not in <widget>.ancestors`` sites in the 251-candidate
+   cluster, not three.** The fourth is ``_library_media_settlement_tree``
+   (``library_screen.py:5872`` at this commit, ``:5646`` at the parent
+   ``3dd7a745a``), which is already excluded under class 2 above and is
+   therefore not reclassified -- but it means a subsystem can carry this
+   shape in a method whose exclusion happens to be over-determined, and a
+   census that stops at the methods it had to newly exclude will undercount
+   how widespread the shape is.
 
 10. **1 callback-identity exclusion -- a TENTH bypass shape, also found by
    this task's own battery.** ``_exit_library_media_viewer``'s body schedules
