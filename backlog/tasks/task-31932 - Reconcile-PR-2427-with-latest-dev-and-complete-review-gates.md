@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 17:14'
-updated_date: '2026-09-06 17:30'
+updated_date: '2026-09-06 17:34'
 labels: []
 dependencies: []
 ---
@@ -18,7 +18,7 @@ Preserve the reviewed test repairs and newly landed dev behavior while making PR
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The PR contains latest dev with all reviewed behavior preserved and no unresolved rebase conflicts.
+- [x] #1 The PR contains latest dev with all reviewed behavior preserved and no unresolved rebase conflicts.
 - [x] #2 Review-created Backlog collisions are renumbered with upstream identities and historical evidence paths preserved.
 - [ ] #3 Affected complete-file tests and derived artifact checks pass without weakening contracts or raising screen size limits.
 - [ ] #4 Qodo findings and required checks on the final revision are handled before normal merge.
