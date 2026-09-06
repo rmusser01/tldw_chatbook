@@ -34493,7 +34493,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_reader_session = set_more_open(
             session, not session.more_open
         )
-        viewer = self._mounted_library_media_viewer()
         self._sync_library_media_viewer_or_recompose()
         # task-31633 AC#3: the disclosure owns its own focus target -- PR F's
         # restore seam otherwise leaves focus wherever it already was (the
@@ -34507,10 +34506,30 @@ class LibraryScreen(BaseAppScreen):
         # focused the More button that was about to be detached, and left
         # focus on an orphan with no parent chain, which swallowed every
         # subsequent key (Escape stopped closing anything at all).
-        if viewer is not None:
-            viewer.queue_after_recompose(
+        #
+        # Read AFTER the sync and CHAINED, never replacing: the sync queues
+        # PR F's focus restore on this same one-slot hook and
+        # ``queue_after_recompose`` replaces (that is how task-31567 lost a
+        # receipt's "land on Undo"). Ours runs first and wins outright; the
+        # restore behind it only acts when nothing claimed focus -- which is
+        # exactly the case where More is not composed at all.
+        viewer = self._mounted_library_media_viewer()
+        if viewer is None:
+            # The whole-screen fallback took the sync: there is no viewer to
+            # hang the hook on, so the screen's own post-refresh seam carries
+            # the target instead.
+            self.call_after_refresh(
                 partial(self._focus_library_control, "#library-media-reader-more")
             )
+            return
+        pending = viewer._post_recompose_callback
+
+        def focus_more_then_restore() -> None:
+            self._focus_library_control("#library-media-reader-more")
+            if pending is not None:
+                pending()
+
+        viewer.queue_after_recompose(focus_more_then_restore)
 
     @on(Button.Pressed, "#library-media-image-preview-toggle")
     def handle_library_media_image_preview_toggle(self, event: Button.Pressed) -> None:

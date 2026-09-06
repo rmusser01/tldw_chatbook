@@ -487,6 +487,38 @@ async def test_external_detail_without_original_exposes_no_empty_more_menu():
 
 
 @pytest.mark.asyncio
+async def test_stale_more_disclosure_paints_nothing_on_a_sourceless_detail():
+    """task-31633 AC#3: `more_open` survives the hop onto a server-only
+    detail, where every action inside the disclosure is gated off. Without a
+    guard the Reader composes an empty actions row under a "More" button that
+    is no longer there.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more")
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
+
+        await screen._open_library_external_media_detail("7")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.external_detail,
+            message="External server detail never entered.",
+        )
+        await _wait_for_selector(screen, pilot, "#library-media-reader-identity")
+
+        # The stale flag is the point: the guard is on what it composes.
+        assert screen._library_media_reader_session.more_open is True
+        assert not screen.query("#library-media-reader-more")
+        assert not screen.query("#library-media-reader-more-actions")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("late_outcome", [None, RuntimeError("late failure")])
 async def test_late_external_a_cannot_replace_b_or_show_error(late_outcome):
     """A stale server detail cannot repaint a newer external Reader session."""
@@ -1212,6 +1244,70 @@ def test_escape_and_its_label_read_the_same_find_state():
     LibraryScreen.action_library_media_viewer_back(fake)
     assert fake._library_media_find_open is False
     assert calls == ["sync", ("focus", "#library-media-reader-find")]
+
+
+class _RecomposeHookViewer:
+    """The one-slot post-recompose hook, with no Textual machinery."""
+
+    def __init__(self, pending=None):
+        self._post_recompose_callback = pending
+
+    def queue_after_recompose(self, callback) -> None:
+        self._post_recompose_callback = callback
+
+
+def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
+    """task-31633 AC#3: ``queue_after_recompose`` REPLACES, and the sync this
+    handler just ran queues PR F's focus restore on that same one slot -- so
+    installing the disclosure's own target has to chain the restore behind it
+    rather than evict it (task-31567 lost a receipt's intent exactly that way).
+    """
+    calls: list = []
+    viewer = _RecomposeHookViewer(pending=lambda: calls.append("pr-f-restore"))
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        _mounted_library_media_viewer=lambda: viewer,
+        _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        call_after_refresh=lambda *args: calls.append("call_after_refresh"),
+    )
+
+    LibraryScreen.handle_library_media_reader_more(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_media_reader_session.more_open is True
+    assert calls == ["sync"]
+    # The viewer's recompose fires the one queued callback.
+    viewer._post_recompose_callback()
+    assert calls == [
+        "sync",
+        ("focus", "#library-media-reader-more"),
+        "pr-f-restore",
+    ]
+
+
+def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
+    """The whole-screen recompose leaves no viewer to hang the hook on."""
+    calls: list = []
+    fake = SimpleNamespace(
+        _library_media_reader_session=LibraryMediaReaderSessionState(),
+        _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
+        _mounted_library_media_viewer=lambda: None,
+        _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
+    )
+
+    LibraryScreen.handle_library_media_reader_more(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_media_reader_session.more_open is True
+    assert len(calls) == 2 and calls[0] == "sync"
+    label, queued = calls[1]
+    assert label == "after"
+    queued()
+    assert calls[-1] == ("focus", "#library-media-reader-more")
 
 
 def test_escape_closes_more_find_confirmation_before_leaving_reader():

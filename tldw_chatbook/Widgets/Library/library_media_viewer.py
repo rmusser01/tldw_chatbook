@@ -329,7 +329,10 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     id="library-media-reader-more",
                     compact=True,
                 )
-        if self.more_open:
+        # The same condition the More button above is composed under: a stale
+        # ``more_open`` carried onto a server-only detail would otherwise paint
+        # an empty actions row under a button that is no longer there.
+        if self.more_open and (not self.external_detail or self.viewer.original_source):
             # task-31633 AC#3 (critique #5, capture 10): this was a bare
             # Vertical, and an unstyled Vertical defaults to 1fr -- it took
             # 19 rows for three one-row buttons and pushed the tab row and
@@ -339,7 +342,8 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # Reader is only ~46 wide at 100x30, where a Horizontal clips
             # the fourth action off the pane outright; the grid reflows it
             # onto a second row instead. Column width is the longest label
-            # (13) plus a compact Button's one-cell padding either side.
+            # (13) plus two cells of gutter -- the toolbar rule zeroes these
+            # buttons' own padding, so the label is the whole button.
             with ItemGrid(
                 id="library-media-reader-more-actions",
                 classes="ds-toolbar",
