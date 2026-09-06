@@ -548,3 +548,44 @@ TASK-18801 stays In Progress because clean origin/dev has not received the draft
 Existing warnings and broader failure families, including the three fork-census
 failures and two pending task-ID decisions, remain open. No full-suite, resource-
 closure or merge-ready claim is made.
+
+## Combined settings fork publication and route census
+
+TASK-31798 fixes a real partial-publication gap: the nested generation-settings
+guard ended before context-policy publication. Both regression variants first
+admitted a real fork in that gap (`/private/tmp/tldw-settings-fork-red.xml`). One
+outer existing transition now covers the whole publication block. Exact-origin
+and duplicate validation, persistence, and rollback semantics are unchanged.
+The regression checks other-session isolation, success/exception cleanup and
+stale-fence rejection. Six complete affected settings/fork/first-send files pass
+**330 tests in 35.61 seconds**, with two existing dependency warnings
+(`/private/tmp/tldw-settings-fork-final.xml`). Scoped static checks and independent
+review pass. The diagnostic statement scanner confirms all 81 store diagnostics
+unchanged; no diagnostic pin was edited.
+
+TASK-31799 reconciles the three existing guarded endpoint/settings rollback
+owners and the controller's three exact optimistic-echo rollback calls. Its
+count-only assertion now also checks the qualified store receiver, session and
+message owners, and prior title/conversation arguments. Process-local missing,
+extra, wrong-receiver and wrong-owner mutations all fail; the unchanged controller
+passes. The owner-aware scanner and safe-exemption set are unchanged.
+
+Complete census, trace-first-send and provider-apply UI files returned **70 passed /
+1 failed in 114.90 seconds**, with three existing dependency warnings
+(`/private/tmp/tldw-fork-route-reconciliation.xml`). The census itself is now
+**26 passed / 1 failed**, down from 24 passed / 3 failed. Both other complete
+files pass. Scoped static checks and independent review of the exact inventory
+changes are clear; the remaining failure below is not waived.
+
+The remaining mutation classification covers seven routes:
+`persist_console_settings_commit_serialized`,
+`prepare_session_user_display_name_override_for_commit`,
+`publish_first_persisted_conversation`, `rebind_persisted_conversation`,
+`reconcile_durable_turn_settings`, `retry_console_settings_persistence`, and
+`set_session_user_display_name_override_for_commit`. They remain unclassified.
+In particular, detached display-name preparation mutates live state and returns
+an off-thread persistence plan without the lease used by ordinary roleplay
+refresh; its consumer also has stale-result, error and cancellation exits to
+audit before introducing lease ownership. No blanket wrapper or exemption was
+added to hide that lifetime question. Broader review failures and both pending
+task-ID decisions remain open.

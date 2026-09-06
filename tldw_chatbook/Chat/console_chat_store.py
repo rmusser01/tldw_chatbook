@@ -7951,7 +7951,7 @@ class ConsoleChatStore:
                 current_settings.pinned_prefill if current_settings is not None else None
             ),
         )
-        with self._preparation_lock:
+        with self._fork_source_transition(session.id), self._preparation_lock:
             current = self._sessions.get(submission.origin.session_id)
             if current is not session or not validate_console_settings_origin(
                 submission.origin,

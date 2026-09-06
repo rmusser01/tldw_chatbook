@@ -22,6 +22,7 @@ DIRECT_TRANSITION_ROUTES = frozenset(
     {
         "add_variant",
         "accept_roleplay_projection_persistence_result",
+        "adopt_session_ephemeral_endpoint",
         "append_generation_message",
         "append_generation_variant",
         "append_message",
@@ -30,6 +31,7 @@ DIRECT_TRANSITION_ROUTES = frozenset(
         "begin_variant_stream",
         "cancel_preparation",
         "close_session",
+        "commit_console_settings_live",
         "create_sibling",
         "delete_message",
         "discard_provider_continuation",
@@ -60,6 +62,8 @@ DIRECT_TRANSITION_ROUTES = frozenset(
         "release_dispatch_recovery_action",
         "reload_quarantined_generation",
         "rollback_transient_send",
+        "rollback_session_ephemeral_endpoint_adoption",
+        "rollback_session_settings_replacement",
         "replace_message_thinking",
         "replace_session_settings",
         "retire_generation_attempt",
@@ -1256,7 +1260,25 @@ def test_external_console_modules_do_not_write_live_fork_fields_directly() -> No
         and isinstance(child.func, ast.Attribute)
         and child.func.attr == "rollback_transient_send"
     ]
-    assert len(rollback_calls) == 2
+    # Shutdown/readiness, thinking preflight, and queued Capture On each roll
+    # back the exact optimistic echo through the store's guarded owner.
+    assert [
+        (
+            ast.unparse(call.func),
+            tuple(ast.unparse(arg) for arg in call.args),
+            {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords},
+        )
+        for call in rollback_calls
+    ] == [
+        (
+            "self.store.rollback_transient_send",
+            ("session.id", "echoed_user.id"),
+            {
+                "title": "pre_send_title",
+                "persisted_conversation_id": "pre_send_conversation_id",
+            },
+        )
+    ] * 3
 
 
 def test_external_writer_scan_follows_alias_setattr_and_holder_mutations() -> None:

@@ -12043,3 +12043,16 @@ both leaf and parent aliases failed before the correction. The constructor now
 retains the lexical absolute path. When adopting a path-validation boundary,
 trace earlier canonicalization and test aliases at selection as well as later
 replacement; a safe opener cannot inspect path components it never receives.
+
+## A guarded setter does not cover its caller's remaining publication
+
+**TASK-31798, 2026-09-06 dev review.** The fork census flagged the combined
+Console settings commit even though its generation-settings setter already
+entered the canonical fork transition. A regression attempted real fork
+eligibility and fence issuance after that setter returned but before the
+context-policy publisher ran. Both success and injected-failure variants admitted
+a fork containing only half of the submitted configuration. Extending the existing
+transition around the caller's publication block fixed both while retaining
+other-session access and exception cleanup. When reviewing composed mutations,
+test the handoff after an inner guard exits; individually fenced setters do not
+make a multi-component publication atomic.
