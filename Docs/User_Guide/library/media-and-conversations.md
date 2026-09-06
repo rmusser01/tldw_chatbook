@@ -20,19 +20,23 @@ fills the center of the screen.
 ## Layout tour
 
 ```text
-Wide
+Wide (Media)
 
-+ Library +--->+ Items +--->+ Reader -------------------------------+
-| Browse        | Filter     | title · source · date                 |
-| Media         | item rows  | Find · Read later · Use in Console   |
-| ...           | ...        | Read · Analysis · Highlights · Info  |
-+---------------+------------+ complete stored content               |
++ Library ----+‹+ Items ------+‹+ Reader ---------------------------+
+| Browse       | Filter        | title · source · date              |
+| Media        | item rows     | Find · Read later · Use in Console |
+| ...          | ...           | Read · Analysis · Highlights · Info|
++--------------+---------------+ complete stored content            |
 
-Narrow
+Narrow (Media)
 
-+--->+--->+ Reader -----------------------------------------------+
++›+›+ Reader -------------------------------------------------------+
 | both pane grips remain reachable; Reader gets the available width |
 ```
+
+Media's two grips are one column each — the `‹` (open pane) and `›`
+(collapsed pane) above. Conversations and
+the other Library destinations keep the wider `+--->+` grip.
 
 Media has three stable roles:
 
@@ -44,13 +48,28 @@ Media has three stable roles:
 - **Reader** — a permanent reading surface. Selecting another row updates
   Reader in place; the Items list is not replaced.
 
-Library and Items each have a five-column, full-height grip. **`<---`**
-collapses the pane to its left and **`--->`** expands it. The grips are
-clickable and keyboard-operable. Reader has no grip and never collapses.
-Your manual pane choices are remembered. If the terminal is too narrow, the
-screen temporarily collapses Library first and then Items; widening the
-terminal restores the remembered layout instead of saving the temporary
-responsive state.
+Library and Items each have a full-height grip. On Media the grip is **one
+column** and paints **`‹`** to collapse the pane to its left and **`›`** to
+expand it; every other Library destination keeps the five-column **`<---`** /
+**`--->`** grip. The grips are clickable and keyboard-operable. Reader has no
+grip and never collapses. Your manual pane choices are remembered. If the
+terminal is too narrow, the screen temporarily collapses Library first and
+then Items; widening the terminal restores the remembered layout instead of
+saving the temporary responsive state.
+
+On Media nothing sits between the panes but those two one-cell grips, and the
+list uses the width that frees up:
+
+- **The Items column grows with the terminal.** Once the Reader is
+  comfortable the surplus is split between them, up to a 56-cell ceiling, so
+  a 98-character title paints 46 characters at 235 columns (it painted 31
+  before, in a fixed 40-cell column).
+- **Each item is two rows** — its title, then its type and age — with no
+  blank row between items, so a 52-row terminal lists 15 items rather than
+  11.
+- **The navigation rail joins Media at 112 columns.** Below that the screen
+  shows Items and the Reader only, and the Items pane itself collapses below
+  88 columns.
 
 While another row is loading, Items distinguishes a **Loading ·** row
 prefix from the settled **Loaded ·** one. Reader may keep the prior item visible,
@@ -303,8 +322,22 @@ still spans the pane.
 | "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
-| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. |
+| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
 | "Move to trash" | Two-step, title-specific confirmation. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+*Verified against fix/media-wave5-h @ a4682f17e — 2026-09-06 (task-31633
+AC#3: More opened live at 235x52 and at 100x30 over a seeded document.
+At 235x52 the four actions paint on one row and the "Read" tab row moves
+down exactly one line; at 100x30 they wrap to two rows and the body moves
+two. Before this change the disclosure was a full-height Vertical that
+displaced the tab row and body by 19 rows behind ~16 blank ones. The
+button paints "More ▴" while open and "More" once closed, and focus stays
+on it across both toggles. AC#1/AC#2 layout numbers -- the 56-cell Items
+ceiling and its 46 painted title characters at 235x52, 15 items in a
+52-row terminal, the one-cell grips, and the 112- and 88-column
+thresholds -- are the resolver's own answers and the painted pins that
+hold them, cross-checked against the live captures in the task 1 and
+task 2 reports.)*
 
 ### Review sets
 
@@ -468,7 +501,7 @@ stop, and the footer drops its `esc` chip there rather than advertise a key
 that does nothing.
 Where the Library pane is collapsed but the Items pane still shows the list
 (verified at 100x30) the "‹ Back" control returns you to the list, and so
-does Escape from the Items row. Below about 92 columns both panes are
+does Escape from the Items row. Below 88 columns both panes are
 collapsed: the control and the key still register the exit, but nothing on
 screen changes yet — the Reader keeps painting the item it had, and `]`/`[`
 stop working until you re-enter Media from the rail. A follow-up will open

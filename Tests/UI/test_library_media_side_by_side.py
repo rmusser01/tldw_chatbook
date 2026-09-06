@@ -796,6 +796,8 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
 
         items = screen.query_one("#library-canvas")
         initial_width = items.region.width
+        shell = screen.query_one("#library-media-reader-shell")
+        initial_reader_width = shell.work.region.width
         library_grip = screen.query_one("#library-media-library-grip", Button)
         library_grip.focus()
         await pilot.press("enter")
@@ -804,7 +806,12 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             lambda: not screen._library_media_reader_layout.library_open,
             message="Library grip did not collapse the Library pane.",
         )
-        assert items.region.width > initial_width
+        # task-31633: with the one-cell grips (AC#2) and list growth (AC#1)
+        # the Items pane is already on its 56-cell comfort ceiling at this
+        # size, so the collapsed rail's cells go to the Reader instead. The
+        # collapse still moves cells -- just not into a pane that is full.
+        assert items.region.width >= initial_width
+        assert shell.work.region.width > initial_reader_width
 
         search = screen.query_one("#library-media-trash-search", Input)
         search.focus()
@@ -1183,6 +1190,14 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                     service.page_two_entered.is_set()
                     and controller.loading
                     and len(screen.query(".library-media-row")) == 20
+                    # The retained rows are already in the DOM before the
+                    # loading recompose runs, so they cannot stand in for it:
+                    # settle on the pager the recompose disables, which only
+                    # exists again once that recompose has mounted.
+                    and any(
+                        button.disabled
+                        for button in screen.query("#library-media-next")
+                    )
                 ),
                 message="Compact page-2 loading never retained its mounted rows.",
             )
