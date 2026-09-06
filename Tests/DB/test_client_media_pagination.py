@@ -70,7 +70,7 @@ def test_exact_offsets_return_20_20_5_summary_rows_and_stable_ids(media_db):
 
 
 def test_summary_rows_carry_the_newest_versions_analysis_presence(media_db):
-    """has_analysis follows the NEWEST version, the rule the Reader uses."""
+    """has_analysis follows the newest LIVE version, the rule the Reader uses."""
     database, _path = media_db
     analysed_id, _uuid, _message = database.add_media_with_keywords(
         title="Analysed", media_type="article", content="v1 body", keywords=[]
@@ -81,7 +81,19 @@ def test_summary_rows_carry_the_newest_versions_analysis_presence(media_db):
     cleared_id, _uuid, _message = database.add_media_with_keywords(
         title="Cleared", media_type="article", content="cleared body", keywords=[]
     )
-    assert None not in (analysed_id, plain_id, cleared_id)
+    trashed_version_id, _uuid, _message = database.add_media_with_keywords(
+        title="Trashed version", media_type="article", content="tv body", keywords=[]
+    )
+    versionless_id, _uuid, _message = database.add_media_with_keywords(
+        title="Versionless", media_type="article", content="vl body", keywords=[]
+    )
+    assert None not in (
+        analysed_id,
+        plain_id,
+        cleared_id,
+        trashed_version_id,
+        versionless_id,
+    )
     # Newest version carries the analysis; the older one (created by the
     # ingest itself) does not.
     database.create_document_version(
@@ -96,13 +108,40 @@ def test_summary_rows_carry_the_newest_versions_analysis_presence(media_db):
     database.create_document_version(
         media_id=cleared_id, content="cleared body v3", analysis_content="   "
     )
+    # The newest version is analysed but soft-deleted, so the Reader shows the
+    # older LIVE version -- which has no analysis. The list must agree.
+    soft_deleted = database.create_document_version(
+        media_id=trashed_version_id,
+        content="tv body v2",
+        analysis_content="Retracted findings.",
+    )
+    assert database.soft_delete_document_version(soft_deleted["uuid"]) is True
+    # No DocumentVersions rows at all (the ingest's own version removed).
+    connection = database.get_connection()
+    connection.execute(
+        "DELETE FROM DocumentVersions WHERE media_id = ?", (versionless_id,)
+    )
+    connection.commit()
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM DocumentVersions WHERE media_id = ?",
+            (versionless_id,),
+        ).fetchone()[0]
+        == 0
+    )
 
     rows, _total = database.search_media_db(
         None, results_per_page=20, offset=0, library_summary=True
     )
 
     presence = {row["id"]: row["has_analysis"] for row in rows}
-    assert presence == {analysed_id: 1, plain_id: 0, cleared_id: 0}
+    assert presence == {
+        analysed_id: 1,
+        plain_id: 0,
+        cleared_id: 0,
+        trashed_version_id: 0,
+        versionless_id: 0,
+    }
 
 
 def test_summary_analysis_presence_uses_the_existing_document_versions_index(media_db):

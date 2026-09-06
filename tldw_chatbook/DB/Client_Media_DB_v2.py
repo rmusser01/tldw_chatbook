@@ -151,11 +151,15 @@ _MEDIA_POST_DELETE_CALLBACKS_LOCK = threading.Lock()
 #: small-allowlist case.
 _MEDIA_IDS_FILTER_JSON_EACH_THRESHOLD = 500
 
-#: Whether the NEWEST document version of a media row carries analysis text
-#: (task-28008). The same "newest version wins" rule the Reader applies in
-#: ``Library.library_media_viewer_state._latest_version_analysis_text``, so
-#: the browse list and the Reader can never disagree about one item.
-#: Projected in SQL rather than looked up per row: both legs ride the
+#: Whether the NEWEST LIVE document version of a media row carries analysis
+#: text (task-28008). The same rule the Reader applies in
+#: ``Library.library_media_viewer_state._latest_version_analysis_text``, which
+#: reads ``get_all_document_versions`` -- and that filters ``deleted = 0``, so
+#: BOTH legs here must too. Without the filter,
+#: ``soft_delete_document_version`` (which leaves the row with ``deleted = 1``)
+#: would let the list claim "analysed" off a version the Reader no longer
+#: shows.
+#: Projected in SQL rather than looked up per row: both legs still ride the
 #: existing ``UNIQUE (media_id, version_number)`` index, so no new index is
 #: needed. The plan is pinned in ``Tests/DB/test_client_media_pagination.py``
 #: with ``sqlite_stat1`` ABSENT -- no DB module here runs ``ANALYZE``, so
@@ -164,8 +168,10 @@ _HAS_ANALYSIS_SELECT = (
     "EXISTS ("
     "SELECT 1 FROM DocumentVersions v"
     " WHERE v.media_id = m.id"
+    " AND v.deleted = 0"
     " AND v.version_number = ("
-    "SELECT MAX(version_number) FROM DocumentVersions WHERE media_id = m.id"
+    "SELECT MAX(version_number) FROM DocumentVersions"
+    " WHERE media_id = m.id AND deleted = 0"
     ")"
     " AND TRIM(COALESCE(v.analysis_content, '')) <> ''"
     ") AS has_analysis"
