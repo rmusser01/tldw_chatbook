@@ -796,9 +796,9 @@ worksteal` is already available in the worktree venv). Procedure:
 
 1. Run that command on your branch; capture the pass/fail counts and the
    set of failing test names.
-2. Run the **identical** command against the pristine merge base (e.g.
-   `git stash -u` back to a clean tree at the base commit, or check out
-   `origin/dev` in a scratch worktree) — same `-n`/`--dist` config, so any
+2. Run the **identical** command against the pristine merge base in §3's
+   isolated baseline worktree (`git worktree add <scratch-path>
+   <base-commit>` with its own `uv venv`) — same `-n`/`--dist` config, so any
    parallelization-only flakiness is present in both runs equally.
 3. Diff the two failure-name sets. `pytest-xdist` itself introduces
    real, non-deterministic ordering/parallelization flakiness in this
@@ -827,8 +827,9 @@ required per-task.
 ### Documented pre-existing failures (do not re-derive these)
 
 Tests confirmed, by at least one Library-decomposition task, to fail
-identically on a pristine baseline (`git stash -u` to the pre-task tree)
-and therefore not attributable to any extraction/cleanup PR. Check this
+identically on a pristine baseline (§3's isolated worktree at the pre-task
+tree; older entries below record the `git stash -u` method §3 has since
+retired) and therefore not attributable to any extraction/cleanup PR. Check this
 list before spending time re-proving one of these is pre-existing; add to
 it (with the task that found it) rather than letting the next series
 rediscover the same red from scratch.
