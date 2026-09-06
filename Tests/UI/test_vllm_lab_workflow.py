@@ -2481,7 +2481,18 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
             if block_next_load.is_set():
                 block_next_load.clear()
                 second_load_entered.set()
-                release_second_load.wait(5)
+                # TASK-31809: this wait keeps the fresh screen's profile load
+                # pending until the test explicitly releases it, so the
+                # pre-hydration "Setup incomplete" assertions below observe a
+                # genuinely un-loaded screen. The timeout is only a failsafe
+                # against a never-released hang -- it must comfortably exceed
+                # the wall-clock cost of the pause-loops between block_next_load
+                # and release_second_load. On a machine under concurrent test
+                # load those loops were measured at ~5.6s, so the old 5s
+                # failsafe fired early, unblocking the load, flipping
+                # `_vllm_profiles_loaded` True, and rendering "Ready at ..."
+                # where the test asserts "Setup incomplete".
+                release_second_load.wait(60)
             return repository.load()
 
         def __getattr__(self, name):
@@ -2508,16 +2519,34 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
             if list(first_screen.query(LLMManagementWindow)):
                 break
         first_window = first_screen.query_one(LLMManagementWindow)
+        # TASK-31809: the vLLM pane mounts lazily as part of the window's
+        # compose, and switching `active_view` before that pane exists makes
+        # `watch_active_view` hit a QueryError that is only logged -- the
+        # deferred VllmSetupView mount worker is never started, so the view
+        # never appears and every later `query_one(VllmSetupView)` raises
+        # NoMatches. Under concurrent test load the window's compose lags its
+        # bare mount by enough for the old code to lose this race
+        # intermittently. Wait for the pane before switching.
+        for _ in range(120):
+            if list(first_window.query("#llm-view-vllm")):
+                break
+            await pilot.pause()
         first_window.active_view = "vllm"
-        for _ in range(30):
+        # The loop's exit predicate and the post-loop assertion must be the
+        # SAME condition. The old loop broke on
+        # `_vllm_profiles_loaded and query(VllmSetupView)` but asserted only
+        # `_vllm_profiles_loaded`, then called `query_one(VllmSetupView)` five
+        # bare pauses later -- so a run whose budget expired with profiles
+        # loaded but the view not yet mounted passed the assert and then
+        # raised NoMatches. Wait for BOTH and assert BOTH before querying.
+        for _ in range(120):
             await pilot.pause()
             if first_screen._vllm_profiles_loaded and list(
                 first_screen.query(VllmSetupView)
             ):
                 break
         assert first_screen._vllm_profiles_loaded
-        for _ in range(5):
-            await pilot.pause()
+        assert list(first_screen.query(VllmSetupView))
         first_view = first_screen.query_one(VllmSetupView)
         profile = first_screen._selected_vllm_profile()
         draft = draft_from_profile(profile)
@@ -2561,13 +2590,25 @@ async def test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff(
             if list(fresh_screen.query(LLMManagementWindow)):
                 break
         fresh_window = fresh_screen.query_one(LLMManagementWindow)
+        # TASK-31809: mirror the first-visit fix -- wait for the lazily
+        # composed vLLM pane before switching `active_view`, or the deferred
+        # mount worker never starts and the view never appears.
+        for _ in range(120):
+            if list(fresh_window.query("#llm-view-vllm")):
+                break
+            await pilot.pause()
         fresh_window.active_view = "vllm"
-        for _ in range(100):
-            await pilot.pause(0.02)
+        # The load stays pending here (see `_NavigationRepository.load`), so a
+        # generous budget cannot flip `_vllm_profiles_loaded` -- it only gives
+        # the mount time to land. Wait for the view, then assert it is present
+        # before querying it.
+        for _ in range(120):
+            await pilot.pause()
             if second_load_entered.is_set() and list(fresh_screen.query(VllmSetupView)):
                 break
         assert second_load_entered.is_set()
         assert not fresh_screen._vllm_profiles_loaded
+        assert list(fresh_screen.query(VllmSetupView))
         fresh_view = fresh_screen.query_one(VllmSetupView)
         for _ in range(5):
             await pilot.pause()
