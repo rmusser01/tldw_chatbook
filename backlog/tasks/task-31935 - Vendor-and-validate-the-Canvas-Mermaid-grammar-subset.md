@@ -1,11 +1,11 @@
 ---
 id: TASK-31935
 title: Vendor and validate the Canvas Mermaid grammar subset
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:11'
-updated_date: '2026-09-06 23:52'
+updated_date: '2026-09-06 23:53'
 labels:
   - canvas
   - v2
