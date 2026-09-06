@@ -111,6 +111,14 @@ class OnlineClusterer:
         PAST the pre-crash ids too -- after a crash this clusterer holds no
         centroids at all (the rest of the meeting is coarse), so the mint has
         no live id to count from.
+
+        Returns:
+            The highest cluster NUMBER already in use -- the ``N`` of the most
+            recently minted ``S{N}``, including any ``start_id`` inherited from
+            a previous worker. It is neither a count of live clusters (folding
+            and reconciliation can leave fewer) nor the next id to allocate:
+            the next one is ``S{max_id + 1}``. ``0`` means nothing has been
+            minted or inherited yet.
         """
         return self._n
 

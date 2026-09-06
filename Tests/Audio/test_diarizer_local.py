@@ -476,3 +476,85 @@ def test_pin_is_a_noop_when_coarse_only():
     d._mark_coarse("backend crashed")
     d.pin("S1")  # must not raise, must not write
     assert not any(b'"cmd": "pin"' in c for c in proc.stdin.chunks)
+
+
+# --- Qodo Q2: the WORKER's own command loop, torch-free --------------------
+# The tests above prove the app side puts a `pin` line on the pipe. Nothing
+# proved the worker on the other end acts on it: the dispatch used to sit
+# inside `main()`, behind the ECAPA load, so only a real subprocess could
+# reach it. `serve()` is that loop split out (`main()` calls it with the
+# encoder-bound callables), so the real protocol -- readline framing,
+# length-prefixed PCM, command dispatch -- runs here against a fake encoder.
+
+
+def _serve_script(*lines: bytes) -> "io.BytesIO":
+    """A worker stdin holding `lines` verbatim, then a `close`."""
+    import io
+
+    return io.BytesIO(b"".join(lines) + b'{"cmd": "close"}\n')
+
+
+def _drive_worker(script, live):
+    """Run `serve` over `script` with a fake encoder; return the JSON replies."""
+    import io
+
+    import numpy as np
+
+    from tldw_chatbook.Audio.diarizer_worker import serve
+
+    vectors = [
+        np.array([1.0, 0.0], dtype=np.float32),
+        np.array([0.0, 1.0], dtype=np.float32),
+    ]
+    handed: list[bytes] = []
+
+    def fake_embed(pcm: bytes):
+        handed.append(pcm)
+        return vectors[min(len(handed), len(vectors)) - 1]
+
+    stdout = io.BytesIO()
+    assert serve(script, stdout, live, fake_embed, lambda *a: []) == 0
+    return [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()], handed
+
+
+def test_worker_command_loop_pins_the_cluster_it_is_told_to():
+    """A pinned cluster's centroid is never moved by a fold at the speaker
+    cap -- so the centroid standing still after a second, unrelated voice is
+    proof the `pin` line reached the live clusterer. The control below is the
+    identical script WITHOUT the pin: there the fold averages it away."""
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    assign_a = b'{"cmd": "assign", "seq": 0, "n": 4}\n' + b"aaaa"
+    assign_b = b'{"cmd": "assign", "seq": 1, "n": 4}\n' + b"bbbb"
+
+    pinned = OnlineClusterer(threshold=0.01, max_speakers=1)
+    replies, handed = _drive_worker(
+        _serve_script(assign_a, b'{"cmd": "pin", "id": "S1"}\n', assign_b), pinned
+    )
+
+    # The reply framing is unchanged: one line per assign, `seq` echoed, and
+    # `pin` answers nothing at all (three commands in, two replies out).
+    assert replies == [{"id": "S1", "seq": 0}, {"id": "S1", "seq": 1}]
+    assert handed == [b"aaaa", b"bbbb"]      # PCM read by the control line's `n`
+    assert list(pinned.centroids()["S1"]) == [1.0, 0.0]
+
+    control = OnlineClusterer(threshold=0.01, max_speakers=1)
+    _drive_worker(_serve_script(assign_a, assign_b), control)
+    assert list(control.centroids()["S1"]) == [0.5, 0.5]   # folded, as expected
+
+
+def test_worker_command_loop_ignores_a_garbled_line_and_an_unknown_command():
+    """Protocol robustness the loop already had, now actually exercised: a
+    truncated control line must not kill the meeting's worker."""
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    live = OnlineClusterer(threshold=0.01, max_speakers=2)
+    replies, _handed = _drive_worker(
+        _serve_script(
+            b"not json at all\n",
+            b'{"cmd": "nonsense"}\n',
+            b'{"cmd": "assign", "seq": 7, "n": 4}\n' + b"aaaa",
+        ),
+        live,
+    )
+    assert replies == [{"id": "S1", "seq": 7}]

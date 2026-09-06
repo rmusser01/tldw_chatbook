@@ -214,6 +214,61 @@ def _write(stdout, obj) -> None:
     stdout.flush()
 
 
+def serve(stdin, stdout, live, embed, batch) -> int:
+    """Run the wire protocol until stdin closes or a ``close`` arrives.
+
+    Split out of `main()` (Qodo Q2) so the command loop is reachable without
+    torch: `main()` is the only place the encoder is loaded, and the loop
+    used to sit behind that load, so nothing but a hand-written fake process
+    on the app side could exercise command dispatch. A serialization or
+    dispatch regression -- the ``pin`` forwarding in particular, which sends
+    no reply and so shows up nowhere else -- could not fail a test. `main()`
+    passes the real encoder-bound callables; a test passes its own.
+
+    Args:
+        stdin: Binary input stream: one JSON control line per command, an
+            "assign" line followed by exactly its ``n`` bytes of PCM.
+        stdout: Binary output stream for the one-line JSON replies.
+        live: The `OnlineClusterer` held for the whole meeting.
+        embed: ``(pcm: bytes) -> embedding`` for an assign.
+        batch: ``(wav, start_s, end_s) -> segment dicts`` for a diarize.
+
+    Returns:
+        0 -- the process exit code, so `main()` can return it directly.
+    """
+    while True:
+        line = stdin.readline()
+        if not line:
+            break
+        try:
+            cmd = json.loads(line)
+        except Exception:  # noqa: BLE001 - ignore a garbled control line
+            continue
+        op = cmd.get("cmd")
+        if op == "assign":
+            pcm = _read_exactly(stdin, int(cmd.get("n", 0)))
+            try:
+                sid = live.assign(embed(pcm))
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write(f"ERROR assign {type(exc).__name__}\n")
+                sys.stderr.flush()
+                sid = None
+            _write(stdout, {"id": sid, "seq": cmd.get("seq")})
+        elif op == "diarize":
+            try:
+                segs = batch(cmd["wav"], float(cmd.get("start", 0.0)), float(cmd.get("end", 0.0)))
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write(f"ERROR diarize {type(exc).__name__}\n")
+                sys.stderr.flush()
+                segs = []
+            _write(stdout, {"segments": segs})
+        elif op == "pin":
+            live.pin(str(cmd.get("id", "")))
+        elif op == "close":
+            break
+    return 0
+
+
 def main() -> int:
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
@@ -238,40 +293,13 @@ def main() -> int:
     sys.stderr.write("READY\n")
     sys.stderr.flush()
 
-    while True:
-        line = stdin.readline()
-        if not line:
-            break
-        try:
-            cmd = json.loads(line)
-        except Exception:  # noqa: BLE001 - ignore a garbled control line
-            continue
-        op = cmd.get("cmd")
-        if op == "assign":
-            pcm = _read_exactly(stdin, int(cmd.get("n", 0)))
-            try:
-                sid = live.assign(_embed(encoder, torch, np, pcm))
-            except Exception as exc:  # noqa: BLE001
-                sys.stderr.write(f"ERROR assign {type(exc).__name__}\n")
-                sys.stderr.flush()
-                sid = None
-            _write(stdout, {"id": sid, "seq": cmd.get("seq")})
-        elif op == "diarize":
-            try:
-                segs = _batch(
-                    encoder, torch, np, live,
-                    cmd["wav"], float(cmd.get("start", 0.0)), float(cmd.get("end", 0.0)), max_speakers,
-                )
-            except Exception as exc:  # noqa: BLE001
-                sys.stderr.write(f"ERROR diarize {type(exc).__name__}\n")
-                sys.stderr.flush()
-                segs = []
-            _write(stdout, {"segments": segs})
-        elif op == "pin":
-            live.pin(str(cmd.get("id", "")))
-        elif op == "close":
-            break
-    return 0
+    return serve(
+        stdin, stdout, live,
+        lambda pcm: _embed(encoder, torch, np, pcm),
+        lambda wav, start_s, end_s: _batch(
+            encoder, torch, np, live, wav, start_s, end_s, max_speakers
+        ),
+    )
 
 
 if __name__ == "__main__":
