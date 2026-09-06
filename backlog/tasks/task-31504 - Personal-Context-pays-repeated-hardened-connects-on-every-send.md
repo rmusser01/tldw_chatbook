@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 19:30'
-updated_date: '2026-09-05 20:06'
+updated_date: '2026-09-06 00:04'
 labels:
   - performance
   - personal-context
@@ -32,6 +32,8 @@ ADR required: yes (amend existing decision). ADR path: backlog/decisions/102-per
 - Self-review complete. Status/AC finalization awaits independent spec and quality review; no full suite, commit, or publication performed by the implementing subagent.
 
 Independent spec review and code-quality review approved with no findings. Primary independently reran the nine-file targeted set: 169 passed, 2 dependency warnings (6.56s); quality reviewer separately ran 17 new regressions, all passed. Primary Ruff checks for repository/service/new tests, new-test formatting and diff check passed. Pytest emitted cleanup warnings for protected pre-existing garbage directories after exit 0; those unrelated directories were not modified. Implementation plan: Docs/superpowers/plans/2026-09-05-personal-context-send-performance.md. No schema or dependency changes, no full sweep, no PR or merge. Both authorized views remain intentionally per the documented owner note. Legacy unnumbered acceptance criteria were checked in the task source after CLI reported their indexes unavailable; Done status set through CLI.
+
+Publication: opened https://github.com/rmusser01/tldw_chatbook/pull/2439 against dev from reviewed source 0e3bcd1366. Fresh send-performance regression run: 17 passed, exit 0, two existing dependency warnings and pre-existing protected pytest garbage cleanup warnings; diff check passed. No rebase or merge. Current dev has advanced including Console changes; latest-base integration remains a pre-merge step.
 <!-- SECTION:NOTES:END -->
 
 ## Description (the why)
