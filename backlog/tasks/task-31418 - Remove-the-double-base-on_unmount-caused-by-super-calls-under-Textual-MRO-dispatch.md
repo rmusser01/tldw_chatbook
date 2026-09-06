@@ -77,8 +77,8 @@ test pins the base `on_unmount` firing exactly once under the no-super
 convention (revert-checked: it fires twice with `super()`), plus an AST scan
 that fails if any `on_unmount` re-introduces a `super().on_unmount()` call.
 
-**Docs (AC#3/#5):** the mechanism, the probe result, the convention, and the
-load-bearing exception are recorded in `BaseAppScreen`'s docstring and in a new
+**Docs (AC#3/#5):** the mechanism, the probe result, and the convention
+are recorded in `BaseAppScreen`'s docstring and in a new
 `backlog/docs/lessons-textual.md` section.
 
 **Verification:** guard tests pass (2 passed); all 11 touched modules import
