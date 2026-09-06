@@ -9511,6 +9511,7 @@ class LibraryScreen(BaseAppScreen):
         along the MRO separately for this event (the on_mount contract).
         """
         self._library_screen_suspended = True
+        self._unavailable_navigation.clear_character_return(self)
         self._disarm_library_list_entry_focus()
         self._stop_library_media_selection_debounce()
         self._stop_library_media_filter_timer()
@@ -11220,6 +11221,8 @@ class LibraryScreen(BaseAppScreen):
         if generation is None:
             generation = self._library_navigation_context_generation
         if generation != self._library_navigation_context_generation:
+            return
+        if not await self._unavailable_navigation._validate_library_character_admission(self, character_admission):
             return
         file_notes_flush_allowed = await self._flush_active_file_notes()
         if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
@@ -14346,6 +14349,7 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._focus_library_ordinary_canvas_entry)
         preferences = self._library_rail_preferences()
 
+        yield from self._unavailable_navigation.compose_character_return(self)
         yield Static(
             self._library_header_line(shell.header_line),
             id="library-header-line",

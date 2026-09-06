@@ -30,9 +30,11 @@ def rollback_records():
         logger.remove(sink)
 
 
-def test_unavailable_authority_failure_keeps_exception_canary_out_of_diagnostics():
+@pytest.mark.asyncio
+async def test_unavailable_authority_failure_keeps_exception_canary_out_of_diagnostics():
     from tldw_chatbook.UI.Library_Modules.library_unavailable_navigation import (
-        _library_character_authority_is_current,
+        _LibraryCharacterNavigationAdmission,
+        _validate_library_character_admission,
     )
 
     secret = "/synthetic/private-profile/CANARY-unavailable-authority.sqlite"
@@ -45,13 +47,34 @@ def test_unavailable_authority_failure_keeps_exception_canary_out_of_diagnostics
             chachanotes_db=SimpleNamespace(get_local_authority_id=fail)
         )
     )
+    from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+        UnresolvedConversationKey,
+    )
+    from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
+        LibraryUnavailableConversationInspection,
+        RoleplayReturnTarget,
+    )
+
+    screen._library_navigation_context_generation = 1
+    screen._navigation_controller = SimpleNamespace(character_route=None)
+    screen._pending_library_character_navigation = None
+    screen._conversations_state = SimpleNamespace(loading=False)
+    screen.is_mounted = False
+    admission = _LibraryCharacterNavigationAdmission(
+        LibraryUnavailableConversationInspection(
+            UnresolvedConversationKey("authority", "canary-chat"),
+            RoleplayReturnTarget.console_context_character(),
+        ),
+        screen.app_instance.chachanotes_db,
+        1,
+    )
     records = []
     sink = logger.add(
         lambda message: records.append((str(message), message.record)),
         level="WARNING",
     )
     try:
-        assert not _library_character_authority_is_current(screen, "authority")
+        assert not await _validate_library_character_admission(screen, admission)
     finally:
         logger.remove(sink)
     assert len(records) == 1

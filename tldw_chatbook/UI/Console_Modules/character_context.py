@@ -225,7 +225,9 @@ class ConsoleCharacterContextController:
         ],
         navigate_roleplay_home: Callable[[], None],
         navigate_library_home: Callable[[], None],
-        start_console: Callable[[int, str], Any],
+        start_console: Callable[
+            [ResolvedLocalCharacterKey, Any, str, Callable[[], bool]], Any
+        ],
         state_changed: Callable[[ConsoleCharacterContextState], None] | None = None,
         service_factory: Callable[..., CharacterConversationNavigationService] = (
             CharacterConversationNavigationService
@@ -251,6 +253,7 @@ class ConsoleCharacterContextController:
         )
         self._query_handoff = query_handoff
         self._generation = 0
+        self.return_reveal = False
         self._browse_snapshot: ConsoleCharacterBrowseSnapshot | None = None
         self._activation_cancellation: asyncio.Event | None = None
         self.state = ConsoleCharacterContextState()
@@ -397,6 +400,11 @@ class ConsoleCharacterContextController:
             and current.fingerprint == snapshot.fingerprint
         )
 
+    async def _operation_scope_is_current(self, snapshot, generation: int) -> bool:
+        """Fence both sides of the final asynchronous authority validation."""
+        current = await self._scope_is_current(snapshot)
+        return current and generation == self._generation
+
     def invalidate_scope(self) -> None:
         """Fence work and force the next lifecycle check to reload."""
 
@@ -519,8 +527,9 @@ class ConsoleCharacterContextController:
             database = snapshot.database
             fingerprint = snapshot.fingerprint
             if database is None:
-                if generation == self._generation and await self._scope_is_current(
-                    snapshot
+                if (
+                    generation == self._generation
+                    and await self._operation_scope_is_current(snapshot, generation)
                 ):
                     self._publish(
                         replace(
@@ -539,7 +548,7 @@ class ConsoleCharacterContextController:
             except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
                 if generation != self._generation:
                     return
-                if not await self._scope_is_current(snapshot):
+                if not await self._operation_scope_is_current(snapshot, generation):
                     continue
                 self._publish(
                     replace(
@@ -552,7 +561,7 @@ class ConsoleCharacterContextController:
                 return
             if generation != self._generation:
                 return
-            if not await self._scope_is_current(snapshot):
+            if not await self._operation_scope_is_current(snapshot, generation):
                 continue
             expanded = self.state.expanded_key
             keys = {group.key for group in groups}
@@ -607,12 +616,12 @@ class ConsoleCharacterContextController:
             except Exception:  # noqa: BLE001 - stale DB failures fail closed
                 if generation != self._generation:
                     return
-                if not await self._scope_is_current(snapshot):
+                if not await self._operation_scope_is_current(snapshot, generation):
                     continue
                 return
             if generation != self._generation:
                 return
-            if not await self._scope_is_current(snapshot):
+            if not await self._operation_scope_is_current(snapshot, generation):
                 continue
             self._publish(
                 replace(
@@ -729,8 +738,9 @@ class ConsoleCharacterContextController:
                 )
                 return
             if snapshot.database is None:
-                if generation == self._generation and await self._scope_is_current(
-                    snapshot
+                if (
+                    generation == self._generation
+                    and await self._operation_scope_is_current(snapshot, generation)
                 ):
                     self._publish(
                         replace(
@@ -752,7 +762,7 @@ class ConsoleCharacterContextController:
             except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
                 if generation != self._generation:
                     return
-                if not await self._scope_is_current(snapshot):
+                if not await self._operation_scope_is_current(snapshot, generation):
                     continue
                 self._publish(
                     replace(
@@ -765,7 +775,7 @@ class ConsoleCharacterContextController:
                 return
             if generation != self._generation:
                 return
-            if not await self._scope_is_current(snapshot):
+            if not await self._operation_scope_is_current(snapshot, generation):
                 continue
             fingerprint = snapshot.fingerprint
             keyword_error = {
@@ -917,8 +927,9 @@ class ConsoleCharacterContextController:
                 )
                 return False
             if snapshot.database is None:
-                if generation == self._generation and await self._scope_is_current(
-                    snapshot
+                if (
+                    generation == self._generation
+                    and await self._operation_scope_is_current(snapshot, generation)
                 ):
                     self._publish(
                         replace(
@@ -945,7 +956,7 @@ class ConsoleCharacterContextController:
             except Exception:  # noqa: BLE001 - repair evidence is a DB boundary
                 if generation != self._generation:
                     return False
-                if not await self._scope_is_current(snapshot):
+                if not await self._operation_scope_is_current(snapshot, generation):
                     continue
                 self._publish(
                     replace(
@@ -957,7 +968,7 @@ class ConsoleCharacterContextController:
                 return False
             if generation != self._generation:
                 return False
-            if not await self._scope_is_current(snapshot):
+            if not await self._operation_scope_is_current(snapshot, generation):
                 continue
             break
         else:
@@ -1075,7 +1086,7 @@ class ConsoleCharacterContextController:
         if (
             generation != self._generation
             or snapshot.fingerprint.data_authority_id != key.data_authority_id
-            or not await self._scope_is_current(snapshot)
+            or not await self._operation_scope_is_current(snapshot, generation)
         ):
             if generation == self._generation:
                 self._publish(
@@ -1118,6 +1129,7 @@ class ConsoleCharacterContextController:
         return await self._prepare_unavailable_repair(key, row_key=row_key)
 
     async def view_group(self, group: CharacterConversationGroup) -> None:
+        generation = self._generation
         from ..Navigation.character_conversation_navigation import (
             LibraryUnavailableConversationsBrowse,
             RoleplayCharacterConversationLink,
@@ -1149,7 +1161,7 @@ class ConsoleCharacterContextController:
             if (
                 snapshot.fingerprint.data_authority_id
                 != row.unresolved.data_authority_id
-                or not await self._scope_is_current(snapshot)
+                or not await self._operation_scope_is_current(snapshot, generation)
             ):
                 return
             self._navigate_unavailable_browse(
@@ -1166,11 +1178,33 @@ class ConsoleCharacterContextController:
 
     async def start_current(self, group: CharacterConversationGroup) -> None:
         if isinstance(group.key, ResolvedLocalCharacterKey):
+            generation = self._generation
+            try:
+                snapshot = await self._capture_scope()
+            except (_ConsoleCharacterScopeChanged, _ConsoleCharacterScopeReadError):
+                return
+            if (
+                snapshot.database is None
+                or snapshot.fingerprint.data_authority_id != group.key.data_authority_id
+                or not await self._operation_scope_is_current(snapshot, generation)
+            ):
+                return
             self.invalidate_scope()
+            generation = self._generation
+
+            def is_current() -> bool:
+                return (
+                    generation == self._generation
+                    and self._database_accessor() is snapshot.database
+                )
+
             await _maybe_await(
-                self._start_console(group.key.character_id, group.character_label)
+                self._start_console(
+                    group.key, snapshot.database, group.character_label, is_current
+                )
             )
-            await self.refresh_if_scope_changed(force=True)
+            if is_current():
+                await self.refresh_if_scope_changed(force=True)
 
     def handoff_query(self, query: str) -> bool:
         """Invoke Task 5's typed handoff only after capability installation."""

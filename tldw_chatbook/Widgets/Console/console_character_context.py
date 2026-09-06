@@ -93,6 +93,8 @@ class ConsoleCharacterContext(Vertical):
         self._task: asyncio.Task[Any] | None = None
         self._browse_focus: ConsoleCharacterFocusIdentity | None = None
         self._recompose_generation = 0
+        self._focus_intent_generation = 0
+        self._pending_focus_restore: ConsoleCharacterFocusIdentity | None = None
 
     @property
     def state(self) -> ConsoleCharacterContextState:
@@ -119,7 +121,14 @@ class ConsoleCharacterContext(Vertical):
         return f"console-character-{role}-{digest}"
 
     def on_mount(self) -> None:
+        self.watch(self.screen, "focused", self._observe_focus_intent)
         self._start(self._controller.refresh_if_scope_changed())
+
+    def _observe_focus_intent(self, old: Any, new: Any) -> None:
+        """External focus wins; pruning the owning node is not a new intent."""
+        if new is not None and new is not self and self not in new.ancestors:
+            self._focus_intent_generation += 1
+            self._pending_focus_restore = None
 
     def _start(self, coroutine: Any) -> None:
         self._task = asyncio.create_task(coroutine)
@@ -152,7 +161,7 @@ class ConsoleCharacterContext(Vertical):
     def sync_state(self, state: ConsoleCharacterContextState) -> None:
         """Apply one complete snapshot and semantically restore focus/scroll."""
 
-        if state == self._state:
+        if not self.is_attached or not self.app.screen_stack or state == self._state:
             return
         current_focus = (
             self._focus_identity(self.app.focused) if self.is_mounted else None
@@ -160,11 +169,17 @@ class ConsoleCharacterContext(Vertical):
         self._state = state
         self._sync_identity_line()
         restore = state.restore_focus or current_focus
+        if restore is None and self.app.focused is None:
+            restore = self._pending_focus_restore
+        self._pending_focus_restore = restore
         self._recompose_generation += 1
         generation = self._recompose_generation
         asyncio.create_task(
             self._recompose_and_restore(
-                generation, restore, state.restore_scroll_offset
+                generation,
+                restore,
+                state.restore_scroll_offset,
+                self._focus_intent_generation,
             )
         )
 
@@ -173,12 +188,26 @@ class ConsoleCharacterContext(Vertical):
         generation: int,
         focus: ConsoleCharacterFocusIdentity | None,
         scroll_offset: int | None,
+        focus_intent_generation: int,
     ) -> None:
         """Restore only after Textual has mounted the new semantic projection."""
 
+        if not self.is_attached or not self.app.screen_stack:
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors:
+            # Avoid Textual's automatic external fallback while pruning the
+            # old node. A real subsequent external focus still advances intent.
+            self.screen.set_focus(None)
         await self.recompose()
-        if generation == self._recompose_generation:
+        if (
+            self.is_attached
+            and bool(self.app.screen_stack)
+            and generation == self._recompose_generation
+            and focus_intent_generation == self._focus_intent_generation
+        ):
             self._restore_browse_position(focus, scroll_offset)
+            self._pending_focus_restore = None
 
     def _outer_scroll(self) -> Any | None:
         try:
@@ -412,11 +441,12 @@ class ConsoleCharacterContext(Vertical):
 
         search = Input(
             value=self._state.query,
-            placeholder="Search character chats…",
+            placeholder="Search chats",
+            name="Global Keyword search over local character chats",
             id=CONSOLE_CHARACTER_SEARCH_ID,
         )
         search.character_focus_identity = ConsoleCharacterFocusIdentity("search")
-        search.tooltip = "Search saved local character conversations"
+        search.tooltip = "Global Keyword search over local character chats"
         yield search
 
         if self._state.phase is ConsoleCharacterOperationPhase.REFRESHING:

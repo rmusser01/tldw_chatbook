@@ -166,6 +166,8 @@ class LibraryUnavailableConversationInspection:
             raise TypeError("unresolved must be an UnresolvedConversationKey")
         if not isinstance(self.return_target, RoleplayReturnTarget):
             raise TypeError("return_target must be a RoleplayReturnTarget")
+        if self.return_target != RoleplayReturnTarget.console_context_character():
+            raise ValueError("unavailable inspection must return to Console Character")
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,8 @@ class LibraryUnavailableConversationsBrowse:
             raise TypeError("selected must be an UnresolvedConversationKey")
         if not isinstance(self.return_target, RoleplayReturnTarget):
             raise TypeError("return_target must be a RoleplayReturnTarget")
+        if self.return_target != RoleplayReturnTarget.console_context_character():
+            raise ValueError("unavailable browse must return to Console Character")
 
 
 @dataclass(frozen=True)

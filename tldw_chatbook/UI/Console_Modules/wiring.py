@@ -159,14 +159,17 @@ def _navigate_character_context(screen: Any, context_key: str, target: Any) -> N
 
 
 async def _start_character_context_chat(
-    screen: Any, character_id: int, name: str
+    screen: Any, key: Any, database: Any, name: str, is_current: Callable[[], bool]
 ) -> None:
     from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
         ConsoleCharacterChoice,
     )
 
     await screen._character._apply_console_character_choice_async(
-        ConsoleCharacterChoice(character_id, name, "new")
+        ConsoleCharacterChoice(key.character_id, name, "new"),
+        expected_key=key,
+        required_database=database,
+        commit_is_current=is_current,
     )
 
 
@@ -181,6 +184,8 @@ def _sync_character_context_presentation(
 ) -> None:
     """Push a complete Character snapshot into the current mounted rail."""
 
+    if not screen.is_attached or not screen.app.screen_stack:
+        return
     try:
         widget = screen.query_one("#console-character-context", ConsoleCharacterContext)
     except QueryError:
@@ -1071,8 +1076,8 @@ def build_console_controllers(
             lambda: screen.post_message(NavigateToScreen(TAB_LIBRARY))
         ),
         start_console=(
-            lambda character_id, name: _start_character_context_chat(
-                screen, character_id, name
+            lambda key, database, name, is_current: _start_character_context_chat(
+                screen, key, database, name, is_current
             )
         ),
         state_changed=lambda state: _sync_character_context_presentation(

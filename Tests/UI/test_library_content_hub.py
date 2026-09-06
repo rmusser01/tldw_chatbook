@@ -842,6 +842,52 @@ async def test_library_character_route_rejects_authority_mismatch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_character_authority_read_yields_ui_and_cannot_admit_superseded_route():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    entered, release = threading.Event(), threading.Event()
+    read_threads = []
+
+    def delayed_authority():
+        read_threads.append(threading.get_ident())
+        entered.set()
+        release.wait(0.4)
+        return "slow-authority"
+
+    app.chachanotes_db = SimpleNamespace(get_local_authority_id=delayed_authority)
+    payload = character_navigation.serialize_library_unavailable_inspection(
+        character_navigation.LibraryUnavailableConversationInspection(
+            UnresolvedConversationKey("slow-authority", "stale-chat"),
+            character_navigation.RoleplayReturnTarget.console_context_character(),
+        )
+    )
+    host = DestinationHarness(app, "library")
+    try:
+        async with host.run_test(size=(120, 40)) as pilot:
+            screen = _active_destination_screen(host)
+            await _wait_for_library_shell_ready(screen, pilot)
+            started = time.monotonic()
+            screen.apply_navigation_context(
+                {constants.LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: payload}
+            )
+            assert time.monotonic() - started < 0.1
+            assert await asyncio.to_thread(entered.wait, 1)
+            heartbeat = asyncio.Event()
+            asyncio.get_running_loop().call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), 0.1)
+            assert screen._conversations_state.loading
+            screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "search"})
+            release.set()
+            await pilot.pause(0.2)
+            assert screen._selected_conversation_id != "stale-chat"
+            assert read_threads and threading.get_ident() not in read_threads
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
 async def test_library_navigation_context_opens_requested_valid_mode() -> None:
     app = _build_test_app()
     _seed_library_content(app)

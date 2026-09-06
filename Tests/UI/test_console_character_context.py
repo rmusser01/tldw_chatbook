@@ -142,7 +142,7 @@ def _controller(**overrides):
         "navigate_unavailable_browse": lambda _link: None,
         "navigate_roleplay_home": lambda: None,
         "navigate_library_home": lambda: None,
-        "start_console": lambda _id, _name: None,
+        "start_console": lambda _key, _database, _name, _guard: None,
         "service_factory": _Service,
     }
     params.update(overrides)
@@ -432,7 +432,7 @@ async def test_start_current_invalidates_context_before_current_mutation() -> No
     calls: list[tuple[str, bool]] = []
     controller = None
 
-    async def start(_character_id: int, _name: str) -> None:
+    async def start(_key, _database, _name: str, _guard) -> None:
         assert controller is not None
         calls.append(("mutated", controller.state.scope_fingerprint is None))
 

@@ -355,3 +355,64 @@ def test_strict_wire_rejects_identity_coercion_and_noncanonical_bounds(field, va
     payload["character"][field] = value
     with pytest.raises(ValueError):
         deserialize_roleplay_character_conversation_link(payload)
+
+
+@pytest.mark.parametrize("kind", ("inspection", "browse"))
+@pytest.mark.parametrize(
+    "anchor",
+    (
+        RoleplayReturnTarget.personas_filter(),
+        RoleplayReturnTarget.personas_conversations(),
+    ),
+)
+def test_unavailable_routes_reject_non_console_origins_without_narrowing_repair(
+    kind, anchor
+):
+    from tldw_chatbook.UI.Navigation import (
+        character_conversation_navigation as navigation,
+    )
+
+    key = UnresolvedConversationKey("authority", "conversation")
+    make, serialize, parse = (
+        (
+            navigation.LibraryUnavailableConversationInspection,
+            navigation.serialize_library_unavailable_inspection,
+            navigation.deserialize_library_unavailable_inspection,
+        )
+        if kind == "inspection"
+        else (
+            navigation.LibraryUnavailableConversationsBrowse,
+            navigation.serialize_library_unavailable_browse,
+            navigation.deserialize_library_unavailable_browse,
+        )
+    )
+    valid = make(key, RoleplayReturnTarget.console_context_character())
+    assert parse(serialize(valid)) == valid
+    with pytest.raises(ValueError):
+        make(key, anchor)
+    payload = serialize(valid)
+    payload["return_target"] = {
+        "screen_id": anchor.screen_id,
+        "focus_id": anchor.focus_id,
+    }
+    with pytest.raises(ValueError):
+        parse(payload)
+    from tldw_chatbook.UI.Navigation._character_conversation_wire import (
+        _LibraryUnavailableBrowseWire,
+        _LibraryUnavailableInspectionWire,
+    )
+
+    wire = (
+        _LibraryUnavailableInspectionWire
+        if kind == "inspection"
+        else _LibraryUnavailableBrowseWire
+    )
+    with pytest.raises(ValueError):
+        wire.model_validate(payload)
+    repair = LibraryCharacterRepairContext(key, 1, "Historical", anchor)
+    assert (
+        deserialize_library_character_repair_context(
+            serialize_library_character_repair_context(repair)
+        )
+        == repair
+    )

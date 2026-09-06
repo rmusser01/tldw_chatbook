@@ -92,6 +92,19 @@ async def test_character_context_stays_inside_rail_and_never_claims_task5(
                         break
                 assert geometry.clip.contains_region(action.region)
 
+                if isinstance(action, Input):
+                    painted_search = "\n".join(
+                        strip.text[action.region.x : action.region.right]
+                        for strip in screen._compositor.render_strips()[
+                            action.region.y : action.region.bottom
+                        ]
+                    )
+                    assert "Search chats" in painted_search
+                    assert (
+                        action.name
+                        == "Global Keyword search over local character chats"
+                    )
+
             view_all.focus()
             for _ in range(20):
                 view_all.scroll_visible(animate=False, immediate=True, force=True)

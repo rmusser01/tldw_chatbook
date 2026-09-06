@@ -1125,7 +1125,10 @@ class ConsoleLeftRail(Vertical):
         if (
             self.app.focused is target
             and target.is_mounted
-            and not self._section_is_outer_visible(section_id)
+            and (
+                section_id == "character"
+                or not self._section_is_outer_visible(section_id)
+            )
         ):
             self.activate_section(section_id, reveal_target=target)
             return

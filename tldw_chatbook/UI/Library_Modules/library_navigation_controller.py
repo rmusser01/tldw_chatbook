@@ -54,6 +54,7 @@ class LibraryNavigationController:
         self.repair_present_on_resume = False
         self.keyword_generation = 0
         self.semantic_generation = 0
+        self.character_route = None
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -82,6 +83,7 @@ class LibraryNavigationController:
             return
         if not isinstance(context, Mapping):
             return
+        self.character_route = None
         is_character_navigation = set(context) in (
             {LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION},
             {LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE},

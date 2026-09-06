@@ -12212,6 +12212,7 @@ class ChatScreen(BaseAppScreen):
                 self._character._current_console_rail_character_id() is not None
                 or self._character_context.state.has_context
             ),
+            character_return_reveal=self._character_context.return_reveal,
         )
         if self._should_open_standard_width_inspector(
             rail_state=rail_state,
@@ -12608,6 +12609,8 @@ class ChatScreen(BaseAppScreen):
         notify_on_failure: bool = True,
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
+        if left_open is not None or right_open is not None or "character" in (section_updates or {}):
+            self._character_context.return_reveal = False
         workspace_context = self._workspace._current_console_workspace_context()
         workspace_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
@@ -12729,6 +12732,8 @@ class ChatScreen(BaseAppScreen):
             # guard makes the next sync tick re-measure the now-visible body
             # and repaint at the rail's real width.
             self._character.invalidate_refresh_scope()
+            if self._pending_character_return_focus_id is not None:
+                self._workspace.restore_character_navigation_focus()
 
     def _sync_console_workspace_context(self) -> None:
         try:

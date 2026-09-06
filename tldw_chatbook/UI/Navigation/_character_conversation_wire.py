@@ -86,12 +86,17 @@ class _LibraryRepairWire(_StrictWire):
         return self
 
 
+class _ConsoleContextReturnWire(_ReturnTargetWire):
+    screen_id: Literal["chat"]
+    focus_id: Literal["console-context-character"]
+
+
 class _LibraryUnavailableInspectionWire(_StrictWire):
     version: _Version
     source: Literal["local"]
     data_authority_id: _IdentityText
     unresolved: _UnresolvedConversationWire
-    return_target: _ReturnTargetWire
+    return_target: _ConsoleContextReturnWire
 
     @model_validator(mode="after")
     def same_authority(self) -> Self:
@@ -105,7 +110,7 @@ class _LibraryUnavailableBrowseWire(_StrictWire):
     source: Literal["local"]
     data_authority_id: _IdentityText
     selected: _UnresolvedConversationWire
-    return_target: _ReturnTargetWire
+    return_target: _ConsoleContextReturnWire
 
     @model_validator(mode="after")
     def same_authority(self) -> Self:

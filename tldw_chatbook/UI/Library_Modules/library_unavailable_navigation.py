@@ -111,7 +111,6 @@ def _library_character_navigation_admission(
 ) -> _LibraryCharacterNavigationAdmission | None:
     """Parse one strict typed route and bind it to the active DB handle."""
     from ..Navigation.character_conversation_navigation import (
-        LibraryUnavailableConversationInspection,
         deserialize_library_unavailable_browse,
         deserialize_library_unavailable_inspection,
     )
@@ -136,37 +135,62 @@ def _library_character_navigation_admission(
     if route is None:
         return None
     database = getattr(self.app_instance, "chachanotes_db", None)
-    if not _library_character_authority_is_current(
-        self,
-        route.unresolved.data_authority_id
-        if isinstance(route, LibraryUnavailableConversationInspection)
-        else route.selected.data_authority_id,
-    ):
+    if database is None:
         return None
     return _LibraryCharacterNavigationAdmission(route, database, generation)
+
+
+def compose_character_return(self):
+    """Expose the return only while the validated Character route owns this view."""
+    from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS
+
+    admission = self._navigation_controller.character_route
+    if (
+        admission is not None
+        and _library_character_admission_is_current(self, admission)
+        and self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+    ):
+        from ...Widgets.Library.library_character_return import LibraryCharacterReturn
+
+        yield LibraryCharacterReturn(lambda: return_from_character(self, admission))
+
+
+def return_from_character(self, admission) -> None:
+    from ...Constants import CHARACTER_NAV_CONTEXT_RETURN_FOCUS
+    from ..Navigation.main_navigation import NavigateToScreen
+
+    if not _library_character_admission_is_current(self, admission):
+        return
+    target = admission.route.return_target
+    self.post_message(
+        NavigateToScreen(
+            target.screen_id, {CHARACTER_NAV_CONTEXT_RETURN_FOCUS: target.focus_id}
+        )
+    )
+
+
+def clear_character_return(self) -> None:
+    from textual.screen import ModalScreen
+
+    if isinstance(self.app.screen, ModalScreen):
+        return
+    self._navigation_controller.character_route = None
+    for control in self.query("#library-character-return"):
+        control.display = False
 
 
 def _library_character_admission_is_current(
     self,
     admission: _LibraryCharacterNavigationAdmission | None,
 ) -> bool:
-    from ..Navigation.character_conversation_navigation import (
-        LibraryUnavailableConversationInspection,
-    )
-
     if admission is None:
         return True
     database = getattr(self.app_instance, "chachanotes_db", None)
     if database is not admission.database:
         return False
-    authority = (
-        admission.route.unresolved.data_authority_id
-        if isinstance(admission.route, LibraryUnavailableConversationInspection)
-        else admission.route.selected.data_authority_id
-    )
     return (
         admission.generation == self._library_navigation_context_generation
-        and _library_character_authority_is_current(self, authority)
+        and self._navigation_controller.character_route is admission
     )
 
 
@@ -223,20 +247,73 @@ def _discard_library_unavailable_browse_scope(
 
 
 def _library_character_authority_is_current(self, authority: str) -> bool:
-    """Fail closed unless a typed Character route owns the active database."""
+    """UI-side fence over an off-loop validated snapshot; never performs SQL."""
+    from ..Navigation.character_conversation_navigation import (
+        LibraryUnavailableConversationInspection,
+    )
 
-    database = getattr(self.app_instance, "chachanotes_db", None)
-    try:
-        return bool(
-            database is not None and database.get_local_authority_id() == authority
+    admission = self._navigation_controller.character_route
+    if admission is None or not _library_character_admission_is_current(
+        self, admission
+    ):
+        return False
+    route = admission.route
+    key = (
+        route.unresolved
+        if isinstance(route, LibraryUnavailableConversationInspection)
+        else route.selected
+    )
+    return key.data_authority_id == authority
+
+
+async def _validate_library_character_admission(self, admission) -> bool:
+    """Read transactional authority off-loop, then retain only a current snapshot."""
+    import asyncio
+
+    from ..Navigation.character_conversation_navigation import (
+        LibraryUnavailableConversationInspection,
+    )
+
+    if admission is None:
+        return True
+    if _library_character_admission_is_current(self, admission):
+        return True
+
+    def scope_is_current():
+        return (
+            getattr(self.app_instance, "chachanotes_db", None) is admission.database
+            and admission.generation == self._library_navigation_context_generation
         )
+
+    if not scope_is_current():
+        return False
+    self._conversations_state.loading = True
+    if self.is_mounted:
+        self.notify("Loading character conversations…", severity="information")
+    route = admission.route
+    key = (
+        route.unresolved
+        if isinstance(route, LibraryUnavailableConversationInspection)
+        else route.selected
+    )
+
+    try:
+        authority = await asyncio.to_thread(admission.database.get_local_authority_id)
     except Exception as error:  # noqa: BLE001 - navigation rejects unavailable storage
         logger.warning(
             "Could not validate Library character navigation authority "
             "exception_type={}",
             type(error).__name__,
         )
+        authority = None
+    if not scope_is_current():
         return False
+    self._conversations_state.loading = False
+    if authority != key.data_authority_id:
+        _discard_library_character_admission(self, admission)
+        return False
+    self._navigation_controller.character_route = admission
+    return True
 
 
 async def _open_pending_library_character_navigation(self) -> None:
@@ -248,11 +325,22 @@ async def _open_pending_library_character_navigation(self) -> None:
     admission = self._pending_library_character_navigation
     if admission is None:
         return
+    if not await _validate_library_character_admission(self, admission):
+        _discard_library_character_admission(self, admission)
+        return
     if not _library_character_admission_is_current(self, admission):
         _discard_library_character_admission(self, admission)
         return
     route = admission.route
+    self._apply_navigation_context_state(
+        {}, recompose=False, character_admission=admission
+    )
     if isinstance(route, LibraryUnavailableConversationInspection):
+        if self.is_mounted:
+            await self.recompose()
+        if not _library_character_admission_is_current(self, admission):
+            _discard_library_character_admission(self, admission)
+            return
         await self._open_library_item_by_id(
             "conversations",
             route.unresolved.conversation_id,
@@ -501,6 +589,8 @@ def _apply_navigation_context_state(
         return
     if character_admission is not None:
         if not _library_character_admission_is_current(self, character_admission):
+            if not self.is_mounted:
+                self._pending_library_character_navigation = character_admission
             return
         from ..Library_Modules.library_unavailable_navigation import (
             _LibraryUnavailableBrowseScope,

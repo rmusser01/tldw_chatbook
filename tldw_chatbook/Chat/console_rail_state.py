@@ -822,6 +822,7 @@ def build_console_rail_state(
     can_save_chatbook: bool = False,
     available_columns: int | None = None,
     character_context_exists: bool = False,
+    character_return_reveal: bool = False,
 ) -> ConsoleRailState:
     """Build effective Console rail state without importing Textual.
 
@@ -870,6 +871,10 @@ def build_console_rail_state(
             preferences,
             character_open=bool(character_context_exists),
         )
+    if character_return_reveal:
+        preferences = replace(
+            preferences, left_open=True, right_open=False, character_open=True
+        )
     # TASK-2154.2 (LY-11, ADR-043): the compact-collapse rules below are the
     # responsive default. Explicit opens are honored while the 70/74-column
     # usable-transcript budgets permit, and receive the layout-minimum waiver;
@@ -891,7 +896,9 @@ def build_console_rail_state(
     #   (``CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY``, set by
     #   ``ChatScreen._set_console_rail_preference``) records it. Legacy
     #   payloads lack the marker and keep the force-collapse default.
-    explicit_left_open = console_rail_left_open_explicit(stored_preferences)
+    explicit_left_open = character_return_reveal or console_rail_left_open_explicit(
+        stored_preferences
+    )
     # task-18911: an explicit toggle is honored only while the viewport can
     # afford rail + a usable transcript (rail min + main floor). Below that
     # budget the collapse is a rendering override the explicit marker
