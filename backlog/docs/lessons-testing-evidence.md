@@ -11778,6 +11778,19 @@ have turned `test_screen_still_re_exports_every_moved_name` red. The re-check
 **What to do.** "Check against `_SURFACE`" means resolve each candidate NAME
 against the contract, one at a time. A grep for the subsystem word is a
 different, weaker question, and it answers "no" for the wrong reason.
+## Screen reuse bypasses compose-time handoff consumption
+
+**TASK-31750, 2026-09-06 dev review.** The real stage/leave/restage test
+reached Library and returned to the same installed Console with launch A still
+resident and launch B still pending. TASK-31520's screen reuse meant compose
+never ran again; adding navigation delays could not repair that lifecycle gap.
+Both resident and initially empty Console returns failed with a new handoff,
+while no-new-handoff controls passed. Reusing the existing claim-and-refresh
+routine on ordinary warm resume made all four cases pass. Qualify the actual
+intermediate destination and instance identity, then assert mounted evidence,
+notice preservation/clearing and settled claims; a fresh-screen restore test
+alone does not cover cached-screen return.
+
 ## Stop must drain an offloaded dispatch CAS before terminal settlement
 
 **TASK-31585, 2026-09-05.** Real DeepSeek UAT requested Stop as soon as the

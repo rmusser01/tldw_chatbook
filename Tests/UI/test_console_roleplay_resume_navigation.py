@@ -777,7 +777,9 @@ async def test_resume_navigation_continues_after_chat_handoff_release() -> None:
     )
     screen._stage_handoff_as_console_live_work = lambda _payload: None
     screen._consume_pending_console_roleplay_repair = lambda: False
-    screen._prompts._consume_pending_console_prompt_insert = _async_spy(events, "prompt")
+    screen._prompts = SimpleNamespace(
+        _consume_pending_console_prompt_insert=_async_spy(events, "prompt"),
+    )
     screen.consume_pending_console_provider_intent = lambda: False
     screen._fleet = SimpleNamespace(
         consume_pending_console_fleet_completion=lambda: False,
@@ -819,7 +821,9 @@ async def test_resume_navigation_propagates_logged_chat_handoff_acquisition_fail
         consume_pending_console_first_chat_intent=lambda **_kwargs: False,
     )
     screen._consume_pending_console_roleplay_repair = lambda: False
-    screen._prompts._consume_pending_console_prompt_insert = _async_spy([], "prompt")
+    screen._prompts = SimpleNamespace(
+        _consume_pending_console_prompt_insert=_async_spy([], "prompt"),
+    )
     screen.consume_pending_console_provider_intent = lambda: False
     screen._fleet = SimpleNamespace(
         consume_pending_console_fleet_completion=lambda: False,

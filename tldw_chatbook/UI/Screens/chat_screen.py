@@ -4715,7 +4715,7 @@ class ChatScreen(BaseAppScreen):
         never first become live inside a send gate.
         """
         if self._pending_console_launch_context is not None:
-            self._supersede_resident_console_launch_from_store()
+            self._stage_pending_console_launch_from_store()
             return self._pending_console_launch_context
 
         store = self.app_instance.pending_handoffs
@@ -4738,13 +4738,12 @@ class ChatScreen(BaseAppScreen):
         store.acknowledge(claim)
         return self._pending_console_launch_context
 
-    def _supersede_resident_console_launch_from_store(self) -> None:
-        """Let a freshly staged handoff replace an already-resident launch.
+    def _stage_pending_console_launch_from_store(self) -> None:
+        """Claim fresh evidence and refresh the Console's mounted surfaces.
 
-        Only ever called from `_consume_pending_console_launch` with a
-        non-`None` resident launch. `has_pending` is checked first so the
-        overwhelmingly common case (a resident launch, an empty channel)
-        costs one cheap slot read and touches nothing.
+        Used when consuming over a resident launch or returning to a cached
+        Console, including one with no resident launch. An empty channel
+        costs one cheap slot read and leaves the existing evidence intact.
 
         Failure containment: the resident context is repointed at the new
         launch BEFORE anything fallible runs, and the claim is acknowledged
@@ -4765,7 +4764,7 @@ class ChatScreen(BaseAppScreen):
         # Non-fallible ownership transfer first, then settle the claim.
         self._pending_console_launch_context = launch
         self._console_evidence_sent_notice = None
-        # A superseding launch IS a fresh handoff, so it earns the
+        # A newly claimed launch is a fresh handoff, so it earns the
         # auto-open-once Inspector behavior; set BEFORE staging, because
         # staging syncs the rail state synchronously (same ordering as
         # every other `_stage_console_library_rag_launch` caller).
@@ -16212,6 +16211,8 @@ class ChatScreen(BaseAppScreen):
                 and self._console_environment_owner is not None
             ):
                 self._console_environment_owner.notify_rail_opened()
+        if not mount_already_refreshed and not ordered_resume_active:
+            self._stage_pending_console_launch_from_store()
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via

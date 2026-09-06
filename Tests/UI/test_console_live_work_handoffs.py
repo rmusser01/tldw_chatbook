@@ -2077,7 +2077,7 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
     Once D3 made it survive, the leftover store entry was not a decoy at
     all -- it was the user's newest "Use in Console" click, left invisible
     and later spent on an unrelated message (see
-    ``_supersede_resident_console_launch_from_store``). The store entry is
+    ``_stage_pending_console_launch_from_store``). The store entry is
     now claimed and staged, and the assertions below are inverted to match:
     the newer launch becomes resident and the channel is drained.
 
@@ -2336,26 +2336,18 @@ async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel()
         assert screen._consume_pending_console_launch().title == "Later handoff"
 
 
+@pytest.mark.parametrize("resident", [True, False], ids=["resident", "empty"])
+@pytest.mark.parametrize("new_handoff", [True, False], ids=["new", "no-new"])
 @pytest.mark.asyncio
-async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch():
-    """PR-T1 C1 pilot regression: the real stage A -> leave -> stage B flow.
+async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch(
+    resident, new_handoff
+):
+    """Warm return stages fresh evidence, or preserves state if none arrived.
 
-    Drives the exact user path the final review reconstructed, through the
-    production navigation machinery rather than direct restore calls:
-
-    1. A "Use in Console" handoff (A) lands and Console displays it.
-    2. The user navigates away; ``save_state`` persists A (D3).
-    3. A second handoff (B) is staged while Console is not mounted.
-    4. The user returns to Console.
-
-    Before the fix, ``restore_state`` (which runs BEFORE compose) made A
-    resident, compose's consume returned A, and B was never displayed --
-    the second click looked dead. B then sat in the store until some later
-    send claimed it from inside a send gate and silently prepended it to an
-    unrelated message.
-
-    Asserted here: B is what the rebuilt Console displays AND stages, and
-    the channel is empty afterwards so nothing is left to ambush a send.
+    TASK-31520 keeps the same installed Console across navigation: compose
+    does not run again, so pending handoffs must be consumed on resume.
+    Both initial-empty and resident-launch paths must refresh real widgets,
+    settle the claim, and leave suspended Console untouched until return.
     """
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
 
@@ -2368,20 +2360,34 @@ async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_
         recovery="Review citations before sending.",
         action_label="Review evidence in Console",
     )
-    app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_a)
+    if resident:
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_a)
 
     async with app.run_test(size=(180, 40)) as pilot:
         screen1 = await _wait_for_production_chat_screen(app, pilot)
-        await _wait_for_selector(screen1, pilot, "#console-pending-launch-card")
-        assert screen1._pending_console_launch_context.title == (
-            "Launch A (stale survivor)"
-        )
+        if resident:
+            await _wait_for_selector(screen1, pilot, "#console-pending-launch-card")
+            assert (
+                screen1._pending_console_launch_context.title
+                == "Launch A (stale survivor)"
+            )
+        else:
+            assert screen1._pending_console_launch_context is None
+        before = screen1._pending_console_launch_context
+        screen1._console_evidence_sent_notice = 5
 
-        # Leave Console. `save_state` persists A onto the app's per-screen
-        # state, which the next Console instance restores before compose.
+        # Qualify the actual intermediate destination, not elapsed pauses.
         app.post_message(NavigateToScreen("library"))
-        await pilot.pause()
-        await pilot.pause()
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline:
+            if (
+                type(app.screen).__name__ == "LibraryScreen"
+                and not app._screen_navigation_in_progress()
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            pytest.fail("Console did not finish navigating to Library")
 
         # The user stages a SECOND result while standing in Library.
         launch_b = ConsoleLiveWorkLaunch.from_values(
@@ -2392,25 +2398,63 @@ async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_
             recovery="Review citations before sending.",
             action_label="Review evidence in Console",
         )
-        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_b)
+        if new_handoff:
+            app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_b)
+        await pilot.pause(0.2)
+        assert screen1._pending_console_launch_context is before
+        assert screen1._console_evidence_sent_notice == 5
+        assert (
+            app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+            is new_handoff
+        )
 
         app.post_message(NavigateToScreen("chat"))
         await pilot.pause()
         screen2 = await _wait_for_production_chat_screen(app, pilot)
-        await _wait_for_selector(screen2, pilot, "#console-pending-launch-card")
+        assert screen2 is screen1
+
+        expected_title = (
+            "Launch B (the click that must not die)"
+            if new_handoff
+            else "Launch A (stale survivor)"
+            if resident
+            else None
+        )
+        if expected_title is not None:
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                tray = screen2.query_one("#console-staged-context-tray")
+                if expected_title in _screen_static_text(tray):
+                    break
+                await pilot.pause(0.02)
+            else:
+                pytest.fail(f"Returned Console did not render {expected_title!r}")
 
         staged = screen2._pending_console_launch_context
-        assert staged is not None
-        assert staged.title == "Launch B (the click that must not die)"
+        if expected_title is None:
+            assert staged is None
+        else:
+            assert staged is not None
+            assert staged.title == expected_title
 
-        # Displayed, not merely staged.
+        # Retain the display-state contract as well as mounted-widget evidence.
         strip_state = screen2._build_console_staged_evidence_strip_state(staged)
         assert strip_state.visible is True
-        tray_state = screen2._build_console_staged_context_state(staged)
-        assert "Launch B (the click that must not die)" in tray_state.summary
+        if expected_title is not None:
+            tray_state = screen2._build_console_staged_context_state(staged)
+            assert expected_title in tray_state.summary
+        assert screen2._console_evidence_sent_notice == (None if new_handoff else 5)
+        if not new_handoff:
+            assert staged is before
 
         # And A is not lurking in the store to be spent on a later send.
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK) is None
+        # An unacknowledged claim would prevent the next handoff being claimed.
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_a)
+        next_claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+        assert next_claim is not None
+        app.pending_handoffs.acknowledge(next_claim)
 
 
 @pytest.mark.asyncio
