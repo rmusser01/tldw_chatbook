@@ -10,7 +10,7 @@ from rich.color import Color
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalGroup
+from textual.containers import Horizontal, ItemGrid, Vertical, VerticalGroup
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.widget import Widget
@@ -348,9 +348,35 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 )
             yield Button("Use in Console", id="library-media-use-in-chat", compact=True)
             if not self.external_detail or self.viewer.original_source:
-                yield Button("More", id="library-media-reader-more", compact=True)
-        if self.more_open:
-            with Vertical(id="library-media-reader-more-actions"):
+                # task-31633 AC#3: the glyph is the disclosure state. The
+                # actions render as ONE toolbar row under this one, so
+                # nothing else on screen says whether More is open.
+                yield Button(
+                    "More \u25b4" if self.more_open else "More",
+                    id="library-media-reader-more",
+                    compact=True,
+                )
+        # The same condition the More button above is composed under: a stale
+        # ``more_open`` carried onto a server-only detail would otherwise paint
+        # an empty actions row under a button that is no longer there.
+        if self.more_open and (not self.external_detail or self.viewer.original_source):
+            # task-31633 AC#3 (critique #5, capture 10): this was a bare
+            # Vertical, and an unstyled Vertical defaults to 1fr -- it took
+            # 19 rows for three one-row buttons and pushed the tab row and
+            # the whole reading body off the fold. A second ds-toolbar row
+            # costs exactly one row at the wide size. ItemGrid rather than
+            # Horizontal because the four labels need ~60 cells and the
+            # Reader is only ~46 wide at 100x30, where a Horizontal clips
+            # the fourth action off the pane outright; the grid reflows it
+            # onto a second row instead. Column width is the longest label
+            # (13) plus two cells of gutter -- the toolbar rule zeroes these
+            # buttons' own padding, so the label is the whole button.
+            with ItemGrid(
+                id="library-media-reader-more-actions",
+                classes="ds-toolbar",
+                min_column_width=15,
+                max_column_width=16,
+            ):
                 if not self.external_detail:
                     yield Button("Edit metadata", id="library-media-edit", compact=True)
                 if self.viewer.original_source:

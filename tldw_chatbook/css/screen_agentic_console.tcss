@@ -91,6 +91,12 @@ $ds-library-source-browser-width: 31;
     padding: 1 2;
 }
 
+/* TASK-31665 AC#15: visible scrollbar thumb. `$ds-grid-line` on a
+   `$ds-surface-panel` track measured 1.01:1 -- a scroller advertising a fold
+   it cannot show a position for. `$ds-text-muted` is the app's established
+   thumb token, generated per theme polarity; `scrollbar-color-active` keeps
+   the accent so a drag still reads as a drag. Applied to five more scrollers
+   below (same rationale). */
 #console-settings-body {
     height: 1fr;
     min-height: 0;
@@ -98,8 +104,8 @@ $ds-library-source-browser-width: 31;
     overflow-x: hidden;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -972,6 +978,7 @@ $ds-library-source-browser-width: 31;
     background: $ds-surface-panel;
 }
 
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #console-left-rail-body {
     width: 100%;
     min-width: 0;
@@ -993,8 +1000,8 @@ $ds-library-source-browser-width: 31;
     scrollbar-gutter: stable;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -1028,6 +1035,11 @@ $ds-library-source-browser-width: 31;
     padding: 0;
 }
 
+/* TASK-31663 AC#4: the thumb measured 1.01:1 against its own track. It must
+   clear the 3:1 non-text floor and nothing in the surface family does on
+   this theme ($ds-column-line 1.28:1, $panel-lighten-3 2.16:1), so it takes
+   $ds-text-muted -- the app's other established thumb token, generated per
+   theme polarity. See TASK-31663 notes. */
 #console-inspector-rail-body {
     width: 100%;
     min-width: 0;
@@ -1038,8 +1050,8 @@ $ds-library-source-browser-width: 31;
     overflow-x: hidden;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -1051,6 +1063,17 @@ $ds-library-source-browser-width: 31;
     max-height: 6;
     padding: 0 1;
     overflow: hidden;
+}
+
+/* TASK-31663 AC#5: constrained-height form. At 80x24 a six-row block left a
+   THREE-row scroll body, too short for the Environment section; two rows
+   makes it seven. `ConsoleInspectorRail._sync_authority_summary_density`
+   pins the SAME numbers inline (inline wins in Textual) -- keep them in
+   step. `console-` prefix keeps this out of the boot bundle. */
+#console-send-authority-summary.console-authority-compact {
+    height: 2;
+    min-height: 2;
+    max-height: 2;
 }
 
 #console-send-authority-summary:focus {
@@ -1338,8 +1361,11 @@ ConsoleTerminalWorkspace#console-main-column {
     scrollbar-gutter: stable;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    /* TASK-31663 AC#4: the SECTION-inner bar, same invisible thumb as the
+       outer scroller above -- fixing only one would leave the rail's two
+       scrollbars disagreeing about whether they can be seen. */
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 
@@ -1394,6 +1420,38 @@ ConsoleTerminalWorkspace#console-main-column {
     outline-left: thick $ds-action-focus;
 }
 
+/* TASK-31663 AC#1/AC#2: the rail's Button focus carrier. Seven ring stops
+   painted identical text focused and unfocused (background swap only,
+   1.68:1) and a tint cannot reach 3:1 on this theme, so the cue must change
+   CELLS. Lossless: every rail Button already paints a leading space.
+   Class-keyed, NOT `#console-right-rail Button` -- that form taxed every
+   Button in the app (test_textual_css_fastpath.py's ratchet). Coverage and
+   losslessness pinned by test_console_inspector_focus_carriers.py. */
+Button.console-rail-focus-carrier:focus {
+    outline-left: thick $ds-action-focus;
+}
+
+/* The COLLAPSED rail's handle -- the shipping default state, and before this
+   rule focusing it changed nothing at all. RIGHT edge, measured not
+   stylistic: the shell clips this button's leading pad, so col 0 carries the
+   "◂" of "◂ Inspect" while the last column is always blank. A left edge would
+   paint "█ Inspect". See TASK-31663 notes. */
+#console-inspector-rail-open:focus {
+    outline-right: thick $ds-action-focus;
+}
+
+/* Inspector ROWS are deliberately absent above: the `*:focus` fallback in
+   `css/core/_reset.tcss` already gives them corner brackets on their own
+   padding -- a cue deliberately DISTINCT from the `█` column the focused
+   scroller paints. An `outline-left: thick` here was dead code (a 1-2 line
+   row has no middle line to paint on). See TASK-31663 notes. */
+
+/* The rail's SCROLLER stop. Textual paints children OVER a container's own
+   strips, so the body's edge shows only in inter-section gaps -- none at
+   80x24. The section body's `padding-left: 1` is the innermost free column.
+   Accepted cost: `outline-left` is a `BoxProperty` forcing
+   `refresh(layout=True)`, so scroller focus enter/leave relayouts each
+   section body; investigated as a flake cause and CLEARED twice. */
 #console-workspace-tree {
     width: 100%;
     min-width: 0;
@@ -1651,10 +1709,20 @@ Button.console-inspector-action:disabled {
     padding: 0 0 0 1;
 }
 
+/* TASK-31662: one line per row unless its pair needs two (see
+   `ConsoleInspectorSectionRow`). A floor of `2` left 25% of the Environment
+   section's row-lines blank. */
 .console-inspector-section-row {
     height: auto;
-    min-height: 2;
+    min-height: 1;
     padding: 0 1;
+}
+
+/* The one-line form's inner row: primary (1fr) + secondary (auto), the
+   same split the section header uses for title + summary. */
+.console-inspector-section-row-line {
+    width: 100%;
+    height: 1;
 }
 
 .console-inspector-section-row:focus {
@@ -1668,10 +1736,12 @@ Button.console-inspector-action:disabled {
     text-overflow: ellipsis;
 }
 
+/* TASK-31665 AC#9: no `text-style: dim` -- it DOUBLE-dimmed an already-muted
+   token to 3.42:1 (AA fail) where sibling muted strings paint 5.91:1. `dim`
+   is a real second step (~65% fg retained), not a no-op. */
 .console-inspector-section-row-secondary {
     height: 1;
     color: $ds-text-muted;
-    text-style: dim;
     text-wrap: nowrap;
     text-overflow: ellipsis;
 }
@@ -1681,28 +1751,41 @@ Button.console-inspector-action:disabled {
    built via f-string interpolation in console_inspector_section.py, which
    is out of scope for test_css_class_coverage_contract.py by design (its
    docstring: "f-strings ... are out of scope"); these rules are shipped
-   for real styling, not to satisfy that contract. */
-.console-inspector-section-row-running > .console-inspector-section-row-primary {
+   for real styling, not to satisfy that contract.
+
+   DESCENDANT, not child (`>`), since TASK-31662: the one-line form nests
+   the primary in `.console-inspector-section-row-line`, so `>` silently
+   dropped the status colour for every row sharing a line. */
+.console-inspector-section-row-running .console-inspector-section-row-primary {
     color: $ds-status-running;
 }
 
-.console-inspector-section-row-done > .console-inspector-section-row-primary {
+.console-inspector-section-row-done .console-inspector-section-row-primary {
     color: $ds-status-ready;
 }
 
-.console-inspector-section-row-error > .console-inspector-section-row-primary {
-    color: $ds-status-error;
+/* TASK-31664 (a11y): this text must be READ (a failing-check name), so it
+   takes the READABLE token. $ds-status-error is $error at 3.06:1 (AA fail);
+   $ds-status-error-readable is the per-theme $text-error. */
+.console-inspector-section-row-error .console-inspector-section-row-primary {
+    color: $ds-status-error-readable;
 }
 
-.console-inspector-section-row-blocked > .console-inspector-section-row-primary {
-    color: $ds-status-blocked;
+/* The row the critique measured at 2.53:1 carries status="blocked", NOT
+   "error", so the rule above never reached it. Both are must-be-READ states
+   and deliberately share one readable token. See TASK-31664 notes. */
+.console-inspector-section-row-blocked .console-inspector-section-row-primary {
+    color: $ds-status-error-readable;
 }
 
+/* TASK-31665 AC#5: no top margin. With the section's own bottom margin the
+   tail button floated between two blank lines, "orphaned ~28 lines from its
+   data"; flush under the last row makes its owner unambiguous. */
 .console-inspector-section-view-all {
     width: 100%;
     height: 1;
     min-height: 1;
-    margin: 1 0 0 0;
+    margin: 0;
 }
 
 .console-live-work-source-readiness {
