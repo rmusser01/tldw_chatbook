@@ -574,5 +574,18 @@ numbers looking perfectly plausible.
    state-PR commits of the four series BEFORE ingest are still missing their
    entries — untouched here, still open.
 
-8. **`progress.md` was not touched** (controller-owned), and **nothing was
+8. **A self-inflicted tooling slip, recorded rather than quietly fixed.** The
+   first attempt at the durable-evidence commit chained a `python - <<PY`
+   heredoc onto the same `bash` line as `git commit -F - <<'MSG'`; the outer
+   heredoc swallowed the inner script, and the commit landed with the Python
+   source as its subject line. Every success signal was green — the commit
+   succeeded, `git rev-parse` printed a hash — and it was caught only by
+   reading `git log --oneline` afterwards. Nothing pinned that hash (no
+   `.git-blame-ignore-revs` entry, nothing pushed), so it was `git reset
+   --soft`-ed and re-committed cleanly as `12749306d`, with the one document
+   citing it updated in the same operation. Recorded as a new entry in
+   `backlog/docs/lessons-backlog-hygiene.md` — it is the same silent-success
+   shape that file already catalogues, and a bad commit SUBJECT is durable.
+
+9. **`progress.md` was not touched** (controller-owned), and **nothing was
    pushed**.
