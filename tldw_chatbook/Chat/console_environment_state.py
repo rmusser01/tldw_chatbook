@@ -346,14 +346,23 @@ ENV_UNBOUND_NOTE_TEXT = (
 # TASK-31665 AC#11. `ENV_PENDING_TEXT` promises motion ("Checking…"), and
 # a root the accessor chain cannot determine has none: nothing is
 # dispatched, so nothing will ever land, and the panel sat on that promise
-# with an inert Refresh for the life of the screen (no chat controller yet,
-# or no active session). This copy stops promising and says what is
-# actually true, plus the one thing that changes it. Deliberately NOT the
-# UNBOUND copy: "changes aren't tracked for this workspace" asserts
-# something about a workspace that has not been identified.
-ENV_UNKNOWN_TEXT = "No active chat session — workspace not determined."
+# with an inert Refresh for the life of the screen. This copy stops
+# promising and says what is actually true. Deliberately NOT the UNBOUND
+# copy: "changes aren't tracked for this workspace" asserts something about
+# a workspace that has not been identified.
+#
+# Round-1 review (I2): the first cut read "No active chat session —
+# workspace not determined", which NAMES a cause the panel cannot know.
+# `UNKNOWN_ROOT` has (at least) two sources -- the chat controller not
+# being built yet / having no active session, AND a swallowed exception
+# inside the roots accessor (`review_selection.py`'s bare except), which
+# happens with a perfectly live session. Naming the first was simply false
+# in the second case, the exact dishonest-empty-state class TASK-31664 AC#5
+# had just corrected for the UNBOUND copy. Say only the half that is always
+# true, and phrase the remedy as OPTIONS rather than as a diagnosis.
+ENV_UNKNOWN_TEXT = "Workspace not determined."
 ENV_UNKNOWN_NOTE_TEXT = (
-    "Start or open a chat in a Workspace, then Refresh."
+    "Open a chat in a Workspace, or press Refresh to retry."
 )
 
 
@@ -785,22 +794,22 @@ def tasks_count_summary(
 ) -> str:
     """Tasks header summary for a branch with no task of its own.
 
-    TASK-31665 AC#6. This line used to read "3 doing · 12 todo" while every
-    other statement of the same fact in the section -- each task entry's
-    own ``secondary_text``, and the branch-task summary
-    ``task-N · In Progress`` -- used the backlog's canonical "In Progress"
-    / "To Do". Two vocabularies for one thing; the backlog's wins, because
-    it is the one the task FILES use and the one the other rows already
-    carry.
+    Keeps BOTH counts, in the compact form, on the COLLAPSED header --
+    TASK-31665 AC#6 round-1 ruling. The first cut of this function adopted
+    the backlog's canonical words here too ("3 in progress · 12 to do", 24
+    columns against a 21-column budget at the narrowest rail) and therefore
+    had to drop the to-do count. That mitigation was FALSE: the expansion it
+    pointed at caps at ``MAX_TASK_LIST_ROWS`` (30) and a real backlog holds
+    651 entries, so the ~586 to-do tasks it dropped were visible NOWHERE in
+    Console.
 
-    The canonical words are longer than the abbreviations they replace
-    ("3 in progress · 12 to do" is 24 columns against a 21-column budget at
-    the narrowest supported rail), so this degrades rather than letting
-    ``_ellipsize`` cut mid-word into "3 in progress · 12 t…". The half it
-    keeps is the actionable one -- the same priority rule
-    ``environment_summary`` applies to its own ± counts. The dropped count
-    is one keypress away: expanding the section lists every task with its
-    status.
+    The ruling: AC#6's vocabulary unification is about ROWS, where the
+    canonical "In Progress"/"To Do" stay. The critique's complaint was the
+    same fact stated in two vocabularies ADJACENT -- this header and the
+    duplicate counts row directly beneath it -- and TASK-31662 deleted that
+    row, so the adjacency the complaint was about is already gone. A
+    collapsed one-line summary may use compact forms; it is a teaser, not a
+    statement of record.
 
     Args:
         in_progress: Number of "In Progress" tasks in the backlog.
@@ -808,15 +817,11 @@ def tasks_count_summary(
         budget: Columns the header summary may take.
 
     Returns:
-        The widest form that fits ``budget``.
+        ``"N doing · M todo"``, ellipsized only if a pathological count
+        makes even that overflow (19 columns at four-digit counts, against
+        a 21-column budget, so in practice never).
     """
-    full = f"{in_progress} in progress · {todo} to do"
-    if len(full) <= budget:
-        return full
-    actionable = f"{in_progress} in progress"
-    if len(actionable) <= budget:
-        return actionable
-    return _ellipsize(full, budget)
+    return _ellipsize(f"{in_progress} doing · {todo} todo", budget)
 
 
 def project_tasks_section(

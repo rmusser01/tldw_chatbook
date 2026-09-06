@@ -869,6 +869,12 @@ class ConsoleInspectorSectionRow(Vertical):
             # `ROW_INDENT_COLUMNS` per level in BOTH hosts. Inline because
             # the depth is per-row DATA, not a class.
             self.styles.margin = (0, 0, 0, self.indent * ROW_INDENT_COLUMNS)
+            # Deliberately unstyled today (round-1 review M2): the class is
+            # the styling hook containment theming would need -- a guide
+            # rule, a muted child colour -- and stamping it here is what
+            # makes that a CSS-only change later. The INDENT itself is the
+            # margin above, never this class, so no stylesheet is required
+            # for the containment cue to work.
             self.add_class("console-inspector-section-row-child")
         if row.status:
             self.add_class(f"console-inspector-section-row-{row.status}")

@@ -513,8 +513,13 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             # TASK-23195 and its follow-up replaced the two ASCII-art header
             # labels with a name plus one resolved glyph, mirrored across the
             # rails: the glyph sits on the edge adjacent to the transcript,
-            # pointing the way that rail leaves. The COLLAPSED handles keep
-            # their compact ASCII forms, which are unchanged.
+            # pointing the way that rail leaves. TASK-31665 AC#4 brought the
+            # COLLAPSED handles into that same vocabulary -- they used to
+            # spell their arrows in ASCII (`Context->` / `<-Inspect`), so one
+            # rail spoke two arrow languages depending on whether it was
+            # open. Each state's arrow points the way ACTIVATING it moves the
+            # rail, which is why the collapsed form mirrors the open one
+            # rather than copying it.
             context_label = "Context ◂" if effective_context_open else "Context ▸"
             inspector_label = (
                 "▸ Inspect" if effective_inspector_open else "◂ Inspect"

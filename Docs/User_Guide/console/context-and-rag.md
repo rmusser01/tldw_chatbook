@@ -258,7 +258,7 @@ source never renders as an error:
 | Situation | What you see |
 | --- | --- |
 | Nothing has been checked yet (cold start, or the rail has only just opened) | one muted **Checking workspace…** row — the panel never claims anything before a source has answered |
-| There is no active chat session to read a workspace from (no conversation open yet), and that stays true | after ~30 seconds, two muted rows: **No active chat session — workspace not determined.** and **Start or open a chat in a Workspace, then Refresh.** — the panel stops promising a check that nothing is performing. A brief hiccup never reaches this state, and a panel that already has real data keeps showing it |
+| The rail cannot work out which workspace to read (no conversation open yet, or the lookup itself failed), and that stays true | after ~30 seconds, two muted rows: **Workspace not determined.** and **Open a chat in a Workspace, or press Refresh to retry.** — the panel stops promising a check that nothing is performing. It names no cause, because more than one produces this state. A brief hiccup never reaches it, and a panel that already has real data keeps showing that instead |
 | Changes aren't tracked for this workspace (no folder bound, Change Review not enabled for a bound folder, or the consent check itself failed — the rail can't always tell which) | two muted rows saying so, and that this is *not* a report that nothing changed, plus where to fix it (bind a folder and enable Change Review in Settings ▸ Workspaces); no counts, no commit/push row, no Tasks/PR/check rows |
 | A folder is bound but it is not a git repo | one muted **No git workspace** row; no Tasks, PR, or check rows |
 | `gh` not installed, not authenticated, or the remote isn't GitHub | the PR and check rows are simply absent — the git rows still work |
@@ -1034,10 +1034,11 @@ line away from it, and its tooltip names its scope (**Refresh — Environment**)
 Rows revealed by expanding another row are indented under it, so a block of
 file rows or task entries reads as belonging to the row above it. Task rows
 show the title the task file's own frontmatter carries rather than the
-hyphenated filename slug. The Tasks header summary now uses the backlog's own
-words — **N in progress** rather than "N doing · M todo", matching the status
-each task entry already shows; at 80x24 only the in-progress count fits, and
-expanding the section lists every task with its status. The collapsed rail
+hyphenated filename slug. Task ROWS now use the backlog's own vocabulary --
+each entry's status reads **In Progress** / **To Do**, matching the task
+files themselves. The collapsed Tasks header keeps its compact
+**N doing · M todo** summary — it is a one-line teaser, and both counts fit
+there at every width, which the canonical words would not. The collapsed rail
 handles read **Context ▸** and **◂ Inspect**, the same arrow vocabulary the
 open rails' own collapse controls use (`>` / `<` in ASCII-glyph mode). Both
 **Changes** actions — **Review in Change Review…** and

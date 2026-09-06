@@ -99,10 +99,17 @@ async def test_inspector_row_text_meets_aa_on_the_background_it_paints_on(size):
     because a whole-rail sweep would also pick up borders and glyph
     furniture, which are non-text and answer to the 3:1 floor instead.
 
-    The sweep is over what the compositor PAINTED, so it sees both
-    backgrounds a row can land on (the shell's `$ds-surface-panel` backdrop
-    and the `$surface` island under an embedded control) without this test
-    having to know which is which.
+    What this actually pins, measured rather than claimed: every string a
+    row paints today lands on the shell's `$ds-surface-panel` backdrop
+    (#242f38) -- no `ConsoleInspectorSectionRow` currently embeds a control,
+    so the `$surface` islands described above sit in section HEADERS and
+    tails, outside this sweep's regions. The assertion is written against
+    whatever background the compositor put behind each run rather than
+    against that one colour, so a row that later gains an inline control
+    (or any other surface) is covered without the test being revisited.
+    (`$ds-text-muted` on `$surface` computes to 6.42:1 -- computed from the
+    two tokens, not sampled here, since nothing paints that pair inside a
+    row yet.)
     """
 
     app = _build_test_app()

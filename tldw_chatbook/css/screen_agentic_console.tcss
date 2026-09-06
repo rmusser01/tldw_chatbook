@@ -1767,9 +1767,14 @@ Button.console-inspector-action:disabled {
    undimmed #a7abaf at 5.91:1. That pair IS the critique's "same secondary
    fg measures 3.44:1 on one line and 5.24:1 on the next": two different
    FOREGROUNDS on one background, not one foreground on two backgrounds
-   (see AC#1's finding). Dropping `dim` puts the row secondary on the same
-   token as its neighbours, at 5.91:1 on $ds-surface-panel and 6.42:1 on
-   the $surface islands the rail's Buttons/Inputs paint. */
+   (see AC#1's finding). Solved for from the three sampled colours, `dim`
+   RETAINS ~65% of the foreground and moves it ~35% toward the background
+   -- so it is a real second dimming step applied on top of a token that
+   was already the muted one, not a no-op on it. Dropping `dim` puts the
+   row secondary on the same token as its neighbours, at 5.91:1 on
+   $ds-surface-panel (measured) and 6.42:1 on the $surface islands the
+   rail's Buttons/Inputs paint (computed from the two tokens -- no row
+   embeds a control today, so nothing samples that pair). */
 .console-inspector-section-row-secondary {
     height: 1;
     color: $ds-text-muted;

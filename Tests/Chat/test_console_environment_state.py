@@ -545,14 +545,12 @@ def test_head_row_without_a_branch_task_names_the_list_not_the_counts():
     assert head.clickable
     assert head.primary_text == "Backlog ▸"
     assert head.secondary_text == "2 tasks"
-    # TASK-31665 AC#6: the header's own vocabulary is now the backlog's --
-    # "in progress", not "doing" -- and at the narrowest supported rail
-    # (21 columns for this summary) the full two-count form does not fit,
-    # so it degrades to the actionable half rather than being cut
-    # mid-word. See `tasks_count_summary`.
-    assert state.summary == "3 in progress"
-    assert "doing" not in state.summary
-    assert "todo" not in state.summary
+    # TASK-31665 AC#6 round-1 ruling: the COLLAPSED header keeps both
+    # counts in the compact form. The AC's vocabulary unification is about
+    # ROWS (where "In Progress"/"To Do" stay); the critique's complaint was
+    # this header sitting ADJACENT to a duplicate counts row, and TASK-31662
+    # deleted that row. See `tasks_count_summary`.
+    assert state.summary == "3 doing · 12 todo"
     assert "in progress" not in head.primary_text
 
 
@@ -672,6 +670,12 @@ def test_unknown_root_projects_its_own_copy_not_pending_and_not_unbound():
     ]
     assert state.rows[0].primary_text == ENV_UNKNOWN_TEXT
     assert state.rows[1].primary_text == ENV_UNKNOWN_NOTE_TEXT
+    # Round-1 review I2: the copy must not NAME a cause. `UNKNOWN_ROOT` also
+    # arrives from a swallowed exception in the roots accessor, with a live
+    # session -- "no active chat session" was simply false in that case.
+    assert "session" not in ENV_UNKNOWN_TEXT.lower(), ENV_UNKNOWN_TEXT
+    assert "Refresh" in ENV_UNKNOWN_NOTE_TEXT  # remedy phrased as options
+    assert " or " in ENV_UNKNOWN_NOTE_TEXT
     assert state.summary == ""
     painted = " ".join(row.primary_text for row in state.rows)
     assert ENV_PENDING_TEXT not in painted
@@ -697,12 +701,16 @@ def test_unknown_snapshot_marks_every_tier_so_no_tier_keeps_old_data():
 # --- TASK-31665 AC#6: one Tasks vocabulary --------------------------------
 
 
-def test_tasks_count_summary_uses_the_backlogs_own_words_when_they_fit():
-    assert tasks_count_summary(3, 12, budget=40) == "3 in progress · 12 to do"
+def test_tasks_count_summary_keeps_both_counts_in_the_compact_form():
+    """AC#6 round-1 ruling. The first cut adopted the canonical words here
+    too and had to drop the to-do count to fit the 21-column budget -- and
+    the mitigation it documented ("expanding the section shows it") was
+    false: the expansion caps at MAX_TASK_LIST_ROWS=30 against a real 651-
+    entry backlog, so ~586 to-do tasks were visible NOWHERE in Console."""
+    assert tasks_count_summary(3, 12) == "3 doing · 12 todo"
 
 
-def test_tasks_count_summary_degrades_to_the_actionable_half_not_a_cut_word():
-    """AC#6: at the narrowest supported rail the canonical words do not fit.
-    Dropping the backlog-depth half beats "3 in progress · 12 t…"."""
-    assert tasks_count_summary(3, 12) == "3 in progress"
-    assert "…" not in tasks_count_summary(3, 12)
+def test_tasks_count_summary_fits_the_narrowest_rail_at_realistic_counts():
+    """The whole reason the compact form is allowed here: it fits."""
+    assert len(tasks_count_summary(62, 586)) <= TASKS_SUMMARY_BUDGET
+    assert "…" not in tasks_count_summary(62, 586)

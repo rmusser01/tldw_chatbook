@@ -33,7 +33,7 @@ secondary-contrast finding (the class DOES render in the right rail).
 - [x] #3 Expansion children are visually contained (indent field or └ glyph) instead of relying on an accidental blank line
 - [x] #4 Collapsed-handle "<-Inspect" and open "▸ Inspect" share one glyph vocabulary
 - [x] #5 Refresh control is visually attached to the Environment section (not floating between sections) and carries a tooltip naming its scope
-- [x] #6 Tasks vocabulary unified ("in progress/to do" everywhere); Change Review header pluralization matches the rail ("1 file") — vocabulary unified and "1 file" fixed; NOTE the collapsed Tasks header now shows only the in-progress count at the narrowest rail (21-col budget), see Implementation Notes
+- [x] #6 Tasks vocabulary unified ("in progress/to do" everywhere); Change Review header pluralization matches the rail ("1 file") — scoped by the round-1 controller ruling: unification applies to ROWS (canonical "In Progress"/"To Do"); the COLLAPSED header summary keeps the compact both-counts "N doing · M todo" (19 cols, fits the 21-col budget at every width)
 - [x] #7 Change Review's transient "No file changes recorded" flash (≤0.5s) on entry is eliminated or replaced with a loading state
 - [x] #8 One canonical Change Review opener decided and documented (four exist today)
 - [x] #9 Row secondary text meets 4.5:1 on every background it actually renders over (after #1 lands)
@@ -101,13 +101,37 @@ destination follows the surface -- Environment rows open the working tree,
 run-anchored controls open that run), AC#14 (`cell_len`), AC#15 (five
 scrollbar thumbs).
 
-**Trade-off called out (AC#6).** The Tasks header adopted the backlog's own
-"in progress"/"to do", but at the narrowest rail its 21-column budget cannot
-hold `3 in progress · 12 to do` (24 columns), so `tasks_count_summary`
-degrades to `3 in progress` rather than cutting mid-word. The to-do count is
-therefore no longer visible in the COLLAPSED header at any width; expanding
-the section still lists every task with its status. The alternatives were
-keeping a second vocabulary or shipping `3 in progress · 12 t…`.
+**AC#6, as ruled in round 1.** The first cut adopted the backlog's canonical
+words in the collapsed header too and, unable to fit
+`3 in progress · 12 to do` (24 columns) in a 21-column budget, dropped the
+to-do count -- justifying it with "expanding the section shows it". Review
+showed that mitigation was FALSE: the expansion caps at
+`MAX_TASK_LIST_ROWS = 30` and this repo's backlog holds 651 entries, so the
+~586 to-do tasks would have been visible NOWHERE in Console, and the User
+Guide promised a recovery that did not exist. Controller ruling: AC#6's
+unification is about ROWS -- each task entry's status keeps the canonical
+"In Progress"/"To Do" -- while the COLLAPSED header summary may use compact
+forms, because the critique's complaint was the two vocabularies being
+ADJACENT (this header and the duplicate counts row beneath it) and TASK-31662
+already deleted that row. Restored to `N doing · M todo` (19 columns at
+four-digit counts); the summary function, its tests, and the User Guide
+sentence were corrected together.
+
+**AC#11 copy, corrected in round 1 (I2).** `ENV_UNKNOWN_TEXT` read
+"No active chat session — workspace not determined", which NAMES a cause the
+panel cannot know: `UNKNOWN_ROOT` also arrives from a swallowed exception in
+`review_selection.py`'s roots accessor, with a perfectly live session. Now
+"Workspace not determined." with the remedy phrased as OPTIONS ("Open a chat
+in a Workspace, or press Refresh to retry."), the same cause-agnostic
+discipline TASK-31664 AC#5 applied to the UNBOUND copy.
+
+**Note (round-1 M3).** Composer-insert rows (`+ Add to chat`,
+`+ Fix — add failure summary to chat`, `+ Add task to chat`) can exceed
+`_CHILD_ROW_BUDGET` by design: `_with_insert_marker` PREFIXES its marker and
+does not ellipsize, so the CSS `text-overflow: ellipsis` cuts the tail and
+the marker -- the part that names the consequence -- always survives. The
+expand and surface markers are trailing, which is why those two ellipsize
+first (`_with_expand_marker`'s docstring records that reasoning).
 
 **Files.** `Chat/console_environment_state.py`,
 `UI/Console_Modules/environment.py`, `UI/Screens/chat_screen.py`,
