@@ -4,7 +4,39 @@ Date: 2026-09-05. Isolated branch: `codex/canvas-v1`.
 Architecture: [ADR-121](../../backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md).
 Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-implementation.md).
 
-## Current checkpoint — reviewed trace repair, integration gates pending
+## Current checkpoint — merged into dev
+
+PR [2432](https://github.com/rmusser01/tldw_chatbook/pull/2432) merged normally
+at 2026-09-06T06:11:26Z as `f32a16839d1810618107f7e2ffaed8ac2e3e634f`.
+GitHub confirmed MERGED; a fresh fetch and ancestor check confirmed that dev
+contains reviewed head `18828038d080f59405828d8634e03b56b504c9ee`.
+Qodo's exact-head summary reported zero findings. Current-head Fast Lane
+(9m1s), required Derived Artifacts (6m23s), and remaining active checks passed;
+the configured platform skip and neutral external reviewer remain qualified.
+
+Final rebase onto `723c8146017c4d82ffbf1869b66da893b8d7a4f5` replayed all
+144 Canvas commits without conflict or patch changes. Net differences were
+only ten upstream Research-layout and warm Console-handoff files. All six
+local preflight categories passed, including 3362 task paths. The directly
+affected checks passed **66 tests**, one Requests warning, in 37.57s:
+
+```sh
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/UI/test_chat_screen_resume_handoff_registration.py Tests/UI/test_research_workspace_geometry.py Tests/UI/test_console_native_chat_flow.py::test_warm_console_resume_consumes_staged_chat_handoff Tests/Chat/test_console_canvas_controller.py
+```
+
+Two additional old suspend tests failed because their dictation stub lacks
+`suspend()`; both reproduce unchanged on an untouched archive of that exact
+dev base (2 failed, one Requests warning, 4.94s). They are pre-existing fixture
+failures, not repaired or claimed passing. The Windows GGUF import check first
+failed a missing `.model-import` UI assertion (17 passed, 1 failed); one
+unchanged failed-job rerun passed. Its exact test also passed locally (1 passed,
+one Requests warning, 1.91s). A retry establishes intermittency, not root cause.
+
+No full-suite claim, protection bypass, pause of other work, or cleanup.
+Recovery refs, worktree, baseline archive and raw evidence remain preserved.
+The chronological records below retain earlier failures and limitations; this
+merge checkpoint supersedes their then-pending integration status. V2 has
+entered brainstorming only; no V2 implementation is included.
 
 ### Current-dev migration integration (2026-09-05)
 
