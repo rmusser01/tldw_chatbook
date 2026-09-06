@@ -417,7 +417,7 @@ class MeetingCapture:
         a = int(start_s * SAMPLE_RATE)
         b = int(end_s * SAMPLE_RATE)
         out = bytearray()
-        for start_sample, chunk in ring:
+        for start_sample, chunk in list(ring):
             n = len(chunk) // 2
             lo, hi = start_sample, start_sample + n
             if hi <= a or lo >= b:
