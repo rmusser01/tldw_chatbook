@@ -1210,6 +1210,14 @@ def _escape_fake(
     fake._close_library_media_find = MethodType(
         LibraryScreen._close_library_media_find, fake
     )
+    # PR H2: and every "sync, then focus this control" follow-up routes
+    # through ONE seam, so the fake exercises the real ordering logic. No
+    # viewer is mounted in these fakes, so it takes the screen fallback --
+    # the same ``sync`` then ``focus`` pair the branches recorded before.
+    fake._mounted_library_media_viewer = lambda: None
+    fake._after_library_media_viewer_sync = MethodType(
+        LibraryScreen._after_library_media_viewer_sync, fake
+    )
     # task-31271 seam (a): Escape and its footer label read one seam now.
     fake._library_media_find_state = MethodType(
         LibraryScreen._library_media_find_state, fake
@@ -1249,6 +1257,11 @@ def test_escape_and_its_label_read_the_same_find_state():
 class _RecomposeHookViewer:
     """The one-slot post-recompose hook, with no Textual machinery."""
 
+    #: ``refresh(recompose=True)`` arms this on a real widget and the
+    #: rebuild clears it. The seam reads it to tell a sync that handed the
+    #: rebuild to this viewer's pump from one that changed nothing.
+    _recompose_required = True
+
     def __init__(self, pending=None):
         self._post_recompose_callback = pending
 
@@ -1270,6 +1283,9 @@ def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
         _mounted_library_media_viewer=lambda: viewer,
         _focus_library_control=lambda selector: calls.append(("focus", selector)),
         call_after_refresh=lambda *args: calls.append("call_after_refresh"),
+    )
+    fake._after_library_media_viewer_sync = MethodType(
+        LibraryScreen._after_library_media_viewer_sync, fake
     )
 
     LibraryScreen.handle_library_media_reader_more(
@@ -1296,6 +1312,9 @@ def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
         _mounted_library_media_viewer=lambda: None,
         _focus_library_control=lambda selector: calls.append(("focus", selector)),
         call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
+    )
+    fake._after_library_media_viewer_sync = MethodType(
+        LibraryScreen._after_library_media_viewer_sync, fake
     )
 
     LibraryScreen.handle_library_media_reader_more(
@@ -1646,6 +1665,12 @@ def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
     )
     fake._close_library_media_find = MethodType(
         LibraryScreen._close_library_media_find, fake
+    )
+    # PR H2: the focus follow-up rides the shared post-sync seam; no viewer
+    # is mounted in this fake, so it takes the screen fallback.
+    fake._mounted_library_media_viewer = lambda: None
+    fake._after_library_media_viewer_sync = MethodType(
+        LibraryScreen._after_library_media_viewer_sync, fake
     )
     # Qodo on #2378: the handler refuses when the tab has nothing to search.
     fake._library_media_find_unavailable_reason = MethodType(
@@ -2274,7 +2299,18 @@ async def test_opening_find_costs_no_extra_focus_move(size):
         original_set_focus = screen.set_focus
 
         def counting_set_focus(_self, widget, scroll_visible=True):
-            moves.append(str(getattr(widget, "id", widget)))
+            # PR H2: EFFECTIVE focus changes only. ``Widget.focus()`` always
+            # defers a ``set_focus`` call, and ``Screen.set_focus`` returns at
+            # ``widget is self.focused`` BEFORE any Blur/Focus pair -- a call
+            # naming the widget that already holds focus moves nothing and
+            # posts no ``DescendantFocus``, which is what this pin counts.
+            # Both channels that land this input now run inside the counted
+            # window (the seam's follow-up rides the viewer's post-recompose
+            # hook, the token channel rides the content widget's), so one of
+            # the two is always such an inert duplicate -- measured: the same
+            # Input object, ``widget is screen.focused`` already True.
+            if widget is not screen.focused:
+                moves.append(str(getattr(widget, "id", widget)))
             return original_set_focus(widget, scroll_visible=scroll_visible)
 
         screen.set_focus = MethodType(counting_set_focus, screen)
