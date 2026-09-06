@@ -21,6 +21,7 @@ from tldw_chatbook.runtime_policy.server_credentials import (
     SERVER_CREDENTIAL_BEARER_TOKEN,
     SERVER_CREDENTIAL_REFRESH_TOKEN,
     InMemoryServerCredentialStore,
+    ServerCredentialScope,
     UnavailableServerCredentialStore,
 )
 from tldw_chatbook.runtime_policy.server_context import (
@@ -2018,6 +2019,101 @@ def test_clear_active_server_credentials_and_clear_server_credentials_clear_per_
     provider.clear_server_credentials("server-b")
 
     assert credentials.get_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN) is None
+
+
+def test_clear_server_credentials_scoped_mode_leaves_sibling_server_intact(tmp_path):
+    """Scoped mode (TLDW_CONFIG_PATH profile isolation, task-31824): two
+    servers sharing one credential profile stay independently clearable.
+    Before the fix, clear_server filtered on server_profile_id alone, so
+    clearing server A also wiped server B's credentials -- including a
+    bearer token written through the task-31821 scoped-write seam
+    (store_scoped_credential). Fails without the fix (B's entries vanish
+    too)."""
+    credentials = InMemoryServerCredentialStore()
+    server_a = "https://server-a.example.com/api"
+    server_b = "https://server-b.example.com/api"
+    provider = _provider(
+        tmp_path,
+        credential_store=credentials,
+        credential_profile_id="shared-scratch-profile",
+    )
+
+    provider.store_scoped_credential(
+        server_a, SERVER_CREDENTIAL_BEARER_TOKEN, "a-bearer"
+    )
+    provider.store_scoped_credential(
+        server_a, SERVER_CREDENTIAL_ACCESS_TOKEN, "a-access"
+    )
+    provider.store_scoped_credential(
+        server_b, SERVER_CREDENTIAL_BEARER_TOKEN, "b-bearer"
+    )
+    provider.store_scoped_credential(
+        server_b, SERVER_CREDENTIAL_ACCESS_TOKEN, "b-access"
+    )
+
+    def _scope(server_id: str, purpose: str) -> ServerCredentialScope:
+        return ServerCredentialScope(
+            server_profile_id="shared-scratch-profile",
+            normalized_origin=server_id,
+            credential_type=purpose,
+        )
+
+    provider.clear_server_credentials(server_a)
+
+    assert (
+        credentials.get_scoped_secret(_scope(server_a, SERVER_CREDENTIAL_BEARER_TOKEN))
+        is None
+    )
+    assert (
+        credentials.get_scoped_secret(_scope(server_a, SERVER_CREDENTIAL_ACCESS_TOKEN))
+        is None
+    )
+    assert (
+        credentials.get_scoped_secret(_scope(server_b, SERVER_CREDENTIAL_BEARER_TOKEN))
+        == "b-bearer"
+    )
+    assert (
+        credentials.get_scoped_secret(_scope(server_b, SERVER_CREDENTIAL_ACCESS_TOKEN))
+        == "b-access"
+    )
+
+
+def test_clear_active_server_credentials_scoped_mode_leaves_sibling_server_intact(
+    tmp_path,
+):
+    """Same as above through clear_active_server_credentials -- the other
+    provider call site that reaches the store's clear_server (task-31824)."""
+    credentials = InMemoryServerCredentialStore()
+    server_a = "https://server-a.example.com/api"
+    server_b = "https://server-b.example.com/api"
+    provider = _provider(
+        tmp_path,
+        runtime_context=_runtime_context(active_server_id=server_a),
+        credential_store=credentials,
+        credential_profile_id="shared-scratch-profile",
+    )
+
+    provider.store_scoped_credential(
+        server_a, SERVER_CREDENTIAL_BEARER_TOKEN, "a-bearer"
+    )
+    provider.store_scoped_credential(
+        server_b, SERVER_CREDENTIAL_BEARER_TOKEN, "b-bearer"
+    )
+
+    provider.clear_active_server_credentials()
+
+    scope_a = ServerCredentialScope(
+        server_profile_id="shared-scratch-profile",
+        normalized_origin=server_a,
+        credential_type=SERVER_CREDENTIAL_BEARER_TOKEN,
+    )
+    scope_b = ServerCredentialScope(
+        server_profile_id="shared-scratch-profile",
+        normalized_origin=server_b,
+        credential_type=SERVER_CREDENTIAL_BEARER_TOKEN,
+    )
+    assert credentials.get_scoped_secret(scope_a) is None
+    assert credentials.get_scoped_secret(scope_b) == "b-bearer"
 
 
 def test_clear_active_server_credentials_blocks_legacy_profile_reimport(tmp_path):

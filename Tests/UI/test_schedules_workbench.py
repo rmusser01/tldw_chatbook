@@ -26,12 +26,15 @@ from textual import on
 from tldw_chatbook.Scheduling.events import (
     DefinitionRunNowRequested,
     DeleteTaskRequested,
+    DuplicateDefinitionRequested,
+    DuplicateTaskRequested,
     ReminderDispatched,
     ReminderFieldEditRequested,
     ReminderOwnerActionRequested,
     SyncCompleted,
     SyncFailed,
     ViewDefinitionAuditRequested,
+    ViewDefinitionResultsRequested,
 )
 from tldw_chatbook.Scheduling.models import (
     ReminderTask,
@@ -1185,6 +1188,86 @@ async def test_locked_row_via_real_service_refuses_edit_and_leaves_row_unchanged
         db.close()
 
 
+# --- task-31823: detail-pane Duplicate/View-runs/View-results affordance --
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_creates_a_disambiguated_local_copy_via_the_service(
+    tmp_path,
+):
+    """Duplicate correctness: the copy is a real second row (through the
+    existing `create_reminder` create path), its name is disambiguated,
+    its authored fields match the source, and it shares no mutable state
+    with it -- editing the copy leaves the source untouched. The
+    ownership ruling: a server-owned SOURCE still duplicates onto the
+    LOCAL owner (a duplicate is a plain new draft, never an implicit
+    transfer)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        # Seeded directly (not via `create_reminder`, which would try a
+        # real server round-trip for a `server:` owner) -- the ownership
+        # ruling only cares what the SOURCE row's own `owner_id` says.
+        task_id = db.create_reminder_task(
+            owner_id="server:example.com",
+            title="Weekly digest",
+            schedule_kind="recurring",
+            run_at=None,
+            cron="0 9 * * 1",
+            timezone="America/New_York",
+            body="Check the numbers",
+            enabled=True,
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
+            assert table.row_count == 1
+            table.cursor_coordinate = (0, 0)
+            await pilot.pause()
+
+            detail = pilot.app.screen.query_one("#scheduling-task-detail", TaskDetail)
+            button = detail.query_one("#scheduling-duplicate-task", Button)
+            assert button.disabled is False
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            rows = db.list_reminder_tasks()
+            assert len(rows) == 2
+            source = next(row for row in rows if row["id"] == task_id)
+            copy = next(row for row in rows if row["id"] != task_id)
+
+            assert copy["title"] == "Weekly digest (copy)"
+            assert copy["id"] != source["id"]
+            assert copy["owner_id"] == "local"
+            assert source["owner_id"] == "server:example.com"  # unchanged
+            assert copy["cron"] == source["cron"] == "0 9 * * 1"
+            assert copy["timezone"] == source["timezone"]
+            assert copy["body"] == source["body"] == "Check the numbers"
+            # Fresh row, no borrowed run/transfer history.
+            assert copy["transfer_state"] is None
+            assert copy["last_status"] == "waiting"
+
+            # No shared mutable state: editing the copy leaves the
+            # source's own title untouched.
+            await service.update_reminder(
+                copy["id"], {"title": "Edited copy"}, owner_id="local"
+            )
+            assert db.get_reminder_task(copy["id"])["title"] == "Edited copy"
+            assert db.get_reminder_task(source["id"])["title"] == "Weekly digest"
+
+            # The Queue re-rendered both rows (`refresh_definitions=False`
+            # since duplicating a reminder never changes which
+            # definitions exist).
+            assert table.row_count == 2
+    finally:
+        db.close()
+
+
 # --- redesign PR-3, task 4: definition-pane in-pane editing + lifecycle ----
 
 
@@ -1243,6 +1326,9 @@ class _CapturingDefinitionDetailApp(ConsolidatedCSSApp):
         super().__init__(*args, **kwargs)
         self.run_now_events: list = []
         self.audit_events: list = []
+        # task-31823:
+        self.duplicate_events: list = []
+        self.results_events: list = []
 
     def compose(self):
         yield DefinitionDetail()
@@ -1254,6 +1340,14 @@ class _CapturingDefinitionDetailApp(ConsolidatedCSSApp):
     @on(ViewDefinitionAuditRequested)
     def _capture_audit(self, event: ViewDefinitionAuditRequested) -> None:
         self.audit_events.append(event.definition)
+
+    @on(DuplicateDefinitionRequested)
+    def _capture_duplicate(self, event: DuplicateDefinitionRequested) -> None:
+        self.duplicate_events.append(event.definition)
+
+    @on(ViewDefinitionResultsRequested)
+    def _capture_results(self, event: ViewDefinitionResultsRequested) -> None:
+        self.results_events.append(event.definition)
 
 
 @pytest.mark.asyncio
@@ -1313,6 +1407,112 @@ async def test_last_run_row_activation_posts_view_definition_audit_requested():
         # Never opened an in-place editor for this row.
         assert not row.query(Input)
         assert not row.query(Select)
+
+
+# ---------------------------------------------------------------------------
+# task-31823: the definition pane's secondary-actions row (Duplicate / View
+# runs / View results -- the rest of spec §5's deferred kebab list).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_view_runs_button_posts_the_same_message_the_last_run_row_does():
+    """AC#1: `View runs` is reachable from the definition pane as a plain
+    button, and posts the EXACT SAME `ViewDefinitionAuditRequested`
+    message the `Last run` row's own activation posts -- one navigation,
+    two entry points. Unconditionally enabled, same "viewing history is
+    not an edit" ruling as the row."""
+    async with _CapturingDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        definition = _editable_definition(family="agent_task")
+        detail.set_definition(definition)
+        await pilot.pause()
+
+        button = detail.query_one("#scheduling-automation-view-runs", Button)
+        assert button.disabled is False
+        detail.on_button_pressed(Button.Pressed(button))
+        await pilot.pause()
+
+        assert pilot.app.audit_events == [definition]
+
+
+@pytest.mark.asyncio
+async def test_view_results_button_posts_the_same_message_the_unread_row_does():
+    """AC#1: `View results` is reachable from the definition pane as a
+    plain button, posting the SAME `ViewDefinitionResultsRequested`
+    message the `Unread results` row's own activation posts."""
+    async with _CapturingDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        definition = _editable_definition()
+        detail.set_definition(definition)
+        await pilot.pause()
+
+        button = detail.query_one("#scheduling-automation-view-results", Button)
+        assert button.disabled is False
+        detail.on_button_pressed(Button.Pressed(button))
+        await pilot.pause()
+
+        assert pilot.app.results_events == [definition]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_posts_duplicate_definition_requested():
+    """AC#1: `Duplicate` is reachable from the definition pane and posts
+    `DuplicateDefinitionRequested` carrying the painted definition -- the
+    pane performs no I/O of its own."""
+    async with _CapturingDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        definition = _editable_definition()
+        detail.set_definition(definition)
+        await pilot.pause()
+
+        button = detail.query_one("#scheduling-automation-duplicate", Button)
+        assert button.disabled is False
+        detail.on_button_pressed(Button.Pressed(button))
+        await pilot.pause()
+
+        assert pilot.app.duplicate_events == [definition]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_disabled_with_a_reason_when_transfer_locked():
+    """AC#2 (UX-073): `Duplicate` is gated the same way Pause/Resume
+    already is -- a row mid-transfer is not a settled row to fork from.
+    The reason lands in the SAME always-visible Static the lock already
+    uses, not just the tooltip."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition())
+        detail.set_lifecycle_lock("Read-only mid-transfer.")
+        await pilot.pause()
+
+        button = detail.query_one("#scheduling-automation-duplicate", Button)
+        assert button.disabled is True
+        assert "Read-only mid-transfer." in str(button.tooltip)
+        why = detail.query_one("#scheduling-automation-detail-why", Static)
+        assert "Read-only mid-transfer." in why.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_disabled_with_a_reason_for_unsupported_family():
+    """AC#2: the same family gate that disables the editable Details/
+    Frequency rows for a non-`recurring_question` definition also
+    disables `Duplicate` -- duplicating one would only bounce off
+    `save_definition`'s own `_reject_unsupported_family` guard, so this
+    row has nothing settled to fork from either."""
+    async with _BareDefinitionDetailApp().run_test(size=(80, 60)) as pilot:
+        detail = pilot.app.query_one(DefinitionDetail)
+        detail.set_definition(_editable_definition(family="agent_task"))
+        await pilot.pause()
+
+        button = detail.query_one("#scheduling-automation-duplicate", Button)
+        assert button.disabled is True
+        why = detail.query_one("#scheduling-automation-detail-why", Static)
+        assert why.visual.plain, "the family note must be visible, not just a tooltip"
+        # `View runs`/`View results` stay reachable regardless (same
+        # "viewing history is not an edit" ruling proven above).
+        assert not detail.query_one("#scheduling-automation-view-runs", Button).disabled
+        assert not detail.query_one("#scheduling-automation-view-results", Button).disabled
 
 
 @pytest.mark.asyncio
@@ -4914,6 +5114,423 @@ async def test_unread_row_activation_pushes_definition_filtered_results_overlay(
             # other definition's is still unread -> total unread == 1.
             badge = workbench.query_one("#scheduling-results-badge", Button)
             assert str(badge.label) == "Results (1)"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_view_results_button_pushes_the_definition_filtered_results_overlay(
+    tmp_path,
+):
+    """task-31823 AC#1: the definition pane's `View results` button
+    reaches the SAME navigation target `Unread results` row activation
+    does (`test_unread_row_activation_pushes_definition_filtered_
+    results_overlay` above) -- proven here via the workbench-level
+    navigation-target assertion (`ResultsHostScreen`), not just the
+    message capture the bare-pane test already covers."""
+    app = WorkbenchTestApp()
+    db, service = _connected_service(tmp_path, app)
+    try:
+        target_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Weekly digest",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            definition = db.get_automation_definition(target_id)
+            detail.set_definition(definition, unread_count=0)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-view-results", Button)
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, ResultsHostScreen)
+            overlay_tab = pilot.app.screen.query_one(ResultsTab)
+            heading = str(
+                overlay_tab.query_one("#scheduling-results-heading").render()
+            ).strip()
+            assert "Weekly digest" in heading
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_creates_a_disambiguated_local_copy_of_a_definition(
+    tmp_path,
+):
+    """Duplicate correctness (definitions): the copy is a real second row
+    (through the existing `save_definition` create path), its name is
+    disambiguated, its authored fields match the source, it shares no
+    mutable state with the source, and it gets fresh-create defaults
+    (a new id, `version=1`). Ownership ruling: a server-owned SOURCE
+    still duplicates onto the LOCAL owner -- a duplicate is a plain new
+    draft, never an implicit transfer. Lifecycle ruling (review finding
+    1): the PAUSED source's lifecycle carries forward to the copy --
+    see `test_duplicate_button_collapses_a_paused_source_to_a_paused_
+    copy_not_due_for_selection` below for the due-selection proof this
+    test doesn't repeat."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        source_id = db.create_automation_definition(
+            "server:example.com",
+            "recurring_question",
+            "Morning brief",
+            lifecycle="paused",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={
+                "question": "What changed?",
+                "provider": "openai",
+                "model": "gpt-5",
+            },
+            config={
+                "generation_mode": "required",
+                "scope": {"mode": "all_searchable_library"},
+            },
+            notification_policy={"on_success": True, "on_failure": True},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            source = db.get_automation_definition(source_id)
+            detail.set_definition(source)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-duplicate", Button)
+            assert button.disabled is False
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            rows = db.list_automation_definitions(owner_id=None)
+            assert len(rows) == 2
+            source_row = next(row for row in rows if row["id"] == source_id)
+            copy = next(row for row in rows if row["id"] != source_id)
+
+            assert copy["name"] == "Morning brief (copy)"
+            assert copy["id"] != source_row["id"]
+            assert copy["owner_id"] == "local"
+            assert source_row["owner_id"] == "server:example.com"  # unchanged
+            assert copy["input"]["question"] == source_row["input"]["question"]
+            assert copy["schedule"]["cron"] == source_row["schedule"]["cron"]
+            # Fresh-create defaults (new id) -- but NOT lifecycle: the
+            # paused SOURCE's lifecycle carries forward to the copy
+            # (review finding 1 -- a silently-reactivated duplicate of a
+            # paused definition is a real-cost surprise). `version` is 2,
+            # not the plain create-path 1: the create lands "configured"
+            # (that path has no `lifecycle` field to carry it, see
+            # `_duplicate_definition_payload`'s docstring), then ONE
+            # follow-up `set_definition_lifecycle` call collapses it to
+            # paused -- a real second write, so version bumps like any
+            # other edit (`update_automation_definition`'s own
+            # optimistic-locking contract).
+            assert copy["lifecycle"] == "paused"
+            assert copy["version"] == 2
+
+            # No shared mutable state: editing the copy's schedule leaves
+            # the source's own schedule untouched. `family` must travel
+            # even on a partial update -- `_reject_unsupported_family`
+            # reads it off the caller's own payload before any merge.
+            # A real caller (`AutomationDefinitionForm._build_payload`)
+            # always sends the FULL authored field set on every save, so
+            # this mirrors that rather than a bare delta -- `input` in
+            # particular is required-present on every call, merge or not.
+            update_outcome = await service.save_definition(
+                {
+                    "family": "recurring_question",
+                    "name": copy["name"],
+                    "input": copy["input"],
+                    "schedule": {**copy["schedule"], "cron": "0 8 * * 2"},
+                    "config": copy["config"],
+                    "notification_policy": copy["notification_policy"],
+                },
+                "local",
+                definition_id=copy["id"],
+            )
+            assert update_outcome.status == "saved", update_outcome.errors
+            assert (
+                db.get_automation_definition(copy["id"])["schedule"]["cron"]
+                == "0 8 * * 2"
+            )
+            assert (
+                db.get_automation_definition(source_id)["schedule"]["cron"]
+                == "0 9 * * 1"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_collapses_a_paused_source_to_a_paused_copy_not_due_for_selection(
+    tmp_path,
+):
+    """task-31823 review finding 1 (MAJOR): duplicating a PAUSED
+    recurring-question definition must not silently reactivate it -- the
+    due-run selector (`list_armable_automation_definitions`, gated
+    strictly on `lifecycle = 'configured'`) must never select the copy.
+    Revert-check: against the pre-fix code (no follow-up `set_definition_
+    lifecycle` call after create), the copy keeps `create_automation_
+    definition`'s own default ("configured") and the `lifecycle`/
+    `armable_ids` assertions below both fail."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        source_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Morning brief",
+            lifecycle="paused",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            source = db.get_automation_definition(source_id)
+            detail.set_definition(source)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-duplicate", Button)
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            rows = db.list_automation_definitions(owner_id=None)
+            assert len(rows) == 2
+            copy = next(row for row in rows if row["id"] != source_id)
+            assert copy["lifecycle"] == "paused"
+
+            armable_ids = {
+                row["id"] for row in db.list_armable_automation_definitions("local")
+            }
+            assert copy["id"] not in armable_ids, (
+                "a duplicated paused definition must not be selected as due"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_keeps_an_active_source_active_and_due_for_selection(
+    tmp_path,
+):
+    """Symmetric control for the test above: an ACTIVE (`configured`)
+    source still duplicates as active and IS selected as due -- the
+    existing behavior this task always intended for the common case,
+    unchanged by the finding-1 fix (which only changes non-active
+    sources)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        source_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Morning brief",
+            lifecycle="configured",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            source = db.get_automation_definition(source_id)
+            detail.set_definition(source)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-duplicate", Button)
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            rows = db.list_automation_definitions(owner_id=None)
+            assert len(rows) == 2
+            copy = next(row for row in rows if row["id"] != source_id)
+            assert copy["lifecycle"] == "configured"
+
+            armable_ids = {
+                row["id"] for row in db.list_armable_automation_definitions("local")
+            }
+            assert copy["id"] in armable_ids, (
+                "an active definition's duplicate must remain selectable as due"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_pause_followup_returning_non_saved_warns_without_a_success_toast(
+    tmp_path,
+):
+    """final review F1(a): when the pause follow-up returns a non-`saved`
+    outcome, the handler must emit ONLY the honest warning -- never also
+    fall through to the plain "Duplicated ... as a new local automation"
+    success toast (a contradictory pair). Revert-check: against the
+    pre-fix shape (`b3ad92e18`, the warning added but the success branch
+    left unconditional), this test's `len(notify_calls) == 1` assertion
+    fails (both toasts fire, 2 calls)."""
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SaveDefinitionOutcome,
+    )
+
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        source_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Morning brief",
+            lifecycle="paused",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+
+        async def _failing_set_lifecycle(row_id, action):
+            return SaveDefinitionOutcome(
+                status="error",
+                errors=[{"field": "_lifecycle", "code": "boom", "message": "boom"}],
+                definition_id=row_id,
+            )
+
+        service.set_definition_lifecycle = _failing_set_lifecycle
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            notify_calls: list[tuple[str, str]] = []
+            pilot.app.notify = lambda message, severity="information", **_: (
+                notify_calls.append((severity, str(message)))
+            )
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            source = db.get_automation_definition(source_id)
+            detail.set_definition(source)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-duplicate", Button)
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert len(notify_calls) == 1, notify_calls
+            severity, message = notify_calls[0]
+            assert severity == "warning"
+            assert "could not be paused" in message
+            assert "Failed to duplicate" not in message
+
+            rows = db.list_automation_definitions(owner_id=None)
+            assert len(rows) == 2
+            copy = next(row for row in rows if row["id"] != source_id)
+            assert copy["lifecycle"] == "configured"  # pause failed, still active
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_pause_followup_raising_warns_and_never_reports_failed_to_duplicate(
+    tmp_path,
+):
+    """final review F1(b): a RAISING pause follow-up must land on the
+    SAME honest warning path, never the create's own "Failed to
+    duplicate" error -- that would misreport the exact harm `624189b9d`
+    fixed as its own opposite, while an ACTIVE copy sits on disk.
+    Revert-check: against the pre-fix shape (the pause call inside the
+    create's own try/except), this test's message assertion fails
+    (`notify_calls[0]` reads "Failed to duplicate ...", and the raise
+    is otherwise indistinguishable from the create itself failing)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        source_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Morning brief",
+            lifecycle="paused",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+
+        async def _raising_set_lifecycle(row_id, action):
+            raise RuntimeError("boom")
+
+        service.set_definition_lifecycle = _raising_set_lifecycle
+
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            notify_calls: list[tuple[str, str]] = []
+            pilot.app.notify = lambda message, severity="information", **_: (
+                notify_calls.append((severity, str(message)))
+            )
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            source = db.get_automation_definition(source_id)
+            detail.set_definition(source)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-duplicate", Button)
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert len(notify_calls) == 1, notify_calls
+            severity, message = notify_calls[0]
+            assert severity == "warning"
+            assert "could not be paused" in message
+            assert "Failed to duplicate" not in message
+
+            rows = db.list_automation_definitions(owner_id=None)
+            assert len(rows) == 2
+            copy = next(row for row in rows if row["id"] != source_id)
+            assert copy["lifecycle"] == "configured"  # pause raised, still active
     finally:
         db.close()
 
