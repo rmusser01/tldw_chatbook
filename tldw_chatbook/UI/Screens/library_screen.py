@@ -35125,9 +35125,15 @@ class LibraryScreen(BaseAppScreen):
         CHAINED behind whatever is already queued there rather than replacing
         it: ``queue_after_recompose`` replaces, and the sync above just
         queued task-31567's restore on that same one slot (that is how
-        task-31567 lost a receipt's "land on Undo"). Ours runs first and wins
-        outright; the restore behind it only acts when nothing claimed focus,
-        which is exactly the case where the target is not composed at all.
+        task-31567 lost a receipt's "land on Undo"). Order inside the chain:
+        our ``_focus_library_control`` DEFERS (``Widget.focus`` goes through
+        ``app.call_later``), so when the chained restore runs, focus is still
+        wherever the recompose left it and the restore does its own landing
+        (the captured identity, else the list entry); the deferred focus then
+        lands on the target and wins. The transient is benign -- the list
+        entry is focused with ``scroll_visible=False`` and the programmatic
+        marker armed -- and when the target is not composed at all the focus
+        call no-ops and the restore's landing stands.
 
         Args:
             follow_up: A Library control selector to focus once the sync has
@@ -35144,8 +35150,10 @@ class LibraryScreen(BaseAppScreen):
             else follow_up
         )
         viewer = self._mounted_library_media_viewer()
-        # ``refresh(recompose=True)`` arms this flag and ``_check_recompose``
-        # clears it only when the rebuild actually runs, so it is the honest
+        # ``refresh(recompose=True)`` arms this flag synchronously and only
+        # ``_check_recompose`` (on the viewer's pump) clears it, before
+        # awaiting ``recompose()``; read here with no await in between it is
+        # the honest
         # answer to "did THIS sync hand the rebuild to the viewer's pump?".
         # False covers both cases where the hook would swallow the follow-up
         # instead of ordering it: the no-change short-circuit (nothing is

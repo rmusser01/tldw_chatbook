@@ -48,19 +48,23 @@ class AdaptiveReaderLayoutProfile:
     Attributes:
         list_min_width: Floor for the list (Items) pane. The resolver
             collapses the pane rather than paint it narrower.
-        list_target_width: The list pane's width once the shell has room for
-            both panes but no surplus to share.
+        list_target_width: Not read by the resolver. The list's automatic
+            width comes from ``preferences.items_width`` (defaulted from
+            ``ITEMS_TARGET_WIDTH``); the field is retained only so profiles
+            can be constructed with it in tests.
         list_comfort_width: Ceiling for ``list_grows``. Surplus width stops
             flowing into the list here and goes to the work pane instead.
         list_max_width: Hard ceiling for the list pane, including a width the
             user typed.
         work_min_width: Floor for the work (Reader) pane; below it the shell
             drops the list pane rather than squeeze the document.
-        work_comfort_width: The work-pane width at which the Reader counts as
-            comfortable -- the gate ``list_grows`` waits on.
+        work_comfort_width: Not read by the resolver. The ``list_grows``
+            gate is ``max(work_min_width, READER_COMFORT_WIDTH)``; only
+            Collections sets this field (56), to no effect.
         list_grows: When ``True``, a work pane already at
-            ``work_comfort_width`` shares further surplus with the list, up to
-            ``list_comfort_width``, instead of absorbing every extra cell.
+            ``max(work_min_width, READER_COMFORT_WIDTH)`` shares half of any
+            further surplus with the list, up to ``list_comfort_width``,
+            instead of absorbing every extra cell.
             Automatic widths only: a custom width is obeyed as typed. Default
             ``False`` (every extra cell goes to the work pane); only Media
             opts in today.
