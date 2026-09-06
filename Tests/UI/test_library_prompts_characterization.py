@@ -152,14 +152,14 @@ async def test_import_row_typing_reaches_the_screen_owned_path(tmp_path) -> None
             await _open_prompts_list(screen, pilot)
             path_input = await _open_import_row(screen, pilot)
 
-            assert screen._library_prompts_import_open is True
-            assert screen._library_prompts_import_path == ""
+            assert screen._prompts_state.import_open is True
+            assert screen._prompts_state.import_path == ""
 
             typed = str(tmp_path / "exported-prompts.json")
             path_input.value = typed
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_prompts_import_path == typed,
+                lambda: screen._prompts_state.import_path == typed,
                 message="Import path typing never reached the screen state",
             )
     finally:
@@ -192,14 +192,14 @@ async def test_import_run_button_reaches_the_blank_path_gate(tmp_path) -> None:
             path_input.value = "   "
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_prompts_import_path == "   ",
+                lambda: screen._prompts_state.import_path == "   ",
                 message="Import path typing never reached the screen state",
             )
 
             screen.query_one("#library-prompts-import-run", Button).press()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_prompts_import_status
+                lambda: screen._prompts_state.import_status
                 == _BLANK_PATH_STATUS,
                 message="Import Run never reached the blank-path gate",
             )
@@ -235,7 +235,7 @@ async def test_import_path_enter_reaches_the_blank_path_gate(tmp_path) -> None:
             path_input.value = "   "
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_prompts_import_path == "   ",
+                lambda: screen._prompts_state.import_path == "   ",
                 message="Import path typing never reached the screen state",
             )
             path_input.focus()
@@ -245,7 +245,7 @@ async def test_import_path_enter_reaches_the_blank_path_gate(tmp_path) -> None:
             await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_prompts_import_status
+                lambda: screen._prompts_state.import_status
                 == _BLANK_PATH_STATUS,
                 message="Import path Enter never reached the blank-path gate",
             )
@@ -282,17 +282,17 @@ async def test_editor_discard_drops_the_dirty_draft_and_returns_to_the_list(
             await _open_prompt_editor(screen, pilot, prompt_id)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_prompt_editor_armed,
+                lambda: screen._prompts_state.editor_armed,
                 message="Prompt editor did not arm",
             )
-            assert screen._library_prompts_view == "editor"
+            assert screen._prompts_state.view == "editor"
 
             screen.query_one("#library-prompt-user", TextArea).load_text(
                 "Discarded working copy."
             )
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_prompt_dirty,
+                lambda: screen._prompts_state.dirty,
                 message="Prompt draft did not become dirty",
             )
 
@@ -302,14 +302,14 @@ async def test_editor_discard_drops_the_dirty_draft_and_returns_to_the_list(
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_prompts_view == "list"
-                    and screen._library_prompt_dirty is False
+                    screen._prompts_state.view == "list"
+                    and screen._prompts_state.dirty is False
                 ),
                 message="Discard never left the dirty Prompt editor",
             )
 
-            assert screen._library_prompt_detail is None
-            assert screen._library_prompt_block_state is None
+            assert screen._prompts_state.detail is None
+            assert screen._prompts_state.block_state is None
             stored = db.get_prompt_by_id(prompt_id)
             assert stored is not None
             assert stored["user_prompt"] == "Summarize {changes}."

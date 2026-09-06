@@ -2570,10 +2570,10 @@ def test_check_action_gates_prompt_editor_back_to_active_editor():
     assert screen.check_action("library_prompt_editor_back", ()) is False
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
-    screen._library_prompts_view = "list"
+    screen._prompts_state.view = "list"
     assert screen.check_action("library_prompt_editor_back", ()) is False
 
-    screen._library_prompts_view = "editor"
+    screen._prompts_state.view = "editor"
     assert screen.check_action("library_prompt_editor_back", ()) is True
 
     screen._library_selected_row_id = LIBRARY_ROW_CREATE_PROMPT
@@ -2617,9 +2617,9 @@ def test_check_action_gates_list_focus_rail_to_showing_list():
     assert screen.check_action("library_list_focus_rail", ()) is False
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
-    screen._library_prompts_view = "list"
+    screen._prompts_state.view = "list"
     assert screen.check_action("library_list_focus_rail", ()) is True
-    screen._library_prompts_view = "editor"
+    screen._prompts_state.view = "editor"
     assert screen.check_action("library_list_focus_rail", ()) is False
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
@@ -3231,7 +3231,7 @@ async def test_action_library_prompt_editor_back_honors_dirty_guard():
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
-    screen._library_prompts_view = "editor"
+    screen._prompts_state.view = "editor"
 
     async def flush_fails():
         return False
@@ -3242,7 +3242,7 @@ async def test_action_library_prompt_editor_back_honors_dirty_guard():
 
     await screen.action_library_prompt_editor_back()
 
-    assert screen._library_prompts_view == "editor", "a failed flush must veto"
+    assert screen._prompts_state.view == "editor", "a failed flush must veto"
     assert refresh_calls == []
 
     async def flush_ok():
@@ -3250,7 +3250,7 @@ async def test_action_library_prompt_editor_back_honors_dirty_guard():
 
     screen._flush_library_prompt_save = flush_ok
     screen._reset_library_prompt_editor_state = (
-        lambda: setattr(screen, "_library_prompts_view", "list")
+        lambda: setattr(screen._prompts_state, "view", "list")
     )
     screen._refresh_local_source_snapshot = lambda: None
     # task-3316: the guarded exit now re-requests the Prompts page through
@@ -3266,7 +3266,7 @@ async def test_action_library_prompt_editor_back_honors_dirty_guard():
 
     await screen.action_library_prompt_editor_back()
 
-    assert screen._library_prompts_view == "list"
+    assert screen._prompts_state.view == "list"
     # The exit's redraw is now carried by the prompts-page refetch it
     # requests (whose reply recomposes), not by a direct ``refresh`` call.
     assert len(browse_requests) == 1, "the exit must refetch the prompts page"
@@ -5388,16 +5388,16 @@ async def test_prompt_receipt_owner_vetoes_real_app_navigation_until_settlement(
         receipt = PromptBatchDeleteResult(
             (PromptDeleteReceiptEntry(41, "Receipt owner", "prompt", 2),)
         )
-        screen._library_prompt_delete_receipt = receipt
-        screen._library_prompts_mutation_in_flight = True
+        screen._prompts_state.delete_receipt = receipt
+        screen._prompts_state.mutation_in_flight = True
 
         await app.handle_screen_navigation(NavigateToScreen("home"))
         await pilot.pause()
 
         assert app.screen is screen
-        assert screen._library_prompt_delete_receipt is receipt
+        assert screen._prompts_state.delete_receipt is receipt
 
-        screen._library_prompts_mutation_in_flight = False
+        screen._prompts_state.mutation_in_flight = False
         await app.handle_screen_navigation(NavigateToScreen("home"))
         await pilot.pause()
         assert type(app.screen).__name__ == "HomeScreen"

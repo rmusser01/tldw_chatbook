@@ -11,10 +11,15 @@ and its failure/retry states, the editor (basic/advanced/info modes, block
 editor, dirty tracking, save/discard/back), the version-history region, the
 Prompt Collections membership surface, export/copy/duplicate, and the
 delete/undo batch flow. ``LibraryScreen`` keeps one-line delegators under
-every one of these 139 original names until this series' own cleanup task
-(prompts series 3/3) prunes the ones with zero external references -- see
+**100 of these 139** original names; this series' own cleanup task (prompts
+series 3/3) pruned the other 39, whose delegators had zero references
+outside their own body anywhere in the repo -- see
 ``Tests/Architecture/test_library_prompts_wiring.py``'s own
-``_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED`` (empty at this commit).
+``_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED`` for the list. The 100 that
+stay are 51 the recipe's transform whitelist keeps unconditionally (44
+``@on`` + 1 ``action_*`` + the 6 ``on_<message>`` handlers Textual
+dispatches BY NAME off ``Message.handler_name``, which a delete would
+silently unhook) plus 49 with a genuine external caller.
 
 **Cluster derivation.** An ``ast`` census of every ``LibraryScreen``
 class-body method whose name contains ``"prompt"`` (case-insensitive), run
@@ -423,9 +428,11 @@ class LibraryPromptsController:
     ``LibraryPromptsState`` (via the injected accessor) and the shared
     shell/framework/wiring bindings below. ``LibraryScreen`` constructs
     exactly one of these, in ``__init__`` right after
-    ``self._ingest_controller``, and keeps one-line delegators for every
-    original name this cluster moved (139 -- see the module docstring for the
-    full derivation and the 22 exclusions).
+    ``self._ingest_controller``, and keeps one-line delegators for 100 of
+    the 139 original names this cluster moved (the prompts cleanup PR pruned
+    the other 39 -- see the module docstring for the full derivation, the 22
+    exclusions, and ``_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED`` for the
+    pruned list).
     """
 
     def __init__(

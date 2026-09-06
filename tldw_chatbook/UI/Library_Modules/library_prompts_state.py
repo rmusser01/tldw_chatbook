@@ -8,13 +8,17 @@ closely, since Prompts also splits across THREE shim prefixes and also has
 both an entangled reader-preferences trio and a config-computed
 ``editor_mode``). Every field here was moved verbatim out of
 ``LibraryScreen.__init__`` in ``tldw_chatbook/UI/Screens/library_screen.py``
--- same default, same type, same comment. ``library_screen.py`` keeps every
-original ``_library_prompt_<field>``/``_library_prompts_<field>``/
+-- same default, same type, same comment. The state PR kept every original
+``_library_prompt_<field>``/``_library_prompts_<field>``/
 ``_selected_prompt_id`` attribute name alive as a generated getter/setter
-``@property`` shim pointing at ``self._prompts_state.<field>`` (a
-sentinel-wrapped block right after the ``LibraryScreen`` class body), which
-this series' own cleanup PR (task 3) deletes once every remaining screen-side
-reference has been retargeted.
+``@property`` shim on ``LibraryScreen``; this series' own cleanup PR (task 3)
+DELETED that block once every remaining screen-side reference had been
+retargeted, so ``library_screen.py`` now spells every one of them
+``self._prompts_state.<field>`` outright. The identical generated loop still
+runs, permanently, one layer down -- on ``LibraryPromptsController``, over
+``self._prompts_state_accessor()`` -- because the byte-for-byte canon forbids
+editing a moved body, so the flat names those bodies use must keep resolving
+through something.
 
 **Note on the two ``library_prompts_state`` modules (basename collision).**
 This file (``tldw_chatbook/UI/Library_Modules/library_prompts_state.py``) is
@@ -51,11 +55,11 @@ on "prompt" over every ``__init__``-stored attribute rather than a
   is ``_selected_prompt_id``) -- the same third-prefix shape the skills
   series found in ``_selected_skill_name``.
 
-``prompt_state_shim_attr()`` below is the single function BOTH the screen's
-shim-generator loop and this subsystem's wiring test call to resolve a field
-name to its original attribute name, rather than each independently
-recomputing the three-way branch (the drift risk a duplicated frozenset
-would reintroduce).
+``prompt_state_shim_attr()`` below is the single function BOTH the
+controller's shim-generator loop and this subsystem's wiring test call to
+resolve a field name to its original attribute name, rather than each
+independently recomputing the three-way branch (the drift risk a duplicated
+frozenset would reintroduce).
 
 Field ownership (recipe §2 script, substring "prompt" over
 ``__init__``-stored attributes): **46 fields** found, of which **43 MOVE**,
@@ -120,8 +124,9 @@ cannot be passed as a constructor argument:
   own ``editor_mode``/``reader_mode`` "new wrinkle" shape exactly.
 
 All four dataclass defaults below are therefore momentary placeholders,
-overwritten through the generated property shim before anything else reads
-them. Every OTHER field's original line is deleted outright -- 39 in total:
+overwritten by their own original ``__init__`` lines (which now assign
+``self._prompts_state.<field>`` directly, the shim having been deleted in
+task 3) before anything else reads them. Every OTHER field's original line is deleted outright -- 39 in total:
 37 static literals plus two pure no-argument factory calls folded into
 ``default_factory`` (``PromptSelectionBasket`` and ``local_prompt_
 capabilities`` -- both read only module constants and have no side effects,
@@ -190,15 +195,18 @@ def prompt_state_shim_attr(field_name: str) -> str:
     """The original ``LibraryScreen`` attribute name for a state field.
 
     Single-source resolution of the three-way prefix mapping documented in
-    this module's own docstring -- used by BOTH the screen's generated shim
-    loop and this subsystem's wiring test, so the mapping cannot drift into
-    two independently-typed copies.
+    this module's own docstring -- used by BOTH
+    ``LibraryPromptsController``'s generated shim loop and this subsystem's
+    wiring test, so the mapping cannot drift into two independently-typed
+    copies. (The screen's own loop, task 1's, was deleted in task 3; the
+    names this returns are still exactly the ones the moved bodies spell.)
 
     Args:
         field_name: A ``LibraryPromptsState`` dataclass field name.
 
     Returns:
-        The flat ``LibraryScreen`` attribute name that field shims under.
+        The flat original ``LibraryScreen`` attribute name that field shims
+        under on the controller.
     """
     if field_name in PROMPT_UNPREFIXED_STATE_FIELDS:
         return "_" + field_name
@@ -292,9 +300,9 @@ class LibraryPromptsState:
     # Placeholder defaults only -- the shared reader-preferences
     # tuple-unpack, the `resolve_adaptive_reader_layout` call, and the
     # persistence-locks dict literal all keep their ORIGINAL `__init__`
-    # lines untouched (see the module docstring's forced-early-construction
-    # paragraph), writing through the screen's generated property shim into
-    # this object's own fields the instant each original line runs.
+    # positions (see the module docstring's forced-early-construction
+    # paragraph), writing into this object's own fields the instant each
+    # original line runs.
     reader_preferences: AdaptiveReaderLayoutPreferences = field(
         default_factory=AdaptiveReaderLayoutPreferences
     )

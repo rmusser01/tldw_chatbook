@@ -521,7 +521,31 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # module census both enforce this), and +88 for the construction site
     # (`self._prompts_controller = LibraryPromptsController(...)`, 31 named
     # dependencies). -4061 + 333 + 3 + 88 = -3637.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37722, 1321),
+    #
+    # 2026-09-05, wave-6 task 3 (prompts cleanup PR, prompts series 3/3):
+    # fresh `_measure()`: 37722/1321 -> 37574/1282. The METHOD count drops by
+    # exactly 39 -- the delegator-prune count, a pure deletion with no
+    # replacement (39 of 139 moved names had ZERO references outside their
+    # own body anywhere in the repo, across all four census spellings).
+    # Line delta -148 reconciles EXACTLY, each term measured rather than
+    # estimated: -117 pruned delegator lines (3 each: `def` + forwarding
+    # `return` + the blank separator; none of the 39 is decorated, so no
+    # decorator lines are involved), -29 dead-import lines (25 names left
+    # dead by task 2's move, each first checked individually against
+    # `test_library_support_layer_surface.py`'s `_SURFACE` re-export
+    # contract -- that check saved 5 MORE candidates from deletion; two of
+    # the lines are whole single-name `from ... import X` statements, and
+    # two more come from collapsing the now-single-name
+    # `library_prompts_state` import back to one line),
+    # -10 net for the generated prompts-state shim block (20 lines out, a
+    # 10-line "deleted here, and why" comment in, matching the
+    # collections/search+RAG/skills/ingest markers stacked above it), +6 for
+    # lifting the prompts search-debounce timer out of `on_screen_suspend`'s
+    # flat-name string loop into its own explicit `_prompts_state` block
+    # (the ingest path-debounce timer's own precedent, three lines above
+    # it), and +2 for the two stale comments that grew a line each when
+    # their corrected text was re-wrapped. -117 - 29 - 10 + 6 + 2 = -148.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37574, 1282),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

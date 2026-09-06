@@ -258,7 +258,18 @@ _BUDGETS: dict[str, int] = {
     # and the alternative un-deduplicated count (42) are now stated inline so
     # a reviewer can re-derive 33 without re-running the census.
     # 4956 -> 4991.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 4991,
+    # 2026-09-05, wave-6 task 3 (prompts cleanup PR, prompts series 3/3):
+    # comment-only growth, 4991 -> 4998. Two now-false present-tense claims
+    # about the screen's delegators ("keeps one-line delegators under every
+    # one of these 139 original names", module docstring, and the same claim
+    # again in `LibraryPromptsController`'s own class docstring) were
+    # corrected to the post-prune 100-of-139 count and pointed at
+    # `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED` -- the identical shape the
+    # skills and ingest cleanups each had to fix in their own controllers.
+    # No moved body was touched (byte-for-byte canon intact); this is the
+    # §17 re-pin-at-move flow applied to a docstring-only delta. 4991 ->
+    # 4998.
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 4998,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the

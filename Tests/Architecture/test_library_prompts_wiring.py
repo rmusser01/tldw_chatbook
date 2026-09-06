@@ -1,29 +1,38 @@
 """Prompts extraction series: state object and controller are screen-wired.
 
-Wave-6 Task 1 (prompts series 1/3, state PR) and Task 2 (prompts series
-2/3, controller PR; recipe: ``backlog/docs/
-library-decomposition-recipe.md``; skills series precedent: ``Tests/
-Architecture/test_library_skills_wiring.py``, its state-PR-era shape -- the
-closest match, since Prompts is likewise a THREE-prefix subsystem). Every
-field ``LibraryPromptsState`` declares must have a matching generated
-property shim on ``LibraryScreen``, resolved via ``prompt_state_shim_attr()``
--- the single-source three-way prefix mapping (``_library_prompt_`` default,
-``_library_prompts_`` for the plural-named subset, bare ``_`` for the one
-unprefixed field, ``selected_prompt_id``) documented in
-``library_prompts_state.py``'s own module docstring.
+Wave-6 Task 1 (prompts series 1/3, state PR), Task 2 (prompts series 2/3,
+controller PR) and Task 3 (prompts series 3/3, cleanup PR; recipe:
+``backlog/docs/library-decomposition-recipe.md``; skills series precedent:
+``Tests/Architecture/test_library_skills_wiring.py`` in its POST-cleanup
+shape -- the closest match, since Prompts is likewise a THREE-prefix
+subsystem). Every field ``LibraryPromptsState`` declares must have a
+matching generated property shim on ``LibraryPromptsController``, resolved
+via ``prompt_state_shim_attr()`` -- the single-source three-way prefix
+mapping (``_library_prompt_`` default, ``_library_prompts_`` for the
+plural-named subset, bare ``_`` for the one unprefixed field,
+``selected_prompt_id``) documented in ``library_prompts_state.py``'s own
+module docstring.
 
-**What the per-field sweep can and cannot prove.** Because the screen's shim
-loop and this file's sweep both call ``prompt_state_shim_attr()``, the sweep
-proves the two are CONSISTENT -- it cannot prove the mapping is CORRECT. A
-review pass demonstrated this concretely: deleting the plural branch from
-``prompt_state_shim_attr()`` outright leaves the sweep at 5 passed, because
-screen and test then agree on the same wrong answer. ``test_prompt_state_
-shim_attr_maps_each_prefix_family_to_its_literal_name`` below closes that
-hole with hard-coded expected strings -- one per prefix family, including the
-bare-underscore one -- which is the only assertion here that would fail on
-such a mutation. The sweep still earns its place for the other half of the
-job: that each shim genuinely reads AND writes its own state field rather
-than merely existing as a property.
+Task 1's ``test_state_object_fields_match_the_shim_surface`` (every field
+<-> a matching generated property shim on ``LibraryScreen``) is GONE as of
+Task 3: the screen's generated shim block was deleted once every remaining
+screen-side reference had been retargeted to ``self._prompts_state.<field>``
+outright. ``test_the_screen_no_longer_carries_a_prompt_state_shim`` below
+asserts that ABSENCE instead, mirroring every prior series' own
+post-cleanup shape.
+
+**What the per-field sweep can and cannot prove.** Because the controller's
+shim loop and this file's sweep both call ``prompt_state_shim_attr()``, the
+sweep proves the two are CONSISTENT -- it cannot prove the mapping is
+CORRECT. A review pass demonstrated this concretely: deleting the plural
+branch from ``prompt_state_shim_attr()`` outright leaves the sweep passing,
+because generator and test then agree on the same wrong answer.
+``test_prompt_state_shim_attr_maps_each_prefix_family_to_its_literal_name``
+below closes that hole with hard-coded expected strings -- one per prefix
+family, including the bare-underscore one -- which is the only assertion
+here that would fail on such a mutation. The sweep still earns its place for
+the other half of the job: that each shim genuinely reads AND writes its own
+state field rather than merely existing as a property.
 
 The state module under test is ``tldw_chatbook.UI.Library_Modules.library_
 prompts_state`` -- NOT the unrelated, pre-existing ``tldw_chatbook.Library.
@@ -60,7 +69,7 @@ from tldw_chatbook.UI.Library_Modules.library_prompts_state import (
 #: "prompt" over every ``__init__``-stored attribute of ``LibraryScreen``):
 #: 46 fields found, 3 WIRING (live controller instances -- see below), 0
 #: BLOCKED, so 43 move. Pinned here so a field silently added to or dropped
-#: from the dataclass fails loudly instead of quietly shrinking the shim
+#: from the dataclass fails loudly instead of quietly resizing the shim
 #: surface this file checks.
 _EXPECTED_PROMPT_STATE_FIELD_COUNT = 43
 
@@ -76,25 +85,26 @@ _PROMPT_WIRING_SCREEN_ATTRS: tuple[str, ...] = (
 
 
 @pytest.mark.unit
-def test_state_object_fields_match_the_shim_surface() -> None:
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+def test_state_object_declares_the_censused_field_count() -> None:
+    """The ownership census's MOVE count, pinned against the dataclass.
 
+    Task 1 paired this with a per-field screen-shim sweep; task 3 deleted
+    that shim block (every screen-side reference now spells
+    `self._prompts_state.<field>` outright), so what survives here is the
+    half that never depended on the screen: a field silently added to or
+    dropped from `LibraryPromptsState` must fail loudly rather than quietly
+    resizing every surface this file checks.
+    """
     field_names = {f.name for f in dataclasses.fields(LibraryPromptsState)}
     assert field_names, "state object is empty"
     assert len(field_names) == _EXPECTED_PROMPT_STATE_FIELD_COUNT, (
         f"expected {_EXPECTED_PROMPT_STATE_FIELD_COUNT} prompt fields, "
         f"got {len(field_names)}"
     )
-    missing = []
-    for name in sorted(field_names):
-        shim_attr = prompt_state_shim_attr(name)
-        if not isinstance(getattr(LibraryScreen, shim_attr, None), property):
-            missing.append(shim_attr)
-    assert not missing, f"no screen shim property found for: {missing!r}"
 
 
 @pytest.mark.unit
-def test_every_shim_reads_and_writes_its_own_state_field() -> None:
+def test_every_controller_shim_reads_and_writes_its_own_state_field() -> None:
     """Each generated property is a real two-way shim, not a stub.
 
     A getter/setter pair that existed but bound the WRONG field (the
@@ -103,25 +113,35 @@ def test_every_shim_reads_and_writes_its_own_state_field() -> None:
     bound as a default argument) would satisfy a bare `isinstance(...,
     property)` check while silently aliasing 43 names onto one field. This
     round-trips a distinct sentinel through every name to rule that out.
-    """
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-    screen = object.__new__(LibraryScreen)
+    Task 1 aimed this at the SCREEN's shim block; task 3 deleted that block
+    and re-aimed the same probe at `LibraryPromptsController`'s own
+    permanent shim loop, which is generated by the identical
+    `dataclasses.fields` loop and so carries the identical trap. Kept rather
+    than deleted alongside the screen block precisely because
+    `test_prompts_controller_exposes_every_state_field` below is the weaker
+    `isinstance(..., property)` check this one exists to strengthen.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_prompts_controller import (
+        LibraryPromptsController,
+    )
+
+    controller = object.__new__(LibraryPromptsController)
     state = LibraryPromptsState()
-    screen._prompts_state = state
+    controller._prompts_state_accessor = lambda: state
 
     field_names = sorted(f.name for f in dataclasses.fields(LibraryPromptsState))
     read_mismatch = []
     write_mismatch = []
     for name in field_names:
         shim_attr = prompt_state_shim_attr(name)
-        if getattr(screen, shim_attr) is not getattr(state, name):
+        if getattr(controller, shim_attr) is not getattr(state, name):
             read_mismatch.append(shim_attr)
         sentinel = object()
-        setattr(screen, shim_attr, sentinel)
+        setattr(controller, shim_attr, sentinel)
         if getattr(state, name) is not sentinel:
             write_mismatch.append(shim_attr)
-        if getattr(screen, shim_attr) is not sentinel:
+        if getattr(controller, shim_attr) is not sentinel:
             read_mismatch.append(shim_attr)
     assert not read_mismatch, f"shim getters do not read their field: {read_mismatch!r}"
     assert not write_mismatch, (
@@ -132,6 +152,29 @@ def test_every_shim_reads_and_writes_its_own_state_field() -> None:
     # share one underlying field.
     written = [getattr(state, name) for name in field_names]
     assert len({id(value) for value in written}) == len(field_names)
+
+
+@pytest.mark.unit
+def test_the_screen_no_longer_carries_a_prompt_state_shim() -> None:
+    """The task-1 screen shim block is GONE, and must stay gone.
+
+    Mirrors every prior series' own post-cleanup assertion: the flat
+    `_library_prompt_<field>`/`_library_prompts_<field>`/
+    `_selected_prompt_id` names must not exist on `LibraryScreen` in ANY
+    form -- neither as the deleted generated properties nor as a hand-added
+    replacement -- so a reintroduced shim fails loudly here instead of
+    silently re-splitting the ownership this series consolidated.
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    still_shimmed = [
+        prompt_state_shim_attr(f.name)
+        for f in dataclasses.fields(LibraryPromptsState)
+        if hasattr(LibraryScreen, prompt_state_shim_attr(f.name))
+    ]
+    assert not still_shimmed, (
+        f"the prompts-state shim block is back on LibraryScreen: {still_shimmed!r}"
+    )
 
 
 @pytest.mark.unit
@@ -373,15 +416,60 @@ _PROMPTS_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
-#: Filled in by this series' own cleanup task (task 3, prompts series 3/3)
-#: with the moved names whose screen delegator has zero external references.
-#: Deliberately EMPTY here: a controller PR moves bodies and leaves a
-#: delegator under every one of them, so the delegator-prune census has not
-#: been run yet. The skip/absence-assertion pair below is wired now (rather
-#: than added later) so task 3's own edit is a one-line frozenset change,
-#: matching `_INGEST_CLUSTER_SCREEN_DELEGATOR_PRUNED`/
-#: `_SKILLS_CLUSTER_SCREEN_DELEGATOR_PRUNED` in their post-cleanup shape.
-_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset()
+#: Filled in by this series' own cleanup task (task 3, prompts series 3/3):
+#: the moved names whose screen delegator had ZERO references outside its
+#: own body anywhere in the repo, across all four census spellings
+#: (attribute, quoted-string, bare-assignment, patch-target table). 39 of
+#: 139 (~28%). The other 100 KEEP: 51 unconditionally per the recipe's
+#: transform whitelist -- 44 `@on` handlers, 1 `action_*`, and 6
+#: `on_<Message>` NAME-dispatched Textual handlers (`on_prompt_block_editor_
+#: *`; Textual resolves these off `Message.handler_name` through
+#: `MessagePump._get_dispatch_methods`, so deleting one silently stops the
+#: screen handling that message) -- and 49 more with a genuine external
+#: caller.
+_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
+    {
+        "_apply_library_prompt_detail_failure",
+        "_apply_library_prompt_save_outcome",
+        "_await_library_prompt_durable_call",
+        "_await_library_prompt_save_call",
+        "_capture_library_prompt_block_state",
+        "_claim_library_prompt_detail_generation",
+        "_detach_library_prompt_working_copy",
+        "_exit_library_prompt_editor_guarded",
+        "_initialize_library_prompt_history",
+        "_library_prompt_action_artifact_type",
+        "_library_prompt_artifact_fields",
+        "_library_prompt_detail_failure_notice",
+        "_library_prompt_detail_request_is_current",
+        "_library_prompt_history_action_is_current",
+        "_library_prompt_legacy_recipe_requires_conversion",
+        "_library_prompt_loading_notice",
+        "_library_prompt_markdown_artifact_fields",
+        "_library_prompt_mutation_is_current",
+        "_library_prompt_text_fields_match_state",
+        "_load_library_prompt_memberships",
+        "_mark_library_prompt_dirty",
+        "_notify_library_prompt_legacy_recipe_requires_conversion",
+        "_notify_library_prompt_unrepresentable_markdown",
+        "_notify_library_prompt_unsupported_artifact_type",
+        "_open_library_prompt_colliding_with_current_name",
+        "_open_library_prompt_delete_confirmation",
+        "_reconcile_library_prompt_history_region",
+        "_reconcile_library_prompt_memberships",
+        "_request_library_prompt_history_count",
+        "_request_library_prompt_history_page",
+        "_resolve_library_prompt_create_conflict",
+        "_restore_library_prompt_history",
+        "_return_to_library_prompt_create_draft",
+        "_save_library_prompt",
+        "_set_library_prompt_discard_enabled",
+        "_sync_library_prompt_open_existing_button",
+        "_sync_library_prompt_save_action_widgets",
+        "_undo_library_prompt_delete",
+        "_update_library_prompt_meta_static",
+    }
+)
 
 #: Every name a moved body references that is NOT this controller's own
 #: `LibraryPromptsState` field and NOT another mover -- i.e. the complete
@@ -492,8 +580,9 @@ def test_screen_delegates_prompt_handlers() -> None:
 
     Mirrors `test_screen_delegates_ingest_handlers`: a same-name forwarding
     check, not a loose "the controller is referenced somewhere" substring
-    check. Skips `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (empty until
-    task 3) and instead asserts each such name is genuinely ABSENT from
+    check. Skips the 39 names in
+    `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED` (task 3's census) and
+    instead asserts each such name is genuinely ABSENT from
     `LibraryScreen`, so a future accidental re-add would fail loudly here
     rather than silently reintroducing dead code.
     """

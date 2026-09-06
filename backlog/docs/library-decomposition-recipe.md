@@ -965,7 +965,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 2 | **search + RAG** — **complete** (wave-3 Tasks 2–4, task-31203) | 6 + 16 | Deferred from wave-2 (search alone was BLOCKED at the entanglement gate, wave-2 Task 8) into ONE combined series once RAG's own pool was folded in. 20 fields moved to `LibraryRagSearchState`; 42 of 50 combined "search"+"rag"-named method candidates moved to `LibraryRagSearchController` (3 Prompts-owned + 7 Media-owned excluded from the raw 60 name matches before the 50-candidate cluster is even formed; of the 50, 8 excluded: 3 `@work` framework-decorator hazard, 1 module-globals-coupling, 4 instance-attribute-monkeypatch test bypass); 12 of 42 screen delegators pruned at cleanup. See §18 for the series' actual, as-landed numbers |
 | 3 | **skills** — **complete** (wave-4 Tasks 1–3) | 15 | 36 fields moved to `LibrarySkillsState` (a three-way prefix split: 26 `_library_skill_*` singular + 9 `_library_skills_*` plural + 1 bare `_selected_skill_name`, resolved by a single `skill_state_shim_attr()` function rather than two independent frozensets); 86 of 127 "skill"-named method candidates moved to ONE `LibrarySkillsController` (41 excluded: 6 merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1 instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-argument hazard — plus 1 CRITICAL unbound-attribute-escape (`getattr(self, "focused", None)` with no corresponding property) found by post-landing review rather than the pre-landing battery, fixed with a fail-without/pass-with covering test); 16 of 86 screen delegators pruned at cleanup. This series' own two battery-caught regressions (§3's sixth bypass shape) and the review-found seventh instance widened that bypass catalogue for every subsequent subsystem. See §19 for the series' actual, as-landed numbers |
 | 3 | **ingest** — **complete** (wave-5 Tasks 1–3) | 23 | 20 fields moved to `LibraryIngestState` (single `_library_ingest_` prefix, no plural variant); 56 of 78 "ingest"-named method candidates moved to ONE `LibraryIngestController` (22 excluded: 4 `@work` framework-decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-monkeypatch); 6 of 56 screen delegators pruned at cleanup. This series' own state PR found the "seventh bypass shape" (an `object.__new__`-bypassed fixture's flat-name seed breaking the instant the state shim installs, not deferrable to cleanup) — a review-found CRITICAL: 2 tests left RED at HEAD in `Tests/UI/test_parakeet_v2_install_ui.py`, the one file whose filename and test names contain neither "ingest" nor "library" and which the task's own `-k`-filtered sweep therefore could not see, a no-red-ships violation (the same task's separate 24-vs-27-site count error in its own report was a distinct Important finding, not this CRITICAL) — and its controller PR's post-landing review found a SECOND review-found CRITICAL, the "eighth" bypass shape (a moved body's bare module global patched at the OLD module path by a green-but-vacuous test, `_resolve_ingest_source`) — both widened the bypass catalogue for every subsequent subsystem. See §20 for the series' actual, as-landed numbers, and §20's own "Wave-5 close" subsection for the wave-level pin trajectory, verification battery, and lessons |
-| 4 | prompts | 41 | |
+| 4 | **prompts** — **complete** (wave-6 Tasks 1–3) | 41 | 43 fields moved to `LibraryPromptsState` (a three-way prefix split, the skills precedent: 31 `_library_prompt_*` singular + 11 `_library_prompts_*` plural + 1 bare `_selected_prompt_id`, resolved by a single `prompt_state_shim_attr()`; 3 further prompt-named `__init__` attributes are WIRING — live `LibraryPromptHistoryController`/`LibraryPromptBrowseController`/`LibraryPromptCollectionsController` instances — and stayed on the screen); 139 of 161 "prompt"-named method candidates moved to ONE `LibraryPromptsController`, the largest single move of this program (22 excluded: 14 unbound-fake-self, 3 instance-attribute-monkeypatch, 2 screen-identity, 2 module-globals-coupling, 1 merely-delegate-to-existing-controller property); 39 of 139 screen delegators pruned at cleanup (~28%). This series' cleanup found a genuinely NEW delegator-prune hazard the prior five did not: Textual's `on_<Message>` NAME-dispatched handlers (`MessagePump._get_dispatch_methods` resolves them off `Message.handler_name`, not off `@on`), which a reference-count census reports as zero-referenced and whose deletion would silently unhook the screen from six messages. See §21 for the series' actual, as-landed numbers |
 | 4 | media | 55 | |
 | 4 | notes | 72 | most scarred; its sync controller (`canvas_sync.py`) already lives in `UI/Library_Modules/` from PR 0a |
 | 5 | final shell pass | — | residual focus/lifecycle plumbing, delegator table tidy, `compose_content` reduced to the region-yielding skeleton |
@@ -4164,3 +4164,203 @@ unrelated feature work landing on `dev` in between.
    the recipe doing its job — recorded here as confirmation, not a new
    finding.
 
+## 21. The prompts series, as landed — the sixth rehearsal, and the largest single move of this program
+
+Wave-6 Tasks 1–3 (`.superpowers/sdd/2026-09-05-library-decomposition-wave6-prompts`)
+extracted the Prompts subsystem. At 161 method candidates and 46 prompt-named
+`__init__` attributes it is the biggest cluster the recipe has processed —
+skills' 127/36 was the prior high — and the first to need a delegator-prune
+census that a plain reference count gets WRONG (see the `on_<Message>`
+finding below).
+
+### Fields/methods moved, per task
+
+| Task | PR | What moved | Screen delta |
+|---|---|---|---|
+| 1 | State | 43 of 46 prompt-named `__init__` attributes → `LibraryPromptsState`; a THREE-way prefix split (31 `_library_prompt_*` singular + 11 `_library_prompts_*` plural + 1 bare `_selected_prompt_id`), resolved by one `prompt_state_shim_attr()` rather than two independent frozensets (the skills precedent). The other 3 are WIRING — live `LibraryPromptHistoryController`/`LibraryPromptBrowseController`/`LibraryPromptCollectionsController` instances — and stayed plain screen attributes. 4 fields keep their ORIGINAL `__init__` line (`reader_preferences`, `reader_layout`, `reader_persistence_locks`, `editor_mode`) because `self._prompts_state` must be constructed before the shared reader-preference tuple-unpack | 41393 → 41359 lines, 1321 methods (unchanged) |
+| 2 | Controller | 139 of 161 "prompt"-named method candidates → `LibraryPromptsController` (44 `@on` + 6 `on_<message>` naming-convention + 1 `action_*` + 1 `@staticmethod` + 87 plain; 22 exclusions: 14 unbound-fake-self, 3 instance-attribute-monkeypatch, 2 screen-identity, 2 module-globals-coupling, 1 merely-delegate-to-existing-controller `@property`). Single controller, not split — an import-graph component analysis over all 161 candidates found one connected component of 145 names, so no clean seam existed | 41359 → 37722 lines, 1321 methods (unchanged: 139 `FunctionDef`s out, 139 delegators in). Controller born-governed at 4956, review fix round → 4991 |
+| 3 | Cleanup | Shim block (43 properties, three prefixes) deleted; 128 screen-side literal `self.<flat>` retargets to `self._prompts_state.<field>` plus 4 dynamic-dispatch string retargets and 1 `getattr` RECEIVER fix; 465 test-side attribute-path retargets across 11 files spanning `Tests/UI` and `Tests/ProductionApp`, plus 13 `SimpleNamespace` fixture restructurings (27 flat kwargs → nested `_prompts_state=SimpleNamespace(...)`) and one fake-harness CLASS-ATTRIBUTE restructuring covering 5 more construction sites; 39 of 139 screen delegators pruned; 25 dead imports removed (5 further candidates SAVED by the `_SURFACE` check); the 4 stale `test_library_modal_dismissal.py` inventory rows repointed at the controller behind a new `_OwnerScope`; 10 stale docstring/comment corrections across the screen (3), the controller (2) and the state module (5) | 37722 → 37574 lines, 1321 → 1282 methods (39 fewer `FunctionDef`s — exactly the 39 pruned delegators). Controller: 4991 → 4998 (comment-only) |
+
+**Pin trajectory** (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`
+in `Tests/Architecture/test_screen_size_ratchet.py`):
+`41393/1321 → 41359/1321 → 37722/1321 → 37574/1282` (final).
+
+**Controller-file governance pin** (§17): `library_prompts_controller.py`
+born-governed the moment it existed (Task 2): `4956 → 4991` (Task 2's own
+review fix round) `→ 4998` (this cleanup task, comment-only).
+
+### Delegator census — 100 KEEP, 39 PRUNED (~28%), and a genuinely new hazard
+
+Of the 139 moved names, **51 KEEP unconditionally** per the transform
+whitelist (§4) — but the whitelist needed a THIRD member this series, not
+the two prior series used:
+
+- **44 `@on` handlers** and **1 `action_*`** — the established two.
+- **6 `on_<Message>` NAME-dispatched handlers** (`on_prompt_block_editor_
+  back_requested` and its five siblings). **This is the new one.** Textual
+  dispatches these purely by name: `Message.handler_name` is
+  `f"on_{name}"` (`textual/message.py`), and `MessagePump._get_dispatch_
+  methods` walks `self.__class__.__mro__` looking that name up
+  (`textual/message_pump.py`). They carry no decorator, so a
+  decorator-driven whitelist misses them; and no code anywhere spells
+  `screen.on_prompt_block_editor_back_requested`, so a **reference-count
+  census reports them as zero-referenced and marks all six PRUNE**. Deleting
+  them would have silently unhooked `LibraryScreen` from six messages with
+  every test still green, because the canvas widget below also defines
+  handlers of the same names and keeps handling them one level down.
+  **The rule this generalises to: before pruning any moved name matching
+  `on_[a-z]`, check it against Textual's name-based dispatch, not just
+  against the reference census.** (The 6 do appear to have "code
+  references" in a naive census — but every hit is a `def` of the SAME name
+  in an unrelated class, which is the opposite of a caller.)
+
+Of the remaining 88 candidates (1 staticmethod + 87 plain), **49 have a
+genuine external caller** and **39 have none**. Every verdict was derived
+from a tokenize-based census (NAME tokens only, so a docstring mention
+cannot masquerade as a call) over `tldw_chatbook/` + all of `Tests/`,
+excluding only the controller module and each name's own delegator body,
+then re-checked against a broader "name appears anywhere on the line" pass.
+The broad pass is what earns its keep: it caught three names
+(`_arm_library_prompt_editor`, `_restore_library_prompts_focus`,
+`_sync_library_prompt_memberships`) whose only callers pass them as **bare
+callables** — `self.call_after_refresh(self._arm_library_prompt_editor)`,
+`sync_memberships=lambda: self._sync_library_prompt_memberships`, and one
+passed as a positional argument on its own line — which a `<name>\s*\(`
+call-shaped regex scores as zero, marking all three PRUNE. That is the skills series' own lesson-2 sanity check
+(§19) firing for real rather than passing vacuously.
+
+**A second novel census finding: an uncollected-but-executable script under
+`Docs/`.** `_library_prompt_can_update_original` has zero references in
+`tldw_chatbook/` and `Tests/` — but
+`Docs/superpowers/reviews/evidence/task-22033/task22033_live_matrix_runner.py:262`
+calls `screen._library_prompt_can_update_original()` on a real screen.
+`pyproject.toml` sets `testpaths = ["Tests"]`, so that file is never
+collected, and prior series established that frozen `Docs/` evidence
+scripts are NOT retargeted (`task23019_scenarios.py` still spells
+`screen._library_skill_editor_state` two waves after the skills cleanup).
+Nonetheless the prune rule is "zero references **anywhere in the repo**",
+and this is a reference in executable form, so the delegator was KEPT — the
+first time a `Docs/` hit has changed a prune verdict. Prune fraction: 39 of
+139, ~28%, at the high end of the recorded range (export ~5% < ingest ~11%
+< skills ~19% < collections ~22% < search+RAG ~29% ≈ prompts ~28% <
+conversations ~30%).
+
+### Dynamic-dispatch census — four spellings, six real screen-side sites
+
+Run over the 43 state fields AND the 139 mover names, in all four spellings
+(attribute, quoted-string, bare-assignment/kwarg, patch-target table). The
+**mover** names came back clean in every non-attribute spelling: the only
+string-literal occurrences anywhere are the wiring test's own pin tuple and
+the four `test_library_modal_dismissal.py` inventory rows (below). The
+patch-target-table shape (`(target, "<name>", key)` rows consumed by a
+distant `monkeypatch.setattr`, whose exemplar is
+`Tests/UI/test_library_shell.py:5146`) DOES name a prompt method there —
+but `_request_library_prompts_browse`, which is one of the 22 EXCLUSIONS,
+so it never moved and needed nothing.
+
+The **field** names produced six screen-side sites, each matching a shape a
+prior series already solved:
+
+- **The shared reader-preference dispatcher, twice**
+  (`_replace_library_reader_preference` / `_persist_library_reader_
+  preference`): the `"prompts"` entry's value string became
+  `"_prompts_state.reader_preferences"`. Zero consumption-site changes —
+  both dicts are already read through `operator.attrgetter` and written
+  through `_assign_library_reader_preferences_attribute`, the dotted-path
+  helper the conversations exemplar added and every series since has
+  reused rather than re-derived.
+- **The choice-strip visibility/canvas-kind pair**: same treatment,
+  `"_prompts_state.sort_choices_visible"`, sitting directly beside the
+  skills entry that already reads that way.
+- **One `getattr(self, "_library_prompts_view", "list")`** needing the
+  skills series' RECEIVER fix, not a string swap:
+  `getattr(self._prompts_state, "view", "list")`. Task 1's census recorded
+  four such sites; task 2's move took three of them into the controller,
+  where they resolve through the controller's own permanent shim loop and
+  correctly stay untouched.
+- **`on_screen_suspend`'s flat-name timer loop**: the prompts
+  search-debounce timer left the string tuple for its own explicit
+  `_prompts_state` block — the ingest path-debounce timer's precedent,
+  three lines above it in the same method, complete with the same
+  "a `getattr` for the old flat name silently returns None" warning. Both
+  of that loop's test pins (`test_library_screen_reuse.py`) got the
+  matching treatment.
+
+Test-side: `test_library_adaptive_reader_closeout.py`'s
+`DESTINATION_CONTRACT` needed its two `"prompts"` strings dotted (the sixth
+consecutive subsystem to need that one entry), and
+`test_screen_navigation.py:3253`'s `setattr(screen, "_library_prompts_
+view", "list")` needed the receiver fix.
+
+### Import verification — the `_SURFACE` check saved 5 of 30
+
+30 imports were left dead in `library_screen.py` by this wave, derived as a
+DIFFERENCE (AST-unused set at the wave-6 start commit vs. at this commit)
+rather than as an absolute unused-name list — 38 further names are unused at
+BOTH ends and belong to prior series or to `__future__`/`_SURFACE`
+bookkeeping, and deleting those would have been out of scope.
+
+Each of the 30 was then checked individually against
+`Tests/Architecture/test_library_support_layer_surface.py`'s `_SURFACE`
+re-export contract, and **5 came back pinned**:
+`LIBRARY_PROMPT_DIRTY_VETO_COPY`, `LIBRARY_PROMPT_SAVE_STATUS_COPY`,
+`_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP`,
+`_LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS`,
+`_LIBRARY_PROMPT_WRITE_WORKER_GROUPS`. All five stayed;
+`test_screen_still_re_exports_every_moved_name` asserts the MODULE surface,
+not live usage. **This is the shape's third series in a row and the largest
+hit yet** (ingest saved 1 of 9; this saved 5 of 30) — and it was nearly
+missed a second way: the first `_SURFACE` check was a case-sensitive grep
+for `prompt`, which returned zero because all five names spell it `PROMPT`.
+**Do the `_SURFACE` check by exact-name lookup, not by a lowercase
+subsystem-word grep.** The remaining 25 were deleted, each independently
+confirmed already re-imported and live inside the controller (23 of them)
+or genuinely unnecessary anywhere (`PromptSourceCapabilities`,
+`local_prompt_capabilities` — both now live only in
+`library_prompts_state.py`, which owns the field whose default calls them).
+
+### The deferred modal inventory — repointed, proven by construction
+
+`Tests/UI/test_library_modal_dismissal.py` maintains a hand-declared
+`(file, class, presenter, modal-type)` inventory and rediscovers it by
+AST-parsing only the files named in `_SUPPORTED_OWNER_SCOPES`. Task 2's move
+made four rows stale. Repointing them required adding an
+`_OwnerScope("tldw_chatbook/UI/Library_Modules/library_prompts_controller.
+py", "LibraryPromptsController")` FIRST — without it a repointed edge is
+never discovered and the bidirectional assertion fails the other way.
+
+That test **cannot be proven green end-to-end**: it is pre-RED at this
+task's parent for an unrelated skills-era failure
+(`unresolved modal constructor … LibraryScreen._present_library_skills_
+import_choice_if_needed`), which aborts discovery before the comparison.
+Measured identically on both trees: **1 failed / 169 passed**. The retarget
+was therefore proven by CONSTRUCTION instead — running the file's own
+`_discover_library_modal_edges` against the new scope alone and comparing
+to the four declared rows: 4 discovered, 4 declared, zero undeclared, zero
+missing, exact match including each modal's concrete type. The fifth prompt
+row, `_stage_library_prompt_for_console`, is one of the 22 exclusions, is
+still screen-resident, and was correctly left alone. The cross-wave repair
+(the skills blocker, plus `handle_library_ingest_browse` and the two skill-
+trust passphrase presenters, all equally stale delegators) is filed
+separately at wave close — it is not prompts-only work.
+
+### Wiring test finalization
+
+`Tests/Architecture/test_library_prompts_wiring.py`:
+`test_state_object_fields_match_the_shim_surface` narrowed to
+`test_state_object_declares_the_censused_field_count` (the half that never
+depended on the screen);
+`test_every_shim_reads_and_writes_its_own_state_field` **re-aimed at the
+controller** rather than deleted, since `LibraryPromptsController`'s own
+permanent shim loop is generated by the identical `dataclasses.fields` loop
+and carries the identical closure-binding trap, and the surviving
+`test_prompts_controller_exposes_every_state_field` is exactly the weaker
+`isinstance(..., property)` check it exists to strengthen (a
+deviation from the prior series' delete-it precedent, taken deliberately —
+prior series had no equivalent second test to lose);
+`test_the_screen_no_longer_carries_a_prompt_state_shim` added, asserting
+ABSENCE; `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED` filled with the 39
+names, with both `test_screen_delegates_prompt_handlers` and
+`test_prompts_cluster_staticmethods_forward_to_the_controller_class`
+already wired (by task 2) to skip them and assert genuine absence instead.
+13 tests, all green.
