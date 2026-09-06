@@ -652,14 +652,28 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     set id(value) { this.setAttribute("id", String(value)); }
     get className() { return this.getAttribute("class") || ""; }
     set className(value) { this.setAttribute("class", String(value)); }
-    get value() { return this.__value; }
-    set value(value) { this.__value = String(value); markPropertyOverride(this, "value"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "value", value: this.__value}); }
+    get value() { return this.localName === "option" ? optionValue(this) : this.__value; }
+    set value(value) {
+      this.__value = String(value);
+      markPropertyOverride(this, "value");
+      if (this.localName === "select") setSelectValue(this, this.__value);
+      if (this.localName === "option") { this.setAttribute("value", this.__value); return; }
+      emitForPresent(this, {op: "set-property", node_id: this.__id, name: "value", value: this.__value});
+    }
     get checked() { return this.__checked; }
     set checked(value) { this.__checked = Boolean(value); markPropertyOverride(this, "checked"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "checked", value: this.__checked}); }
     get disabled() { return this.__disabled; }
-    set disabled(value) { this.__disabled = Boolean(value); markPropertyOverride(this, "disabled"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "disabled", value: this.__disabled}); }
+    set disabled(value) {
+      if (Boolean(value)) this.setAttribute("disabled", "");
+      else this.removeAttribute("disabled");
+    }
     get selected() { return this.__selected; }
-    set selected(value) { this.__selected = Boolean(value); markPropertyOverride(this, "selected"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "selected", value: this.__selected}); }
+    set selected(value) {
+      this.__selected = Boolean(value); markPropertyOverride(this, "selected");
+      const selected = this.__selected;
+      refreshFormAncestors(this, selected ? this : null);
+      emitForPresent(this, {op: "set-property", node_id: this.__id, name: "selected", value: selected});
+    }
     get textContent() {
       if (this.nodeType === 3) return this.__text;
       if (this.__text !== null) return this.__text;
@@ -669,6 +683,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       value = String(value); if (utf8Length(value) > 524288) throw new RangeError("Text exceeds Canvas V1");
       for (const child of this.childNodes) child.parentNode = null;
       this.childNodes = []; this.__text = value;
+      refreshFormAncestors(this);
       emitForPresent(this, {op: "set-text", node_id: this.__id, value});
     }
     getAttribute(name) { name = String(name); return this.attributes.has(name) ? this.attributes.get(name) : null; }
@@ -677,13 +692,21 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       name = String(name); value = String(value); validateAttribute(this, name, value);
       if (name === "style") throw new TypeError("Use the Canvas style facade");
       this.attributes.set(name, value);
-      if (name === "value") this.__value = value;
-      if (["checked", "disabled", "selected"].includes(name)) this["__" + name] = true;
+      if (name === "value" && !listIncludes(this.__propertyOverrides, "value")) this.__value = value;
+      if (name === "disabled") this.__disabled = true;
+      if (["checked", "selected"].includes(name) && !listIncludes(this.__propertyOverrides, name)) this["__" + name] = true;
+      // Availability reflection does not change an explicit empty selection.
+      if (name !== "disabled") refreshFormAncestors(this, name === "selected" && this.__selected ? this : null);
       emitForPresent(this, {op: "set-attribute", node_id: this.__id, name, value});
     }
     removeAttribute(name) {
       name = String(name); if (!allowedAttribute(this, name)) throw new TypeError("Attribute is outside Canvas V1");
-      this.attributes.delete(name); emitForPresent(this, {op: "remove-attribute", node_id: this.__id, name});
+      this.attributes.delete(name);
+      if (name === "disabled") this.__disabled = false;
+      if (["checked", "selected"].includes(name) && !listIncludes(this.__propertyOverrides, name)) this["__" + name] = false;
+      if (name === "value" && !listIncludes(this.__propertyOverrides, "value")) this.__value = "";
+      if (name !== "disabled") refreshFormAncestors(this);
+      emitForPresent(this, {op: "remove-attribute", node_id: this.__id, name});
     }
     appendChild(child) {
       if (!(child instanceof VirtualNode) || child === this) throw new TypeError("Invalid child");
@@ -691,6 +714,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       if (child.parentNode) child.parentNode.removeChild(child);
       if (this.__rendererPresent) ensureRendererSubtree(child);
       child.parentNode = this; this.childNodes.push(child);
+      refreshFormAncestors(this);
       emitForPresent(this, {op: "append-child", node_id: this.__id, child_id: child.__id}); return child;
     }
     insertBefore(child, reference) {
@@ -702,11 +726,13 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       if (this.__rendererPresent) ensureRendererSubtree(child);
       const index = reference === null ? this.childNodes.length : this.childNodes.indexOf(reference);
       child.parentNode = this; this.childNodes.splice(index, 0, child);
+      refreshFormAncestors(this);
       emitForPresent(this, {op: "insert-before", node_id: this.__id, child_id: child.__id, reference_id: reference ? reference.__id : null}); return child;
     }
     removeChild(child) {
       const index = this.childNodes.indexOf(child); if (index < 0) throw new Error("Node is not a child");
       this.childNodes.splice(index, 1); child.parentNode = null;
+      refreshFormAncestors(this);
       emitForPresent(this, {op: "remove-child", node_id: this.__id, child_id: child.__id}); return child;
     }
     addEventListener(type, callback, options = false) {
@@ -747,6 +773,64 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   function assertNoCycle(parent, child) {
     for (let current = parent; current; current = current.parentNode) {
       if (current === child) throw new TypeError("Invalid child cycle");
+    }
+  }
+
+  function optionValue(option) {
+    const explicit = option.getAttribute("value");
+    return explicit === null ? option.textContent.replace(/[\t\n\f\r ]+/g, " ").trim() : explicit;
+  }
+
+  function selectOptions(select) {
+    const options = makeList();
+    const work = [select];
+    while (work.length) {
+      const node = work.pop();
+      if (node.localName === "option") push(options, node);
+      else if (node === select || node.localName === "optgroup") {
+        for (let index = node.childNodes.length - 1; index >= 0; index -= 1) work.push(node.childNodes[index]);
+      }
+    }
+    return options;
+  }
+
+  function setSelectValue(select, value) {
+    const options = selectOptions(select);
+    let found = false;
+    for (let index = 0; index < options.length; index += 1) {
+      const option = options[index];
+      option.__selected = !found && optionValue(option) === value;
+      if (option.__selected) found = true;
+      markPropertyOverride(option, "selected");
+    }
+    select.__value = found ? value : "";
+  }
+
+  function refreshSelect(select, preferred = null) {
+    const options = selectOptions(select);
+    const multiple = select.hasAttribute("multiple");
+    let chosen = null;
+    for (let index = 0; index < options.length; index += 1) if (options[index].__selected) chosen = options[index];
+    if (preferred && listIncludes(options, preferred)) chosen = preferred;
+    if (!chosen && !multiple && Number(select.getAttribute("size") || 0) <= 1) {
+      for (let index = 0; index < options.length; index += 1) {
+        const option = options[index];
+        if (!option.__disabled && !(option.parentNode.localName === "optgroup" && option.parentNode.hasAttribute("disabled"))) { chosen = option; break; }
+      }
+    }
+    select.__value = "";
+    let found = false;
+    for (let index = 0; index < options.length; index += 1) {
+      const option = options[index];
+      if (!multiple) option.__selected = option === chosen;
+      if (option.__selected && !found) { select.__value = optionValue(option); found = true; }
+    }
+  }
+
+  function refreshFormAncestors(node, preferred = null) {
+    for (let current = node; current; current = current.parentNode) {
+      if (current.localName === "textarea" && !listIncludes(current.__propertyOverrides, "value")) current.__value = current.textContent;
+      if (current.localName === "select") refreshSelect(current, preferred);
     }
   }
 
@@ -859,6 +943,7 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     for (const childRecord of record.children) {
       const child = installNode(childRecord, namespace); child.parentNode = node; node.childNodes.push(child);
     }
+    refreshFormAncestors(node);
     return node;
   }
 
@@ -1061,7 +1146,10 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
   controls.dispatch = (encoded) => {
     const record = safeJsonParse(encoded);
     const target = nodes.get(record.target_id); if (!target) throw new Error("Unknown event target");
-    if (record.value !== null) { target.__value = record.value; markPropertyOverride(target, "value"); }
+    if (record.value !== null) {
+      target.__value = record.value; markPropertyOverride(target, "value");
+      if (target.localName === "select") setSelectValue(target, record.value);
+    }
     if (record.checked !== null) { target.__checked = record.checked; markPropertyOverride(target, "checked"); }
     target.dispatchEvent(new VirtualEvent(record.type, {key: record.key}));
   };

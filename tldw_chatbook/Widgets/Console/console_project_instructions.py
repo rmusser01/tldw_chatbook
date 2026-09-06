@@ -301,6 +301,9 @@ class ConsoleProjectInstructionStatusRow(Widget):
         yield Button(
             f"{self._state.status} · Project",
             id="console-project-instruction-status-button",
+            # `console-rail-focus-carrier` keys the focus-edge rule
+            # (TASK-31663); see `console_inspector_section.py`'s toggle.
+            classes="console-rail-focus-carrier",
             compact=True,
         )
 

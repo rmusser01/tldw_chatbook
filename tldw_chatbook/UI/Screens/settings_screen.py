@@ -101,7 +101,10 @@ from ...Chat.console_provider_support import (
     ConsoleProviderCatalogEntry,
     supported_console_provider_catalog,
 )
-from ...Chat.console_session_settings import CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+from ...Chat.console_session_settings import (
+    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    normalize_console_model_value,
+)
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...Sync_Interop.sync_promotion_state import (
@@ -10816,6 +10819,41 @@ class SettingsScreen(BaseAppScreen):
             )
         return "Provider readiness: needs provider and model"
 
+    def _provider_overview_readiness_status(self) -> str:
+        """One-line send-path readiness verdict for the Overview status row.
+
+        TASK-31805: the Overview 'Status:' must reflect what an actual send
+        would do, never the mere presence of a provider/model name. Two
+        blockers are surfaced, in the SAME order the send path enforces them
+        (``build_console_settings_readiness``): the credential check first
+        (``get_provider_readiness`` / ``resolve_provider_api_key``), then a
+        selected model. Without the credential check a fresh no-key profile
+        read as usable ("Status: OpenAI / gpt-4o") while a send failed with
+        "OpenAI API Key is required but not found."; without the model check a
+        provider whose credential resolves but with no model selected would
+        still read "Ready" while the identity shows "not selected" and the
+        send gateway blocks with "Select a model before sending."
+
+        Returns:
+            "Ready" when a send would proceed, "Not ready: <reason>" when a
+            credential or model blocker applies, or "needs provider and model"
+            when no provider is selected yet.
+        """
+        resolved = self._resolve_provider_model_for_settings()
+        provider = str(resolved.provider or "").strip()
+        if not provider or provider == "not selected":
+            return "needs provider and model"
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_readiness_app_config(),
+        )
+        if not readiness.ready:
+            return f"Not ready: {readiness.reason}"
+        # Credential resolves (or is not required); a send still needs a model.
+        if normalize_console_model_value(resolved.model) is None:
+            return "Not ready: Select a model"
+        return "Ready"
+
     def _provider_draft(self) -> SettingsDraft | None:
         return self._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -15321,7 +15359,7 @@ class SettingsScreen(BaseAppScreen):
             {
                 "configuration": (
                     f"{provider or 'Not selected'} / {model}; Status: "
-                    f"{self._provider_readiness_label().removeprefix('Provider readiness: ')}"
+                    f"{self._provider_overview_readiness_status()}"
                 ),
                 "last_connection_test": self._provider_test_result,
                 "storage_privacy": (

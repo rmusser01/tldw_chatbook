@@ -94,3 +94,34 @@ def test_meeting_owner_imports_without_numpy_and_leaves_the_mixer_unloaded():
         f"(exit={result.returncode}):\n"
         f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
     )
+
+
+def test_app_import_pulls_in_no_diarizer_module():
+    """Boot must never import the diarizer backends, or torch (spec §3.4,
+    §7): `build_diarizer()` (`meeting_owner.py`) imports `SpeechBrainDiarizer`
+    from `diarizer_local` LAZILY, only when a meeting actually starts with
+    `live_diarization` on, and `diarizer_local` itself only spawns
+    `diarizer_worker.py` as a SEPARATE subprocess (never imports it) --
+    `torch`/`speechbrain` therefore only ever load in that child process, not
+    in the TUI. Run with numpy blocked too, matching the two probes above:
+    app import must survive with neither numpy nor the diarizer/torch stack
+    present.
+    """
+    script = _BLOCK_NUMPY + textwrap.dedent("""
+        import sys
+        import tldw_chatbook.app  # noqa: F401
+
+        watched = (
+            "tldw_chatbook.Audio.diarizer_local",
+            "tldw_chatbook.Audio.diarizer_worker",
+            "torch",
+        )
+        pulled = sorted(name for name in watched if name in sys.modules)
+        print(f"RESULT: PULLED={pulled}")
+    """)
+    result = _run_probe(script)
+    assert "RESULT: PULLED=[]" in result.stdout, (
+        f"app import pulled in a diarizer module or torch at boot "
+        f"(exit={result.returncode}):\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    )

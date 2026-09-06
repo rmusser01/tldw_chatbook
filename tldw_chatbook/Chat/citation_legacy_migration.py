@@ -1269,11 +1269,27 @@ class CitationLegacyMigrationService:
         conversation_id: str,
         *,
         verify_canonical: bool = False,
+        read_only: bool = False,
     ) -> LegacyCitationConversationRead:
-        """Choose canonical or legacy once; never merge the two histories."""
+        """Choose canonical or legacy once; never merge the two histories.
+
+        Args:
+            conversation_id: Owner whose citation history is projected.
+            verify_canonical: Verify completed migration source fingerprints.
+            read_only: Refuse states requiring reconciliation without writing.
+
+        Returns:
+            The selected canonical or legacy citation projection.
+
+        Raises:
+            CitationPersistenceUnavailable: A read-only projection requires
+                reconciliation before its citation history can be verified.
+        """
 
         journal = self.get_journal(conversation_id)
         if journal is not None and journal.state is LegacyMigrationState.DIVERGED:
+            if read_only:
+                raise CitationPersistenceUnavailable("citation_verification_required")
             return LegacyCitationConversationRead(
                 state=LegacyCitationReadState.DIVERGED,
                 records={},
@@ -1283,6 +1299,8 @@ class CitationLegacyMigrationService:
             and journal.state is not LegacyMigrationState.COMPLETE
             and self._has_active_legacy_rows(conversation_id)
         ):
+            if read_only:
+                raise CitationPersistenceUnavailable("citation_verification_required")
             return LegacyCitationConversationRead(
                 state=LegacyCitationReadState.VERIFICATION_PENDING,
                 records={},
@@ -1290,6 +1308,10 @@ class CitationLegacyMigrationService:
         canonical_records = self._canonical_records(conversation_id)
         if journal is not None and journal.state is LegacyMigrationState.COMPLETE:
             if not verify_canonical:
+                if read_only:
+                    raise CitationPersistenceUnavailable(
+                        "citation_verification_required"
+                    )
                 return LegacyCitationConversationRead(
                     state=LegacyCitationReadState.VERIFICATION_PENDING,
                     records={},
@@ -1299,6 +1321,10 @@ class CitationLegacyMigrationService:
             except (_LegacyInputError, CitationPersistenceUnavailable):
                 fingerprint = ""
             if fingerprint != journal.source_fingerprint:
+                if read_only:
+                    raise CitationPersistenceUnavailable(
+                        "citation_verification_required"
+                    )
                 resolved = self._resolve_source_mismatch(conversation_id)
                 if resolved.state is LegacyMigrationState.DIVERGED:
                     return LegacyCitationConversationRead(

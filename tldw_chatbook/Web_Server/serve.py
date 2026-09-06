@@ -34,6 +34,10 @@ from ..Canvas.gateway import (
     CanvasSelectionChanged,
     CanvasSourceResponse,
 )
+from ..Canvas.limits import (
+    SUPPORTED_CANVAS_RUNTIME_PROFILE,
+    UnsupportedCanvasRuntimeProfile,
+)
 from ..Canvas.web_auth import (
     CSRF_HEADER_NAME,
     SESSION_COOKIE_NAME,
@@ -184,6 +188,8 @@ class _ServedCanvasAuthorityProxy:
     async def resolve_render_plan(self, scope: CanvasGatewayScope):
         captured = await self._plan_scope(scope)
         _payload, metadata = await self._read(scope)
+        if metadata.get("runtime_profile") != SUPPORTED_CANVAS_RUNTIME_PROFILE:
+            raise UnsupportedCanvasRuntimeProfile("unsupported Canvas runtime profile")
         plan = await self._compilation.run_async(
             lambda: compile_canvas_document(metadata["source"])
         )
@@ -212,7 +218,11 @@ class _ServedCanvasAuthorityProxy:
 
     async def read_source(self, scope: CanvasGatewayScope):
         payload, metadata = await self._read(scope)
-        return CanvasSourceResponse(metadata["source"], str(payload["content_sha256"]))
+        return CanvasSourceResponse(
+            metadata["source"],
+            str(payload["content_sha256"]),
+            metadata.get("runtime_profile"),
+        )
 
     async def describe_selection(self, scope: CanvasGatewayScope):
         read_payload, metadata = await self._read(scope)
