@@ -58,3 +58,40 @@ async def close_owned_console_resources(
         databases.clear()
     if errors:
         raise BaseExceptionGroup("Console resource cleanup failed", errors)
+
+
+@pytest.fixture(autouse=True)
+async def close_owned_console_test_apps(
+    request, monkeypatch, close_owned_console_resources
+):
+    """Drain only importing-module builder products before their exact DBs close."""
+    apps = []
+    build_app = request.module._build_test_app
+
+    def build_owned_app(*args, **kwargs):
+        app = build_app(*args, **kwargs)
+        apps.append(app)
+        for database in (
+            app.local_workspace_db,
+            app.subscriptions_db,
+            app.local_library_collections_db,
+            app.evaluation_orchestrator.db if app.evaluation_orchestrator else None,
+        ):
+            if database is not None:
+                close_owned_console_resources.callback(database.close)
+        return app
+
+    monkeypatch.setattr(request.module, "_build_test_app", build_owned_app)
+    yield
+
+    errors = []
+    try:
+        for app in reversed(apps):
+            try:
+                await app._shutdown_console_runtime()
+            except BaseException as exc:
+                errors.append(exc)
+    finally:
+        apps.clear()
+    if errors:
+        raise BaseExceptionGroup("Console test app runtime cleanup failed", errors)
