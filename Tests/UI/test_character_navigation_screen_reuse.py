@@ -186,13 +186,13 @@ async def test_reused_library_accepts_character_repair_and_returns_to_roleplay(
         assert app.screen_stack[-2] is library
         for _ in range(100):
             await pilot.pause(0.05)
-            if library._library_character_repair_controller.context is None:
+            if library._navigation_controller.repair_controller.context is None:
                 continue
             if not dialog.query_one(
                 "#library-character-repair-candidate", Select
             ).disabled:
                 break
-        assert library._library_character_repair_controller.context == context
+        assert library._navigation_controller.repair_controller.context == context
         dialog.query_one("#library-character-repair-candidate", Select).value = str(
             character_id
         )
@@ -207,7 +207,7 @@ async def test_reused_library_accepts_character_repair_and_returns_to_roleplay(
             if type(app.screen).__name__ == "PersonasScreen":
                 break
         assert type(app.screen).__name__ == "PersonasScreen"
-        assert library._pending_character_repair_context is None
+        assert library._navigation_controller.pending_repair_context is None
         assert (
             database.get_conversation_by_id("reused-library-repair")[
                 "assistant_authority_id"

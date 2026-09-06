@@ -80,10 +80,8 @@ from ...config import (
     save_settings_to_cli_config,
 )
 from ...Constants import (
-    CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
-    LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
@@ -564,13 +562,6 @@ if TYPE_CHECKING:
         LibraryFileNotesWorkspace,
     )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
-    from ..Library_Modules.library_character_repair_controller import (
-        LibraryCharacterRepairController,
-    )
-    from ..Navigation.character_conversation_navigation import (
-        LibraryCharacterRepairContext,
-        RoleplayReturnTarget,
-    )
 else:
 
     def LibraryFileNotesWorkspace(*args: Any, **kwargs: Any) -> Any:
@@ -2198,13 +2189,21 @@ class LibraryScreen(BaseAppScreen):
             LibraryLandingAttentionAction | None
         ) = None
         self._library_navigation_context_generation: int = 0
-        self._character_repair_present_on_resume = False
-        self._pending_character_repair_context: (
-            LibraryCharacterRepairContext | None
-        ) = None
-        self._library_character_repair_controller: (
-            LibraryCharacterRepairController | None
-        ) = None
+        from ..Library_Modules.library_navigation_controller import (
+            LibraryNavigationController,
+        )
+
+        self._navigation_controller = LibraryNavigationController(
+            self,
+            invalidate_media_browse=lambda: (
+                self._library_media_browse_controller.invalidate()
+            ),
+            unmount_collections_capture=lambda: (
+                self._library_collections_capture_controller.unmount()
+                if self._library_collections_capture_controller is not None
+                else None
+            ),
+        )
         self._conversations_state = LibraryConversationsState()
         # Constructed early -- see LibraryCollectionsState's docstring.
         self._collections_state = LibraryCollectionsState()
@@ -9580,8 +9579,7 @@ class LibraryScreen(BaseAppScreen):
         work already running on its thread).
         """
         self._library_screen_suspended = False
-        if self._character_repair_present_on_resume:
-            self.call_after_refresh(self._present_character_repair_context)
+        self.call_after_refresh(self._navigation_controller.present_pending_repair)
         self.call_after_refresh(self.refresh_notes_sync_runtime)
         self._refresh_library_visit_surfaces()
 
@@ -9722,7 +9720,7 @@ class LibraryScreen(BaseAppScreen):
         self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
         self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
         self.call_after_refresh(self._present_library_skills_import_choice_if_needed)
-        self.call_after_refresh(self._present_character_repair_context)
+        self.call_after_refresh(self._navigation_controller.present_pending_repair)
         if (
             self._library_new_profile_admission
             and not self._library_lifecycle_was_stored
@@ -11199,81 +11197,8 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
-        """Apply route context supplied by shell navigation.
-
-        Args:
-            context: Navigation payload from ``NavigateToScreen``. A valid
-                Library mode switches the active mode. A ``conversation_id``
-                selects that conversation when the local source snapshot
-                arrives, defaulting the mode to Conversations when no valid
-                mode is supplied. A ``notes_create`` flag lands on the
-                in-canvas Create > New note view (the retired Notes tab's
-                "new note" deep link). A ``note_id`` opens that note's
-                in-canvas editor directly (the retired Notes tab's
-                chat-sidebar deep link); ``mode="notes"`` alone (no
-                ``note_id``) lands on the Notes list instead. An
-                ``ingest_media`` flag lands on the in-canvas Ingest >
-                Import media view (Home's ingest-jobs "Open details"
-                control, L3b Task 6). A supported ``open_source_type`` and
-                exact ``open_source_id`` pair delegates to Library's existing
-                item opener.
-        """
-        if self._library_prompts_mutation_in_flight:
-            return
-        if not isinstance(context, Mapping):
-            return
-        if set(context) == {LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR}:
-            from ..Navigation.character_conversation_navigation import (
-                deserialize_library_character_repair_context,
-            )
-
-            payload = context.get(LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR)
-            if not isinstance(payload, Mapping):
-                return
-            try:
-                repair_context = deserialize_library_character_repair_context(payload)
-            except (TypeError, ValueError):
-                logger.warning("Rejected invalid Library character-repair context")
-                return
-            self._pending_character_repair_context = repair_context
-            self._character_repair_present_on_resume = True
-            if self.is_mounted:
-                self.call_after_refresh(self._present_character_repair_context)
-            return
-        target_row_id = self._library_navigation_context_target_row(context)
-        if target_row_id is None:
-            return
-        self._library_navigation_context_generation += 1
-        if target_row_id != LIBRARY_ROW_BROWSE_MEDIA:
-            self._library_media_browse_controller.invalidate()
-        if (
-            target_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
-            and self._library_collections_capture_controller is not None
-        ):
-            self._library_collections_capture_controller.unmount()
-        generation = self._library_navigation_context_generation
-        if (
-            self.is_mounted
-            and target_row_id == LIBRARY_ROW_BROWSE_PROMPTS
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
-        ):
-            return
-        if self.is_mounted:
-            # A cached mounted screen must admit the route through the same
-            # awaited save/leave guards as a rail switch. Applying it
-            # synchronously could discard a dirty editor or an active Prompt
-            # selection before the transition is actually admitted.
-            self.run_worker(
-                self._apply_navigation_context_after_flush(
-                    dict(context),
-                    target_row_id,
-                    generation,
-                ),
-                exclusive=True,
-                group="library_nav_context",
-            )
-            return
-        self._apply_navigation_context_state(context)
+        """Admit route context through the Library-owned navigation controller."""
+        self._navigation_controller.apply_navigation_context(context)
 
     def _library_navigation_context_target_row(
         self,
@@ -11323,69 +11248,6 @@ class LibraryScreen(BaseAppScreen):
                 }[source_type]
         return target_row_id
 
-    def _present_character_repair_context(self) -> None:
-        """Open Library's only mutation surface for a validated repair context."""
-
-        context = self._pending_character_repair_context
-        if (
-            context is None or not self._character_repair_present_on_resume
-            or not self.is_mounted or self.app.screen is not self
-        ):
-            return
-        database = getattr(self.app_instance, "chachanotes_db", None)
-        try:
-            if database.get_local_authority_id() != context.unresolved.data_authority_id:
-                self._notify(
-                    "The active Data Profile changed. Repair was not applied.",
-                    "warning",
-                )
-                return
-        except Exception:  # noqa: BLE001 - database boundary stays recoverable
-            logger.opt(exception=True).warning(
-                "Could not validate Library character-repair authority"
-            )
-            return
-        from ...Character_Chat.character_conversation_navigation import (
-            CharacterConversationNavigationService,
-        )
-        from ..Library_Modules.library_character_repair_controller import (
-            LibraryCharacterRepairController,
-            LibraryCharacterRepairDialog,
-        )
-
-        service = CharacterConversationNavigationService(database)
-        controller = LibraryCharacterRepairController(
-            service=service,
-            invalidate_keyword=self._invalidate_character_keyword_candidates,
-            invalidate_semantic=self._invalidate_character_semantic_candidates,
-            return_to_anchor=self._return_from_character_repair,
-            focus_refresh=lambda: None,
-            source_revision=database.get_character_conversation_search_revision,
-        )
-        self._library_character_repair_controller = controller
-        self._character_repair_present_on_resume = False
-        self.app.push_screen(LibraryCharacterRepairDialog(controller, context))
-
-    def _invalidate_character_keyword_candidates(self) -> None:
-        self._library_character_keyword_generation = (
-            getattr(self, "_library_character_keyword_generation", 0) + 1
-        )
-
-    def _invalidate_character_semantic_candidates(self) -> None:
-        self._library_character_semantic_generation = (
-            getattr(self, "_library_character_semantic_generation", 0) + 1
-        )
-
-    def _return_from_character_repair(self, target: RoleplayReturnTarget) -> None:
-        """Clear only an applied repair and return to its stable source anchor."""
-
-        self._pending_character_repair_context = None
-        self.post_message(
-            NavigateToScreen(
-                target.screen_id,
-                {CHARACTER_NAV_CONTEXT_RETURN_FOCUS: target.focus_id},
-            )
-        )
 
     async def _apply_navigation_context_after_flush(
         self,

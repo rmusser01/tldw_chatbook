@@ -415,7 +415,7 @@ async def test_mounted_library_refreshes_real_cas_version_then_retry_succeeds(
                     break
             dialog = harness.screen
             assert isinstance(dialog, LibraryCharacterRepairDialog)
-            controller = screen._library_character_repair_controller
+            controller = screen._navigation_controller.repair_controller
             assert controller is not None
             select = dialog.query_one("#library-character-repair-candidate", Select)
             assert not select.disabled
@@ -434,9 +434,9 @@ async def test_mounted_library_refreshes_real_cas_version_then_retry_succeeds(
             await dialog.workers.wait_for_complete()
             await pilot.pause()
 
-        assert screen._pending_character_repair_context is None
-        assert screen._library_character_keyword_generation == 1
-        assert screen._library_character_semantic_generation == 1
+        assert screen._navigation_controller.pending_repair_context is None
+        assert screen._navigation_controller.keyword_generation == 1
+        assert screen._navigation_controller.semantic_generation == 1
         repaired = db.get_conversation_by_id("unresolved")
         assert repaired and repaired["character_id"] == replacement_id
     finally:
