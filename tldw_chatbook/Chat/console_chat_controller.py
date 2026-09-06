@@ -518,7 +518,7 @@ class _TodoWiring(TypedDict, total=False):
 
 
 #: task-1337 (plan Task 8): raw built-in tool names the Console-composed
-#: ``MCPToolProvider`` must exclude -- the 18 ``library_*`` descriptor tools
+#: ``MCPToolProvider`` must exclude -- the current ``library_*`` descriptor tools
 #: (served to Console agents by the run's own direct/RAG Library provider, in
 #: either retrieval mode) plus the five legacy RAG/chat readers whose Console
 #: coverage those providers replace. The legacy names live HERE, not in the
@@ -3049,6 +3049,7 @@ class ConsoleChatController:
         activity_receipts: Any | None = None,
         staged_evidence_provider: Callable[[str], bool] | None = None,
         cancel_raw_cli_session: Callable[[str], object] | None = None,
+        canvas_enabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
     ) -> None:
         self.store = store
@@ -3085,6 +3086,11 @@ class ConsoleChatController:
         self._rag_capture_provider = rag_capture_provider
         self._staged_evidence_provider = staged_evidence_provider
         self._cancel_raw_cli_session = cancel_raw_cli_session
+        if canvas_enabled_reader is None:
+            from tldw_chatbook.config import get_canvas_execution_enabled
+
+            canvas_enabled_reader = get_canvas_execution_enabled
+        self._canvas_enabled_reader = canvas_enabled_reader
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
         )
@@ -3315,6 +3321,8 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        self._pending_dispatch_transitions: dict[str, asyncio.Task[None]] = {}
+        self._deferred_user_stop_markers: set[str] = set()
         # Physical SQLite maintenance sets this process-local gate before its
         # final provider-idle check. New runs may prepare normally but cannot
         # cross either provider-dispatch seam until the compactor's finally
@@ -6315,6 +6323,12 @@ class ConsoleChatController:
                 }
             ):
                 return self._prepared_action_refusal(current)
+            if (
+                current.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+                and trace_call_admission.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                and preparation_id not in self._trace_call_boundaries_by_preparation
+            ):
+                return self._prepared_action_refusal(current)
             if current.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE:
                 current = self.store.compare_and_set_preparation(
                     current.session_id,
@@ -8556,6 +8570,16 @@ class ConsoleChatController:
         db = getattr(self.store.persistence, "db", None)
         return not bool(getattr(db, "is_memory_db", False))
 
+    def _run_owned_chat_db_operation(
+        self, call: Callable[..., Any], /, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Close a worker invocation's chat handle after all its work unwinds."""
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        database = getattr(self.store.persistence, "db", None)
+        with operation_owned_connection(database):
+            return call(*args, **kwargs)
+
     async def _run_durable_db_call(
         self, call: Callable[..., Any], /, *args: Any
     ) -> Any:
@@ -8577,8 +8601,27 @@ class ConsoleChatController:
         """
 
         if self._durable_db_call_offloadable():
-            return await asyncio.to_thread(call, *args)
+            return await asyncio.to_thread(self._run_owned_chat_db_operation, call, *args)
         return call(*args)
+
+    async def _drain_dispatch_transition(self, assistant_id: str) -> bool:
+        """Publish a pending handoff before settlement; report caller cancellation."""
+        transition = self._pending_dispatch_transitions.get(assistant_id)
+        if transition is None:
+            return False
+        cancelled = False
+        try:
+            while not transition.done():
+                try:
+                    await asyncio.shield(transition)
+                except asyncio.CancelledError:
+                    # Repeated Stop must not cancel the draining handoff.
+                    cancelled = True
+            transition.result()
+        finally:
+            if self._pending_dispatch_transitions.get(assistant_id) is transition:
+                self._pending_dispatch_transitions.pop(assistant_id, None)
+        return cancelled
 
     def _build_durable_trace_request(
         self,
@@ -8602,8 +8645,18 @@ class ConsoleChatController:
             raise TraceProvenancePersistenceError()
 
         def provider_row(row: Mapping[str, Any]) -> dict[str, Any]:
+            # History annotations identify saved owners, but are not provider
+            # values. Match and freeze the same visible shape that serialization
+            # sends; otherwise the agent bridge cannot reuse its saved descriptor.
             return {
-                key: value for key, value in row.items() if key != NATIVE_MESSAGE_ID_KEY
+                key: value
+                for key, value in row.items()
+                if key
+                not in {
+                    NATIVE_MESSAGE_ID_KEY,
+                    PERSISTED_MESSAGE_ID_KEY,
+                    PERSISTED_CONVERSATION_ID_KEY,
+                }
             }
 
         source_by_owner = {
@@ -9147,25 +9200,44 @@ class ConsoleChatController:
             and "checkpoint_transition" in existing_effects.completed
             and "provider_entry" not in existing_effects.completed
         ):
-            self.store.mark_dispatch_recovery_needed(
-                session_id,
-                commit.assistant_message_id,
-            )
-            self._hydrate_dispatch_recovery_queue(session_id, force=True)
-            return ConsoleSubmitResult(
-                True,
-                True,
-                "Delivery status is unknown. Use Retry anyway or Discard.",
-                session_id=session_id,
-                user_message_id=commit.user_message_id,
-                assistant_message_id=commit.assistant_message_id,
-                terminal_status=self.run_state_for(session_id).status,
-                origin=continuation.origin,
-                queue_entry_id=continuation.queue_entry_id,
-                committed_context_epoch=continuation.committed_context_epoch,
-                preparation_id=preparation_id,
-                provider_started=True,
-            )
+            try:
+                verify_recovery = getattr(
+                    self.provider_gateway, "_verify_trace_preparation_recovery", None,
+                )
+                if (
+                    continuation.trace_capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON
+                    or not callable(verify_recovery)
+                ):
+                    raise TraceCallPersistenceError()
+                await self._run_durable_db_call(
+                    verify_recovery, continuation,
+                    self._trace_call_boundaries_by_preparation.get(preparation_id),
+                )
+                # This only proves the missing provider effect may be retried.
+                # Keep the completed checkpoint CAS and its attempt unchanged;
+                # gateway recovery independently checks the newly prepared bytes.
+                # An explicit Capture-Off action uses this same ownership proof,
+                # but never re-admits or changes the abandoned trace reservation.
+            except TraceCallPersistenceError:
+                self.store.mark_dispatch_recovery_needed(
+                    session_id,
+                    commit.assistant_message_id,
+                )
+                self._hydrate_dispatch_recovery_queue(session_id, force=True)
+                return ConsoleSubmitResult(
+                    True,
+                    True,
+                    "Delivery status is unknown. Use Retry anyway or Discard.",
+                    session_id=session_id,
+                    user_message_id=commit.user_message_id,
+                    assistant_message_id=commit.assistant_message_id,
+                    terminal_status=self.run_state_for(session_id).status,
+                    origin=continuation.origin,
+                    queue_entry_id=continuation.queue_entry_id,
+                    committed_context_epoch=continuation.committed_context_epoch,
+                    preparation_id=preparation_id,
+                    provider_started=True,
+                )
         assistant_holder: dict[str, ConsoleChatMessage] = {}
 
         def publish_owners() -> None:
@@ -9314,12 +9386,21 @@ class ConsoleChatController:
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
 
         async def enter_provider_dispatch() -> None:
-            await self._run_durable_postcommit_effect(
-                preparation_id,
-                "checkpoint_transition",
-                transition_checkpoint,
-                fingerprint=fingerprint,
+            # SQLite keeps running after cancellation of its to_thread await.
+            # Finish publishing that exact committed owner before Stop settles
+            # it; otherwise a late CAS can survive a false recovery failure.
+            assistant_id = commit.assistant_message_id
+            transition = asyncio.create_task(
+                self._run_durable_postcommit_effect(
+                    preparation_id,
+                    "checkpoint_transition",
+                    transition_checkpoint,
+                    fingerprint=fingerprint,
+                )
             )
+            self._pending_dispatch_transitions[assistant_id] = transition
+            if await self._drain_dispatch_transition(assistant_id):
+                raise asyncio.CancelledError
 
         try:
 
@@ -9426,6 +9507,13 @@ class ConsoleChatController:
                     preparation_id=preparation_id,
                     provider_started=False,
                 )
+            bind_trace_owner = getattr(self.provider_gateway, "_bind_trace_preparation", None)
+            if callable(bind_trace_owner):
+                bind_trace_owner(
+                    continuation.stream_signals, continuation,
+                    boundary=(self._trace_call_boundaries_by_preparation.get(preparation_id)
+                              if effective_capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON else None),
+                )
             stream_result = await self._run_durable_postcommit_effect(
                 preparation_id,
                 "provider_entry",
@@ -9505,7 +9593,23 @@ class ConsoleChatController:
             failed_call_started = any_provider_started
             if isinstance(exc, TraceCallPersistenceError):
                 boundary_started = getattr(exc.boundary, "dispatch_started", None)
-                if type(boundary_started) is bool:
+                if getattr(exc.boundary, "dispatch_outcome", None) == "unknown":
+                    # A cached unstarted reservation is not rollback evidence
+                    # when the exact dispatch read-back was unavailable.
+                    failed_call_started = True
+                    if getattr(exc.boundary, "_accepted_preparation", None) is continuation:
+                        self._trace_call_boundaries_by_preparation[preparation_id] = exc.boundary
+                        if not any_provider_started:
+                            try:
+                                # FRESH normalizes before this checkpoint;
+                                # AGENT already completed it. Persist the same
+                                # conservative uncertainty before cold recovery.
+                                await enter_provider_dispatch()
+                            except Exception:  # noqa: BLE001 - retain unknown ownership if its checkpoint also fails
+                                logger.warning("Uncertain trace dispatch checkpoint could not be saved.")
+                            else:
+                                any_provider_started = True
+                elif type(boundary_started) is bool:
                     failed_call_started = boundary_started
                 elif exc.reservation_status is not None:
                     # Boundary construction/reservation failed before this
@@ -14109,6 +14213,13 @@ class ConsoleChatController:
             return False
         self.prompt_queue_coordinator.pause_for_stop(session_id)
         self._signal_stop(session_id=session_id)
+        if assistant_message_id in self._pending_dispatch_transitions:
+            if record_user_stop:
+                self._deferred_user_stop_markers.add(assistant_message_id)
+            task = self._active_stream_tasks.get(session_id)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
+            return True
         settlement_failed = False
         try:
             self._mark_stream_stopped(
@@ -14122,7 +14233,7 @@ class ConsoleChatController:
                 assistant_message_id,
             )
         if record_user_stop and not settlement_failed:
-            # TASK-337 AC3: a durable, explicit record — the run-state chip
+            # TASK-337 AC3: an explicit transcript record — the run-state chip
             # copy is transient and the review found nothing else marked
             # the interruption.
             try:
@@ -20254,6 +20365,7 @@ class ConsoleChatController:
             )
         finally:
             self._trace_last_provider_activity = time.monotonic()
+            self._deferred_user_stop_markers.discard(assistant_message_id)
             if (
                 self._active_stream_tasks.get(owner_id) is active_task
                 and self._active_assistant_message_ids.get(owner_id)
@@ -21224,6 +21336,10 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
             if cancel_event.is_set():
+                # A synchronous gateway schedules the dispatch callback in a
+                # separate task. Cancelling this stream does not cancel that
+                # callback, so join its handoff before touching the owner.
+                await self._drain_dispatch_transition(assistant_message_id)
                 self.store.record_trajectory_timing(
                     assistant_message_id, model_status="cancelled"
                 )
@@ -22090,7 +22206,17 @@ class ConsoleChatController:
         await self._wait_for_trace_maintenance_dispatch()
         self._trace_last_provider_activity = time.monotonic()
         if before_provider_dispatch is not None:
-            await before_provider_dispatch()
+            try:
+                await before_provider_dispatch()
+            except asyncio.CancelledError:
+                if not cancel_event.is_set():
+                    raise
+                # No agent worker exists yet; the durable handoff has drained
+                # and its published checkpoint can now settle normally.
+                stopped = self._mark_stream_stopped(
+                    assistant_message_id, visible_copy="Response stopped."
+                )
+                return ConsoleSubmitResult(True, True, stopped.content)
         elif preparation_id is not None and not self._transition_preparation(
             preparation_id,
             ConsoleTurnPreparationState.ACCEPTED,
@@ -22137,11 +22263,58 @@ class ConsoleChatController:
                 current_user_message=trusted_profile_user_message,
                 kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
             )
+        canvas_provider = None
+        canvas_authority = None
+        canvas_controller = getattr(self.store, "canvas_turn_controller", None)
+        try:
+            canvas_enabled = self._canvas_enabled_reader() is True
+        except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
+            canvas_enabled = False
+        if canvas_enabled and canvas_controller is not None and session is not None:
+            from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+            from tldw_chatbook.Canvas.models import CanvasScope
+
+            native_path = self.store.active_path_message_ids(session_id)
+            active_path: list[str] = []
+            for native_id in native_path:
+                try:
+                    path_message = self.store.get_message(native_id)
+                except KeyError:
+                    active_path = []
+                    break
+                if (
+                    not session.ephemeral
+                    and path_message.persisted_message_id is None
+                    and path_message.role is ConsoleMessageRole.SYSTEM
+                ):
+                    continue
+                active_path.append(path_message.persisted_message_id or path_message.id)
+            canvas_run_id = str(uuid4())
+            canvas_scope = CanvasScope(
+                session_id=session_id,
+                conversation_id=conversation_id,
+                active_message_ids=tuple(active_path),
+                selected_canvas_id=None,
+                selected_revision_id=None,
+                run_id=canvas_run_id,
+            )
+            canvas_run = canvas_controller.register_run(
+                canvas_scope,
+                assistant_message_id=assistant_message_id,
+                temporary=session.ephemeral,
+            )
+            canvas_provider = CanvasToolProvider(
+                canvas_run,
+                scope=canvas_scope,
+                enabled_reader=self._canvas_enabled_reader,
+            )
+            canvas_authority = canvas_provider.issue_registration_authority()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
             run_id, outcome = await asyncio.to_thread(
+                self._run_owned_chat_db_operation,
                 self._agent_bridge.run_reply,
                 conversation_id=conversation_id,
                 session_id=session_id,
@@ -22185,6 +22358,8 @@ class ConsoleChatController:
                 # per-run call caps.
                 persona_policy_rules=turn_context.persona_policy_rules,
                 profile_provider=profile_provider,
+                canvas_provider=canvas_provider,
+                canvas_authority=canvas_authority,
                 native_tools_enabled=bool(
                     turn_context.tool_configuration.get(
                         "native_tool_calls_enabled", True
@@ -23653,6 +23828,14 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
             session_id=owner_id,
         )
+        if assistant_message_id in self._deferred_user_stop_markers:
+            self._deferred_user_stop_markers.discard(assistant_message_id)
+            if owner_id is not None:
+                self.store.append_message(
+                    owner_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content="Response stopped by user.",
+                )
         return stopped
 
     def _set_run_state(

@@ -130,6 +130,11 @@ $ds-library-source-browser-width: 31;
 #scheduling-detail-pane { width: 4fr; min-width: 52; border: solid $ds-grid-line; padding: 1; }
 #scheduling-inspector-pane { width: 2fr; min-width: 34; border: solid $ds-grid-line; padding: 1; }
 
+#scheduling-task-detail-groups,
+#scheduling-automation-detail-body {
+    height: auto;
+}
+
 /* The queue table must fill its pane, or empty queues collapse to a single
  * clipped row at short heights (80x24). */
 #scheduling-task-table {
@@ -314,6 +319,15 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     color: $text;
     border: none;
     text-align: center;
+}
+
+/* 31712 AC#6: same "empty state replaces the real content" idiom as
+ * `#scheduling-task-detail-empty-state` above -- distinguishes "no task
+ * selected" from a selected task whose metadata rows read "-" too. */
+#scheduling-task-inspector-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
 }
 
 /* Inspector metadata */

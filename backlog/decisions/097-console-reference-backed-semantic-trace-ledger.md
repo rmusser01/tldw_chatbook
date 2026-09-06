@@ -62,6 +62,13 @@ project-instruction bodies never enter default durable capture.
    abandoned generations remain distinct calls. No call stores a history array
    proportional to the conversation's age.
 
+   Agent run identity binds the stable opaque actor/chain pair carried by route
+   provenance, not the chain alone (PR2433 review, 2026-09-05). The existing
+   `run_id` stores `actor_uuid:chain_uuid`; both inputs are canonical UUIDv4
+   values, so this is an unambiguous content-free identity. No new schema,
+   content hash, or process-local ownership registry is introduced. Historical
+   chain-only runs remain readable, but cannot authorize a new continuation.
+
 5. **Store request headers only when their effective value changes.** A complete
    logical header records provider/model configuration, rendered system references,
    tool-schema references, response/reasoning controls, endpoint's credential-free
@@ -214,6 +221,77 @@ project-instruction bodies never enter default durable capture.
 19. **Keep token-chunk packing separate.** Raw token-level event capture and lossless
     chunk-row encoding are deferred to [TASK-24206](../tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
     and are not required by the forthcoming ADR-097 implementation umbrella.
+
+### Clarification recorded 2026-09-05: retained soft-delete envelopes
+
+The accepted design's mutation-boundary section and TASK-23113.2 AC8 specify
+that soft deletion changes visibility/ownership while retaining semantic bytes.
+For that operation, this supersedes ADR-090's older deletion-sidecar clearing
+amendment: thinking and continuation remain with the retained message envelope,
+not as active transcript or replay content. Hard deletion and semantic edits
+still use the preservation/mutation boundary above. This clarification records
+the already-implemented contract; it does not add retention or disclosure rights.
+It resolves the stale tombstone expectation discovered during TASK-31232's
+baseline repair. See the [accepted mutation boundary](../../Docs/superpowers/specs/2026-08-28-console-reference-backed-semantic-trace-ledger-design.md#semantic-message-revisions)
+and [TASK-23113.2](../tasks/task-23113.2%20-%20Enforce-semantic-revisions-for-every-model-visible-mutation.md).
+
+### Amendment recorded 2026-09-05: completed tool-turn surface transition
+
+TASK-31742's real production-factory integration probes exposed a missing composed
+operation: a completed run's bounded tool suffix must become the exact saved
+assistant revision while the next saved user is appended. The owner approved the
+focused repair and its review corrections before implementation.
+
+Permit one explicitly typed replacement-plus-append for eligible `AGENT_FIRST`
+and `FRESH` next sends, not arbitrary multi-item replacement. The same attached
+owner, lineage, frozen policy, completed prior run, exact response-revision link,
+unchanged prefix and bounded active tool suffix must be proven. Response linkage
+alone is never authority. Recheck the predecessor and call witness when persisting
+both operations, header and dispatch binding in the existing atomic transaction;
+historical call heads remain unchanged. Keep the 256-node range limit, existing
+schema, disclosure rules, and growth/latency gates.
+
+Across saved turns, policy agreement compares every persisted disclosure setting
+(credential-filter version, PII enabled state, and exact ruleset revision), with
+both records required. Accepted turns allocate fresh opaque policy IDs even for
+identical settings. Exact prior-run policy identity and exact incoming reservation
+and retry identity remain required; historical artifacts are never relabeled.
+This clarification follows the real-controller regression and does not admit
+changed disclosure settings or replace final-value verification.
+
+Pre-dispatch Retry must prove and reuse its exact still-unbound reservation via
+accepted-turn recovery ownership. Never skip unrelated reservations or revive a
+terminal call. A write exception is not proof of rollback: reconcile the exact
+call and expected head/header to committed, rolled-back or unknown. Preserve
+committed dispatch state, invalidate stale capabilities, and allow no automatic
+redispatch on uncertainty. Only the original live invocation retaining its exact
+unconsumed gateway entry grant may proceed after a proven commit.
+
+The [approved repair contract](../../Docs/superpowers/specs/2026-09-05-console-tool-turn-surface-transition-design.md)
+defines exclusions and recovery proofs; the
+[implementation plan](../../Docs/superpowers/plans/2026-09-05-console-tool-turn-surface-transition.md)
+defines staged verification. This amendment authorizes the contract, not a claim
+that implementation or merge verification is complete. It adds no Canvas
+privileges, dependency, synchronization contract or new persistence registry.
+
+### Amendment recorded 2026-09-05: owner-approved latency reference replacement
+
+For TASK-31742, the owner explicitly approved replacing the latency reference
+machine with the current host after a direct hardware check: Mac17,6, Apple M5
+Max, 18 logical CPUs, 137438953472 bytes (128 GiB). Fixture version 5 identifies
+this host as `tldw-mac17-6-m5-max-18c-128gb-apfs-v5`, replacing the M4 Pro
+14-core/48-GiB version 4 reference. Keep arm64/APFS, CPython 3.12.11, SQLite
+3.49.1, sample counts/order, SQLite settings, checkpoint policy and all numerical
+thresholds unchanged. Non-reference hosts still fail release qualification;
+correctness-only opt-in is not release evidence.
+
+This is an explicit reference-platform change, not proof of equivalent performance
+on the old hardware. Retain the new raw benchmark artifact and report its exact
+environment and whether thresholds were applied. The previous M5 diagnostic run
+against version 4 remains non-reference evidence and is not retroactively promoted.
+Retaining the old reference would require another machine; silently bypassing
+identity checks or raising thresholds was rejected. This changes no runtime or
+storage contract and does not waive current-head integration/PR gates.
 
 ## Consequences
 

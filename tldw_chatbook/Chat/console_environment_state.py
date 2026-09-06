@@ -13,7 +13,13 @@ from enum import Enum
 
 from rich.cells import cell_len
 
+from tldw_chatbook.Chat import console_rail_state
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
+
+# Preserve callers of the original display-state exports without making the
+# lightweight rail identifiers depend on this first-open projection module.
+ENVIRONMENT_SECTION_ID = console_rail_state.ENVIRONMENT_SECTION_ID
+TASKS_SECTION_ID = console_rail_state.TASKS_SECTION_ID
 
 
 class EnvSourceAvailability(str, Enum):
@@ -258,9 +264,6 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
 #: indent the fitter does not know about is exactly the silent truncation
 #: `_with_expand_marker`'s docstring already warns about.
 _CHILD_ROW_BUDGET = SINGLE_LINE_ROW_BUDGET - ROW_INDENT_COLUMNS
-
-ENVIRONMENT_SECTION_ID = "environment"
-TASKS_SECTION_ID = "tasks"
 
 ENV_ROW_CHANGES = "env-changes"
 ENV_ROW_ERROR = "env-error"

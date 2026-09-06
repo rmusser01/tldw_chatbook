@@ -25,6 +25,7 @@ from contextlib import asynccontextmanager
 import pytest
 from textual.app import App
 from textual.events import AppFocus
+from textual.screen import Screen
 from textual.widgets import Button
 
 from Tests.UI.test_console_fleet_panel import _FleetBridge
@@ -36,7 +37,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Agents.fleet_coordinator import FleetHandle
 from tldw_chatbook.app import TldwCli
-import tldw_chatbook.UI.Console_Modules.environment as env_mod
+import tldw_chatbook.Workspaces.environment_status as env_mod
 from tldw_chatbook.UI.Console_Modules.environment import UNKNOWN_ROOT
 from tldw_chatbook.Chat.console_environment_state import (
     ENV_ROW_BRANCH,
@@ -107,6 +108,73 @@ def _row_ids(section: ConsoleInspectorSection) -> list[str]:
 # ---------------------------------------------------------------------------
 # Row actions
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_suspended_environment_stays_quiet_and_refreshes_on_resume():
+    """A covered reusable screen is still displayed but must not collect."""
+    async with _console_screen() as (pilot, screen):
+        owner = screen._console_environment
+        owner._workspace_root_accessor = lambda: "/w"
+        dispatches = []
+        owner._dispatch_local = lambda root: dispatches.append(("local", root))
+        owner._dispatch_net = lambda root, **kwargs: dispatches.append(("net", root))
+        screen._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        assert dispatches
+        await pilot.app.push_screen(Screen())
+        await pilot.pause()
+        assert screen.is_mounted and _right_rail_open(screen)
+        assert pilot.app.screen is not screen
+        dispatches.clear()
+        screen._poll_console_environment()
+        screen.notify_terminal_focus_regained()
+        owner.request_refresh(include_net=True)
+        assert dispatches == []
+        assert not owner._rail_open_accessor()
+        await pilot.app.pop_screen()
+        await pilot.pause()
+        assert pilot.app.screen is screen
+        assert screen._console_environment is owner
+        assert ("local", "/w") in dispatches
+        assert ("net", "/w") in dispatches
+
+
+@pytest.mark.asyncio
+async def test_first_open_without_workspace_paints_empty_state_and_reuses_owner():
+    """Lazy first-open must paint even when no gather can produce a landing.
+
+    Merge note (dev `84695063c4` x TASK-31660): this test was written on dev,
+    where an empty ``workspace_roots`` tuple early-returned and left the
+    DEFAULT snapshot painted (``env-empty``). TASK-31660 made that tuple an
+    ANSWER -- "no folder is bound" -- which lands an explicit UNBOUND
+    snapshot, so the honest rows here are now ``env-unbound``/
+    ``env-unbound-note``. The property this test actually guards (first open
+    paints SOMETHING, and re-opening reuses the same owner) is unchanged.
+    """
+    async with _console_screen() as (pilot, screen):
+        screen._review_selection._console_change_review_workspace_roots = lambda: ()
+        assert screen._console_environment_owner is None
+        screen.notify_terminal_focus_regained()
+        screen._poll_console_environment()
+        screen._run_coalesced_console_agent_fleet_sync()
+        assert screen._console_environment_owner is None
+        screen._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        owner = screen._console_environment
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        assert section.display
+        assert "env-unbound" in _row_ids(section)
+        screen._set_console_rail_preference(right_open=False)
+        await pilot.pause()
+        screen.notify_terminal_focus_regained()
+        screen._set_console_rail_preference(right_open=True)
+        await pilot.pause()
+        assert screen._console_environment is owner
+        assert section.display
+        assert "env-unbound" in _row_ids(section)
 
 
 @pytest.mark.asyncio
@@ -1176,11 +1244,31 @@ async def test_unbound_landing_replaces_the_previous_repos_paint():
 
 @pytest.mark.asyncio
 async def test_cold_start_rail_never_paints_the_no_git_workspace_negative():
-    """AC #2 at the screen seam: PENDING, not a claim, before anything lands."""
+    """AC #2 at the screen seam: PENDING, not a claim, before anything lands.
+
+    Merge note (dev `84695063c4`): a CLOSED Inspect rail no longer builds the
+    Environment owner at all (ADR-097 first-paint deferral), so the cold-start
+    section is genuinely empty -- an even stronger form of "never paints the
+    negative", asserted first below. The AC's positive half is asserted where
+    it is now observable: the first open, with a root that cannot be
+    DETERMINED, so the controller skips silently and nothing lands. That is
+    the exact window the AC is about, and the honest paint there is
+    "Checking workspace", never "No git workspace".
+    """
     async with _console_screen() as (pilot, screen):
+        # Undetermined root: `request_refresh`/`poll_tick` both skip silently,
+        # so opening the rail cannot race a landing into this assertion.
+        screen._review_selection._console_change_review_workspace_roots = lambda: None
         section = screen.query_one(
             "#console-environment-section", ConsoleInspectorSection
         )
+        # Closed rail, nothing collected: no rows, so no claim either way.
+        assert _row_ids(section) == []
+        assert screen._console_environment_owner is None
+
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        assert _right_rail_open(screen)
         assert _row_ids(section) == [ENV_ROW_PENDING]
         painted = " ".join(
             str(static.renderable)

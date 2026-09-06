@@ -16,8 +16,8 @@ layout tour). Everything on this page lives in two places:
 
 - The **tab strip** — the row of tabs directly under the
   "Conversation" title above the transcript.
-- The **"Console context"** rail on the left — its separate **Sessions**,
-  **Workspaces**, **Conversations**, and **Details** sections. If the rail is
+- The **"Console context"** rail on the left — its separate **Workspaces**,
+  **Conversations**, **Character**, and **Details** sections. If the rail is
   collapsed, click the **Context->** handle at the left edge to open it when
   the viewport can retain a usable transcript.
 
@@ -39,9 +39,6 @@ strip: "Each tab runs its own agent — up to 3 in parallel (change in
 Settings > Console Behavior)." Dismiss it with its "✕". The "3" is the
 default limit — the banner shows whatever your configured limit is.
 
-**Sessions section** (left rail). Names the active conversation ("None" when
-no conversation is active yet); hover the value to see its durable id.
-
 **Workspaces section** (left rail). Shows the active workspace on one compact
 line, keeps **Switch**, **New**, and **RAG** together, and renders every
 named workspace in a native Tree with its conversations as children. The
@@ -55,6 +52,20 @@ only Default-workspace and unassigned conversations. A conversation assigned
 to a named workspace appears under that workspace in the Tree instead, never
 in both places. Starred entries sort first inside their one owner; starring is
 a property and action, not a duplicate Starred group.
+
+**Character section** (left rail). Shows up to four local character cards or
+unavailable-character groups, with up to five recent saved conversations in
+the one expanded group. Search returns at most eight saved local character
+conversations and never sends titles or transcript text to a network service.
+Each search result keeps its title, character name, and Local/age metadata
+on separate lines so the metadata remains readable in the narrow rail.
+Enter or double-click opens an exact saved conversation in its Console tab;
+single-click selects it. **View all N in Roleplay** opens that character's
+complete saved history. A current card with no saved chats offers **Start in
+Console**, while the overall empty state offers **Open Roleplay**. Chats whose
+card was deleted or cannot be identified are never guessed open: use **Repair
+in Library**, or **View all N in Library**, to resolve them. Turning off
+`show_character_avatar` hides only the image; these navigation controls remain.
 
 **Details section** (left rail, collapsed by default). Status lines for
 "Storage", "Sync", "Local file tools", "Server", and "ACP", plus a "Handoff" list.
@@ -166,8 +177,8 @@ Workspaces search can reveal matching conversation results whose parent branch
 was closed. Those temporary disclosure changes are discarded when the search
 is cleared, restoring the exact disclosure state from before the search.
 
-Context preserves complete reading bodies up to 15 rows for Sessions, Model,
-Agent, and Details; 20 for Workspaces and Conversations; and 35 for Character.
+Context preserves complete reading bodies up to 15 rows for Model, Agent, and
+Details; 20 for Workspaces and Conversations; and 35 for Character.
 Longer sections scroll locally, while **▼ more sections — scroll** means to
 scroll the outer rail to reach complete later sections. Inspector sections keep
 their separate 20-row ceiling. Character art remains centered and complete with

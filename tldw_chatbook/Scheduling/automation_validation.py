@@ -17,6 +17,16 @@ the local `family: unsupported` handling of `agent_task` payloads.
 
 Reuses the already-ported `normalize_recurring_question_scope`
 (`recurring_question_scope.py`) rather than duplicating it.
+
+`validate_recurring_question_config`'s `mode` keyword (task-31414) is a
+LOCAL addition on top of the port: the server always backfills
+`scope`/`finding_policy`/`retention_policy`/`generation_mode` with
+concrete defaults, which this module's `mode="create"` default still
+does byte-for-byte. `mode="update"` is the deliberate divergence -- an
+edit that never supplied one of those four leaves it absent in the
+normalized `config` instead of inventing a value, so re-syncing this
+function from a future server change must preserve that branch, not
+flatten it back to unconditional backfill.
 """
 
 from __future__ import annotations
@@ -144,6 +154,8 @@ def normalize_retention_policy(value: Any, errors: list[dict[str, Any]]) -> dict
 
 def validate_recurring_question_config(
     config: dict[str, Any],
+    *,
+    mode: str = "create",
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
     """Validate and normalize a ``recurring_question`` preview's base config.
 
@@ -158,6 +170,16 @@ def validate_recurring_question_config(
             the recurring-question option config (``scope``,
             ``finding_policy``, ``retention_policy``, ``generation_mode``);
             ``config["input"]`` holds ``question``.
+        mode: ``"create"`` (default) or ``"update"``. A local, non-ported
+            addition (task-31414): the server's own port always backfills
+            ``scope``/``finding_policy``/``retention_policy``/
+            ``generation_mode`` with concrete defaults, which is correct
+            for a brand-new definition but wrong for an edit that never
+            touched those fields -- an EDIT payload that omits one of the
+            four leaves it absent in ``normalized["config"]`` instead of
+            inventing a value the caller never supplied. A key that IS
+            present is validated/normalized identically in both modes
+            (strictness never relaxes, only the backfill does).
 
     Returns:
         A ``(normalized, errors, warnings)`` tuple. ``normalized`` is
@@ -183,29 +205,39 @@ def validate_recurring_question_config(
     if not question:
         errors.append(field_error("input.question", "required", "Question is required."))
 
-    scope, scope_errors, scope_warnings = normalize_recurring_question_scope(option_config.get("scope"))
-    finding_policy = normalize_finding_policy(option_config.get("finding_policy"), errors)
-    retention_policy = normalize_retention_policy(option_config.get("retention_policy"), errors)
-    generation_mode = str(option_config.get("generation_mode") or "optional").strip() or "optional"
-    if generation_mode not in GENERATION_MODES:
-        errors.append(
-            field_error(
-                "config.generation_mode",
-                "unsupported",
-                f"Unsupported generation mode: {generation_mode}",
-            )
+    backfill = mode != "update"
+    normalized_config = dict(option_config)
+
+    if backfill or "scope" in option_config:
+        scope, scope_errors, scope_warnings = normalize_recurring_question_scope(option_config.get("scope"))
+        normalized_config["scope"] = scope
+        errors.extend(scope_errors)
+        warnings.extend(warning["code"] for warning in scope_warnings)
+
+    if backfill or "finding_policy" in option_config:
+        normalized_config["finding_policy"] = normalize_finding_policy(
+            option_config.get("finding_policy"), errors
         )
+
+    if backfill or "retention_policy" in option_config:
+        normalized_config["retention_policy"] = normalize_retention_policy(
+            option_config.get("retention_policy"), errors
+        )
+
+    if backfill or "generation_mode" in option_config:
+        generation_mode = str(option_config.get("generation_mode") or "optional").strip() or "optional"
+        if generation_mode not in GENERATION_MODES:
+            errors.append(
+                field_error(
+                    "config.generation_mode",
+                    "unsupported",
+                    f"Unsupported generation mode: {generation_mode}",
+                )
+            )
+        normalized_config["generation_mode"] = generation_mode
 
     normalized = dict(config)
     normalized["name"] = name
     normalized["input"] = {**input_config, "question": question}
-    normalized["config"] = {
-        **option_config,
-        "scope": scope,
-        "finding_policy": finding_policy,
-        "retention_policy": retention_policy,
-        "generation_mode": generation_mode,
-    }
-    errors.extend(scope_errors)
-    warnings.extend(warning["code"] for warning in scope_warnings)
+    normalized["config"] = normalized_config
     return normalized, errors, warnings

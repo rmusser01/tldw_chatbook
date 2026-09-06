@@ -1,0 +1,36 @@
+{
+  "review_comments": [
+    "3941785987",
+    "3941785985",
+    "3941785984"
+  ],
+  "base_revision": "e35b77766c39eab2fde301733f402aa06411a70e",
+  "controller_sha256": "aea69b2b7ec5a938cbb05c1b66f95f6ad2950e50ae5706bf2335fe8ef1be54a0",
+  "red": "Two actual generic-sync gateway cases produced BLOCKED instead of STOPPED around the real file-backed dispatch CAS; four existing direct/agent cases passed.",
+  "regression_tests": {
+    "passed": 13,
+    "deselected": 6,
+    "command": "python -m pytest Tests/Chat/test_console_durable_commit_offload.py Tests/Chat/test_console_dispatch_transition_drain.py -k \"stop_during_dispatch or dispatch_drain\" -q --tb=short",
+    "coverage": "Six real SQLite cases: direct, agent, generic sync; before/after CAS; repeated Stop; another active session preserved; sync worker acknowledgement and no adapter entry; independent SQLite terminal/checkpoint check. Seven no-DB cases: success, failure, child cancellation, repeated waiter cancellation, missing owner, newer owner preserved."
+  },
+  "existing_stop_gateway_tests": {
+    "passed": 46,
+    "deselected": 639,
+    "command": "python -m pytest Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_provider_gateway.py -k \"stop or cancel or settlement or pre_worker_failure or generic_sync_generator\" -q --tb=short"
+  },
+  "acceptance_recovery_tests": {
+    "passed": 40,
+    "deselected": 1,
+    "command": "python -m pytest Tests/Chat/test_console_first_send_atomicity.py Tests/Chat/test_console_dispatch_recovery_fix_round2.py -k \"not (explicit_retry_resumes_every_unfinished_postcommit_effect_before_provider and checkpoint_transition)\" -q --tb=short",
+    "baseline_exclusion": "Tests/Chat/test_console_dispatch_recovery_fix_round2.py::test_explicit_retry_resumes_every_unfinished_postcommit_effect_before_provider[checkpoint_transition] previously reproduced on untouched HEAD: provider_started True versus expected False."
+  },
+  "static": {
+    "fatal_ruff": "passed",
+    "new_unit_full_ruff": "passed",
+    "changed_test_format": "passed",
+    "controller_full_ruff": "176 unchanged baseline signatures",
+    "bandit": "17 unchanged findings; 10 B110 and 7 B101; no new issue signatures",
+    "artifact_hashes": "Three recorded harness hashes preserved; .txt snapshots are non-executable mode100644 with no application/script/test execution reference."
+  },
+  "limits": "No new provider or microphone run. Earlier live receipts retain their original revision/diff hashes and do not claim live verification of this review change. Targeted tests only; requests dependency warning remains."
+}

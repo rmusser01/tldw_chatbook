@@ -25,8 +25,10 @@ from tldw_chatbook.Chat.console_prepared_request import build_console_request
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
 )
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
     ConsoleTraceCaptureMode,
@@ -109,7 +111,9 @@ class _TraceGrowthFixture(BaseModel):
     @classmethod
     def _validate_coverage(cls, coverage: dict[str, str]) -> dict[str, str]:
         if frozenset(coverage) != EXPECTED_SCENARIOS:
-            raise ValueError("coverage must declare every expected scenario exactly once")
+            raise ValueError(
+                "coverage must declare every expected scenario exactly once"
+            )
         if any(not node_id.strip() for node_id in coverage.values()):
             raise ValueError("coverage node ids must be non-empty")
         return coverage
@@ -167,9 +171,7 @@ def _semi_incompressible_text(seed: str, turn: int, size: int) -> str:
     blocks: list[str] = []
     block = 0
     while sum(map(len, blocks)) < size:
-        blocks.append(
-            hashlib.sha256(f"{seed}:{turn}:{block}".encode()).hexdigest()
-        )
+        blocks.append(hashlib.sha256(f"{seed}:{turn}:{block}".encode()).hexdigest())
         block += 1
     return "".join(blocks)[:size]
 
@@ -233,15 +235,17 @@ def _delta(after: _TraceSize, before: _TraceSize) -> _TraceSize:
     }
 
 
-def _saved_message(
+def _saved_message_revision(
     database: CharactersRAGDB,
     conversation_id: str,
     content: str,
-) -> tuple[dict[str, str], SavedRevisionTraceProvenance]:
+    *,
+    sender: str = "user",
+) -> tuple[str, dict[str, str], SavedRevisionTraceProvenance]:
     message_id = database.add_message(
         {
             "conversation_id": conversation_id,
-            "sender": "user",
+            "sender": sender,
             "content": content,
         }
     )
@@ -254,14 +258,32 @@ def _saved_message(
         ).fetchone()
     assert revision is not None
     return (
-        {"role": "user", "content": content},
+        message_id,
+        {"role": sender, "content": content},
         SavedRevisionTraceProvenance(str(revision[0])),
     )
+
+
+def _saved_message(
+    database: CharactersRAGDB,
+    conversation_id: str,
+    content: str,
+) -> tuple[dict[str, str], SavedRevisionTraceProvenance]:
+    _message_id, message, revision = _saved_message_revision(
+        database,
+        conversation_id,
+        content,
+    )
+    return message, revision
 
 
 def _semantic_request(
     active: list[tuple[dict[str, str], TraceProvenance]],
     policy: FrozenTracePolicy,
+    *,
+    route: ConsoleRequestRoute = ConsoleRequestRoute.FRESH,
+    actor_id: str | None = None,
+    chain_id: str | None = None,
 ):
     return build_console_request(
         [message for message, _descriptor in active],
@@ -269,7 +291,13 @@ def _semantic_request(
         memory_provenance=(),
         mandatory_provenance=(),
         tool_provenance=(),
-        metadata_provenance=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+        metadata_provenance=(
+            request_route_provenance(
+                route,
+                actor_id=actor_id,
+                chain_id=chain_id,
+            ),
+        ),
         capture_policy=policy,
         capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
     )
@@ -281,21 +309,43 @@ async def _dispatch(
     active: list[tuple[dict[str, str], TraceProvenance]],
     policy: FrozenTracePolicy,
     boundary_errors: list[Exception],
+    *,
+    route: ConsoleRequestRoute = ConsoleRequestRoute.FRESH,
+    actor_id: str | None = None,
+    chain_id: str | None = None,
+    canonical_message_id: str | None = None,
 ) -> None:
     prepared = gateway.prepare_chat_request(
         resolution,
-        _semantic_request(active, policy),
-        route=ConsoleRequestRoute.FRESH,
+        _semantic_request(
+            active,
+            policy,
+            route=route,
+            actor_id=actor_id,
+            chain_id=chain_id,
+        ),
+        route=route,
+        route_actor_id=actor_id,
+        route_chain_id=chain_id,
         capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
     )
+    signals = None
+    if canonical_message_id is not None:
+        signals = ConsoleProviderStreamSignals()
+        signals.bind_trace_settlement_sink(
+            lambda handoff: handoff.settle(canonical_message_id)
+        )
     try:
         chunks = [
             chunk
             async for chunk in gateway.stream_chat(
                 resolution,
                 prepared,
-                route=ConsoleRequestRoute.FRESH,
+                route=route,
+                route_actor_id=actor_id,
+                route_chain_id=chain_id,
                 capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                signals=signals,
             )
         ]
     except Exception:
@@ -303,6 +353,267 @@ async def _dispatch(
             raise boundary_errors.pop() from None
         raise
     assert chunks == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_completed_tool_next_send_transition_has_bounded_literal_growth(
+    tmp_path: Path,
+) -> None:
+    """Each completed-tool transition adds two nodes and five trace events."""
+    database = CharactersRAGDB(
+        tmp_path / "trace-completed-tool-growth.sqlite",
+        "trace-completed-tool-growth",
+    )
+    async with AsyncExitStack() as resources:
+        resources.callback(database.close)
+        conversation_id = database.add_conversation({"title": "completed tool growth"})
+        assert conversation_id is not None
+        adapter_calls: list[dict[str, object]] = []
+
+        def adapter(**kwargs):
+            adapter_calls.append(kwargs)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        boundary_errors: list[Exception] = []
+        boundary_factory = ConsoleTraceBoundaryFactory(database)
+
+        def diagnostic_boundary_factory(*args):
+            try:
+                return boundary_factory(*args)
+            except Exception as exc:
+                boundary_errors.append(exc)
+                raise
+
+        gateway = ConsoleProviderGateway(
+            chat_api_call_fn=adapter,
+            trace_call_boundary_factory=diagnostic_boundary_factory,
+        )
+        resources.push_async_callback(gateway.aclose)
+        resolution = ConsoleProviderResolution(
+            provider="openai",
+            base_url="https://api.example.invalid/v1",
+            model="gpt-growth",
+            ready=True,
+            execution_key="openai",
+            streaming=False,
+        )
+        reader = ConsoleTraceNativeReader(database)
+        first_id, first_message, first_revision = _saved_message_revision(
+            database,
+            conversation_id,
+            "turn-0",
+        )
+        saved_history: list[tuple[dict[str, str], TraceProvenance]] = [
+            (first_message, first_revision)
+        ]
+        policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+        actor_id, chain_id = new_opaque_id(), new_opaque_id()
+        await _dispatch(
+            gateway,
+            resolution,
+            list(saved_history),
+            policy,
+            boundary_errors,
+            route=ConsoleRequestRoute.AGENT_FIRST,
+            actor_id=actor_id,
+            chain_id=chain_id,
+        )
+
+        async def complete_tool_turn(
+            turn_index: int,
+            active: list[tuple[dict[str, str], TraceProvenance]],
+            selected_policy: FrozenTracePolicy,
+            selected_actor_id: str,
+            selected_chain_id: str,
+        ) -> tuple[dict[str, str], SavedRevisionTraceProvenance]:
+            active.append(
+                (
+                    {
+                        "role": "tool",
+                        "content": f"result-{turn_index}",
+                        "tool_call_id": f"call-{turn_index}",
+                    },
+                    ProviderArtifactTraceProvenance(
+                        TraceProvenanceSource.TOOL_RESULT,
+                        selected_policy,
+                    ),
+                )
+            )
+            answer_id, answer_message, answer_revision = _saved_message_revision(
+                database,
+                conversation_id,
+                "ok",
+                sender="assistant",
+            )
+            await _dispatch(
+                gateway,
+                resolution,
+                active,
+                selected_policy,
+                boundary_errors,
+                route=ConsoleRequestRoute.TOOL_LOOP,
+                actor_id=selected_actor_id,
+                chain_id=selected_chain_id,
+                canonical_message_id=answer_id,
+            )
+            return answer_message, answer_revision
+
+        answer = await complete_tool_turn(
+            0,
+            list(saved_history),
+            policy,
+            actor_id,
+            chain_id,
+        )
+        expected_history = {
+            0: [
+                [{"role": "user", "content": "turn-0"}],
+                [
+                    {"role": "user", "content": "turn-0"},
+                    {
+                        "role": "tool",
+                        "content": "result-0",
+                        "tool_call_id": "call-0",
+                    },
+                ],
+            ],
+            1: [
+                [
+                    {"role": "user", "content": "turn-0"},
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "turn-1"},
+                ],
+                [
+                    {"role": "user", "content": "turn-0"},
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "turn-1"},
+                    {
+                        "role": "tool",
+                        "content": "result-1",
+                        "tool_call_id": "call-1",
+                    },
+                ],
+            ],
+            2: [
+                [
+                    {"role": "user", "content": "turn-0"},
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "turn-1"},
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "turn-2"},
+                ],
+                [
+                    {"role": "user", "content": "turn-0"},
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "turn-1"},
+                    {"role": "assistant", "content": "ok"},
+                    {"role": "user", "content": "turn-2"},
+                    {
+                        "role": "tool",
+                        "content": "result-2",
+                        "tool_call_id": "call-2",
+                    },
+                ],
+            ],
+        }
+        completed_turns = {first_id: 0}
+
+        def assert_native_history() -> None:
+            for message_id, turn_index in completed_turns.items():
+                calls = reader.read_calls(message_id)
+                assert len(calls) == 2
+                assert all(call.verification_status == "verified" for call in calls)
+                assert [
+                    call.capture.request["messages_payload"] for call in calls
+                ] == expected_history[turn_index]
+
+        assert_native_history()
+        transition_growth: list[tuple[int, int, int]] = []
+        transition_events: list[tuple[str, ...]] = []
+
+        for turn_index in (1, 2):
+            saved_history.append(answer)
+            turn_id, message, revision = _saved_message_revision(
+                database,
+                conversation_id,
+                f"turn-{turn_index}",
+            )
+            saved_history.append((message, revision))
+            policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+            actor_id, chain_id = new_opaque_id(), new_opaque_id()
+            with database.transaction() as cursor:
+                before = tuple(
+                    int(value)
+                    for value in cursor.execute(
+                        "SELECT "
+                        "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                        "(SELECT COUNT(*) FROM console_trace_events), "
+                        "(SELECT COUNT(*) FROM console_trace_surface_replacements)"
+                    ).fetchone()
+                )
+            await _dispatch(
+                gateway,
+                resolution,
+                list(saved_history),
+                policy,
+                boundary_errors,
+                route=ConsoleRequestRoute.AGENT_FIRST,
+                actor_id=actor_id,
+                chain_id=chain_id,
+            )
+            with database.transaction() as cursor:
+                after = tuple(
+                    int(value)
+                    for value in cursor.execute(
+                        "SELECT "
+                        "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                        "(SELECT COUNT(*) FROM console_trace_events), "
+                        "(SELECT COUNT(*) FROM console_trace_surface_replacements)"
+                    ).fetchone()
+                )
+                transition_events.append(
+                    tuple(
+                        str(row[0])
+                        for row in cursor.execute(
+                            "SELECT event_type FROM console_trace_events "
+                            "WHERE sequence >= ? ORDER BY sequence",
+                            (before[1],),
+                        ).fetchall()
+                    )
+                )
+            transition_growth.append(
+                tuple(current - prior for current, prior in zip(after, before))
+            )
+            assert_native_history()
+
+            answer = await complete_tool_turn(
+                turn_index,
+                list(saved_history),
+                policy,
+                actor_id,
+                chain_id,
+            )
+            completed_turns[turn_id] = turn_index
+            assert_native_history()
+
+        assert transition_growth == [(2, 5, 1), (2, 5, 1)]
+        assert transition_events == [
+            (
+                "call_boundary",
+                "surface_replace",
+                "surface_append",
+                "response_selection",
+                "call_outcome",
+            ),
+            (
+                "call_boundary",
+                "surface_replace",
+                "surface_append",
+                "response_selection",
+                "call_outcome",
+            ),
+        ]
+        assert len(adapter_calls) == 6
 
 
 async def _run_fixture(
@@ -410,9 +721,7 @@ async def _run_fixture(
         assert halfway is not None
         with database.transaction() as cursor:
             legacy_exchange_count = int(
-                cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[
-                    0
-                ]
+                cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0]
             )
             persisted = " ".join(
                 str(value)
@@ -557,7 +866,9 @@ async def test_console_trace_growth_release_gate(
         },
     }
     artifact_path = tmp_path / (
-        ARTIFACT_NAME.replace(".json", f"-{'replace' if replacement_heavy else 'append'}.json")
+        ARTIFACT_NAME.replace(
+            ".json", f"-{'replace' if replacement_heavy else 'append'}.json"
+        )
     )
     artifact_path.write_text(
         json.dumps(artifact, indent=2, sort_keys=True) + "\n",
@@ -568,9 +879,6 @@ async def test_console_trace_growth_release_gate(
         expected_calls += expected_calls // fixture.replacement_interval
     assert all(result["adapter_call_count"] == expected_calls for result in results)
     assert all(result["legacy_exchange_count"] == 0 for result in results)
-    assert (
-        second_bytes / first_bytes
-        <= thresholds.second_half_to_first_half_bytes_max
-    )
+    assert second_bytes / first_bytes <= thresholds.second_half_to_first_half_bytes_max
     assert second_rows / first_rows <= thresholds.second_half_to_first_half_rows_max
     assert total_bytes <= thresholds.total_trace_owned_bytes_max

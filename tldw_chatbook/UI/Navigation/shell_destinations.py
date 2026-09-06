@@ -123,7 +123,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "schedules",
         "Schedules",
         "schedules",
-        "When jobs, watchlists, and workflows run.",
+        "When scheduled tasks fire and recurring questions run.",
         "Manage run timing, triggers, and recovery.",
     ),
     ShellDestination(
@@ -132,6 +132,15 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "workflows",
         "Reusable procedures, recipes, dry-runs, and outputs.",
         "Build and launch repeatable agent workflows.",
+    ),
+    ShellDestination(
+        "meetings",
+        "Meetings",
+        "meetings",
+        "Record a call or a room with a live labelled transcript, then file it in the Library.",
+        "Record and transcribe a meeting.",
+        palette_aliases=("meeting", "record", "transcribe"),
+        navigation_priority=75,
     ),
     ShellDestination(
         "mcp",
@@ -197,6 +206,7 @@ SHELL_DESTINATION_SHORTCUTS: Mapping[str, str] = MappingProxyType(
         "logs": "f8",
         "settings": "f9",
         "research": "f10",
+        "meetings": "f11",
     }
 )
 

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -35,7 +34,6 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
     ConsolePromptQueueModal,
 )
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
 def _activity(
@@ -247,7 +245,17 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(size) -> None
 
 
 @pytest.mark.asyncio
-async def test_stay_from_lifecycle_dialog_preserves_manager_edit_and_focus() -> None:
+async def test_confirm_navigation_is_a_pure_allow_with_manager_open() -> None:
+    """TASK-31520 rewrite: the lifecycle dialog is retired with the loss.
+
+    Pre-reuse, a busy/paused queue raised a Stay/Leave dialog from
+    ``confirm_navigation`` because leaving destroyed the screen. The chat
+    route is reusable now -- the queue registry, the paused chain, and the
+    session all survive navigation -- so the gate answers True. What still
+    matters: the CALL must be a pure gate with no side effects -- it must
+    not dismiss the open manager, discard the unsaved edit, or move focus
+    (the real navigation seam owns overlay dismissal separately).
+    """
     _app, host = _ready_host()
     async with host.run_test(size=(100, 30)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -272,7 +280,6 @@ async def test_stay_from_lifecycle_dialog_preserves_manager_edit_and_focus() -> 
         controller.prompt_queue_coordinator.publish_registry_change(session_id)
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-
         await pilot.click("#console-prompt-queue-manage")
         await pilot.pause()
         assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal)
@@ -283,17 +290,13 @@ async def test_stay_from_lifecycle_dialog_preserves_manager_edit_and_focus() -> 
         edit.text = "unsaved manager edit"
         edit.focus()
 
-        confirmation_task = asyncio.create_task(console.confirm_navigation())
-        for _ in range(5):
-            await pilot.pause()
-            if isinstance(host.screen_stack[-1], ConfirmationDialog):
-                break
-        assert isinstance(host.screen_stack[-1], ConfirmationDialog)
-        host.screen_stack[-1].query_one("#cancel-button", Button).press()
+        assert await console.confirm_navigation() is True, (
+            "nothing is lost by navigating under reuse; the gate must allow"
+        )
         await pilot.pause()
-
-        assert await confirmation_task is False
-        assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal)
+        assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal), (
+            "the gate must not dismiss the open manager"
+        )
         assert edit.text == "unsaved manager edit"
         assert edit.has_focus
 
@@ -569,3 +572,197 @@ async def test_use_current_context_rejects_an_epoch_that_changed_after_review() 
 
     assert result.status is QueueMutationStatus.INVALID
     assert "changed since review" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_dirty_queue_edit_vetoes_navigation_and_preserves_text() -> None:
+    """TASK-31701: the one lossy Console navigation is guarded again.
+
+    A queue-manager edit whose text diverges from the queued entry vetoes
+    `flush_pending_work` (the seam app.py consults before dismissing
+    overlays), preserving the modal, the typed text, and focus. Saving
+    the edit clears the veto -- navigation is lossless again.
+    """
+    _app, host = _ready_host()
+    async with host.run_test(size=(100, 30)) as pilot:
+        console = await _mounted_console(host, pilot)
+        controller = console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        snapshot = controller.prompt_queue_registry.begin_chain(
+            session_id,
+            context_epoch=controller.store.conversation_context_epoch(session_id),
+            expected_revision=snapshot.revision,
+        ).snapshot
+        controller.prompt_queue_registry.admit(
+            session_id,
+            text="original queued text",
+            expected_revision=snapshot.revision,
+        )
+        controller.prompt_queue_coordinator.publish_registry_change(session_id)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        await pilot.click("#console-prompt-queue-manage")
+        await pilot.pause()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsolePromptQueueModal)
+
+        # No edit open: nothing to protect.
+        assert console.flush_pending_work() is True
+
+        await pilot.click("#console-prompt-queue-edit")
+        edit = modal.query_one("#console-prompt-queue-edit-input", TextArea)
+        # Edit open but text unchanged: still lossless, still allowed.
+        assert console.flush_pending_work() is True
+
+        edit.text = "edited but not yet saved"
+        assert console.flush_pending_work() is False, (
+            "a dirty edit must veto -- the navigation seam would dismiss "
+            "the modal and discard the typed text"
+        )
+        assert isinstance(host.screen_stack[-1], ConsolePromptQueueModal), (
+            "the veto must not disturb the open manager"
+        )
+        assert edit.text == "edited but not yet saved"
+
+        # Saving resolves the veto.
+        await pilot.click("#console-prompt-queue-save")
+        await pilot.pause()
+        assert console.flush_pending_work() is True, (
+            "a saved edit loses nothing; navigation must be allowed again"
+        )
+
+
+def _bare_modal_for_dirty_check(
+    *, editing: str | None, edit_text: str, baseline: str | None, read_result
+):
+    """A ConsolePromptQueueModal with only the dirty-check's seams stubbed.
+
+    Args:
+        editing: Value for ``_editing_entry_id``.
+        edit_text: Text the stubbed edit TextArea reports.
+        baseline: Value for ``_editing_baseline_text``.
+        read_result: What the stubbed controller's ``read_waiting_text``
+            returns.
+
+    Returns:
+        The bare modal instance.
+    """
+    modal = ConsolePromptQueueModal.__new__(ConsolePromptQueueModal)
+    modal._editing_entry_id = editing
+    modal._editing_baseline_text = baseline
+    modal._revision = 7
+    modal.session_id = "session-1"
+    modal._queue_controller = SimpleNamespace(
+        read_waiting_text=lambda *args, **kwargs: read_result
+    )
+    modal.query_one = lambda selector, widget_type=None: SimpleNamespace(
+        text=edit_text
+    )
+    return modal
+
+
+def test_has_unsaved_edit_unit_states() -> None:
+    """Isolated decision table for the dirty check (Qodo #2425).
+
+    The race states (STALE_REVISION / LOCKED / NOT_FOUND) must judge
+    against the edit-time baseline: the save path refuses them too, so
+    the veto is the user's only copy of the modified text.
+    """
+    from tldw_chatbook.Chat.console_prompt_queue import QueueMutationStatus
+
+    applied = SimpleNamespace(status=QueueMutationStatus.APPLIED, text="queued")
+
+    # No edit open: never dirty.
+    assert (
+        _bare_modal_for_dirty_check(
+            editing=None, edit_text="anything", baseline=None, read_result=applied
+        ).has_unsaved_edit()
+        is False
+    )
+    # Edit open, text matches the current queue: clean.
+    assert (
+        _bare_modal_for_dirty_check(
+            editing="e1", edit_text="queued", baseline="queued", read_result=applied
+        ).has_unsaved_edit()
+        is False
+    )
+    # Edit open, text diverges from the current queue: dirty.
+    assert (
+        _bare_modal_for_dirty_check(
+            editing="e1", edit_text="typed", baseline="queued", read_result=applied
+        ).has_unsaved_edit()
+        is True
+    )
+    # Race states: current unreadable -> judge against the baseline.
+    for status in (
+        QueueMutationStatus.STALE_REVISION,
+        QueueMutationStatus.LOCKED,
+        QueueMutationStatus.NOT_FOUND,
+    ):
+        raced = SimpleNamespace(status=status, text=None)
+        assert (
+            _bare_modal_for_dirty_check(
+                editing="e1", edit_text="typed", baseline="queued", read_result=raced
+            ).has_unsaved_edit()
+            is True
+        ), f"{status}: modified text must stay protected through the race"
+        assert (
+            _bare_modal_for_dirty_check(
+                editing="e1", edit_text="queued", baseline="queued", read_result=raced
+            ).has_unsaved_edit()
+            is False
+        ), f"{status}: an unmodified edit protects nothing"
+    # Defensive: no baseline at all -> any typed text is protected.
+    raced = SimpleNamespace(status=QueueMutationStatus.NOT_FOUND, text=None)
+    assert (
+        _bare_modal_for_dirty_check(
+            editing="e1", edit_text="typed", baseline=None, read_result=raced
+        ).has_unsaved_edit()
+        is True
+    )
+    assert (
+        _bare_modal_for_dirty_check(
+            editing="e1", edit_text="", baseline=None, read_result=raced
+        ).has_unsaved_edit()
+        is False
+    )
+
+
+def test_flush_pending_work_unit_stack_walk() -> None:
+    """Isolated contract for the screen hook (Qodo #2425).
+
+    Vetoes (with one warning notification) when any stacked screen
+    reports an unsaved edit; allows when none does or none provides the
+    probe.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    class _App:
+        def __init__(self, stack):
+            self.screen_stack = stack
+
+    class _Host(ChatScreen):
+        # Textual's `app` is a read-only property; the bare unit needs a
+        # stubbed stack, so the subclass overrides the lookup.
+        _stub_app = None
+
+        @property
+        def app(self):
+            return self._stub_app
+
+    screen = _Host.__new__(_Host)
+    notes: list[str] = []
+    screen.notify = lambda message, **kwargs: notes.append(str(message))
+
+    plain = SimpleNamespace()  # no has_unsaved_edit at all
+    clean = SimpleNamespace(has_unsaved_edit=lambda: False)
+    dirty = SimpleNamespace(has_unsaved_edit=lambda: True)
+
+    screen._stub_app = _App([plain, clean])
+    assert ChatScreen.flush_pending_work(screen) is True
+    assert notes == []
+
+    screen._stub_app = _App([plain, clean, dirty])
+    assert ChatScreen.flush_pending_work(screen) is False
+    assert len(notes) == 1 and "Unsaved queue edit" in notes[0]

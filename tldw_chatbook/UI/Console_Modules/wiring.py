@@ -59,9 +59,20 @@ from tldw_chatbook.Chat.console_fleet_attention import (
     fleet_unseen_conversation_ids,
 )
 from tldw_chatbook.Chat.console_runtime import leave_console_runtime
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE,
+    LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION,
+    LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR,
+    ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION,
+    TAB_LIBRARY,
+    TAB_PERSONAS,
+)
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
+)
+from tldw_chatbook.Widgets.Console.console_character_context import (
+    ConsoleCharacterContext,
 )
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
 from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
@@ -72,10 +83,15 @@ from tldw_chatbook.Widgets.Console.console_speech_controls import (
 )
 from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
 
+from ..Navigation.main_navigation import NavigateToScreen
 from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 from .agent import ConsoleAgentController
 from .capture_policy_bindings import build_capture_policy_bindings
 from .character import ConsoleCharacterController
+from .character_context import (
+    ConsoleCharacterContextController,
+    ConsoleCharacterContextState,
+)
 from .console_spend_projection import ConsoleDraftSpendRefresh
 from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
@@ -90,7 +106,6 @@ from .prompt_queue import (
 )
 from .prompts import ConsolePromptsController
 from .raw_cli import ConsoleRawCliController, restore_refused_raw_cli_stash
-from .reaction_preview import get_console_reaction_preview_coordinator
 from .realtime import ConsoleRealtimeController
 from .retrieval import ConsoleRetrievalController
 from .review_selection import (
@@ -111,6 +126,83 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..Screens.chat_screen import ChatScreen
 
 __all__ = ["build_console_controllers"]
+
+
+def _navigate_character_context(screen: Any, context_key: str, target: Any) -> None:
+    """Serialize exact navigation only when the user leaves the Character browser."""
+    from ..Navigation.character_conversation_navigation import (
+        serialize_library_character_repair_context,
+        serialize_library_unavailable_browse,
+        serialize_library_unavailable_inspection,
+        serialize_roleplay_character_conversation_link,
+    )
+
+    route, serialize = {
+        ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION: (
+            TAB_PERSONAS,
+            serialize_roleplay_character_conversation_link,
+        ),
+        LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR: (
+            TAB_LIBRARY,
+            serialize_library_character_repair_context,
+        ),
+        LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: (
+            TAB_LIBRARY,
+            serialize_library_unavailable_inspection,
+        ),
+        LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE: (
+            TAB_LIBRARY,
+            serialize_library_unavailable_browse,
+        ),
+    }[context_key]
+    screen.post_message(NavigateToScreen(route, {context_key: serialize(target)}))
+
+
+async def _start_character_context_chat(
+    screen: Any, key: Any, database: Any, name: str, is_current: Callable[[], bool]
+) -> None:
+    from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+        ConsoleCharacterChoice,
+    )
+
+    await screen._character._apply_console_character_choice_async(
+        ConsoleCharacterChoice(key.character_id, name, "new"),
+        expected_key=key,
+        required_database=database,
+        commit_is_current=is_current,
+    )
+
+
+def _reaction_preview_coordinator(screen: Any) -> Any:
+    from .reaction_preview import get_console_reaction_preview_coordinator
+
+    return get_console_reaction_preview_coordinator(screen.app_instance)
+
+
+def _sync_character_context_presentation(
+    screen: Any, state: ConsoleCharacterContextState
+) -> None:
+    """Push a complete Character snapshot into the current mounted rail."""
+
+    if not screen.is_attached or not screen.app.screen_stack:
+        return
+    try:
+        widget = screen.query_one("#console-character-context", ConsoleCharacterContext)
+    except QueryError:
+        return
+    widget.sync_state(state)
+    try:
+        rail = screen.query_one("#console-left-rail")
+    except QueryError:
+        return
+    sync = getattr(rail, "sync_character_context", None)
+    if callable(sync):
+        sync(state)
+    # A scope may have no active character but still gain its first useful
+    # context when the off-loop recent-chat read settles. Re-resolve the
+    # render-only first-use default; this does not persist on read.
+    current_rail_state = screen._current_console_rail_state()
+    screen._sync_console_rail_visibility_if_changed(current_rail_state)
 
 
 def _displayed_console_composer_draft(screen: Any) -> str | None:
@@ -519,7 +611,8 @@ def build_console_controllers(
 
     Assigns, in this order, `screen._image`, `screen._video`,
     `screen._retrieval`, `screen._library_policy`, `screen._library_activity`,
-    `screen._skill`, `screen._workspace`, `screen._character`, `screen._fleet`,
+    `screen._skill`, `screen._workspace`, `screen._character`,
+    `screen._character_context`, `screen._fleet`,
     `screen._session`, `screen._dictation`, `screen._hands_free`,
     `screen._realtime`, `screen._message`, `screen._console_auto_speak`,
     `screen._prompts`, `screen._agent`, `screen._terminal`, `screen._raw_cli`,
@@ -696,6 +789,7 @@ def build_console_controllers(
     #: only the bounded plain-value input delegate and DOM edges.
     screen._workspace = ConsoleWorkspaceController(
         screen,
+        notify_character_navigation=lambda message, severity: screen._notify(message, severity),
         app_instance=screen.app_instance,
         # Late-binding lambdas, not the bound methods directly -- same
         # staleness reason as `ConsoleDictationController`'s own wiring
@@ -926,6 +1020,68 @@ def build_console_controllers(
         is_mounted=lambda: screen.is_mounted,
         render_character_avatar=(
             lambda **kwargs: screen._render_character_avatar_into_section(**kwargs)
+        ),
+    )
+    screen._character_context = ConsoleCharacterContextController(
+        database_accessor=(
+            lambda: getattr(screen.app_instance, "chachanotes_db", None)
+        ),
+        current_character_accessor=(
+            lambda: (
+                (
+                    character_id,
+                    screen._character._current_console_rail_character_name()
+                    or "Current character",
+                )
+                if (
+                    character_id
+                    := screen._character._current_console_rail_character_id()
+                )
+                is not None
+                else None
+            )
+        ),
+        open_conversation_accessor=(
+            lambda: screen._session._current_console_conversation_id()
+        ),
+        activate_target=(
+            lambda request, cancellation: (
+                screen._workspace.activate_character_conversation(request, cancellation)
+            )
+        ),
+        navigate_roleplay=(
+            lambda link: _navigate_character_context(
+                screen, ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION, link
+            )
+        ),
+        navigate_repair=(
+            lambda context: _navigate_character_context(
+                screen, LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR, context
+            )
+        ),
+        navigate_inspection=(
+            lambda link: _navigate_character_context(
+                screen, LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION, link
+            )
+        ),
+        navigate_unavailable_browse=(
+            lambda link: _navigate_character_context(
+                screen, LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE, link
+            )
+        ),
+        navigate_roleplay_home=(
+            lambda: screen.post_message(NavigateToScreen(TAB_PERSONAS))
+        ),
+        navigate_library_home=(
+            lambda: screen.post_message(NavigateToScreen(TAB_LIBRARY))
+        ),
+        start_console=(
+            lambda key, database, name, is_current: _start_character_context_chat(
+                screen, key, database, name, is_current
+            )
+        ),
+        state_changed=lambda state: _sync_character_context_presentation(
+            screen, state
         ),
     )
 
@@ -1233,7 +1389,7 @@ def build_console_controllers(
             lambda: getattr(screen.app_instance, "chachanotes_db", None)
         ),
         reaction_preview_coordinator_accessor=(
-            lambda: get_console_reaction_preview_coordinator(screen.app_instance)
+            lambda: _reaction_preview_coordinator(screen)
         ),
         refresh_character_avatar=(
             lambda **kwargs: (
@@ -1556,6 +1712,14 @@ def build_console_controllers(
             lambda message_id: getattr(
                 screen._session, "request_console_chat_fork", lambda _message_id: None
             )(message_id)
+        ),
+        open_canvas_block=(
+            lambda reference, source: screen._open_console_canvas_block(
+                reference, source
+            )
+        ),
+        prefill_canvas_repair=(
+            lambda repair: screen._prefill_console_canvas_repair(repair)
         ),
     )
     screen._console_fork_eligibility = screen._message.console_fork_eligibility

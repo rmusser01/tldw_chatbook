@@ -133,16 +133,163 @@ _CONTROLLER_GLOB = "*_controller.py"
 #: glob in `test_every_controller_file_has_a_budget_row` the moment they
 #: exist, and get their own row at that point).
 _BUDGETS: dict[str, int] = {
+    # 2026-09-05, wave-6 final review (`origin/dev` reconciliation merge):
+    # BOTH rows below are dev-side controllers, not this wave's work. Dev
+    # created `library_character_repair_controller.py` and `library_
+    # navigation_controller.py` without adding either to this table, so
+    # `test_every_controller_file_has_a_budget_row` -- the self-defending
+    # property this file exists for -- named them the moment the merge
+    # landed them here. That is the glob doing its job on someone else's
+    # miss; they are governed at this merge rather than left to whichever
+    # branch next trips the check. Pinned at their exact measured line
+    # counts (`len(path.read_text(encoding="utf-8").splitlines())`, this
+    # file's own `_measure` expression), no headroom.
+    "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 502,
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1738,
     "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1307,
+    # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
+    # governed the moment this file existed (task-31203 AC#4's glob-based
+    # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
+    # 37-parameter constructor (self + screen + 35 named dependencies; see
+    # the module's own docstring for the full 78-candidate/21-exclusion
+    # derivation, including 6 instance-attribute-monkeypatch exclusions
+    # found only by running the battery) pinned at its exact measured line
+    # count.
+    # Task 2 fix round 1 (post-review): `_resolve_ingest_source` excluded
+    # (module-globals coupling on `validate_path_simple`/`validate_url`,
+    # found by the mechanical module-globals census, not the battery --
+    # see the screen ratchet's own comment above for the full incident);
+    # 56 moved methods, one named dependency added for its mover caller.
+    # Constructor arity verified with `inspect.signature(LibraryIngest
+    # Controller.__init__)` rather than hand-counted: 37 -> 38 params excl.
+    # `self` (1 positional `screen` + 36 -> 37 keyword-only named
+    # dependencies), a clean +1 matching the one new dependency. Dead
+    # imports removed (`logger`, `validate_path_simple`, `validate_url` --
+    # all now unused in this file). 2510 -> 2536 lines.
+    #
+    # 2026-09-05, wave-5 task 3 (ingest cleanup, series 3/3): comment-only
+    # growth, no method body touched (56 movers unchanged -- cleanup prunes
+    # the SCREEN's delegators, not the controller's own methods, per the
+    # collections/search+RAG/skills precedent). Four moved-docstring-
+    # adjacent module/constructor docstring corrections: two stray "63"
+    # counts (should be 56 -- an arithmetic slip inherited from an earlier
+    # draft, never 78-22 or any other real derivation), the "LibraryScreen
+    # keeps one-line delegators under every one of these 56 original names"
+    # claim (now false for 6 of the 56, this task's own screen-side prune),
+    # and the `_apply_library_ingest_backend_save`/`_sync_library_canvas`
+    # module-globals census evidence (corrected from 7 files/~20 sites to
+    # the true 10 files/38 sites -- 3 files missed by task 2's own grep
+    # because their patch sites used a variable name other than
+    # `library_screen`/`library_screen_module`; see the recipe's §3 for the
+    # full correction) -- all fixed in this task, +22 lines. 2536 -> 2558.
+    #
+    # 2026-09-05, wave-5 task 3 fix round 1 (post-review, counts only):
+    # comment-only growth, no method body touched. The `_sync_library_
+    # canvas` census's own "site" definition (one match/line of the
+    # 3-shape pattern set, deduplicated per file) and its reproducible
+    # 10-file breakdown summing to 38 were added to this module's own
+    # docstring so a reviewer can re-derive the number without re-running
+    # the census script. 2558 -> 2569.
+    #
+    # 2026-09-05, wave-5 final review: `origin/dev` merge (89 commits since
+    # this branch's merge-base 68f9d865f). Dev edited one ALREADY-MOVED body
+    # after the move landed -- `handle_library_ingest_clear_finished` gained
+    # a 13-line stale-outcome prune (task-28007's Qodo review round) -- so
+    # the edit follows the body here rather than resurrecting the screen's
+    # copy: +13 ported lines, +5 for the `library_ingest_analyze_outcomes_
+    # accessor` constructor parameter and its 4-line comment, +3 for storing
+    # it, +12 for the same-named property that lets the ported lines stay
+    # byte-for-byte with dev's, and +21 of module docstring recording the
+    # divergence, the new group-(b) binding, and the follow-up task
+    # (task-31651) that folds the field into `LibraryIngestState` proper.
+    # No other body touched; 56 movers unchanged. 2569 -> 2623.
+    #
+    # 2026-09-05, wave-5 ROUND-2 `origin/dev` merge (72 commits since the
+    # previous reconciliation's merge-base 93388ba69). Dev edited TWO more
+    # already-moved bodies, both with TASK-31521 suspend gates (the Library
+    # route became reusable, so navigation suspends the screen instead of
+    # unmounting it): `_handle_library_ingest_registry_changed` defers its
+    # dynamic-region rebuild, footer re-registration, source-snapshot
+    # re-read and landing-attention sync while hidden, and `_handle_library_
+    # ingest_progress_changed` skips pure DOM patching. Same rule as last
+    # round -- the edit follows the body, the screen keeps its one-line
+    # delegators: +20 ported lines (exactly dev's own delta on those two
+    # bodies, so both port byte-for-byte), +15 for three new constructor
+    # parameters and their comments (`library_screen_suspended_accessor`,
+    # `library_ingest_suspended_activity_accessor`, `set_library_ingest_
+    # suspended_activity`), +7 for storing them, +32 for the two same-named
+    # properties (one getter-only, one getter/setter) that keep the ported
+    # lines byte-for-byte, and +24 of module docstring (group (b) 8 -> 10,
+    # and the divergence paragraph rewritten from one body to three).
+    # Keyword-only constructor arity measured, not assumed: 38 -> 41 (43
+    # total including `self` and `screen`). No other body touched; 56 movers
+    # unchanged. 2623 -> 2721.
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
+    # See the dev-side-controller note above the character-repair row. Dev
+    # landed this file at 195 lines; the +3 is this merge's own port -- the
+    # `apply_navigation_context` gate read the flat `_library_prompts_
+    # mutation_in_flight` attribute the wave-6 prompts cleanup deleted, and
+    # was retargeted to `_prompts_state.mutation_in_flight` with a one-line
+    # comment naming the retarget (3 comment lines, the gate line itself
+    # replaced in place).
+    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 198,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     "tldw_chatbook/UI/Library_Modules/library_note_import_controller.py": 587,
     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2023,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
+    # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
+    # governed the moment this file existed (task-31203 AC#4's glob-based
+    # discovery, recipe §17) -- 139 moved methods (byte-for-byte; the
+    # largest single move of this program, past skills' own 86) plus the
+    # constructor/property scaffolding the canon requires, pinned at its
+    # exact measured line count. Constructor arity MEASURED with
+    # `inspect.signature(LibraryPromptsController.__init__)`, never
+    # hand-counted: 33 parameters including `self` -- 1 positional
+    # (`screen`) + 31 keyword-only named dependencies (1 state accessor +
+    # 12 shell helpers + 4 shared-shell-state accessors + 3 prompt-wiring-
+    # controller accessors + 1 merely-delegate-property accessor + 10
+    # late-binding callables for the exclusions). 85 class-level
+    # `property` objects: 42 hand-written bindings + the 43 generated
+    # flat-name state shims. See the module's own docstring for the full
+    # 161-candidate / 22-exclusion derivation and the single-controller
+    # decision (one connected component of 145 names, no seam to split on).
+    #
+    # 2026-09-05, wave-6 task 2 fix round 2 (post-review, counts only):
+    # comment-only growth, no method body touched (139 movers unchanged, all
+    # still byte-for-byte). Three census figures in this module's own
+    # docstring were wrong and were corrected in place: "Three MORE names"
+    # reach the unbound-fake-self shape by indirection -> FIVE (the sentence
+    # was counting the three SHAPES as if they were names; the bullets always
+    # listed 1 + 2 + 2, and 10 direct + 5 indirect = the 15 rows the same
+    # paragraph enumerates); "11 movers" forward bare `self` into `_sync_
+    # library_canvas` -> 7 movers + 4 exclusions (AST re-scan: 11 methods
+    # total, `set & movers` = 7); and the `_sync_library_canvas` LATENT
+    # verdict's supporting evidence, which claimed only one test function
+    # mentions a mover -- false, `test_library_entry_compose_once.py` INVOKES
+    # `_sync_library_prompts_browse_result` at :1014/:1044. The VERDICT is
+    # unchanged and now rests on the correct argument (monkeypatch is
+    # function-scoped; that file's four patch pairs live in four OTHER test
+    # functions, zero overlap, verified by mapping every census line and both
+    # invocation lines to their enclosing FunctionDef). The "site" definition
+    # and the alternative un-deduplicated count (42) are now stated inline so
+    # a reviewer can re-derive 33 without re-running the census.
+    # 4956 -> 4991.
+    # 2026-09-05, wave-6 task 3 (prompts cleanup PR, prompts series 3/3):
+    # comment-only growth, 4991 -> 4998. Two now-false present-tense claims
+    # about the screen's delegators ("keeps one-line delegators under every
+    # one of these 139 original names", module docstring, and the same claim
+    # again in `LibraryPromptsController`'s own class docstring) were
+    # corrected to the post-prune 100-of-139 count and pointed at
+    # `_PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED` -- the identical shape the
+    # skills and ingest cleanups each had to fix in their own controllers.
+    # No moved body was touched (byte-for-byte canon intact); this is the
+    # §17 re-pin-at-move flow applied to a docstring-only delta. 4991 ->
+    # 4998.
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 4998,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
@@ -233,6 +380,10 @@ _BUDGETS: dict[str, int] = {
 #: controller shrinks (a cleanup PR that forgot to lower its row), not to
 #: pin every file to its exact byte count at all times.
 _SLACK_TOLERANCE_LINES = 50
+
+# TASK-31244: initial exact pin for the focused navigation helper. Existing
+# controller ceilings remain unchanged; route hooks stay outside LibraryScreen.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] = 811
 
 
 @lru_cache(maxsize=None)

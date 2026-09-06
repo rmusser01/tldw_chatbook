@@ -819,3 +819,89 @@ async def test_scheduler_loop_dispatches_a_due_briefing_job(db):
     handler.assert_awaited_once()
     dispatched_task = handler.await_args.args[0]
     assert dispatched_task["id"] == "briefing:1"
+
+
+# ---------------------------------------------------------------------------
+# UAT finding 3a: dispatch -> UI fanout (`on_reminder_dispatched`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_reminder_dispatched_fires_after_a_successful_fire(db):
+    """The callback must fire AFTER `mark_reminder_dispatched` commits, not
+    before -- a UI refresh triggered from it must see the row's NEW fired
+    state (enabled=False, next_run_at=None for a one-time reminder), never
+    the stale pre-fire snapshot."""
+    task_id = _create_reminder(db, "Test", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    calls: list[str] = []
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        on_reminder_dispatched=lambda tid: calls.append(tid),
+    )
+    loop.queue.load()
+    await loop.tick()
+
+    handler.assert_awaited_once()
+    assert calls == [task_id]
+    row = db.get_reminder_task(task_id)
+    assert row["enabled"] == 0, "the callback must fire AFTER the row's fired state lands"
+    assert row["next_run_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_on_reminder_dispatched_fires_after_a_failed_handler_too(db):
+    """A handler that raises still calls `mark_reminder_dispatched`
+    (recording the failed attempt) -- the row's bucket/status can still
+    change (e.g. its retry/missed state), so the UI must still hear
+    about it."""
+    task_id = _create_reminder(db, "Test", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock(side_effect=RuntimeError("boom"))
+    calls: list[str] = []
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        on_reminder_dispatched=lambda tid: calls.append(tid),
+    )
+    loop.queue.load()
+
+    with patch("tldw_chatbook.Scheduling.scheduler.loop.logger"):
+        await loop.tick()
+
+    assert calls == [task_id]
+
+
+@pytest.mark.asyncio
+async def test_on_reminder_dispatched_callback_failure_does_not_break_dispatch(db):
+    """Same tolerance as `on_queue_changed`: a broken callback must never
+    fail the dispatch itself."""
+    task_id = _create_reminder(db, "Test", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+
+    def boom(_task_id):
+        raise RuntimeError("bad callback")
+
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        on_reminder_dispatched=boom,
+    )
+    loop.queue.load()
+    await loop.tick()
+
+    handler.assert_awaited_once()
+    row = db.get_reminder_task(task_id)
+    assert row["enabled"] == 0, "the dispatch itself must still have succeeded"
+
+
+def test_on_reminder_dispatched_defaults_to_none_and_is_optional():
+    """Several existing tests build a `SchedulerLoop` via `__new__`,
+    bypassing `__init__` -- `_notify_reminder_dispatched` must tolerate a
+    missing attribute, not just a `None` one."""
+    loop = SchedulerLoop.__new__(SchedulerLoop)
+    # No `on_reminder_dispatched` attribute at all -- must not raise.
+    loop._notify_reminder_dispatched("some-id")

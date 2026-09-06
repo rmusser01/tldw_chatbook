@@ -32,6 +32,28 @@ SEMANTIC_MUTATION_GUARD_FUNCTION = "console_semantic_mutation_authorized"
 TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
 
 
+@contextmanager
+def operation_owned_connection(database: object) -> Iterator[None]:
+    """Close only the thread-local handle opened by this synchronous operation.
+
+    Inspect without acquiring a handle. A pre-existing registered connection,
+    including its active transaction, remains owned by the caller.
+    """
+    local = getattr(database, "_local", None)
+    registry = getattr(database, "_connection_quiescence", None)
+    close = getattr(database, "close_connection", None)
+    if local is None or registry is None or not callable(close):
+        yield
+        return
+    previous = getattr(local, "conn", None)
+    borrowed = previous is not None and registry.is_registered(previous)
+    try:
+        yield
+    finally:
+        if not borrowed and getattr(local, "conn", None) is not None:
+            close()
+
+
 class SQLiteConnectionQuiescenceRegistry:
     """Coordinate an exclusive maintenance window over held SQLite handles.
 

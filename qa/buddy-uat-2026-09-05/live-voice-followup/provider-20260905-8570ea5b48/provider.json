@@ -1,0 +1,27 @@
+{
+  "run_id": "provider-20260905-8570ea5b48",
+  "child_pid": 2697,
+  "wrapper_pid": 2690,
+  "provider": "deepseek",
+  "microphone_opened": false,
+  "fixture": "Reply exactly: Migu live check passed.",
+  "import_root": "/private/tmp/chatbook-migu-dragging-20260905/tldw_chatbook",
+  "run_status": "failed",
+  "visible_copy": "Agent run failed: provider returned HTTP 502 (Provider error from deepseek: provider unavailable. Status: 502.).",
+  "buddy_states": [
+    "idle",
+    "thinking",
+    "speaking",
+    "error"
+  ],
+  "final_buddy_state": "error",
+  "expected_reply": false,
+  "elapsed_seconds": 3.01,
+  "app_exception": null,
+  "stop_requested_from_status": "failed",
+  "stop_exercised_during_stream": false,
+  "stop_final_status": "failed",
+  "stop_final_buddy_state": "error",
+  "stop_elapsed_seconds": 0.0,
+  "normal_config_unchanged": true
+}

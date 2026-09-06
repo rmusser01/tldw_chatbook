@@ -11,6 +11,8 @@ from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPS
 
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
+ENVIRONMENT_SECTION_ID = "environment"
+TASKS_SECTION_ID = "tasks"
 # Task-400: the "context" (staged sources) section moved from the left rail
 # into the Inspector rail, so it is no longer a collapsible left-rail section.
 # TASK-23199: "session" was retired. It rendered a header plus one row
@@ -84,6 +86,10 @@ CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
 #: right rail needs no marker because its closed default is distinguishable
 #: from an explicit ``right_open=True`` by value alone.
 CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY = "left_open_explicit"
+#: TASK-31244: distinguishes a user's Character disclosure gesture from a
+#: first-use default.  Presence of the old Boolean without this marker is a
+#: legacy preference and must remain authoritative until the first toggle.
+CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY = "character_disclosure_explicit"
 
 _PERSISTENCE_PREFIX = "console_rail_state"
 _INVALID_KEY_RUN_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -359,6 +365,14 @@ def console_rail_left_open_explicit(stored_preferences: Any) -> bool:
     )
 
 
+def console_character_disclosure_explicit(stored_preferences: Any) -> bool:
+    """Return whether Character openness came from an explicit user toggle."""
+
+    return isinstance(stored_preferences, Mapping) and _coerce_bool(
+        stored_preferences.get(CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY), False
+    )
+
+
 def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
     """Normalize stored Console rail preferences.
 
@@ -452,8 +466,41 @@ def serialize_console_rail_stored_preferences(raw: Any) -> dict[str, bool]:
     )
     if not isinstance(raw, Mapping) or "right_open" not in raw:
         serialized.pop("right_open")
+    # A genuinely absent record must stay distinguishable from an old record
+    # that explicitly stored the legacy Character Boolean.
+    if not console_character_disclosure_explicit(raw) and (
+        not isinstance(raw, Mapping) or "character_open" not in raw
+    ):
+        serialized.pop("character_open")
     if console_rail_left_open_explicit(raw):
         serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+    if console_character_disclosure_explicit(raw):
+        serialized[CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY] = True
+    return serialized
+
+
+def serialize_console_rail_updated_preferences(
+    preferences: ConsoleRailPreferences,
+    prior_stored: Any,
+    *,
+    left_open: bool | None,
+    right_open: bool | None,
+    character_toggled: bool,
+) -> dict[str, bool]:
+    """Serialize a manual change while preserving untouched disclosure intent."""
+    serialized = serialize_console_rail_preferences(preferences)
+    if left_open is not None or console_rail_left_open_explicit(prior_stored):
+        serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+    if character_toggled or console_character_disclosure_explicit(prior_stored):
+        serialized[CONSOLE_CHARACTER_DISCLOSURE_EXPLICIT_KEY] = True
+    elif not isinstance(prior_stored, Mapping) or "character_open" not in prior_stored:
+        serialized.pop("character_open", None)
+    if (
+        right_open is None
+        and isinstance(prior_stored, Mapping)
+        and "right_open" not in prior_stored
+    ):
+        serialized.pop("right_open")
     return serialized
 
 
@@ -774,6 +821,8 @@ def build_console_rail_state(
     approval_count: Any = 0,
     can_save_chatbook: bool = False,
     available_columns: int | None = None,
+    character_context_exists: bool = False,
+    character_return_reveal: bool = False,
 ) -> ConsoleRailState:
     """Build effective Console rail state without importing Textual.
 
@@ -808,6 +857,24 @@ def build_console_rail_state(
         mark persisted preference or explicit intent.
     """
     preferences = coerce_console_rail_preferences(stored_preferences)
+    # New scopes reveal useful Character context once. Explicit payloads and
+    # legacy Booleans both win; only total absence receives the first-use
+    # default. This decision is render-only and never writes on read/resize.
+    if not (
+        isinstance(stored_preferences, Mapping)
+        and (
+            console_character_disclosure_explicit(stored_preferences)
+            or "character_open" in stored_preferences
+        )
+    ):
+        preferences = replace(
+            preferences,
+            character_open=bool(character_context_exists),
+        )
+    if character_return_reveal:
+        preferences = replace(
+            preferences, left_open=True, right_open=False, character_open=True
+        )
     # TASK-2154.2 (LY-11, ADR-043): the compact-collapse rules below are the
     # responsive default. Explicit opens are honored while the 70/74-column
     # usable-transcript budgets permit, and receive the layout-minimum waiver;
@@ -829,7 +896,9 @@ def build_console_rail_state(
     #   (``CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY``, set by
     #   ``ChatScreen._set_console_rail_preference``) records it. Legacy
     #   payloads lack the marker and keep the force-collapse default.
-    explicit_left_open = console_rail_left_open_explicit(stored_preferences)
+    explicit_left_open = character_return_reveal or console_rail_left_open_explicit(
+        stored_preferences
+    )
     # task-18911: an explicit toggle is honored only while the viewport can
     # afford rail + a usable transcript (rail min + main floor). Below that
     # budget the collapse is a rendering override the explicit marker

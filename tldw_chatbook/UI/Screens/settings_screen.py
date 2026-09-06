@@ -59,6 +59,7 @@ from tldw_chatbook.UI.focus_ownership import (
 
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+from ...Canvas.limits import CanvasLimits
 from ...Chat.console_chat_controller import CapturePolicyMutationStatus
 from ...Chat.console_exchange_capture import CaptureDetail
 from ...Chat.console_context_policy import (
@@ -160,10 +161,12 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     ProviderSettingsError,
+    CanvasConfigPolicy,
     RuntimeConfigSnapshot,
     _default_base_data_dir,
     apply_settings_mutation_to_cli_config,
     apply_console_capture_settings,
+    build_canvas_config_policy,
     coerce_bool_setting,
     coerce_float_setting,
     coerce_int_setting,
@@ -185,6 +188,7 @@ from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
     provider_api_key_validation_error,
     sanitize_string,
+    validate_bounded_integer,
     validate_number_range,
     validate_text_input,
     validate_url,
@@ -265,29 +269,8 @@ from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
 from ...Widgets.Settings_Widgets.tool_profiles_panel import ToolProfilesPanel
-from ...Widgets.Settings_Widgets.tool_pack_import_review import (
-    ToolPackExportReviewModal,
-    ToolPackImportOptions,
-    ToolPackImportOptionsModal,
-    ToolPackImportReviewModal,
-    ToolProfileFirstBindReviewModal,
-)
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave
 from ...Third_Party.textual_fspicker import Filters
-from ...Tool_Packs.activation import ToolPackActivationResult
-from ...Tool_Packs.binding import (
-    ToolProfileBindingReview,
-    ToolProfileConfirmationRequired,
-)
-from ...Tool_Packs.contracts import ToolPackError
-from ...Tool_Packs.export import ToolPackExportReview
-from ...Tool_Packs.importer import ToolPackImportReview
-from ...Tool_Packs.publication import (
-    CapturedToolPackDestination,
-    ToolPackPublicationResult,
-)
-from ...Tool_Packs.removal import ToolProfileRemovalResult
-from ...Tool_Packs.service import ToolProfileListing
 from ...Model_Artifacts.service import ArtifactRef
 from ...Model_Artifacts.store import managed_service
 from ...TTS.audio_cpp_guided_config import (
@@ -355,21 +338,6 @@ from .settings_library_rag_defaults import (
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
 )
-from .settings_rag_profile_adapter import (
-    activate_profile,
-    active_profile_info,
-    clone_profile_as,
-    delete_user_profile,
-    fetch_index_status,
-    get_profile_defaults,
-    index_change_pending,
-    is_first_run_state,
-    list_profiles_grouped,
-    load_rag_defaults_from_active_profile,
-    rename_user_profile,
-    save_rag_defaults_to_active_profile,
-    soft_config_warnings,
-)
 from ...RAG_Search.ingestion_indexing import (
     backfill_semantic_index,
     get_shared_rag_service,
@@ -430,12 +398,15 @@ from ..Navigation.vllm_handoff import (
 )
 
 if TYPE_CHECKING:
-    # Type-only: the create dialog is a shared modal imported locally at its
-    # one call site (handle_workspace_create) to avoid a real import cycle.
-    from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from ...Tool_Packs.contracts import ToolPackError
+    from ...Tool_Packs.service import ToolProfileListing
     from ...Widgets.Settings_Widgets.personal_context_panel import (
         PersonalContextSettingsPanel,
     )
+
+    # Type-only: the create dialog is a shared modal imported locally at its
+    # one call site (handle_workspace_create) to avoid a real import cycle.
+    from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from .settings_endpoint_probe import SettingsEndpointProbeOutcome
     from .settings_network_defaults import SettingsNetworkTLS
 
@@ -467,6 +438,189 @@ def reset_image_generation_runtime() -> None:
     from ...Image_Generation.config import reset_image_generation_runtime as reset
 
     reset()
+
+
+# ADR-097: the adapter imports the RAG engine's package. Resolve it only
+# when its Settings category is used; these named seams remain patchable
+# by the profile-region tests and other existing consumers.
+def activate_profile(profile_id: str) -> tuple[bool, str]:
+    """Activate a RAG profile when the user requests a profile change.
+
+    Args:
+        profile_id: Identifier of the profile to activate.
+
+    Returns:
+        Success flag and an empty string or failure reason.
+    """
+    from .settings_rag_profile_adapter import activate_profile as activate
+
+    return activate(profile_id)
+
+
+def active_profile_info() -> dict:
+    """Read the active RAG profile for its Settings presentation.
+
+    Returns:
+        Profile identifier, name, read-only state, and description.
+    """
+    from .settings_rag_profile_adapter import active_profile_info as read
+
+    return read()
+
+
+def clone_profile_as(source_id: str, new_name: str) -> tuple[bool, str]:
+    """Clone a RAG profile after an explicit Settings action.
+
+    Args:
+        source_id: Identifier of the profile to clone.
+        new_name: Display name for the writable copy.
+
+    Returns:
+        Success flag and the new profile identifier or failure reason.
+    """
+    from .settings_rag_profile_adapter import clone_profile_as as clone
+
+    return clone(source_id, new_name)
+
+
+def delete_user_profile(profile_id: str) -> tuple[bool, str]:
+    """Delete a user RAG profile through its existing adapter.
+
+    Args:
+        profile_id: Identifier of the user profile to delete.
+
+    Returns:
+        Success flag and any fallback notice or failure reason.
+    """
+    from .settings_rag_profile_adapter import delete_user_profile as delete
+
+    return delete(profile_id)
+
+
+def fetch_index_status() -> dict:
+    """Read RAG index status only when the category requests it.
+
+    Returns:
+        Index state, document count, and provenance for the active profile.
+    """
+    from .settings_rag_profile_adapter import fetch_index_status as fetch
+
+    return fetch()
+
+
+def get_profile_defaults(profile_id: str) -> SettingsLibraryRagDefaults | None:
+    """Read defaults for the RAG profile selected in Settings.
+
+    Args:
+        profile_id: Identifier of the profile whose defaults are requested.
+
+    Returns:
+        Profile defaults, or None when the profile is missing.
+    """
+    from .settings_rag_profile_adapter import get_profile_defaults as read
+
+    return read(profile_id)
+
+
+def index_change_pending(values: SettingsLibraryRagDefaults) -> bool:
+    """Check whether staged RAG settings require reindexing.
+
+    Args:
+        values: Candidate Library/RAG defaults to check.
+
+    Returns:
+        Whether saving would change the active collection fingerprint.
+    """
+    from .settings_rag_profile_adapter import index_change_pending as pending
+
+    return pending(values)
+
+
+def is_first_run_state(info: dict, grouped: dict, index_state: str) -> bool:
+    """Resolve the RAG category's first-run presentation on demand.
+
+    Args:
+        info: Active-profile presentation facts.
+        grouped: Built-in and user profile groups.
+        index_state: Previously fetched index state for the active profile.
+
+    Returns:
+        Whether the profile and index facts describe a fresh installation.
+    """
+    from .settings_rag_profile_adapter import is_first_run_state as first_run
+
+    return first_run(info, grouped, index_state)
+
+
+def list_profiles_grouped() -> dict:
+    """List RAG profiles for their Settings picker.
+
+    Returns:
+        Name-sorted built-in and user groups plus the active profile identifier.
+    """
+    from .settings_rag_profile_adapter import list_profiles_grouped as list_profiles
+
+    return list_profiles()
+
+
+def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
+    """Load active-profile defaults when the RAG category needs them.
+
+    Returns:
+        Active-profile defaults with the current global Console settings.
+    """
+    from .settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile as load,
+    )
+
+    return load()
+
+
+def rename_user_profile(profile_id: str, new_name: str) -> tuple[bool, str]:
+    """Rename a user RAG profile after an explicit Settings action.
+
+    Args:
+        profile_id: Identifier of the user profile to rename.
+        new_name: Replacement display name.
+
+    Returns:
+        Success flag and an empty string or failure reason.
+    """
+    from .settings_rag_profile_adapter import rename_user_profile as rename
+
+    return rename(profile_id, new_name)
+
+
+def save_rag_defaults_to_active_profile(
+    values: SettingsLibraryRagDefaults,
+) -> tuple[bool, str]:
+    """Persist RAG defaults through the existing active-profile owner.
+
+    Args:
+        values: Candidate Library/RAG defaults to persist.
+
+    Returns:
+        Success flag and an empty string or failure reason.
+    """
+    from .settings_rag_profile_adapter import (
+        save_rag_defaults_to_active_profile as save,
+    )
+
+    return save(values)
+
+
+def soft_config_warnings(values: SettingsLibraryRagDefaults) -> list[str]:
+    """Read advisory warnings for the current RAG settings draft.
+
+    Args:
+        values: Candidate Library/RAG defaults to check.
+
+    Returns:
+        Advisory messages that do not prevent saving.
+    """
+    from .settings_rag_profile_adapter import soft_config_warnings as warnings
+
+    return warnings(values)
 
 
 class _AudioCppResultTransactionError(RuntimeError):
@@ -843,6 +997,8 @@ MODEL_CATALOG_FIELD_IDS = frozenset(
 )
 
 RAW_CLI_PERMITTED_DRAFT_KEY = "console.raw_cli_permitted"
+CANVAS_ENABLED_DRAFT_KEY = "canvas.enabled"
+CANVAS_AUTO_OPEN_DRAFT_KEY = "canvas.auto_open_on_create"
 RAW_CLI_CONFIG_RECONCILE_ATTEMPTS = 3
 RAW_CLI_DISCLOSURE_LINES = (
     "Commands run with the same OS permissions as Chatbook.",
@@ -1774,7 +1930,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
     SettingsCategoryId.PRIVACY_SECURITY: (
         (
             "Affected config",
-            "console.raw_cli_permitted only; privacy posture and secret status stay read-only",
+            "Canvas availability and auto-open plus the raw CLI host-access unlock",
         ),
         (
             "Credential source",
@@ -1782,7 +1938,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Recovery",
-            "save or revert the raw CLI unlock; use Check Privacy for posture verification",
+            "save or revert Canvas and host-access changes; use Check Privacy for posture verification",
         ),
         (
             "Boundary",
@@ -2623,6 +2779,8 @@ class SettingsScreen(BaseAppScreen):
     )
 
     def __init__(self, app_instance, *, personal_context_service=None, **kwargs):
+        from ...Tool_Packs.service import ToolProfileListing
+
         super().__init__(app_instance, "settings", **kwargs)
         self._console_capture_policy = runtime_capture_policy()
         self._console_capture_status = "Global exchange capture settings are active."
@@ -2644,6 +2802,10 @@ class SettingsScreen(BaseAppScreen):
         # (GUIDED_SETTINGS_MUTATION_CATEGORIES) with a self-contained save
         # branch in action_settings_save_category.
         self._network_pending: dict[str, object] = {}
+        self._snapshot_preferences_loaded = None
+        self._snapshot_preferences_raw = None
+        self._snapshot_preferences_saving = False
+        self._snapshot_preferences_unavailable = False
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_test_evidence_store = ProviderTestEvidenceStore()
         self._provider_draft_generation = 0
@@ -3985,6 +4147,8 @@ class SettingsScreen(BaseAppScreen):
     )
     def _load_tool_profiles_worker(self, generation: int) -> None:
         """Capture one complete profile listing without blocking Settings."""
+        from ...Tool_Packs.service import ToolProfileListing
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             listing = ToolProfileListing(unavailable_category="service_unavailable")
@@ -4009,7 +4173,7 @@ class SettingsScreen(BaseAppScreen):
     def _apply_tool_profiles_listing(
         self,
         generation: int,
-        listing: ToolProfileListing,
+        listing: "ToolProfileListing",
     ) -> None:
         """Apply only the newest listing to the currently mounted category."""
         if generation != self._tool_profiles_listing_generation:
@@ -4058,7 +4222,7 @@ class SettingsScreen(BaseAppScreen):
         return False
 
     @staticmethod
-    def _tool_pack_failure_copy(operation: str, error: ToolPackError) -> str:
+    def _tool_pack_failure_copy(operation: str, error: "ToolPackError") -> str:
         """Return bounded recovery copy for one stable Tool Pack error."""
         if operation == "export" and error.category == "publication_unsupported":
             if os.name == "nt":
@@ -4088,6 +4252,15 @@ class SettingsScreen(BaseAppScreen):
     )
     async def _tool_profile_import_flow(self) -> None:
         """Inspect and explicitly activate a Tool Pack outside the event loop."""
+        from ...Tool_Packs.activation import ToolPackActivationResult
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.importer import ToolPackImportReview
+        from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+            ToolPackImportOptions,
+            ToolPackImportOptionsModal,
+            ToolPackImportReviewModal,
+        )
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Import failed · service_unavailable")
@@ -4187,6 +4360,16 @@ class SettingsScreen(BaseAppScreen):
         policy_digest: str | None,
     ) -> None:
         """Capture, review, and safely publish one immutable Tool Pack."""
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.export import ToolPackExportReview
+        from ...Tool_Packs.publication import (
+            CapturedToolPackDestination,
+            ToolPackPublicationResult,
+        )
+        from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+            ToolPackExportReviewModal,
+        )
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Export failed · service_unavailable")
@@ -4284,6 +4467,9 @@ class SettingsScreen(BaseAppScreen):
         revision: int,
     ) -> None:
         """Confirm and replace one eligible profile with its permanent tombstone."""
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.removal import ToolProfileRemovalResult
+
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
             self._set_tool_profiles_result("Remove failed · service_unavailable")
@@ -4650,6 +4836,8 @@ class SettingsScreen(BaseAppScreen):
                     "api_settings.<provider>.api_mode",
                     "api_settings.<provider>.model_defaults.<model>",
                     "model_capabilities.models.<model>.context_window",
+                    "llamacpp_snapshots.enabled",
+                    "llamacpp_snapshots.keep_count",
                 ),
                 reads_runtime_state_from=("Console provider readiness",),
                 writes_allowed=True,
@@ -4803,17 +4991,25 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.PRIVACY_SECURITY,
-                owns_config_sections=("console.raw_cli_permitted",),
+                owns_config_sections=(
+                    "canvas.enabled",
+                    "canvas.auto_open_on_create",
+                    "console.raw_cli_permitted",
+                ),
                 reads_runtime_state_from=(
+                    "CanvasConfigPolicy and CanvasLimits",
                     "RawCliRuntime launch-local arm state",
                     "encryption and config redaction posture",
                     "api_settings environment credential status",
                 ),
                 writes_allowed=True,
-                runtime_owner="Settings unlock plus RawCliRuntime launch-local arm state",
+                runtime_owner=(
+                    "Canvas global execution gate plus Settings unlock and "
+                    "RawCliRuntime launch-local arm state"
+                ),
                 boundary_copy=(
-                    "Only console.raw_cli_permitted is editable here; privacy posture, "
-                    "encryption, and credential status remain read-only."
+                    "Canvas availability, create auto-open, and console.raw_cli_permitted "
+                    "are editable here; quotas and credential values remain read-only."
                 ),
                 recovery_copy=(
                     "Save or revert the unlock; Disarm acts immediately without changing "
@@ -5015,6 +5211,55 @@ class SettingsScreen(BaseAppScreen):
             return False
         console = app_config.get("console")
         return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
+
+    def _loaded_canvas_policy(self):
+        """Return the normalized, credential-free Canvas policy for this screen."""
+
+        app_config = getattr(self.app_instance, "app_config", None)
+        return build_canvas_config_policy(
+            app_config if isinstance(app_config, Mapping) else {}
+        )
+
+    def _canvas_draft_value(self, key: str) -> bool:
+        """Return one staged Canvas boolean, falling back to normalized config."""
+
+        draft = self._settings_drafts.get(SettingsCategoryId.PRIVACY_SECURITY)
+        if draft is not None and key in draft.values:
+            return draft.values[key] is True
+        policy = self._loaded_canvas_policy()
+        if key == CANVAS_ENABLED_DRAFT_KEY:
+            return policy.enabled
+        if key == CANVAS_AUTO_OPEN_DRAFT_KEY:
+            return policy.auto_open_on_create
+        raise KeyError(key)
+
+    def _stage_canvas_value(self, key: str, value: bool) -> None:
+        """Stage a Canvas preference in the canonical Privacy draft."""
+
+        category = SettingsCategoryId.PRIVACY_SECURITY
+        policy = self._loaded_canvas_policy()
+        original = (
+            policy.enabled
+            if key == CANVAS_ENABLED_DRAFT_KEY
+            else policy.auto_open_on_create
+        )
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category))
+        draft.set_value(key, original, bool(value))
+        self._update_draft_status_widgets(category)
+
+    def _sync_canvas_widgets(self) -> None:
+        """Synchronize mounted Canvas controls from the current draft/config."""
+
+        for selector, key in (
+            ("#settings-canvas-enabled", CANVAS_ENABLED_DRAFT_KEY),
+            ("#settings-canvas-auto-open", CANVAS_AUTO_OPEN_DRAFT_KEY),
+        ):
+            try:
+                checkbox = self.query_one(selector, Checkbox)
+            except QueryError:
+                continue
+            with checkbox.prevent(Checkbox.Changed):
+                checkbox.value = self._canvas_draft_value(key)
 
     def _raw_cli_runtime(self) -> Any | None:
         """Return the app-owned launch-local raw CLI runtime, when available."""
@@ -6765,7 +7010,147 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
         draft = self._settings_drafts.get(category)
-        return bool(draft and draft.is_dirty)
+        return bool(draft and draft.is_dirty) or (
+            category is SettingsCategoryId.PROVIDERS_MODELS
+            and self._snapshot_preferences_dirty()
+        )
+
+    _SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY = (
+        "Snapshot preferences unavailable. In Advanced Config, correct "
+        "llamacpp_snapshots.enabled (true/false) and keep_count (1–1000), then Revert."
+    )
+
+    def _snapshot_preferences_dirty(self) -> bool:
+        loaded = getattr(self, "_snapshot_preferences_loaded", None)
+        return loaded is not None and self._snapshot_preferences_raw != (
+            loaded.enabled,
+            str(loaded.keep_count),
+        )
+
+    @on(Input.Changed, "#settings-snapshot-keep")
+    @on(Checkbox.Changed, "#settings-snapshot-enabled")
+    def _snapshot_preferences_changed(self, event) -> None:
+        event.stop()
+        self._snapshot_preferences_raw = (
+            self.query_one("#settings-snapshot-enabled", Checkbox).value,
+            self.query_one("#settings-snapshot-keep", Input).value,
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    async def _save_snapshot_preferences_draft(
+        self, raw, expected, provider_dirty
+    ) -> None:
+        from tldw_chatbook.LLM_Management import (
+            snapshot_settings as snapshot_preferences,
+        )
+
+        try:
+            value = snapshot_preferences.SnapshotPreferences(
+                enabled=raw[0],
+                keep_count=validate_bounded_integer(raw[1], minimum=1, maximum=1000),
+            )
+            saved = await asyncio.to_thread(
+                snapshot_preferences.save_snapshot_preferences, value, expected=expected
+            )
+            if not saved:
+                raise ValueError("save failed")
+            self._snapshot_preferences_loaded = value
+            unchanged = self._snapshot_preferences_raw == raw
+            if self.is_mounted:
+                # Input.Changed may still be queued after the visible value changed.
+                unchanged = (
+                    unchanged
+                    and all(
+                        widget.value == raw[1]
+                        for widget in self.query("#settings-snapshot-keep")
+                    )
+                    and all(
+                        widget.value == raw[0]
+                        for widget in self.query("#settings-snapshot-enabled")
+                    )
+                )
+            if unchanged:
+                self._snapshot_preferences_raw = (value.enabled, str(value.keep_count))
+                if self.is_mounted:
+                    with self.prevent(Input.Changed, Checkbox.Changed):
+                        for widget in self.query("#settings-snapshot-keep"):
+                            widget.value = str(value.keep_count)
+                        for widget in self.query("#settings-snapshot-enabled"):
+                            widget.value = value.enabled
+            message = (
+                "Snapshot preferences saved. Enable/disable applies on next launch."
+            )
+            if provider_dirty:
+                message = "Snapshot preferences saved separately. Provider changes have their own Save result."
+            self._set_static_text("#settings-snapshot-result", message)
+            if (
+                provider_dirty
+                and self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS
+            ):
+                # Resume the existing provider workflow only when this pair settled.
+                self._snapshot_preferences_saving = False
+                if unchanged:
+                    self.action_settings_save_category(allow_text_entry_focus=True)
+            self.app.notify(message, severity="information")
+        except snapshot_preferences.SnapshotPreferencesConflict:
+            self._set_static_text(
+                "#settings-snapshot-result",
+                "Preferences changed elsewhere. Use Revert to reload before Save.",
+            )
+            self.app.notify(
+                "Snapshot preferences changed elsewhere; Revert before Save.",
+                severity="warning",
+            )
+        except (ValueError, OSError):
+            self._set_static_text(
+                "#settings-snapshot-result",
+                "Not saved. Keep count must be 1–1000; check config access.",
+            )
+        finally:
+            self._snapshot_preferences_saving = False
+            if self.is_mounted:
+                self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    async def _revert_snapshot_preferences(self) -> None:
+        from tldw_chatbook.LLM_Management import (
+            snapshot_settings as snapshot_preferences,
+        )
+
+        try:
+            loaded = await asyncio.to_thread(
+                snapshot_preferences.load_snapshot_preferences
+            )
+        except (ValueError, OSError):
+            loaded = None
+        self._snapshot_preferences_loaded = loaded
+        self._snapshot_preferences_unavailable = loaded is None
+        self._snapshot_preferences_raw = (
+            (loaded.enabled, str(loaded.keep_count)) if loaded else (False, "")
+        )
+        if self.is_mounted:
+            try:
+                with self.prevent(Input.Changed, Checkbox.Changed):
+                    self.query_one(
+                        "#settings-snapshot-enabled", Checkbox
+                    ).value = self._snapshot_preferences_raw[0]
+                    self.query_one(
+                        "#settings-snapshot-keep", Input
+                    ).value = self._snapshot_preferences_raw[1]
+                self.query_one("#settings-snapshot-enabled", Checkbox).disabled = (
+                    loaded is None
+                )
+                self.query_one("#settings-snapshot-keep", Input).disabled = (
+                    loaded is None
+                )
+                self._set_static_text(
+                    "#settings-snapshot-result",
+                    "Snapshot preferences reloaded."
+                    if loaded
+                    else self._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY,
+                )
+            except QueryError:
+                pass
+            self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     # ------------------------------------------------------------------
     # Video Gen (task-3401.12): draft/dirty editing + Save/Revert, mirroring
@@ -7240,8 +7625,8 @@ class SettingsScreen(BaseAppScreen):
             return "Guided edits: change a Storage default first."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             if self._category_has_unsaved_changes(category):
-                return "Guided edit: Save or Revert the raw CLI unlock."
-            return "Guided edit: raw CLI unlock only; posture remains read-only."
+                return "Guided edits: Save or Revert Canvas and host-access changes."
+            return "Guided edits: Canvas controls and host-access unlock; quotas stay read-only."
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             if self._category_has_unsaved_changes(category):
                 return "Guided edits: Save or Revert changes."
@@ -7304,6 +7689,13 @@ class SettingsScreen(BaseAppScreen):
                 continue
             button.disabled = not actions_enabled
             button.label = self._guided_action_label(base, dirty=dirty)
+            if (
+                selector == "#settings-revert-category"
+                and category is SettingsCategoryId.PROVIDERS_MODELS
+                and self._snapshot_preferences_unavailable
+            ):
+                button.disabled = False
+                button.label = "Revert (r) — reload preferences"
 
     def _category_status(self, summary: SettingsCategorySummary) -> str:
         if self._category_has_unsaved_changes(summary.category):
@@ -7926,8 +8318,8 @@ class SettingsScreen(BaseAppScreen):
             return "Changes apply on next launch; active handles stay unchanged."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             return (
-                "Only the raw CLI unlock is editable; privacy posture and secrets "
-                "remain read-only and redacted."
+                "Canvas availability and create auto-open are editable; hard quotas, "
+                "privacy posture, and secrets remain read-only and redacted."
             )
         if category is SettingsCategoryId.PERSONAL_CONTEXT:
             return "Encrypted local profile; record and authority actions apply immediately."
@@ -14063,6 +14455,30 @@ class SettingsScreen(BaseAppScreen):
             else "api_settings.<provider>"
         )
         field_id = self._active_settings_field_id
+        if field_id in {"settings-snapshot-enabled", "settings-snapshot-keep"}:
+            enabled = field_id == "settings-snapshot-enabled"
+            return (
+                (
+                    "Focused setting",
+                    "Prompt-cache snapshots" if enabled else "Snapshot keep count",
+                ),
+                (
+                    "Purpose",
+                    "Enable/disable applies on next launch."
+                    if enabled
+                    else "Keep the newest snapshots across all models; lower counts apply after the next successful Save.",
+                ),
+                (
+                    "Saved as",
+                    "llamacpp_snapshots.enabled"
+                    if enabled
+                    else "llamacpp_snapshots.keep_count",
+                ),
+                (
+                    "Validation",
+                    "On or Off" if enabled else "whole number from 1 to 1000",
+                ),
+            )
         if field_id == "settings-provider-value":
             return (
                 ("Focused setting", "Provider"),
@@ -15034,6 +15450,29 @@ class SettingsScreen(BaseAppScreen):
                     yield self._detail_row(label, value)
 
     def _render_provider_detail(self) -> ComposeResult:
+        from tldw_chatbook.LLM_Management import (
+            snapshot_settings as snapshot_preferences,
+        )
+
+        if self._snapshot_preferences_loaded is None:
+            try:
+                self._snapshot_preferences_loaded = (
+                    snapshot_preferences.load_snapshot_preferences()
+                )
+            except (ValueError, OSError):
+                self._snapshot_preferences_loaded = None
+            self._snapshot_preferences_unavailable = (
+                self._snapshot_preferences_loaded is None
+            )
+            self._snapshot_preferences_raw = (
+                (
+                    self._snapshot_preferences_loaded.enabled,
+                    str(self._snapshot_preferences_loaded.keep_count),
+                )
+                if self._snapshot_preferences_loaded
+                else (False, "")
+            )
+            self.call_after_refresh(self._update_guided_action_widgets)
         resolved = self._resolve_provider_model_for_settings()
         values = self._provider_display_setting_values()
         provider = str(values["provider"])
@@ -15048,6 +15487,43 @@ class SettingsScreen(BaseAppScreen):
         )
         provider_card.disabled = self._vllm_default_recovery() is not None
         with provider_card:
+            with Collapsible(
+                title="Prompt-cache snapshots",
+                collapsed=True,
+                id="settings-snapshot-controls",
+            ):
+                yield Static(
+                    "Save processed context to reuse later. Restoring does not change your conversations.",
+                    classes="settings-help-copy",
+                )
+                yield Static(
+                    "Enable/disable applies on next launch.",
+                    id="settings-snapshot-launch-scope",
+                    classes="settings-help-copy",
+                )
+                yield Checkbox(
+                    "Enable snapshots",
+                    value=self._snapshot_preferences_raw[0],
+                    disabled=self._snapshot_preferences_unavailable,
+                    id="settings-snapshot-enabled",
+                )
+                yield Static(
+                    "Keep count (1–1000, across all models)",
+                    classes="settings-input-label",
+                )
+                yield Input(
+                    self._snapshot_preferences_raw[1],
+                    disabled=self._snapshot_preferences_unavailable,
+                    id="settings-snapshot-keep",
+                    type="integer",
+                )
+                yield Static(
+                    self._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY
+                    if self._snapshot_preferences_unavailable
+                    else "Draft — use category Save / Revert. Enable/disable applies on next launch.",
+                    id="settings-snapshot-result",
+                    classes="settings-help-copy",
+                )
             # task-189: the Connect block (provider, model, endpoint,
             # credentials, readiness/test) leads; sampling and tuning live in
             # the collapsed "Generation defaults" disclosure below it.
@@ -19201,6 +19677,78 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-privacy-check-result",
                     classes="settings-status-row",
                 )
+            canvas_policy = self._loaded_canvas_policy()
+            limits: CanvasLimits = canvas_policy.limits
+            with Vertical(
+                id="settings-canvas-card", classes="settings-focus-card"
+            ):
+                yield Static(
+                    "Canvas",
+                    classes="destination-section settings-column-title",
+                )
+                yield Static(
+                    "Strict zero-egress runtime: interactive HTML, CSS, and JavaScript "
+                    "cannot use the network, host filesystem, cookies, Chatbook APIs, "
+                    "or the parent-page DOM.",
+                    classes="settings-status-row",
+                )
+                yield Checkbox(
+                    "Enable Canvas tools, actions, and browser delivery",
+                    value=self._canvas_draft_value(CANVAS_ENABLED_DRAFT_KEY),
+                    id="settings-canvas-enabled",
+                    tooltip=(
+                        "Global kill switch. Turning it off preserves stored Canvas "
+                        "artifacts while revoking execution and browser delivery."
+                    ),
+                )
+                yield Checkbox(
+                    "Open Canvas automatically after a successful create",
+                    value=self._canvas_draft_value(CANVAS_AUTO_OPEN_DRAFT_KEY),
+                    id="settings-canvas-auto-open",
+                    tooltip=(
+                        "Affects successful creates only. Updates and explicit Open in "
+                        "Canvas actions are unchanged."
+                    ),
+                )
+                yield Static(
+                    "These controls show effective values. Environment variables "
+                    "override saved preferences when set, so saving TOML cannot "
+                    "override the environment.",
+                    classes="settings-status-row",
+                )
+                yield Static("Remote browser access", classes="destination-section")
+                yield self._detail_row(
+                    "Configured served posture", canvas_policy.remote_access_summary
+                )
+                yield Static(
+                    "Capability URLs remain short-lived and browser-scoped. Access "
+                    "tokens are never displayed here.",
+                    classes="settings-status-row",
+                )
+                yield Static(
+                    "Effective hard quotas — read-only",
+                    classes="destination-section",
+                )
+                yield self._detail_row(
+                    "HTML document", f"{limits.html_bytes // 1024} KiB"
+                )
+                yield self._detail_row(
+                    "Inline script", f"{limits.script_bytes // 1024} KiB"
+                )
+                yield self._detail_row(
+                    "Data assets", f"{limits.aggregate_asset_bytes // (1024 * 1024)} MiB aggregate"
+                )
+                yield self._detail_row("DOM nodes", f"{limits.dom_nodes:,}")
+                yield self._detail_row("CSS rules", f"{limits.css_rules:,}")
+                yield self._detail_row(
+                    "Runtime memory",
+                    f"{limits.runtime_memory_bytes // (1024 * 1024)} MiB",
+                )
+                yield Static(
+                    "Disabling takes effect immediately and is safe to repeat. "
+                    "Re-enabling Canvas requires restarting Chatbook.",
+                    classes="settings-status-row",
+                )
             armed_for_launch = self._host_access_is_armed()
             raw_cli_label, raw_cli_disabled = self._raw_cli_arm_button_state()
             terminal_label, terminal_disabled = self._terminal_arm_button_state()
@@ -19504,6 +20052,13 @@ class SettingsScreen(BaseAppScreen):
                 summary.category is SettingsCategoryId.PROVIDERS_MODELS
                 and self._vllm_default_recovery() is not None
             )
+            if (
+                summary.category is SettingsCategoryId.PROVIDERS_MODELS
+                and self._snapshot_preferences_unavailable
+                and self._vllm_default_recovery() is None
+            ):
+                revert_button.disabled = False
+                revert_button.label = "Revert (r) — reload preferences"
             yield revert_button
             if summary.category is SettingsCategoryId.PROVIDERS_MODELS:
                 recovery = self._vllm_default_recovery()
@@ -22873,6 +23428,16 @@ class SettingsScreen(BaseAppScreen):
         profile_id: str | None,
     ) -> None:
         """Apply staged defaults, reviewing one imported first bind if required."""
+        from ...Tool_Packs.binding import (
+            ToolProfileBindingReview,
+            ToolProfileConfirmationRequired,
+        )
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.service import ToolProfileListing
+        from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+            ToolProfileFirstBindReviewModal,
+        )
+
         intended = WorkspaceAssistantDefaults(
             assistant_kind="persona",
             assistant_id=persona_id,
@@ -25490,6 +26055,20 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._stage_raw_cli_permitted(bool(event.value))
 
+    @on(Checkbox.Changed, "#settings-canvas-enabled")
+    def handle_canvas_enabled_changed(self, event: Checkbox.Changed) -> None:
+        """Stage the authoritative Canvas execution/delivery kill switch."""
+
+        event.stop()
+        self._stage_canvas_value(CANVAS_ENABLED_DRAFT_KEY, bool(event.value))
+
+    @on(Checkbox.Changed, "#settings-canvas-auto-open")
+    def handle_canvas_auto_open_changed(self, event: Checkbox.Changed) -> None:
+        """Stage the create-only Canvas auto-open preference."""
+
+        event.stop()
+        self._stage_canvas_value(CANVAS_AUTO_OPEN_DRAFT_KEY, bool(event.value))
+
     @on(Button.Pressed, "#settings-raw-cli-arm")
     def handle_raw_cli_arm_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -25751,13 +26330,22 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _save_raw_cli_permitted_value(
         value: bool,
+        canvas_values: Mapping[str, bool] | None = None,
     ) -> tuple[bool, RuntimeConfigSnapshot | None]:
-        """Persist and reload the strict raw CLI unlock literal."""
+        """Persist and reload the Privacy category's strict booleans atomically."""
         adapter = SettingsConfigAdapter()
+        sections: dict[str, dict[str, bool]] = {
+            "console": {"raw_cli_permitted": bool(value)}
+        }
+        if canvas_values is not None:
+            sections["canvas"] = {
+                "enabled": canvas_values.get("enabled") is True,
+                "auto_open_on_create": (
+                    canvas_values.get("auto_open_on_create") is True
+                ),
+            }
         try:
-            saved = adapter.save_sections(
-                {"console": {"raw_cli_permitted": bool(value)}}
-            )
+            saved = adapter.save_sections(sections)
         except Exception:
             logger.exception("Failed to persist raw CLI unlock")
             return False, None
@@ -25773,6 +26361,30 @@ class SettingsScreen(BaseAppScreen):
         if not isinstance(snapshot, RuntimeConfigSnapshot):
             return True, None
         return True, snapshot
+
+    def _reconcile_privacy_draft_value(
+        self,
+        *,
+        key: str,
+        saved_value: bool,
+        submitted_value: bool,
+    ) -> None:
+        """Rebase one staged value without discarding edits made during a save."""
+
+        category = SettingsCategoryId.PRIVACY_SECURITY
+        draft = self._settings_drafts.get(category)
+        if draft is None:
+            return
+        current_value = (
+            draft.values.get(key) is True if key in draft.values else saved_value
+        )
+        if current_value == submitted_value:
+            draft.values.pop(key, None)
+            draft.originals.pop(key, None)
+        else:
+            draft.set_value(key, saved_value, current_value)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
 
     @staticmethod
     def _raw_cli_snapshot_authority(
@@ -25836,11 +26448,90 @@ class SettingsScreen(BaseAppScreen):
         self._console_settings()["raw_cli_permitted"] = False
         return False, False
 
+    @staticmethod
+    def _canvas_snapshot_policy(
+        snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[int, CanvasConfigPolicy] | None:
+        """Extract a normalized Canvas policy from one valid generation."""
+
+        if not isinstance(snapshot, RuntimeConfigSnapshot):
+            return None
+        if type(snapshot.generation) is not int or snapshot.generation < 0:
+            return None
+        if not isinstance(snapshot.values, Mapping):
+            return None
+        return snapshot.generation, build_canvas_config_policy(snapshot.values)
+
+    def _reconcile_canvas_runtime_policy(
+        self,
+        published_snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[CanvasConfigPolicy, bool]:
+        """Publish only the newest stable Canvas preference generation."""
+
+        candidate = published_snapshot
+        for _attempt in range(RAW_CLI_CONFIG_RECONCILE_ATTEMPTS):
+            parsed = self._canvas_snapshot_policy(candidate)
+            if parsed is None:
+                try:
+                    candidate = get_runtime_config_snapshot()
+                except Exception:  # noqa: BLE001 - fail closed without logging config
+                    logger.error(
+                        "Failed to refresh Canvas runtime config snapshot "
+                        "(attempt %d of %d)",
+                        _attempt + 1,
+                        RAW_CLI_CONFIG_RECONCILE_ATTEMPTS,
+                    )
+                    break
+                parsed = self._canvas_snapshot_policy(candidate)
+                if parsed is None:
+                    candidate = None
+                    continue
+            generation, policy = parsed
+
+            def _publish_policy() -> bool:
+                app_config = self._app_config_section_target()
+                canvas_section = app_config.setdefault("canvas", {})
+                if not isinstance(canvas_section, dict):
+                    canvas_section = {}
+                    app_config["canvas"] = canvas_section
+                canvas_section.update(
+                    {
+                        "enabled": policy.enabled,
+                        "auto_open_on_create": policy.auto_open_on_create,
+                    }
+                )
+                return True
+
+            try:
+                if run_if_runtime_config_generation_current(
+                    generation, _publish_policy
+                ):
+                    return policy, True
+            except Exception:  # noqa: BLE001 - fail closed without logging config
+                logger.error(
+                    "Failed to guard Canvas config reconciliation (attempt %d of %d)",
+                    _attempt + 1,
+                    RAW_CLI_CONFIG_RECONCILE_ATTEMPTS,
+                )
+            candidate = None
+
+        logger.warning("Canvas runtime config generation did not stabilize; failing closed")
+        policy = build_canvas_config_policy(
+            {"canvas": {"enabled": False, "auto_open_on_create": False}},
+            environ={},
+        )
+        self._app_config_section_target()["canvas"] = {
+            "enabled": False,
+            "auto_open_on_create": False,
+        }
+        return policy, False
+
     def _apply_raw_cli_save_result(
         self,
         saved: bool,
         published_snapshot: RuntimeConfigSnapshot | None,
         value: bool,
+        canvas_values: Mapping[str, bool] | None = None,
     ) -> None:
         category = SettingsCategoryId.PRIVACY_SECURITY
         self._raw_cli_save_pending = False
@@ -25849,22 +26540,41 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_raw_cli_state()
             self.app.notify("Failed to save the raw CLI unlock.", severity="error")
             return
+        submitted_canvas_enabled = (
+            canvas_values is not None and canvas_values.get("enabled") is True
+        )
+        disable_accepted = canvas_values is not None and not submitted_canvas_enabled
+        canvas_runtime = getattr(self.app_instance, "console_runtime", None)
+        if disable_accepted:
+            latch_disabled = getattr(canvas_runtime, "latch_canvas_disabled", None)
+            if callable(latch_disabled):
+                latch_disabled()
         saved_value, stable = self._reconcile_raw_cli_runtime_authority(
             published_snapshot
         )
-        draft = self._settings_drafts.get(category)
-        current_value = (
-            draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
-            if draft is not None
-            else saved_value
+        self._reconcile_privacy_draft_value(
+            key=RAW_CLI_PERMITTED_DRAFT_KEY,
+            saved_value=saved_value,
+            submitted_value=value,
         )
-        if current_value == value:
-            self._settings_drafts.pop(category, None)
-        elif draft is not None:
-            draft.set_value(
-                RAW_CLI_PERMITTED_DRAFT_KEY,
-                saved_value,
-                current_value,
+        canvas_enabled: bool | None = None
+        if canvas_values is not None:
+            observed_policy, _canvas_stable = self._reconcile_canvas_runtime_policy(
+                published_snapshot
+            )
+            submitted_enabled = submitted_canvas_enabled
+            submitted_auto_open = canvas_values.get("auto_open_on_create") is True
+            canvas_enabled = observed_policy.enabled
+            canvas_auto_open = observed_policy.auto_open_on_create
+            self._reconcile_privacy_draft_value(
+                key=CANVAS_ENABLED_DRAFT_KEY,
+                saved_value=canvas_enabled,
+                submitted_value=submitted_enabled,
+            )
+            self._reconcile_privacy_draft_value(
+                key=CANVAS_AUTO_OPEN_DRAFT_KEY,
+                saved_value=canvas_auto_open,
+                submitted_value=submitted_auto_open,
             )
         terminal_cleanup_count: int | None = 0
         if not value or not saved_value:
@@ -25875,8 +26585,17 @@ class SettingsScreen(BaseAppScreen):
             if terminal_runtime is not None:
                 terminal_cleanup_count = self._terminal_live_session_count()
                 terminal_runtime.disarm()
+        self._sync_canvas_widgets()
         self._sync_raw_cli_widgets()
         self._update_draft_status_widgets(category)
+        if disable_accepted:
+            apply_policy = getattr(canvas_runtime, "apply_canvas_policy", None)
+            if callable(apply_policy):
+                self.run_worker(
+                    apply_policy(),
+                    group="settings-disable-canvas",
+                    exclusive=True,
+                )
         cleanup_suffix = ""
         if terminal_cleanup_count:
             cleanup_suffix = (
@@ -25888,7 +26607,17 @@ class SettingsScreen(BaseAppScreen):
                 " Terminal cleanup status could not be inspected; check Terminal "
                 "for pending or unproven cleanup."
             )
-        if stable and saved_value is value:
+        if canvas_values is not None:
+            self.app.notify(
+                (
+                    "Canvas disabled for this launch; tools and browser delivery "
+                    "were revoked and stored Canvas data was preserved."
+                    if disable_accepted
+                    else "Canvas settings saved. Restart Chatbook to re-enable Canvas delivery."
+                ),
+                severity="warning" if disable_accepted else "information",
+            )
+        elif stable and saved_value is value:
             self.app.notify(
                 (
                     "Raw CLI and Terminal unlock saved on."
@@ -25910,17 +26639,31 @@ class SettingsScreen(BaseAppScreen):
             )
 
     @work(exclusive=True, group="settings-save-raw-cli", thread=True)
-    def _settings_save_raw_cli_worker(self, value: bool) -> None:
-        saved, published_snapshot = self._save_raw_cli_permitted_value(value)
+    def _settings_save_raw_cli_worker(
+        self,
+        value: bool,
+        canvas_values: Mapping[str, bool] | None = None,
+    ) -> None:
+        if canvas_values is None:
+            saved, published_snapshot = self._save_raw_cli_permitted_value(value)
+        else:
+            saved, published_snapshot = self._save_raw_cli_permitted_value(
+                value, canvas_values
+            )
         self.app.call_from_thread(
             self._apply_raw_cli_save_result,
             saved,
             published_snapshot,
             value,
+            canvas_values,
         )
 
-    def _start_raw_cli_save(self, value: bool) -> bool:
-        """Start one serialized raw CLI unlock save."""
+    def _start_raw_cli_save(
+        self,
+        value: bool,
+        canvas_values: Mapping[str, bool] | None = None,
+    ) -> bool:
+        """Start one serialized Privacy-category save."""
         if getattr(self, "_raw_cli_save_pending", False):
             self.app.notify(
                 "Raw CLI unlock save is already in progress.", severity="warning"
@@ -25928,7 +26671,7 @@ class SettingsScreen(BaseAppScreen):
             return False
         self._raw_cli_save_pending = True
         try:
-            self._settings_save_raw_cli_worker(value)
+            self._settings_save_raw_cli_worker(value, canvas_values)
         except Exception:
             self._raw_cli_save_pending = False
             raise
@@ -25945,20 +26688,37 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         draft = self._settings_drafts.get(category)
-        if draft is None or RAW_CLI_PERMITTED_DRAFT_KEY not in draft.dirty_keys:
+        dirty_keys = set() if draft is None else draft.dirty_keys
+        canvas_dirty = bool(
+            dirty_keys
+            & {CANVAS_ENABLED_DRAFT_KEY, CANVAS_AUTO_OPEN_DRAFT_KEY}
+        )
+        raw_cli_dirty = RAW_CLI_PERMITTED_DRAFT_KEY in dirty_keys
+        if not raw_cli_dirty and not canvas_dirty:
             self._settings_drafts.pop(category, None)
+            self._sync_canvas_widgets()
             self._sync_raw_cli_widgets()
             self._update_draft_status_widgets(category)
             self.app.notify("No Settings changes to save.", severity="information")
             return
-        value = draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
-        if not value or self._loaded_raw_cli_permitted():
-            self._start_raw_cli_save(value)
+        value = self._raw_cli_draft_value()
+        canvas_values = (
+            {
+                "enabled": self._canvas_draft_value(CANVAS_ENABLED_DRAFT_KEY),
+                "auto_open_on_create": self._canvas_draft_value(
+                    CANVAS_AUTO_OPEN_DRAFT_KEY
+                ),
+            }
+            if canvas_dirty
+            else None
+        )
+        if not raw_cli_dirty or not value or self._loaded_raw_cli_permitted():
+            self._start_raw_cli_save(value, canvas_values)
             return
 
         async def _confirmed_unlock() -> None:
             self._raw_cli_unlock_confirmation_pending = False
-            self._start_raw_cli_save(True)
+            self._start_raw_cli_save(True, canvas_values)
 
         async def _cancelled_unlock() -> None:
             self._raw_cli_unlock_confirmation_pending = False
@@ -26045,6 +26805,22 @@ class SettingsScreen(BaseAppScreen):
             panel.request_save()
             return
         if category is SettingsCategoryId.PROVIDERS_MODELS:
+            if self._snapshot_preferences_saving:
+                return
+            if self._snapshot_preferences_dirty():
+                self._snapshot_preferences_saving = True
+                draft = self._settings_drafts.get(category)
+                self.run_worker(
+                    self._save_snapshot_preferences_draft(
+                        self._snapshot_preferences_raw,
+                        self._snapshot_preferences_loaded,
+                        bool(draft and draft.is_dirty),
+                    ),
+                    group="settings-snapshot-save",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                return
             current_provider = str(
                 self._provider_setting_values_mapping().get("provider") or ""
             ).strip()
@@ -26850,6 +27626,18 @@ class SettingsScreen(BaseAppScreen):
                 "Raw CLI unlock save is still in progress.", severity="warning"
             )
             return
+        if (
+            category is SettingsCategoryId.PROVIDERS_MODELS
+            and self._snapshot_preferences_unavailable
+            and not self._category_has_unsaved_changes(category)
+        ):
+            self.run_worker(
+                self._revert_snapshot_preferences(),
+                group="settings-snapshot-revert",
+                exclusive=True,
+                exit_on_error=False,
+            )
+            return
         if category is SettingsCategoryId.SPEECH_TTS:
             try:
                 panel = self.query_one(
@@ -26964,9 +27752,16 @@ class SettingsScreen(BaseAppScreen):
             self._sync_storage_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
+            self._sync_canvas_widgets()
             self._sync_raw_cli_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
+            self.run_worker(
+                self._revert_snapshot_preferences(),
+                group="settings-snapshot-revert",
+                exclusive=True,
+                exit_on_error=False,
+            )
             values = self._provider_setting_values()
             try:
                 provider = str(values["provider"])

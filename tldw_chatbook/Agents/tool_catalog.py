@@ -60,9 +60,14 @@ from .agent_models import (
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
+    ToolCall,
+    ToolProjectionAudience,
+    ToolRecordProjection,
     ToolResult,
     ToolSchema,
     WAIT_AGENTS_TOOL_NAME,
+    default_tool_record_projection,
+    failed_tool_record_projection,
 )
 from .run_context import current_run_id
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (tool_arg_coercion imports at the dispatch site.)
@@ -90,6 +95,9 @@ PROFILE_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
         "profile_update",
         "profile_promote",
     }
+)
+CANVAS_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
+    {"canvas_list", "canvas_read", "canvas_create", "canvas_update"}
 )
 
 
@@ -746,6 +754,18 @@ class ToolProvider(Protocol):
     def load_schema(self, tool_id: str) -> ToolSchema: ...
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult: ...
+
+
+@runtime_checkable
+class ToolRecordProjectionProvider(Protocol):
+    """Optional provider hook for audience-specific tool-record redaction."""
+
+    def project_tool_record(
+        self,
+        audience: ToolProjectionAudience,
+        call: ToolCall,
+        result: ToolResult | None,
+    ) -> ToolRecordProjection: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -1425,6 +1445,8 @@ class ToolCatalogRegistry:
         self._providers: list[ToolProvider] = []
         self._builtin_library_provider: ToolProvider | None = None
         self._builtin_library_authority: BuiltinLibraryAuthority | None = None
+        self._canvas_provider: ToolProvider | None = None
+        self._canvas_authority: object | None = None
         # Whether the Console session owning THIS run is temporary ("not
         # saved locally"). Enforced in `invoke_by_name` -- the one choke
         # point every provider's `invoke()` is reached through -- rather
@@ -1523,6 +1545,50 @@ class ToolCatalogRegistry:
             self._catalog_generation += 1
         return True
 
+    def register_canvas_provider(self, provider: object, authority: object) -> bool:
+        """Register only an exact live scoped Canvas provider and capability.
+
+        Canvas names are reserved even while Canvas is unavailable.  Neither
+        matching names/source strings nor a structural protocol lookalike can
+        acquire the reversible-conversation-local approval classification.
+        """
+
+        from .canvas_tool_provider import (  # deferred off the default boot path
+            CANVAS_MUTATION_APPROVAL_CLASSIFICATION,
+            CanvasToolProvider,
+            CanvasToolRegistrationAuthority,
+        )
+
+        if type(provider) is not CanvasToolProvider:
+            return False
+        assert isinstance(provider, CanvasToolProvider)
+        if (
+            type(authority) is not CanvasToolRegistrationAuthority
+            or authority.classification
+            is not CANVAS_MUTATION_APPROVAL_CLASSIFICATION
+            or not provider.authenticates_registration_authority(authority)
+            or not provider.scope_is_current()
+        ):
+            return False
+        try:
+            entries = provider.list_catalog()
+        except Exception:  # noqa: BLE001 - malformed provider fails closed
+            return False
+        if (
+            frozenset(entry.name for entry in entries) != CANVAS_RESERVED_TOOL_NAMES
+            or any(entry.source != "canvas" for entry in entries)
+        ):
+            return False
+        with self._catalog_lock:
+            if self._canvas_provider is not None:
+                return False
+            self._canvas_provider = provider
+            self._canvas_authority = authority
+            self._providers.append(provider)
+            self._catalog_snapshot = None
+            self._catalog_generation += 1
+        return True
+
     def _authenticated_builtin_library_name(
         self, provider: ToolProvider, name: str
     ) -> bool:
@@ -1535,6 +1601,24 @@ class ToolCatalogRegistry:
             and authority.reserved_names is LIBRARY_RESERVED_TOOL_NAMES
             and name in LIBRARY_RESERVED_TOOL_NAMES
             and provider.authenticates_builtin_authority(authority)
+        )
+
+    def _authenticated_canvas_name(self, provider: ToolProvider, name: str) -> bool:
+        """Return whether one reserved name has its exact live Canvas owner."""
+
+        from .canvas_tool_provider import (  # deferred off the default boot path
+            CanvasToolProvider,
+            CanvasToolRegistrationAuthority,
+        )
+
+        authority = self._canvas_authority
+        return bool(
+            provider is self._canvas_provider
+            and type(provider) is CanvasToolProvider
+            and type(authority) is CanvasToolRegistrationAuthority
+            and name in CANVAS_RESERVED_TOOL_NAMES
+            and provider.authenticates_registration_authority(authority)
+            and provider.scope_is_current()
         )
 
     def reset_catalog_cache(self) -> None:
@@ -1551,7 +1635,14 @@ class ToolCatalogRegistry:
             self._catalog_generation += 1
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
-        return list(self._ensure_catalog_cache().entries)
+        entries = self._ensure_catalog_cache().entries
+        provider = self._canvas_provider
+        return [
+            entry
+            for entry in entries
+            if entry.name not in CANVAS_RESERVED_TOOL_NAMES
+            or (provider is not None and self._authenticated_canvas_name(provider, entry.name))
+        ]
 
     def find(
         self,
@@ -1615,6 +1706,11 @@ class ToolCatalogRegistry:
         accepted_entries: list[ToolCatalogEntry] = []
         for provider in self._providers:
             for entry in provider.list_catalog():
+                if (
+                    entry.name in CANVAS_RESERVED_TOOL_NAMES
+                    and not self._authenticated_canvas_name(provider, entry.name)
+                ):
+                    continue
                 if (
                     self._ephemeral
                     and entry.source == "library"
@@ -1691,6 +1787,76 @@ class ToolCatalogRegistry:
             return None
         return record.tool_id, record.provider
 
+    def has_tool_record_projection(self, name: str) -> bool:
+        """Return whether this tool's cached owner opted into projection.
+
+        This registry-owned distinction controls compatibility behavior at
+        runtime.  It is deliberately not a flag returned by an untrusted
+        projector, which could otherwise request the permissive fallback.
+        """
+        record = self._owner_record_for_name(name)
+        return record is not None and isinstance(
+            record.provider, ToolRecordProjectionProvider
+        )
+
+    def is_canvas_reversible_conversation_local_mutation(self, name: str) -> bool:
+        """Return the narrow nominal pre-authorization for Canvas mutations."""
+
+        from .canvas_tool_provider import (  # deferred off the default boot path
+            CANVAS_MUTATION_APPROVAL_CLASSIFICATION,
+            CanvasToolProvider,
+        )
+
+        record = self._owner_record_for_name(name)
+        if (
+            record is None
+            or type(record.provider) is not CanvasToolProvider
+            or not self._authenticated_canvas_name(record.provider, name)
+        ):
+            return False
+        try:
+            return (
+                record.provider.approval_classification_for(record.tool_id)
+                is CANVAS_MUTATION_APPROVAL_CLASSIFICATION
+            )
+        except Exception:  # noqa: BLE001 - approval classification fails closed
+            return False
+
+    def project_tool_record(
+        self,
+        audience: ToolProjectionAudience,
+        call: ToolCall,
+        result: ToolResult | None,
+    ) -> ToolRecordProjection:
+        """Return the owning provider's safe record view for one audience.
+
+        Existing providers intentionally do not need to implement the hook:
+        their fallback is byte-compatible with the records the runtime wrote
+        before projections existed.  A sensitive provider that cannot project
+        is fail-closed; no exception text, raw arguments, or raw result is
+        retained by the fallback.
+        """
+        record = self._owner_record_for_name(call.name)
+        provider = record.provider if record is not None else None
+        if not isinstance(provider, ToolRecordProjectionProvider):
+            return default_tool_record_projection(call, result)
+        try:
+            projected = provider.project_tool_record(audience, call, result)
+            if not isinstance(projected, ToolRecordProjection):
+                raise TypeError("tool projection returned an invalid value")
+            if (
+                not isinstance(projected.content, str)
+                or not isinstance(projected.error, str)
+                or not isinstance(projected.error_category, str)
+                or projected.ok not in {None, True, False}
+            ):
+                raise TypeError("tool projection contains invalid metadata")
+            json.dumps(dict(projected.arguments), sort_keys=True, allow_nan=False)
+            return projected
+        except Exception as exc:  # noqa: BLE001 -- content boundary fails closed
+            category = type(exc).__name__[:64] or "ProjectionError"
+            return failed_tool_record_projection(call, result, category)
+
     def _coerce_arguments(self, name, tool_id, provider, args: dict) -> dict:
         """Repair JSON-string arguments against the tool's declared schema.
 
@@ -1720,6 +1886,23 @@ class ToolCatalogRegistry:
         if record is None:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         tool_id, provider = record.tool_id, record.provider
+        if name in CANVAS_RESERVED_TOOL_NAMES:
+            if not self._authenticated_canvas_name(provider, name):
+                from .canvas_tool_provider import CanvasToolProvider
+
+                if isinstance(provider, CanvasToolProvider) and not provider.canvas_enabled:
+                    return ToolResult.blocked(
+                        "Canvas is disabled. Restart Chatbook after re-enabling it."
+                    )
+                return ToolResult.blocked(
+                    "Canvas authority is unavailable."
+                )
+            if name in {"canvas_create", "canvas_update"} and not (
+                self.is_canvas_reversible_conversation_local_mutation(name)
+            ):
+                return ToolResult.blocked(
+                    "Canvas reversible conversation-local authority is unavailable."
+                )
         # TASK-26005: repair arguments the model JSON-encoded as strings before
         # anything downstream sees them. Placed here rather than at either
         # `provider.invoke` below because this method has two dispatch sites and
@@ -1745,6 +1928,8 @@ class ToolCatalogRegistry:
         # Returns a ToolResult rather than raising: the pure loop must never
         # see an exception out of tool invocation.
         if self._ephemeral:
+            if self._authenticated_canvas_name(provider, name):
+                return provider.invoke(tool_id, args)
             if self._authenticated_builtin_library_name(provider, name):
                 return provider.invoke(tool_id, args)
             from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason

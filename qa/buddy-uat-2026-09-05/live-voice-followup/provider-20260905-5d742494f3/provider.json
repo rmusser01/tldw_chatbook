@@ -1,0 +1,27 @@
+{
+  "run_id": "provider-20260905-5d742494f3",
+  "child_pid": 4284,
+  "wrapper_pid": 4277,
+  "provider": "deepseek",
+  "microphone_opened": false,
+  "fixture": "Reply exactly: Migu live check passed.",
+  "import_root": "/private/tmp/chatbook-migu-dragging-20260905/tldw_chatbook",
+  "run_status": "completed",
+  "visible_copy": "Response complete.",
+  "buddy_states": [
+    "idle",
+    "thinking",
+    "speaking",
+    "idle"
+  ],
+  "final_buddy_state": "idle",
+  "expected_reply": true,
+  "elapsed_seconds": 1.48,
+  "app_exception": null,
+  "stop_requested_from_status": "streaming",
+  "stop_exercised_during_stream": true,
+  "stop_final_status": "blocked",
+  "stop_final_buddy_state": "idle",
+  "stop_elapsed_seconds": 0.42,
+  "normal_config_unchanged": true
+}

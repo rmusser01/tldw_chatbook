@@ -1,4 +1,4 @@
-# Schedules — When jobs, watchlists, and workflows run
+# Schedules — When scheduled tasks fire and recurring questions run
 
 ## Recurring Watchlists briefings
 
@@ -21,7 +21,7 @@ If creation is accepted but no completed briefing appears, inspect the exact bri
 
 ## What this screen is for
 
-Schedules controls when jobs, watchlists, and workflows run. It is a
+Schedules controls when scheduled tasks fire and recurring questions run. It is a
 **single surface**: one list of everything scheduled, a detail pane for
 whatever is highlighted, and an inspector — no tabs. A one-line
 scheduler-liveness indicator sits above them, and a status strip (sync
@@ -131,7 +131,7 @@ rows.
 | `space` | Enable or disable (reminders) |
 | `d` | Delete (reminders) |
 | `x` | Mark or unmark the row for a bulk action |
-| `Esc` | Clear marks — or, in a view opened over the list, close it |
+| `Esc` | Leave the filter box (when it has focus) — otherwise clear marks, or, in a view opened over the list, close it |
 | `s` | Sync now |
 | `a` | Mark every unread automation result read |
 
@@ -174,6 +174,14 @@ and "Sync finished — nothing was pulled or pushed." otherwise. With a
 Local owner and no scheduling server connected, the bar collapses to a
 single line ("Local schedules — no scheduling server connected; sync is
 off"), and the **Clear** button only appears once a sync error exists.
+
+A sync cycle runs several independent phases (reminders, then automation
+review/definition pushback, definitions pull, results pull); one of them
+failing never overwrites the others' honest report. If your reminders
+synced cleanly but, say, an automation results pull hit a stale server,
+you get the success toast **and** a separate "Sync completed with
+issues — …" notice naming that one phase — never a blanket "Sync failed"
+that would make a genuinely successful push look lost.
 
 ## Scheduler liveness
 
@@ -300,11 +308,19 @@ target and only changes through **Edit in full…** or the create form.
 ## Creating a scheduled task
 
 Press **n**, or click **Create ▾** in the rail header. Both ask which
-kind of task you want — **Reminder…** or **Recurring question…** —
+kind of task you want — **Scheduled task…** or **Recurring question…** —
 since a recurring question is a different kind of definition, not just
 another schedule shape. The form scrolls when the terminal is short; the
 live "Runs: …" preview, validation, and Save/Cancel stay pinned at the
 bottom while you edit.
+
+*Copy synced with code — task-31710, 2026-09-05: the chooser's other
+button was **Reminder…**, and the page title/intro sentence said "When
+jobs, watchlists, and workflows run" — both stale (watchlist/briefing
+projections never enter this screen's list; the button and this page's
+own vocabulary now match "Scheduled task" everywhere else it appears).
+Text-parity fix only, not independently re-verified live in the TUI for
+this pass.*
 
 Every create/edit form also has a **Runs on** selector — **This device**
 or **Server (\<id\>)** when a scheduling server is connected — defaulting
@@ -359,11 +375,13 @@ and its Next Run reads **— (disabled)** instead of a concrete time it
 will not honor, in both the detail pane and the queue row's subtitle.
 Enabling it restores the recorded last outcome and the real next run.
 
-This covers a one-time reminder that has already fired: running it
-disables it and clears its next run, so it reads **Disabled** in the
-detail badge with a Next Run of **— (disabled)** — the same as a task
-you disabled by hand. A fired one-time reminder shows the `✓` glyph in
-the queue and moves under the **Completed** chip.
+This does **not** cover a one-time reminder that has already fired:
+dispatching it also disables it and clears its next run internally, but
+the screen reads that specific shape as **finished**, not disabled —
+the detail badge and Next Run agree with the queue row: **Completed**,
+Next Run **—**, the `✓` glyph, and the **Completed** chip, everywhere at
+once. A task you disabled yourself (its next run is still armed
+underneath) is the only shape that reads **Disabled** / **— (disabled)**.
 
 ## Ran late — what happens to overdue reminders
 
@@ -471,6 +489,17 @@ reason — no server connection, no server identity, a transfer already
 running, or, moving a `recurring_question` mirror to this device, the
 same local-health reason the automation's own pane reports.
 
+"Configured" and "reachable" are two different answers and the screen
+says which one it means. A profile with no scheduling server at all
+refuses with *"No server connection is configured."*; a server that is
+configured but has not answered refuses with *"The configured server is
+not reachable right now."* Nothing is offered on a hope: the answer
+comes from a real round trip (the same capabilities probe the sync
+layer uses), it is re-taken when you change the owner or press **s**,
+and until one has succeeded the create forms' `Runs on` dropdown lists
+only **This device** — the server option is omitted rather than offered
+and then refused.
+
 Picking the other owner opens a confirmation listing anything worth knowing before
 you commit: an imminent or already-passed one-time run time ("server
 behavior this close to run time is unverified"), and, for a reminder,
@@ -525,6 +554,18 @@ happened".
 **Retry transfer** appears only alongside a local → server move the
 server definitively rejected; the stored reason is shown beside the
 button, and retrying resubmits the same task.
+
+A queued move can also be stranded rather than rejected — you point the
+app at a different server, or drop the connection entirely, while a
+local → server transfer is still waiting. That queued mutation can never
+be delivered, so the next time the Schedules screen opens (this check
+does not need a reachable server, or even a configured one — it is a
+local check, so it also covers the connection-dropped case, not only a
+sync-eligible server switch) settles it to *failed* with the reason
+*"The server this move was queued for is no longer configured."* rather
+than leaving the row reading "(Moving to server…)" with nothing behind
+it. The task is editable again and carries the usual **Retry
+transfer** / **Cancel transfer** pair.
 
 **A disabled server reminder stays disabled** when it is released to this
 device — the release moves the task, not its on/off state.
@@ -708,6 +749,19 @@ example "the server has archived this automation") rather than the
 connection message — only genuine connectivity failures mention the
 network.
 
+**A server too old for this surface says so.** Before pulling, the app
+asks the server what it supports. A server that does not answer that
+question at all is not asked for automations or results — nothing is
+pulled, no error is invented, and the run-history pane reads *"This
+server does not support scheduled task automation (server too old)."* A
+server new enough to answer but not yet serving the results route
+reports *"This server does not provide the results inbox (server too
+old)."* — carried in the sync notice as *"Sync completed with issues —
+Automation results pull: …"*, so the missing route names itself instead
+of surfacing as a server-worded error about a task that was never the
+problem. The results view itself still reads "No results yet." when
+nothing has arrived; the sync notice is where the *why* lives.
+
 ## Execution timeouts
 
 A scheduled task's handler is bounded: if it is still running after its
@@ -723,6 +777,49 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
+
+*Verified against the schedules UAT remediation, Tasks 1/3/4 — live in
+the real TUI, 2026-09-05 (scratch profile, 235x52 and 80x24). Copy
+changed in three places, each because the behaviour behind it changed:
+**Moving a task…** now separates "no server is configured" from "the
+configured server is not reachable" — the offer is gated on a real probe
+rather than on a server profile merely existing, so the `Runs on`
+dropdown lists only **This device** when nothing answers (confirmed
+live: with nothing listening, both the create form's dropdown and a
+row's `m` dropdown offered exactly one option, and `s` refused with
+"Local only — nothing to sync (no server connection)"). The same
+section gained the stranded-transfer paragraph: a queued local -> server
+move whose server is no longer configured settles to *failed* with a
+stated reason instead of reading "(Moving to server…)" forever. **The
+results view** gained the server-too-old paragraph for the capabilities
+handshake. The keyboard table's `Esc` row now says it leaves the filter
+box first. Fixed without a copy change, re-verified live: the in-pane
+row editors and the queue filter paint their text while focused (they
+rendered as a bare top border before), and the detail pane scrolls to
+its `History` group while keeping the Edit/Run now/Enable/Disable/Delete
+row above the fold at both sizes. Pinned by
+`Tests/UI/test_schedules_responsive_floor.py`,
+`Tests/UI/test_schedules_workbench.py`,
+`Tests/Scheduling/test_scheduling_service.py` and
+`Tests/Scheduling/test_sync_engine.py`.*
+
+*Verified against the schedules UAT remediation, Task 2 (the stale-
+display cluster) — 2026-09-04. Two corrections to prior copy in this
+page, both fixed defects: the **Disabled tasks** section used to
+describe a fired one-time reminder as reading "Disabled" with a
+"— (disabled)" Next Run while simultaneously sitting under the
+**Completed** chip — that was the bug (badge and chip disagreeing on
+the same row), not a documented quirk; it now reads Completed
+everywhere. The **Sync bar honesty** section gained a paragraph on
+mixed-cycle sync (one phase fails, another succeeds): the toast now
+reports both truths separately rather than a blanket "Sync failed"
+masking a phase that actually succeeded. Also fixed without a copy
+change: a scheduler-fired reminder's row now repaints without
+navigating away and back, and the scheduler-liveness line refreshes
+every 5s instead of only alongside the 60s relative-time ticker.
+Pinned by `Tests/UI/test_schedules_disabled_state.py`,
+`Tests/UI/test_schedules_workbench.py`, and
+`Tests/Scheduling/test_sync_engine.py`/`test_scheduler_loop.py`.*
 
 *Verified against the schedules redesign PR-4 — 2026-09-04 (docs pass
 against shipped code/tests, live check pending the redesign program's

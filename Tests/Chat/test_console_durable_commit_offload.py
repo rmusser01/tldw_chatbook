@@ -20,17 +20,156 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleDispatchRecoveryKind
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.Chat.test_console_durable_turn_acceptance import _ready_store
 from Tests.Chat.test_console_first_send_atomicity import (
     _CheckpointObservingGateway,
     _controller,
 )
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleDispatchRecoveryKind,
+    ConsoleRunStatus,
+)
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+
+@pytest.mark.parametrize("after_commit", [False, True])
+@pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+async def test_stop_during_dispatch_cas_settles_before_returning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    after_commit: bool,
+    execution_path: str,
+) -> None:
+    """Stop must drain the actual SQLite handoff before terminal settlement."""
+    db, store, controller, gateway = _controller(tmp_path)
+    store.create_session(session_id="session-2", title="Background")
+    background_entered = asyncio.Event()
+    background_release = asyncio.Event()
+    original_stream = gateway.stream_chat
+
+    async def background_stream(*args, **kwargs):
+        async for chunk in original_stream(*args, **kwargs):
+            yield chunk
+        background_entered.set()
+        await background_release.wait()
+
+    monkeypatch.setattr(gateway, "stream_chat", background_stream)
+    background = asyncio.create_task(
+        controller.submit_draft("keep running", session_id="session-2")
+    )
+    await asyncio.wait_for(background_entered.wait(), 5)
+    background_owner = store.dispatch_recovery_for_session("session-2")
+    background_cancel = controller._active_cancel_events["session-2"]
+    store.switch_session("session-1")
+    agent_run = Mock(side_effect=AssertionError("Stopped turn entered the agent"))
+    sync_gateway = None
+    sync_worker_finished = threading.Event()
+    adapter = Mock(side_effect=AssertionError("Stopped turn entered sync adapter"))
+    if execution_path == "agent":
+        controller._agent_bridge = SimpleNamespace(run_reply=agent_run)
+    elif execution_path == "sync":
+        sync_gateway = ConsoleProviderGateway(
+            config_provider=lambda: {
+                "api_settings": {"openai": {"api_key": "test-only-key"}}
+            },
+            environ={},
+            chat_api_call_fn=adapter,
+        )
+        controller.provider_gateway = sync_gateway
+        controller.provider = "openai"
+        controller.model = "gpt-4.1"
+        mark_unknown = sync_gateway._commit_trace_dispatch_unknown
+
+        def observe_cancelled_dispatch(boundary):
+            try:
+                return mark_unknown(boundary)
+            finally:
+                sync_worker_finished.set()
+
+        monkeypatch.setattr(
+            sync_gateway, "_commit_trace_dispatch_unknown", observe_cancelled_dispatch
+        )
+    repository = store.persistence.console_dispatch_repository
+    original_cas = repository.cas_state
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def gated_cas(transition):
+        try:
+            result = original_cas(transition) if after_commit else None
+            entered.set()
+            assert release.wait(timeout=10)
+            return result if after_commit else original_cas(transition)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(repository, "cas_state", gated_cas)
+    submit = asyncio.create_task(
+        controller.submit_draft("stop before first token", session_id="session-1")
+    )
+    try:
+        try:
+            async with asyncio.timeout(5):
+                while not entered.is_set():
+                    await asyncio.sleep(0.01)
+            assert controller.run_state.status is ConsoleRunStatus.STREAMING
+            assert controller.stop_active_run()
+            await asyncio.sleep(0)
+            # Repeated Stop cannot cancel the draining transaction's owner.
+            controller.stop_active_run()
+            await asyncio.sleep(0)
+        finally:
+            release.set()
+        await asyncio.wait_for(submit, timeout=5)
+        assert await asyncio.to_thread(finished.wait, 5)
+        if sync_gateway is not None:
+            assert await asyncio.to_thread(sync_worker_finished.wait, 5)
+        assert gateway.calls == 1  # Only the unrelated background session entered.
+        agent_run.assert_not_called()
+        adapter.assert_not_called()
+        assert controller.run_state.status is ConsoleRunStatus.STOPPED
+        assert ConsoleRunStatus.BLOCKED not in controller.run_state_history
+        assert store.dispatch_recovery_for_session("session-2") == background_owner
+        assert not background_cancel.is_set()
+        assert not background.done()
+        assert [
+            message.content for message in store.messages_for_session("session-1")
+        ].count("Response stopped by user.") == 1
+        assert not controller._pending_dispatch_transitions
+        assert not controller._deferred_user_stop_markers
+        with sqlite3.connect(tmp_path / "controller.sqlite") as fresh:
+            assert fresh.execute(
+                "SELECT assistant_generation_state, content FROM messages "
+                "WHERE role = 'assistant' ORDER BY assistant_generation_state"
+            ).fetchall() == [("dispatch_started", ""), ("stopped", "")]
+            assert fresh.execute(
+                "SELECT assistant_message_id FROM console_dispatch_checkpoints"
+            ).fetchall() == [(background_owner.assistant_message_id,)]
+        background_release.set()
+        await asyncio.wait_for(background, 5)
+        with sqlite3.connect(tmp_path / "controller.sqlite") as fresh:
+            assert (
+                fresh.execute(
+                    "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+                ).fetchone()[0]
+                == 0
+            )
+
+    finally:
+        release.set()
+        background_release.set()
+        await asyncio.gather(submit, background, return_exceptions=True)
+        if sync_gateway is not None:
+            await sync_gateway.aclose()
+        db.close()
 
 
 class _CommitVisibilityGateway(_CheckpointObservingGateway):
@@ -295,10 +434,23 @@ def test_clean_restore_reconcile_takes_no_write_lock(tmp_path: Path) -> None:
     # Settle the turn out-of-band so the checkpoint is gone and the restore
     # is clean: terminal assistant + no checkpoint = nothing to reconcile.
     with db.transaction(immediate=True) as cursor:
-        cursor.execute(
-            "UPDATE messages SET assistant_generation_state = 'complete', "
-            "content = 'done' WHERE id = ?",
-            (commit.assistant_message_id,),
+        authorization = db._semantic_mutation_authorization_for_coordinator(
+            cursor.connection
+        )
+        with authorization._authorize(
+            message_id=commit.assistant_message_id,
+            operations={"message_update"},
+        ):
+            cursor.execute(
+                "UPDATE messages SET assistant_generation_state = 'complete', "
+                "content = 'done' WHERE id = ?",
+                (commit.assistant_message_id,),
+            )
+        assert (
+            authorization._sqlite_authorized(
+                commit.assistant_message_id, "message_update"
+            )
+            == 0
         )
         cursor.execute(
             "DELETE FROM console_dispatch_checkpoints WHERE assistant_message_id = ?",
@@ -355,10 +507,23 @@ def test_terminal_checkpoint_reconcile_still_deletes_under_write_lock(
     # Terminal assistant state with a lingering checkpoint row: reconcile
     # must delete the checkpoint -- a real write.
     with db.transaction(immediate=True) as cursor:
-        cursor.execute(
-            "UPDATE messages SET assistant_generation_state = 'complete', "
-            "content = 'done' WHERE id = ?",
-            (commit.assistant_message_id,),
+        authorization = db._semantic_mutation_authorization_for_coordinator(
+            cursor.connection
+        )
+        with authorization._authorize(
+            message_id=commit.assistant_message_id,
+            operations={"message_update"},
+        ):
+            cursor.execute(
+                "UPDATE messages SET assistant_generation_state = 'complete', "
+                "content = 'done' WHERE id = ?",
+                (commit.assistant_message_id,),
+            )
+        assert (
+            authorization._sqlite_authorized(
+                commit.assistant_message_id, "message_update"
+            )
+            == 0
         )
 
     statements = _traced_statements(db)

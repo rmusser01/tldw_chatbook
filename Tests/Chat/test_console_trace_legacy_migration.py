@@ -269,9 +269,7 @@ def test_malformed_request_becomes_omission_and_later_row_still_migrates(
     assert malformed_call.capture.request == {
         "legacy_omission": "legacy_credential_filter_unavailable"
     }
-    assert "legacy_credential_filter_unavailable" in (
-        malformed_call.uncertainty_codes
-    )
+    assert "legacy_credential_filter_unavailable" in (malformed_call.uncertainty_codes)
     assert LegacyTraceNormalizer(db).read_calls(later_message_id)
 
 
@@ -327,18 +325,14 @@ def test_decode_contract_failures_become_explicit_omissions(
             json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
         )
     else:
-        blob = capture_to_blob(
-            replace(capture, created_at="2026-08-28T12:59:59+00:00")
-        )
+        blob = capture_to_blob(replace(capture, created_at="2026-08-28T12:59:59+00:00"))
     _insert_exchange(db, message_id=message_id, capture=capture, blob=blob)
 
     result = LegacyTraceMaintenance(db).run_batch()
 
     assert result.processed_rows == 1
     call = LegacyTraceNormalizer(db).read_calls(message_id)[0]
-    assert call.capture.request == {
-        "legacy_omission": "legacy_capture_unavailable"
-    }
+    assert call.capture.request == {"legacy_omission": "legacy_capture_unavailable"}
     assert "legacy_capture_unavailable" in call.uncertainty_codes
 
 

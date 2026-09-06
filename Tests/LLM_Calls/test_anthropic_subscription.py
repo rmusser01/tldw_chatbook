@@ -116,11 +116,13 @@ def _call_anthropic(monkeypatch, tmp_path, auth_source, cred_kwargs=None, api_ke
 
     # point the reader at the tmp credential + count reads (AC#6)
     reads = {"n": 0}
-    real_read = mod.read_claude_code_credential
+    from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
+
+    real_read = subscription.read_claude_code_credential
     def counting_read(path=None):
         reads["n"] += 1
         return real_read(cred_path)
-    monkeypatch.setattr(mod, "read_claude_code_credential", counting_read)
+    monkeypatch.setattr(subscription, "read_claude_code_credential", counting_read)
 
     monkeypatch.setattr(
         mod, "load_settings",
@@ -199,12 +201,13 @@ def test_default_mode_never_reads_credential_and_uses_api_key(monkeypatch, tmp_p
 
 def _readiness(monkeypatch, tmp_path, auth_source, cred_kwargs):
     from tldw_chatbook.Chat import provider_readiness as pr
+    from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
 
     cred_path = tmp_path / "creds.json"
     if cred_kwargs is not None:
         _write_cred(cred_path, **cred_kwargs)
     monkeypatch.setattr(
-        pr, "read_claude_code_credential", lambda path=None: read_claude_code_credential(cred_path)
+        subscription, "read_claude_code_credential", lambda path=None: read_claude_code_credential(cred_path)
     )
     app_config = {"api_settings": {"anthropic": {"auth_source": auth_source}}}
     return pr.get_provider_readiness("Anthropic", app_config, environ={})
@@ -449,7 +452,6 @@ def test_cache_degrade_retry_preserves_oauth_beta(monkeypatch, tmp_path):
     import tldw_chatbook.LLM_Calls.anthropic_subscription as sub
     monkeypatch.setattr(sub, "DEFAULT_CREDENTIALS_PATH", default)
     monkeypatch.setattr(sub, "_KEYCHAIN_CACHE", None, raising=False)
-    monkeypatch.setattr(mod, "read_claude_code_credential", lambda path=None: sub.read_claude_code_credential())
     monkeypatch.setattr(mod, "load_settings", lambda *a, **k: {
         "anthropic_api": {"model": "claude-sonnet-5"},
         "api_settings": {"anthropic": {"auth_source": "claude_subscription"}},

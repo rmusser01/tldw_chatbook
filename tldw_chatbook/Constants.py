@@ -41,6 +41,7 @@ TAB_MCP = "mcp"
 TAB_ACP = "acp"
 TAB_SKILLS = "skills"
 TAB_SETTINGS = "settings"
+TAB_MEETINGS = "meetings"
 
 # Library navigation-context contract keys and values.
 LIBRARY_NAV_CONTEXT_MODE = "mode"
@@ -58,6 +59,14 @@ LIBRARY_MODE_CONVERSATIONS = "conversations"
 CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = (
     "resume_local_conversation_id"
 )
+CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET = "character_conversation_target"
+
+# Trusted character-conversation navigation context keys.
+ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION = "character_conversation"
+LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR = "character_repair"
+LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION = "character_unavailable_inspection"
+LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE = "character_unavailable_browse"
+CHARACTER_NAV_CONTEXT_RETURN_FOCUS = "return_focus"
 
 # Saved-conversation pagination shared by the Roleplay controller and inspector.
 PERSONAS_CONVERSATIONS_PAGE_SIZE = 20
@@ -126,6 +135,7 @@ TAB_DISPLAY_LABELS = {
     TAB_ACP: "ACP",
     TAB_SKILLS: "Skills",
     TAB_SETTINGS: "Settings",
+    TAB_MEETINGS: "Meetings",
 }
 
 

@@ -7,6 +7,7 @@ import math
 import re
 import time
 import unicodedata
+from collections.abc import Mapping
 from itertools import islice
 from typing import Any, Literal, Optional, TypeVar, Union
 from urllib.parse import urlparse
@@ -139,6 +140,57 @@ def validate_tool_arguments(value: object) -> dict[str, Any]:
         if message.startswith("Value error, "):
             message = message.removeprefix("Value error, ")
         raise ValueError(message) from None
+
+
+class CanvasBridgeWireInput(BaseModel):
+    """Strict source-private shape for one untrusted Canvas bridge envelope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    version: str = Field(repr=False)
+    request_id: str = Field(repr=False)
+    kind: str = Field(repr=False)
+    value: Any = Field(repr=False)
+
+
+def validate_canvas_bridge_wire(value: object) -> CanvasBridgeWireInput:
+    """Validate the closed Canvas bridge envelope without semantic coercion.
+
+    Args:
+        value: Candidate browser-to-shell request mapping.
+
+    Returns:
+        A frozen envelope containing the exact four supplied field values.
+
+    Raises:
+        ValueError: If the value is not a mapping or its closed field shape and
+            scalar types are invalid.
+    """
+
+    if not isinstance(value, Mapping):
+        # TRY004: this public wire adapter intentionally exposes ValueError to
+        # callers (including the Canvas gateway) for every rejected payload.
+        raise ValueError("Canvas bridge request must be an object")  # noqa: TRY004
+    if len(value) > len(CanvasBridgeWireInput.model_fields):
+        raise ValueError("Canvas bridge request contains unknown fields") from None
+    try:
+        return CanvasBridgeWireInput.model_validate(dict(value))
+    except PydanticValidationError as exc:
+        error_types = {
+            error["type"]
+            for error in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            )
+        }
+        if "extra_forbidden" in error_types:
+            reason = "Canvas bridge request contains unknown fields"
+        elif "missing" in error_types:
+            reason = "Canvas bridge request is missing fields"
+        else:
+            reason = "Canvas bridge request fields are invalid"
+        raise ValueError(reason) from None
 
 
 def _validate_strict_json_value(
@@ -651,6 +703,32 @@ def validate_ip_address(ip: str) -> bool:
     except ValueError:
         log_counter("input_validation_ip_result", labels={"valid": "false"})
         return False
+
+
+def validate_bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
+    """Normalize an integer form value within inclusive bounds.
+
+    Args:
+        value: Integer or integer text, allowing signs and surrounding whitespace.
+        minimum: Inclusive lower bound.
+        maximum: Inclusive upper bound.
+
+    Returns:
+        The validated integer value.
+
+    Raises:
+        ValueError: If the value is not integer text or an integer, is a boolean,
+            or falls outside the bounds.
+    """
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError("Value must be an integer")  # noqa: TRY004 - form validation uses ValueError
+    try:
+        number = int(value)
+    except ValueError:
+        raise ValueError("Value must be an integer") from None
+    if not minimum <= number <= maximum:
+        raise ValueError(f"Value must be between {minimum} and {maximum}")
+    return number
 
 
 def validate_port(port: Union[str, int]) -> bool:

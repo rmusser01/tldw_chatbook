@@ -696,7 +696,7 @@ def _entry_worker_terminal(case: _EntryWorkerCase, screen: LibraryScreen) -> boo
     if case.name == "pending-conversations":
         return screen._selected_conversation_id == "chat-2" and selector_ready
     if case.name == "pending-prompt":
-        return screen._library_prompt_detail is not None and selector_ready
+        return screen._prompts_state.detail is not None and selector_ready
     return False
 
 
@@ -2839,10 +2839,18 @@ async def test_retained_entry_actions_paint_before_and_after_sync(size, surface)
 
 
 @pytest.mark.asyncio
-async def test_source_worker_completion_during_mount_dispatch_reconciles_once(
+async def test_source_worker_completion_during_resume_dispatch_reconciles_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Removing mount-safe scheduling would lose a fetch that completes in Mount."""
+    """A fetch completing inside the resume dispatch must reconcile once.
+
+    TASK-31521 moved the snapshot fetch from ``on_mount`` to
+    ``on_screen_resume`` (the reusable library route's per-visit seam), so
+    the fetch-completes-while-the-dispatching-handler-is-still-running
+    hazard this test pins moved with it: the gate now holds the RESUME
+    dispatch open across the fetch (pre-31521 it held Mount open, and the
+    apply landed with ``is_mounted`` still False).
+    """
     app = _build_test_app()
     _seed_conversations(app, [])
     fetch_started = asyncio.Event()
@@ -2853,7 +2861,7 @@ async def test_source_worker_completion_during_mount_dispatch_reconciles_once(
     mounted_at_apply: list[bool] = []
     attached_at_apply: list[bool] = []
     target_sync_calls: list[int] = []
-    original_on_mount = LibraryScreen.on_mount
+    original_on_resume = LibraryScreen.on_screen_resume
     original_apply = LibraryScreen._apply_local_source_snapshot
     original_sync = library_screen_module._sync_library_canvas
 
@@ -2892,11 +2900,11 @@ async def test_source_worker_completion_during_mount_dispatch_reconciles_once(
             target_sync_calls.append(screen._library_snapshot_state_generation)
         return original_sync(screen, kind, **kwargs)
 
-    async def gated_on_mount(screen: LibraryScreen) -> None:
+    async def gated_on_resume(screen: LibraryScreen) -> None:
         nonlocal mount_dispatch_active
         mount_dispatch_active = True
         try:
-            original_on_mount(screen)
+            original_on_resume(screen)
             await fetch_started.wait()
             release_fetch.set()
             async with asyncio.timeout(10):
@@ -2907,7 +2915,7 @@ async def test_source_worker_completion_during_mount_dispatch_reconciles_once(
     monkeypatch.setattr(LibraryScreen, "_list_local_source_snapshot", gated_snapshot)
     monkeypatch.setattr(LibraryScreen, "_apply_local_source_snapshot", recorded_apply)
     monkeypatch.setattr(library_screen_module, "_sync_library_canvas", recorded_sync)
-    monkeypatch.setattr(LibraryScreen, "on_mount", gated_on_mount)
+    monkeypatch.setattr(LibraryScreen, "on_screen_resume", gated_on_resume)
 
     host = LibraryHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -2917,7 +2925,10 @@ async def test_source_worker_completion_during_mount_dispatch_reconciles_once(
         await pilot.pause()
 
         assert apply_during_mount == [True]
-        assert mounted_at_apply == [False]
+        # Resume runs after Mount completes, so the apply now lands on a
+        # mounted, attached screen -- the dispatch-window hazard is the
+        # invariant, not the mount flag.
+        assert mounted_at_apply == [True]
         assert attached_at_apply == [True]
         assert screen._local_source_counts["conversations"] == 2
         assert screen._library_snapshot_rendered_generation == (

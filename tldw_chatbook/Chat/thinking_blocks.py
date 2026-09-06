@@ -393,9 +393,7 @@ def thinking_envelope_to_exchange(raw_json: object) -> dict[str, object] | None:
             "Upgrade Chatbook before exporting this conversation's thinking data."
         )
     if result.envelope is None:
-        raise ThinkingEnvelopeValidationError(
-            _INVALID_MESSAGE.format(rule="envelope")
-        )
+        raise ThinkingEnvelopeValidationError(_INVALID_MESSAGE.format(rule="envelope"))
     canonical = dump_thinking_blocks_json(result.envelope)
     return cast(dict[str, object], json.loads(canonical or "null"))
 
@@ -417,14 +415,13 @@ def preflight_thinking_history_policy(
     """Validate imported raw policy and normalize bounded unknown strings."""
     if value is None:
         return "auto", None
-    if type(value) is not str or len(cast(str, value)) > MAX_THINKING_HISTORY_POLICY_CHARS:
+    if (
+        type(value) is not str
+        or len(cast(str, value)) > MAX_THINKING_HISTORY_POLICY_CHARS
+    ):
         raise ValueError("Invalid thinking history policy.")
     normalized = normalize_thinking_history_policy(value)
-    warning = (
-        None
-        if normalized == value
-        else UNKNOWN_THINKING_HISTORY_POLICY_WARNING
-    )
+    warning = None if normalized == value else UNKNOWN_THINKING_HISTORY_POLICY_WARNING
     return normalized, warning
 
 

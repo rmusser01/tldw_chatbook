@@ -49,6 +49,7 @@ from ....Scheduling.events import (
 from ....Scheduling.models import ReminderTask, ScheduledTask
 from ....Scheduling.services.server_client import (
     ServerClientError,
+    ServerClientNotFoundError,
     ServerClientValidationError,
 )
 from ....Scheduling.services.sync_engine import (
@@ -89,6 +90,7 @@ from .task_detail import (
     TaskInspector,
     _format_next_run,
     _format_relative,
+    _format_timezone,
     _managed_elsewhere_notice,
     _queue_owner_suffix,
     _transfer_row_suffix,
@@ -127,10 +129,28 @@ QUEUE_FILTER_DEBOUNCE_SECONDS = 0.2
 #: not current, per the hidden-progress-clock rule (TASK-23022).
 NEXT_RUN_REFRESH_SECONDS = 60.0
 
+#: Cadence for the scheduler-liveness strip (UAT finding 3d). It used to
+#: be repainted only as a side effect of the 60s ticker above, so a
+#: 0-30s "last tick Ns ago" value was visibly static for up to a full
+#: minute between samples. `scheduler_liveness_line` is one JSON-file
+#: read plus a string compare -- cheap enough for its own faster,
+#: independent cadence. Also paused while the screen is not current
+#: (same rule, TASK-23022).
+SCHEDULER_LIVENESS_REFRESH_SECONDS = 5.0
+
 #: Defensive cap for the server definitions' follow-the-pages load -- the
 #: loop exists so the tail of a large definition list is never silently
 #: hidden, not to render unbounded rows.
 AUTOMATIONS_LOAD_MAX_ROWS = 500
+
+#: 31713 AC#3: honest Run-now copy for a server too old to support the
+#: control-plane run endpoint at all -- same wording family as
+#: `SyncEngine._pull_results`'s "This server does not provide the results
+#: inbox (server too old)." for the analogous missing-route case.
+_RUN_NOW_UNSUPPORTED_COPY = (
+    "This server does not support running automations on demand "
+    "(server too old)."
+)
 
 #: Debounce before acting on a notification-triggered results pull
 #: (schedules-handoff PR-6 task 4) -- a burst of `automation_run_*` events
@@ -282,11 +302,14 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
     """Queue-row subtitle: schedule summary + relative next-run (spec S4).
 
     A reminder row reuses `_format_next_run` verbatim (the exact text the
-    pre-redesign Next-Run column showed). A definition row has no
-    existing per-row relative-time formatter to reuse (`_format_next_run`
-    is typed for `ReminderTask | ScheduledTask`), so this derives the
-    same "absolute (relative)" shape from `UnifiedRow`'s own
-    already-normalized `next_run_at` + `bucket`.
+    pre-redesign Next-Run column showed; `compact=True` deliberately
+    drops that path's own timezone token, task-23111). A definition row
+    has no existing per-row relative-time formatter to reuse
+    (`_format_next_run` is typed for `ReminderTask | ScheduledTask`), so
+    this derives the same "absolute (relative)" shape from `UnifiedRow`'s
+    own already-normalized `next_run_at` + `bucket` -- task-31711 AC#1:
+    unlike the reminder path, this one never had a timezone token, so a
+    UTC value read as a bare, unlabeled `YYYY-MM-DD HH:MM`.
     """
     if row.kind == "reminder":
         next_text = _format_next_run(row.source_row, now=now, compact=True)
@@ -296,8 +319,30 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
         next_text = "-"
     else:
         absolute = row.next_run_at.strftime("%Y-%m-%d %H:%M")
-        next_text = f"{absolute} ({_format_relative(row.next_run_at, now)})"
+        tz_label = _format_timezone(row.next_run_at)
+        next_text = f"{absolute} {tz_label} ({_format_relative(row.next_run_at, now)})"
     return f"{row.schedule_summary} · {next_text}"
+
+
+class _QueueFilterInput(Input):
+    """The rail search box -- `escape` blurs it (UAT Minor 21) instead of
+    falling through to `SchedulesWorkbench`'s own `escape` -> clear_marks
+    binding. Textual checks a focused widget's own BINDINGS before its
+    ancestors' (`App._check_bindings` walks the focus chain closest-first),
+    so this in-area binding wins without touching the screen's binding at
+    all; unblurred, the filter kept focus and swallowed the single-letter
+    chip keys (`f`, `1`-`4`) as literal text instead of routing them."""
+
+    BINDINGS = [Binding("escape", "blur_filter", "Unfocus filter", show=False)]
+
+    def action_blur_filter(self) -> None:
+        """Unfocus the search filter.
+
+        Bound to escape (see `BINDINGS` above) so single-letter chip keys
+        (`f`, `1`-`4`) route to their bindings again instead of being
+        swallowed as literal text while the filter still has focus.
+        """
+        self.blur()
 
 
 class SchedulesWorkbench(BaseAppScreen):
@@ -422,6 +467,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._filter_text = ""
         self._filter_debounce_timer: Timer | None = None
         self._next_run_refresh_timer: Timer | None = None
+        self._liveness_refresh_timer: Timer | None = None
         # task-15476: the task id currently shown in the detail/inspector
         # panes, tracked independently of row index so a filter keystroke
         # can restore the same selection instead of always jumping to row 0.
@@ -482,7 +528,53 @@ class SchedulesWorkbench(BaseAppScreen):
 
     @staticmethod
     def _server_available(service: Any, active_server_id: str | None) -> bool:
-        """Return whether Schedules can switch ownership to a live server."""
+        """Return whether Schedules can switch ownership to a live server.
+
+        task-3 (schedules UAT remediation ruling 4): `service.
+        server_reachable` is `refresh_server_reachability`'s actual probe
+        result, not mere configuredness (root-causes.md #5's bug -- the
+        three checks this method used to stop at never contacted
+        anything). It is tri-state (`None` unprobed / `True` / `False`,
+        final review finding 2) -- `bool(...)`-wrapped here so `None`
+        (never probed) still reads as unavailable, same as `False`:
+        "until a probe has succeeded, the option must not be offered"
+        (root-causes.md #5) covers BOTH "hasn't checked" and "checked and
+        failed" identically for this method's callers (the transfer
+        dropdown, `transfer_refusal`'s callers). Only the header's own
+        DISPLAY COPY (`_refresh_owner_select`) needs to tell those two
+        apart. Read via `getattr(..., True)` rather than a direct
+        attribute access: many test doubles across this test suite model
+        "a connected service" without also modeling reachability, and
+        were never meant to exercise this NEW gate -- they get the old
+        available-if-configured behavior; a fake that wants to test the
+        unreachable case sets `server_reachable = False` explicitly.
+        """
+        return bool(
+            service is not None
+            and bool(active_server_id)
+            and service.server_client.notifications_service is not None
+            and getattr(service, "server_reachable", True)
+        )
+
+    @staticmethod
+    def _server_configured(service: Any, active_server_id: str | None) -> bool:
+        """Return whether a server identity is merely CONFIGURED.
+
+        Unlike `_server_available`, this does NOT require `refresh_
+        server_reachability`'s probe to have succeeded -- it is
+        `_server_available`'s OLD body, pre-task-3, kept for call sites
+        that only need "is there anything to even attempt a network call
+        against" (starting the SSE observer, scheduling a catch-up pull,
+        deciding whether to also fetch server automations for the Queue
+        list), not "should this be offered as a confirmed-live transfer/
+        switch destination" (`_server_available`'s job, ruling 4). Those
+        call sites run at `on_mount`, synchronously, before `_refresh_
+        server_reachability`'s background probe has had a chance to
+        resolve -- gating them on `_server_available` made every fresh
+        mount silently skip its first catch-up pull/observer start (a
+        real regression this method exists to avoid, caught by this
+        task's own test suite, not merely a fixture-compat concern).
+        """
         return (
             service is not None
             and bool(active_server_id)
@@ -504,7 +596,16 @@ class SchedulesWorkbench(BaseAppScreen):
         yield DestinationHeader(
             WorkbenchHeaderState(
                 title="Schedules",
-                subtitle="When jobs, watchlists, and workflows run.",
+                # task-31710 AC#2: named what the Queue actually lists
+                # (scheduled tasks + recurring questions) -- watchlists and
+                # workflows never appear here (watchlist/briefing
+                # projections are explicitly out of scope, RowKind is
+                # `Literal["reminder", "definition"]`), so the old wording
+                # described a different screen. "scheduled task", not
+                # "reminder": task-23106's locked noun for this primitive
+                # in this module (`Tests/UI/test_schedules_terminology.py`
+                # is the standing AST guard for it).
+                subtitle="When scheduled tasks fire and recurring questions run.",
                 status="loading",
                 status_label="Checking sync status…",
             ),
@@ -612,7 +713,7 @@ class SchedulesWorkbench(BaseAppScreen):
                             id="scheduling-chip-cycle",
                             tooltip="Cycle the queue filter (f).",
                         )
-                    yield Input(
+                    yield _QueueFilterInput(
                         # Says what ruling 5's search actually
                         # matches -- title + question/body (final
                         # review F6: the Type/Status columns are
@@ -621,6 +722,15 @@ class SchedulesWorkbench(BaseAppScreen):
                         # already documents).
                         placeholder="Filter: title or question…",
                         id="scheduling-queue-filter",
+                        # UAT display blocker (finding 1b): a 1-row Input
+                        # from app CSS height never carries Textual's own
+                        # `.-textual-compact` class, so the existing
+                        # `Input.-textual-compact:focus` outline opt-out
+                        # (TASK-17961) missed it -- `*:focus`'s outline
+                        # painted over the only content row, hiding
+                        # whatever was typed. `compact=True` joins that
+                        # family instead of adding a bespoke opt-out.
+                        compact=True,
                     )
                     yield DataTable(
                         id="scheduling-task-table", cursor_type="row"
@@ -683,6 +793,8 @@ class SchedulesWorkbench(BaseAppScreen):
         self._sync_responsive_workbench()
         self._register_footer_shortcuts()
         self._refresh_owner_select()
+        self._refresh_server_reachability()
+        self._settle_orphaned_transfers()
         self._refresh_conflicts_badge()
         self._refresh_results_badge()
         self._sync_chip_cycle_label()
@@ -699,6 +811,12 @@ class SchedulesWorkbench(BaseAppScreen):
         # is render-time text; refresh it periodically while visible.
         self._next_run_refresh_timer = self.set_interval(
             NEXT_RUN_REFRESH_SECONDS, self._refresh_next_run_rendering
+        )
+        # UAT finding 3d: its own faster, independent cadence -- it used
+        # to be repainted only as a side effect of the timer above, so a
+        # 0-30s value was static for up to a full minute between samples.
+        self._liveness_refresh_timer = self.set_interval(
+            SCHEDULER_LIVENESS_REFRESH_SECONDS, self._refresh_scheduler_liveness
         )
         self._request_tasks_refresh()
         self._refresh_scheduler_liveness()
@@ -720,7 +838,8 @@ class SchedulesWorkbench(BaseAppScreen):
         if self._results_pull_debounce_timer is not None:
             self._results_pull_debounce_timer.stop()
             self._results_pull_debounce_timer = None
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
 
     def _start_server_notification_observer(self) -> None:
         """Start the SSE notification observer (schedules-handoff PR-6
@@ -731,13 +850,19 @@ class SchedulesWorkbench(BaseAppScreen):
         `ServerNotificationEventObserver.observe()` --
         `NotificationsScopeService.observe_server_feed_events` has existed
         since 18940 slice 3 with nothing invoking it (survey §3).
+
+        `_server_configured`, not `_server_available`: this runs at
+        `on_mount`, synchronously, before `_refresh_server_reachability`'s
+        background probe has had any chance to resolve -- gating a
+        mount-time start on the reachability verdict raced it and
+        silently skipped starting the observer on every fresh mount.
         """
         service = self._service()
         scope_service = getattr(self.app_instance, "notifications_scope_service", None)
         if (
             service is None
             or scope_service is None
-            or not self._server_available(service, self._active_server_id())
+            or not self._server_configured(service, self._active_server_id())
         ):
             return
         self._notification_cancel_event = asyncio.Event()
@@ -876,9 +1001,11 @@ class SchedulesWorkbench(BaseAppScreen):
         pull. Gated on a configured server for the same reason
         `_start_server_notification_observer` is: with no server there is
         nothing to pull and `_run_phase` would only record a sync error.
+        `_server_configured`, not `_server_available`, for the same
+        mount-time-race reason that method's own docstring gives.
         """
         service = self._service()
-        if service is None or not self._server_available(
+        if service is None or not self._server_configured(
             service, self._active_server_id()
         ):
             return
@@ -981,8 +1108,10 @@ class SchedulesWorkbench(BaseAppScreen):
     def _refresh_next_run_rendering(self) -> None:
         """Re-render the queue so relative next-run text stays honest.
 
-        Also refreshes the scheduler-liveness line (TASK-26025) so a loop
-        that dies while the screen is open turns visibly stale.
+        UAT finding 3d: the scheduler-liveness line used to be refreshed
+        only as a side effect of this 60s ticker -- it now has its own
+        faster `_liveness_refresh_timer` (started alongside this one in
+        `on_mount`), so this method no longer touches it.
 
         Skips unless this screen is the top of the stack. (Textual's
         ``is_current`` also counts screens behind the top one --
@@ -995,9 +1124,6 @@ class SchedulesWorkbench(BaseAppScreen):
         """
         if self.app.screen is not self:
             return
-        # TASK-26025: refresh liveness even on an empty queue -- a stall
-        # with nothing queued is exactly the case AC#2 must distinguish.
-        self._refresh_scheduler_liveness()
         # redesign PR-2, Task 2: `_visible_rows`, not the reminder-only
         # `_visible_tasks` -- a Queue showing only definition rows still
         # has relative next-run text that must not go stale.
@@ -1006,16 +1132,18 @@ class SchedulesWorkbench(BaseAppScreen):
         self._render_table(tick=True)
 
     def on_screen_suspend(self) -> None:
-        """Stop the relative-time refresh while another screen covers this.
+        """Stop the relative-time and liveness refreshes while covered.
 
         Hidden clocks must not tick unseen (TASK-23022); the resume
         handler refreshes immediately so no stale text is ever shown.
         """
         if self._next_run_refresh_timer is not None:
             self._next_run_refresh_timer.pause()
+        if self._liveness_refresh_timer is not None:
+            self._liveness_refresh_timer.pause()
 
     def on_screen_resume(self) -> None:
-        """Refresh relative times and restart the cadence when uncovered.
+        """Refresh relative times/liveness and restart both cadences.
 
         No ``super().on_screen_resume()``: Textual's dispatcher invokes
         every handler along the MRO for one event (see BaseAppScreen's
@@ -1023,7 +1151,13 @@ class SchedulesWorkbench(BaseAppScreen):
         """
         if self._next_run_refresh_timer is not None:
             self._next_run_refresh_timer.resume()
+        if self._liveness_refresh_timer is not None:
+            self._liveness_refresh_timer.resume()
         self._refresh_next_run_rendering()
+        # UAT finding 3d: `_refresh_next_run_rendering` no longer covers
+        # this (its own decoupled timer does) -- refresh it immediately
+        # on uncover too, same "no stale text is ever shown" rule.
+        self._refresh_scheduler_liveness()
         # redesign PR-4 task 5: the retired Queue-tab `TabActivated`
         # staleness consumer's new home -- see `_consume_definitions_stale`.
         self._consume_definitions_stale()
@@ -1144,6 +1278,13 @@ class SchedulesWorkbench(BaseAppScreen):
             await self._refresh_console_context()
             return
 
+        # UAT Major 5 (unpinned): names WHICH step raised, since a bare
+        # `logger.exception("Failed to load tasks")` covering three
+        # distinct calls (reminders listing, definitions listing, row
+        # build) left no way to pin the raiser without reproducing it
+        # live. Updated before each step so the except below always
+        # names the one in flight when it failed.
+        stage = "listing tasks"
         try:
             combined = await service.list_tasks(
                 owner_id=None, include_projections=False
@@ -1151,6 +1292,7 @@ class SchedulesWorkbench(BaseAppScreen):
             # Defensive, not load-bearing: `include_projections=False`
             # already guarantees every row is a `ReminderTask`.
             reminders = [task for task in combined if isinstance(task, ReminderTask)]
+            stage = "loading automation definitions"
             do_full_definitions_fetch = refresh_definitions or self._definitions_stale
             definitions = (
                 await self._load_queue_definitions(service)
@@ -1159,6 +1301,8 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             if do_full_definitions_fetch:
                 self._definitions_stale = False
+
+            stage = "building unified rows"
 
             def _build_rows() -> list[UnifiedRow]:
                 results = service.db.list_automation_results(
@@ -1172,24 +1316,36 @@ class SchedulesWorkbench(BaseAppScreen):
                 )
 
             all_rows = await asyncio.to_thread(_build_rows)
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed to load tasks")
-            self.app_instance.notify(
-                "Could not load tasks. Check the scheduling service and retry.",
-                severity="error",
+        except Exception as exc:  # noqa: BLE001
+            # UAT Major 5: a read failure is not evidence the queue is
+            # empty. This used to reset `_tasks`/`_all_rows`, clear the
+            # table, and blank every detail/inspector pane on ANY
+            # exception here -- destroying the last-good display over a
+            # transient read error, with nothing short of a fresh mount
+            # able to restore it. Now it keeps whatever was already on
+            # screen and only reports the failure.
+            logger.exception(
+                "Failed to load tasks while {stage} (owner_id={owner_id}, "
+                "refresh_definitions={refresh_definitions}): {exc_type}: {exc}",
+                stage=stage,
+                owner_id=getattr(service, "owner_id", None),
+                refresh_definitions=refresh_definitions,
+                exc_type=type(exc).__name__,
+                exc=exc,
             )
-            self._tasks = []
-            self._all_rows = []
-            self._update_mark_all_read_visibility()
-            table = self.query_one("#scheduling-task-table", DataTable)
-            table.clear()
-            self.query_one("#scheduling-task-detail", TaskDetail).set_task(
-                None, queue_empty=True
-            )
-            self.query_one("#scheduling-task-inspector", TaskInspector).set_task(None)
-            self.query_one(
-                "#scheduling-queue-definition-detail", DefinitionDetail
-            ).set_definition(None)
+            # Review round 1 finding 1: "showing the last-loaded queue"
+            # is only true once something HAS loaded -- on the very
+            # first (never-succeeded) load, `_all_rows` is still its
+            # `__init__` empty-list default, and that copy would assert
+            # a last-good display that never existed.
+            if self._all_rows:
+                message = (
+                    "Could not refresh tasks (showing the last-loaded "
+                    "queue). Check the scheduling service and retry."
+                )
+            else:
+                message = "Could not load tasks. Check the scheduling service and retry."
+            self.app_instance.notify(message, severity="error")
             await self._refresh_console_context()
             return
 
@@ -1235,7 +1391,12 @@ class SchedulesWorkbench(BaseAppScreen):
         self._queue_local_definitions = local_rows
         local_items = self._device_only_automations(local_rows)
         server_client = getattr(service, "server_client", None)
-        server_available = server_client is not None and self._server_available(
+        # `_server_configured`, not `_server_available`: this runs from
+        # `_request_tasks_refresh`'s worker, kicked at `on_mount` roughly
+        # alongside `_refresh_server_reachability`'s own probe -- gating
+        # on the reachability verdict raced it and could silently skip
+        # merging server automations into the FIRST Queue-list load.
+        server_available = server_client is not None and self._server_configured(
             service, self._active_server_id()
         )
         if not server_available:
@@ -1298,6 +1459,15 @@ class SchedulesWorkbench(BaseAppScreen):
         compact_owner_suffix = self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH
 
         table = self.query_one("#scheduling-task-table", DataTable)
+        # 31713 AC#2: `DataTable.clear()` unconditionally resets
+        # `scroll_x` to 0 (`textual.widgets._data_table.DataTable.clear`)
+        # -- every render pass (including the 60s ticker's, which changes
+        # no COLUMN layout, only cell text) was yanking a user reading a
+        # truncated subtitle back to column 0. Row count/columns are
+        # unchanged by this pass, so restoring the captured value verbatim
+        # is safe; `move_cursor` below still auto-adjusts it if the
+        # restored row's cursor cell would otherwise be off screen.
+        saved_scroll_x = table.scroll_x
         table.clear()
         for row in self._visible_rows:
             # Every cell is `Text`, never `str` (D8: `DataTable` runs a
@@ -1314,6 +1484,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 Text(_row_subtitle(row, render_now)),
                 key=row.row_id,
             )
+        table.scroll_x = saved_scroll_x
         self._update_pane_notice()
 
         if self._visible_rows:
@@ -1444,8 +1615,11 @@ class SchedulesWorkbench(BaseAppScreen):
         gate above still keeps the stale pane from being re-fed.
 
         Only `load_tasks`'s SUCCESS path reaches `_render_table` -- its
-        `except` branch empties `_all_rows` and returns early -- so a
-        transient service failure never closes an open pane.
+        `except` branch returns early before ever calling it (Major 5's
+        fix made that branch non-destructive -- it no longer empties
+        `_all_rows` either, final review finding 5 -- but it still never
+        reaches `_render_table`) -- so a transient service failure never
+        closes an open pane.
         """
         host = self._pushed_host
         row_id = self._pushed_row_id
@@ -2101,7 +2275,7 @@ class SchedulesWorkbench(BaseAppScreen):
             lines.append("")
             lines.append(
                 "It keeps running on this device until the server accepts "
-                "the transfer -- nothing goes dark while this is only "
+                "the transfer — nothing goes dark while this is only "
                 "queued."
             )
         return ConfirmationDialog(
@@ -2117,11 +2291,11 @@ class SchedulesWorkbench(BaseAppScreen):
         the reminder and definition transfer flows."""
         if direction == "to_server":
             return (
-                f"'{name}' is queued to move to the server -- it still "
+                f"'{name}' is queued to move to the server — it still "
                 "runs on this device until the server accepts it."
             )
         return (
-            f"'{name}' is queued to move to this device -- a dormant copy "
+            f"'{name}' is queued to move to this device — a dormant copy "
             "is ready and will arm once the server releases it."
         )
 
@@ -2425,8 +2599,19 @@ class SchedulesWorkbench(BaseAppScreen):
             options.append((owner_id, owner_id))
         return options, owner_id
 
-    def action_create_reminder(self) -> None:
-        """Open the create-reminder form."""
+    async def action_create_reminder(self) -> None:
+        """Open the create-reminder form.
+
+        Final review finding 3: re-probes reachability first (same
+        pattern `_run_owner_transfer`/`_on_owner_server`/`action_sync_
+        now` already follow) -- without it, a create during the mount
+        probe's still-pending window (or any time after one failed
+        probe) silently offered only "This device" in `_runs_on_options`,
+        with no notice and no correction while the form stayed open.
+        """
+        service = self._service()
+        if service is not None:
+            await self._reprobe_server_reachability(service)
         options, default_owner = self._runs_on_options()
         self.app.push_screen(
             ReminderForm(
@@ -2437,8 +2622,12 @@ class SchedulesWorkbench(BaseAppScreen):
             callback=self._on_reminder_form_result,
         )
 
-    def action_create_automation(self) -> None:
-        """Open the create-recurring-question-automation form (task-5)."""
+    async def action_create_automation(self) -> None:
+        """Open the create-recurring-question-automation form (task-5).
+
+        Final review finding 3: same re-probe as `action_create_
+        reminder` above, for the same reason.
+        """
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
@@ -2446,6 +2635,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
+        await self._reprobe_server_reachability(service)
         options, default_owner = self._runs_on_options()
         self.app.push_screen(
             AutomationDefinitionForm(
@@ -2458,11 +2648,11 @@ class SchedulesWorkbench(BaseAppScreen):
         """Ask which kind of scheduled task to create (task-5)."""
         self.app.push_screen(NewTaskChoiceModal(), callback=self._on_new_task_choice)
 
-    def _on_new_task_choice(self, choice: str | None) -> None:
+    async def _on_new_task_choice(self, choice: str | None) -> None:
         if choice == "reminder":
-            self.action_create_reminder()
+            await self.action_create_reminder()
         elif choice == "recurring_question":
-            self.action_create_automation()
+            await self.action_create_automation()
 
     def _on_automation_form_result(
         self, outcome: Any | None, *, was_edit: bool = False
@@ -2489,13 +2679,16 @@ class SchedulesWorkbench(BaseAppScreen):
         self._definitions_stale = True
         status = getattr(outcome, "status", None)
         verb = "updated" if was_edit else "created"
+        # task-31710 AC#1: "Recurring question", not "Automation" -- the
+        # noun the chooser button and this primitive's own form title
+        # ("New/Edit Recurring Question") already use.
         if status == "saved":
             self.app_instance.notify(
-                f"Automation {verb}.", severity="information"
+                f"Recurring question {verb}.", severity="information"
             )
         elif status == "queued":
             self.app_instance.notify(
-                f"Automation {verb} locally — it will sync to the server.",
+                f"Recurring question {verb} locally — it will sync to the server.",
                 severity="information",
             )
         # Full refresh (definitions included): `_definitions_stale` is set
@@ -3013,6 +3206,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable; cannot start a transfer."
             )
             return
+        # task-3 (ruling 4): re-probe right before deciding, rather than
+        # trust whatever the mount-time background probe last cached.
+        await self._reprobe_server_reachability(service)
         reason = service.transfer_refusal(row_dict, direction)
         if reason is not None:
             row.show_error(reason)
@@ -3418,7 +3614,7 @@ class SchedulesWorkbench(BaseAppScreen):
         if is_server_scoped_owner(getattr(task, "owner_id", None)):
             self.app_instance.notify(
                 f"'{task.title}' is server-scheduled: the server runs it and "
-                "delivers the notification -- it cannot be run from here.",
+                "delivers the notification — it cannot be run from here.",
                 severity="warning",
             )
             return
@@ -3430,7 +3626,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 result = await service.run_reminder_now(task.id, loop=loop)
                 if result is None:
                     self.app_instance.notify(
-                        f"'{task.title}' did not run -- it is missing, the "
+                        f"'{task.title}' did not run — it is missing, the "
                         "handler for it is unavailable, or its handler "
                         "failed (the task's status shows which).",
                         severity="warning",
@@ -3740,11 +3936,35 @@ class SchedulesWorkbench(BaseAppScreen):
         definition_id = str(definition.get("id"))
         name = str(definition.get("name") or definition_id)
 
+        # 31713 AC#3: mirror the results-pull honesty fix
+        # (`SyncEngine._pull_results`) instead of a parallel gate -- reuse
+        # the SAME `_automation_capabilities_available()` probe. A real
+        # `SchedulingService` always constructs `self.sync_engine`
+        # unconditionally, but the test suite's `MockSchedulingServiceMixin`
+        # (and every stub built on it) defaults `sync_engine = None` --
+        # `None` skips the gate rather than crashing, the same
+        # fail-open philosophy `_automation_capabilities_available` itself
+        # documents for "a transient probe failure must not silently stop"
+        # a caller that otherwise works fine.
+        sync_engine = getattr(service, "sync_engine", None)
+
         async def _run() -> None:
+            if sync_engine is not None and not (
+                await sync_engine._automation_capabilities_available()
+            ):
+                self.app_instance.notify(
+                    _RUN_NOW_UNSUPPORTED_COPY, severity="warning"
+                )
+                return
             try:
                 result = await server_client.run_automation_definition_now(
                     definition_id
                 )
+            except ServerClientNotFoundError:
+                self.app_instance.notify(
+                    _RUN_NOW_UNSUPPORTED_COPY, severity="warning"
+                )
+                return
             except ServerClientValidationError as exc:
                 # Lifecycle refusals (paused/archived) and policy denials
                 # arrive here with the server's own reason text.
@@ -4147,11 +4367,131 @@ class SchedulesWorkbench(BaseAppScreen):
                 "error", f"{count} sync error{'s' if count != 1 else ''}"
             )
         elif not server_available:
-            self._sync_header_status("empty", "Local only — no server connection")
+            # task-3 (ruling 4) / final review finding 2: three distinct
+            # copies, not two -- "nothing configured" / "configured, the
+            # probe hasn't resolved yet" (must NOT assert "not reachable",
+            # a negative fact nothing has established -- the same class of
+            # dishonesty ruling 4 targeted, inverted, root-causes.md #5) /
+            # "configured, confirmed unreachable".
+            if not active_server_id:
+                self._sync_header_status(
+                    "empty", "Local only — no server connection"
+                )
+            elif getattr(service, "server_reachable", True) is None:
+                self._sync_header_status("loading", "Checking sync status…")
+            else:
+                self._sync_header_status(
+                    "empty", "Server configured but not reachable"
+                )
         elif service.owner_id.startswith("server:"):
             self._sync_header_status("ready", "Synced with server")
         else:
             self._sync_header_status("ready", "Local schedules")
+
+    def _settle_orphaned_transfers(self) -> None:
+        """Local-DB-only orphaned-transfer sweep, independent of server
+        reachability (final review finding 1).
+
+        `SyncEngine._settle_orphaned_transfer_mutations` only ran INSIDE
+        `sync_now()`, which `action_sync_now`/the mount-time probe both
+        refuse to even start without a reachable server -- so the UAT's
+        actual core symptom (the configured server removed, or simply
+        dead, not merely switched to another reachable one) never
+        settled: no sync ever runs, so the sweep never runs, and the row
+        keeps reading "Moving to server..." forever with no Retry/
+        Cancel. This is pure local DB work (`get_pending_mutations`/
+        `set_transfer_state`, no network), so it runs unconditionally on
+        every mount -- the in-`sync_now()` call stays too (idempotent):
+        a mid-session reconfiguration onto a still-reachable OTHER server
+        settles on the very next sync without waiting for a re-mount.
+
+        `target_owner=None` when no server is configured at all -- `_settle_
+        orphaned_transfer_mutations` treats that as "every still-pending
+        transfer_to_server mutation is orphaned", which is exactly right
+        (nothing configured means nothing it could still be valid for).
+
+        Qodo fix round (finding 2, MEDIUM): this used to run the local DB
+        work inline and synchronously from `on_mount`, blocking mount on
+        it. Deferred onto the same fire-and-forget worker path
+        `SchedulingService.recover_inflight_transfers` rides at app
+        startup -- `on_mount` kicks it and returns immediately; the
+        sweep's own idempotence (a rerun is a no-op once every row has
+        settled) makes the exact ordering against other mount-time work
+        forgiving.
+        """
+        service = self._service()
+        if service is None:
+            return
+        active_server_id = self._active_server_id()
+        target_owner = f"server:{active_server_id}" if active_server_id else None
+
+        async def _settle() -> None:
+            try:
+                service.sync_engine._settle_orphaned_transfer_mutations(target_owner)
+            except Exception:  # noqa: BLE001
+                # Qodo fix round (finding 3, LOW): name the active target
+                # and owner this sweep was settling against -- never the
+                # mutation payload, which carries the user's own reminder/
+                # definition text on this path.
+                logger.exception(
+                    "Orphaned-transfer sweep failed at mount "
+                    "(target_owner={target_owner}, owner_id={owner_id})",
+                    target_owner=target_owner,
+                    owner_id=service.owner_id,
+                )
+
+        self.run_worker(_settle, exclusive=True, group="schedules-orphan-sweep")
+
+    def _refresh_server_reachability(self) -> None:
+        """Kick a background probe of server reachability (task-3, ruling 4).
+
+        `_server_available`/`transfer_refusal` read `service.
+        server_reachable`, which defaults `False` until a probe succeeds
+        -- this is what actually runs one, then repaints the header/owner
+        state so the honest answer appears as soon as it's known rather
+        than only at the next unrelated refresh.
+
+        A no-op for a test double that doesn't implement `refresh_
+        server_reachability` at all (`_server_available`'s own `getattr`
+        fallback already reads such a fake as available) -- there is
+        nothing to probe and no worker crash to risk over it.
+        """
+        service = self._service()
+        if service is None:
+            return
+        probe = getattr(service, "refresh_server_reachability", None)
+        if probe is None:
+            return
+
+        async def _probe() -> None:
+            await probe()
+            self._refresh_owner_select()
+
+        self.run_worker(
+            _probe, exclusive=True, group="schedules-server-reachability"
+        )
+
+    @staticmethod
+    async def _reprobe_server_reachability(service: Any) -> None:
+        """Re-probe reachability right before a decision that gates on it.
+
+        Fix round 1, finding 1: `_run_owner_transfer` already did this
+        inline; `_on_owner_server` and `action_sync_now` did not, so a
+        press during the on-mount probe window (`_refresh_server_
+        reachability`'s background worker hasn't resolved yet) saw the
+        honest default -- `server_reachable=False` -- and refused a
+        genuinely configured, about-to-be-confirmed server. `refresh_
+        server_reachability`'s own probe is cached per-connection, so
+        this is a no-op round trip once a verdict is already known and
+        only actually re-checks a still-pending mount-time probe or a
+        genuinely stale (errored) prior attempt. Guarded with getattr: a
+        test double that models `server_reachable`/`transfer_refusal`
+        but not this newer probe method must not crash a worker over a
+        method it was never asked to implement.
+        """
+        refresh_reachability = getattr(service, "refresh_server_reachability", None)
+        if refresh_reachability is not None:
+            await refresh_reachability()
 
     def _sync_header_status(self, status: WorkbenchStatus, label: str) -> None:
         """Reflect real sync health in the destination header chip."""
@@ -4162,7 +4502,16 @@ class SchedulesWorkbench(BaseAppScreen):
         header.sync_state(
             WorkbenchHeaderState(
                 title="Schedules",
-                subtitle="When jobs, watchlists, and workflows run.",
+                # task-31710 AC#2: named what the Queue actually lists
+                # (scheduled tasks + recurring questions) -- watchlists and
+                # workflows never appear here (watchlist/briefing
+                # projections are explicitly out of scope, RowKind is
+                # `Literal["reminder", "definition"]`), so the old wording
+                # described a different screen. "scheduled task", not
+                # "reminder": task-23106's locked noun for this primitive
+                # in this module (`Tests/UI/test_schedules_terminology.py`
+                # is the standing AST guard for it).
+                subtitle="When scheduled tasks fire and recurring questions run.",
                 status=status,
                 status_label=label,
             )
@@ -4267,10 +4616,14 @@ class SchedulesWorkbench(BaseAppScreen):
         self._set_owner("local")
 
     @on(Button.Pressed, "#scheduling-owner-server")
-    def _on_owner_server(self) -> None:
+    async def _on_owner_server(self) -> None:
         service = self._service()
         if service is None:
             return
+        # Fix round 1, finding 1: re-probe rather than trust whatever the
+        # mount-time background probe last cached -- same reasoning as
+        # `_run_owner_transfer`'s own re-probe.
+        await self._reprobe_server_reachability(service)
         active_server_id = self._active_server_id()
         if not self._server_available(service, active_server_id):
             self.app_instance.notify("No server connection", severity="warning")
@@ -4320,6 +4673,19 @@ class SchedulesWorkbench(BaseAppScreen):
         else:
             message = "Sync finished — nothing to pull or push."
         self.app_instance.notify(message, severity="information")
+        # UAT finding 3c: `outcome.status`/`.error` now describe ONLY the
+        # reminder phase -- an automation phase (definition push/pull,
+        # results pull) that failed in the same cycle no longer collapses
+        # this into a `SyncFailed` "Sync failed: ..." toast (that would
+        # lie about a reminder phase, or an unrelated definition push,
+        # that genuinely succeeded). Its own truth still has to reach the
+        # user, as its own notice rather than silently dropped.
+        phase_errors = tuple(getattr(outcome, "phase_errors", ()) or ())
+        if phase_errors:
+            self.app_instance.notify(
+                "Sync completed with issues — " + "; ".join(phase_errors),
+                severity="warning",
+            )
         self._refresh_owner_select()
         self._request_tasks_refresh()
         self._refresh_conflicts_badge()
@@ -4329,6 +4695,17 @@ class SchedulesWorkbench(BaseAppScreen):
     def _on_sync_failed(self, event: SyncFailed) -> None:
         self._sync_running = False
         self.app_instance.notify(f"Sync failed: {event.error}", severity="error")
+        # Final review finding 6: an automation phase (definition push/
+        # pull, results pull) that failed in the SAME cycle as the
+        # reminder-phase failure this toast already reports must not be
+        # silently dropped -- symmetric with `_on_sync_completed`'s own
+        # `phase_errors` handling just below its success toast.
+        phase_errors = tuple(getattr(event.outcome, "phase_errors", ()) or ())
+        if phase_errors:
+            self.app_instance.notify(
+                "Also: " + "; ".join(phase_errors),
+                severity="warning",
+            )
         self._refresh_owner_select()
         self._request_tasks_refresh()
         self._refresh_conflicts_badge()
@@ -4719,7 +5096,7 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-bulk-toggle",
         )  # type: ignore[arg-type]
 
-    def action_sync_now(self) -> None:
+    async def action_sync_now(self) -> None:
         """Sync schedule state now."""
         if self._sync_running:
             self.app_instance.notify("Sync already in progress", severity="warning")
@@ -4731,14 +5108,30 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
-        if not self._server_available(service, self._active_server_id()):
+        # Fix round 1, finding 1: re-probe rather than trust whatever the
+        # mount-time background probe last cached -- same reasoning as
+        # `_run_owner_transfer`'s own re-probe.
+        await self._reprobe_server_reachability(service)
+        active_server_id = self._active_server_id()
+        if not self._server_available(service, active_server_id):
             # Honest no-op: never claim "Sync completed" when nothing can
             # sync. Same predicate as the sync bar's collapse (review F10):
             # the bar and the s key must agree on whether sync is possible.
-            self.app_instance.notify(
-                "Local only — nothing to sync (no server connection).",
-                severity="information",
-            )
+            # Final review finding 4: split copy, not the conflated "no
+            # server connection" for both cases -- matches the header's
+            # own split (`:4272`-ish, "Server configured but not
+            # reachable" vs "Local only") and `transfer_refusal`'s own
+            # distinct reason (`scheduling_service.py`).
+            if active_server_id:
+                self.app_instance.notify(
+                    "Server configured but not reachable — nothing to sync.",
+                    severity="information",
+                )
+            else:
+                self.app_instance.notify(
+                    "Local only — nothing to sync (no server connection).",
+                    severity="information",
+                )
             return
         self._sync_running = True
         self.run_worker(self._run_sync, exclusive=True, group="schedules-sync-now")
@@ -4760,7 +5153,9 @@ class SchedulesWorkbench(BaseAppScreen):
             if outcome is not None and getattr(outcome, "status", None) == "error":
                 self.post_message(
                     SyncFailed(
-                        owner_id, getattr(outcome, "error", None) or "sync error"
+                        owner_id,
+                        getattr(outcome, "error", None) or "sync error",
+                        outcome=outcome,
                     )
                 )
                 return

@@ -20,6 +20,7 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _two_conversations,
     _wait_for_library_shell,
+    wire_bypass_ingest_controller,
 )
 from Tests.UI.app_factory import _build_test_app
 
@@ -97,7 +98,7 @@ async def test_preflight_detects_pdf(library_screen, tmp_path, monkeypatch):
     pdf = tmp_path / "doc.pdf"
     pdf.write_text("%PDF-1.4 dummy")
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = str(pdf)
 
     # Run pre-flight synchronously to avoid worker timing issues.
@@ -127,7 +128,7 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
         "command": "pip install pdfplumber",
     }
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = str(pdf)
     form.preflight = _preflight_result(
         type_groups={"pdf": [str(pdf)]},
@@ -141,14 +142,14 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
     # No modal, no job yet: the gate line carries the consent instead.
     assert screen.app.screen_stack[-1] is screen
     assert screen.app_instance.library_ingest_jobs.jobs() == ()
-    consent = screen._library_ingest_start_consent
+    consent = screen._ingest_state.start_consent
     assert consent is not None
     assert consent.owed is True
     assert consent.active_job_ids == ()
     assert consent.tooling_affected_count > 0
 
     # Second press (a decision, not a double-click) submits for real.
-    screen._library_ingest_start_confirm_armed_at -= 1.0
+    screen._ingest_state.start_confirm_armed_at -= 1.0
     screen._submit_library_ingest_form()
     await pilot.pause()
     await pilot.pause()
@@ -173,7 +174,7 @@ async def test_real_screen_to_app_folder_member_change_rearms_without_queueing(
     first.write_text("first")
     matching.write_text("matching")
     active = app.library_ingest_jobs.submit(source_path=str(matching))
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = str(folder)
     form.preflight = _preflight_result(
         type_groups={"generic": [str(first), str(matching)]},
@@ -181,16 +182,16 @@ async def test_real_screen_to_app_folder_member_change_rearms_without_queueing(
     )
 
     screen._submit_library_ingest_form()
-    armed = screen._library_ingest_start_consent
+    armed = screen._ingest_state.start_consent
     assert armed is not None
     (folder / "added.txt").write_text("added")
-    screen._library_ingest_start_confirm_armed_at -= 1.0
+    screen._ingest_state.start_confirm_armed_at -= 1.0
     screen._submit_library_ingest_form()
     await pilot.pause()
 
     jobs = app.library_ingest_jobs.jobs()
     assert [job.job_id for job in jobs] == [active.job_id]
-    rearmed = screen._library_ingest_start_consent
+    rearmed = screen._ingest_state.start_consent
     assert rearmed is not None
     assert rearmed.candidate_changed is True
     assert rearmed.admission_scope.candidate_count == 3
@@ -235,6 +236,8 @@ def test_options_persist_to_config(monkeypatch):
     screen = library_screen_module.LibraryScreen.__new__(
         library_screen_module.LibraryScreen
     )
+    screen._ingest_state = library_screen_module.LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     # task-15470: the actual write moved into a `@work(thread=True)`
     # instance method (`_save_library_ingest_options`), which needs a
     # running app to dispatch through `run_worker` -- this screen was never
@@ -245,7 +248,7 @@ def test_options_persist_to_config(monkeypatch):
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
     )
-    screen._library_ingest_form = SimpleNamespace(
+    screen._ingest_state.form = SimpleNamespace(
         type_options={"pdf": {"pdf_engine": "pymupdf"}},
         analyze=False,
         chunk=True,
@@ -261,8 +264,8 @@ def test_options_persist_to_config(monkeypatch):
     # Seeded by ``__init__`` (bypassed by ``__new__``); ``_do_submit_ingest``
     # bumps it to invalidate in-flight pre-flights (stale-helper repair,
     # task-3300).
-    screen._library_ingest_preflight_generation = 0
-    screen._library_ingest_start_consent = None
+    screen._ingest_state.preflight_generation = 0
+    screen._ingest_state.start_consent = None
     screen.refresh = lambda **_kwargs: None
     # Submit schedules the scroll-receipt-into-view callback (task-3304);
     # the real method posts a message this unmounted shortcut cannot.
@@ -324,6 +327,8 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
     screen = library_screen_module.LibraryScreen.__new__(
         library_screen_module.LibraryScreen
     )
+    screen._ingest_state = library_screen_module.LibraryIngestState()
+    wire_bypass_ingest_controller(screen)
     # task-15470: see `test_options_persist_to_config` above for why this
     # patches the `@work(thread=True)` instance method rather than the
     # module-level config function it wraps.
@@ -331,7 +336,7 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
     screen.app_instance = SimpleNamespace(
         submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
     )
-    screen._library_ingest_form = SimpleNamespace(
+    screen._ingest_state.form = SimpleNamespace(
         type_options={
             "generic": {"chunk_size": "1000", "chunk_overlap": "150"}
         },
@@ -346,8 +351,8 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
         preflight_checking=False,
     )
     screen._cancel_library_ingest_preflight = lambda: None
-    screen._library_ingest_preflight_generation = 0
-    screen._library_ingest_start_consent = None
+    screen._ingest_state.preflight_generation = 0
+    screen._ingest_state.start_consent = None
     screen.refresh = lambda **_kwargs: None
     # Submit schedules the scroll-receipt-into-view callback (task-3304);
     # the real method posts a message this unmounted shortcut cannot.
@@ -370,7 +375,7 @@ async def test_job_persists_to_db(library_screen, tmp_path):
     pdf = tmp_path / "doc.pdf"
     pdf.write_text("%PDF-1.4 dummy")
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = str(pdf)
     form.type_options = {"pdf": {"pdf_engine": "pymupdf"}}
     form.preflight = _preflight_result(type_groups={"pdf": [str(pdf)]})
@@ -394,7 +399,7 @@ async def test_unsupported_file_not_retryable(library_screen, tmp_path):
     unsupported = tmp_path / "file.xyz"
     unsupported.write_text("dummy")
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = str(unsupported)
     form.preflight = _preflight_result(type_groups={"generic": [str(unsupported)]})
 
@@ -563,7 +568,7 @@ async def test_empty_folder_creates_no_job_at_all(library_screen, tmp_path):
     folder = tmp_path / "emptydir"
     folder.mkdir()
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = str(folder)
     screen._trigger_preflight(str(folder))
     await screen.app.workers.wait_for_complete()
@@ -897,7 +902,7 @@ async def test_server_mode_start_creates_no_job_for_a_selection_the_server_refus
     app.media_db = SimpleNamespace()
     app._top_up_ingest_parse_pool = lambda: None
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = str(folder)
     screen._trigger_preflight(str(folder))
     await screen.app.workers.wait_for_complete()
@@ -938,7 +943,7 @@ async def test_the_same_folder_still_imports_on_this_machine(
     app.media_db = SimpleNamespace()
     app._top_up_ingest_parse_pool = lambda: None
 
-    form = screen._library_ingest_form
+    form = screen._ingest_state.form
     form.path = str(folder)
     screen._trigger_preflight(str(folder))
     await screen.app.workers.wait_for_complete()
@@ -953,12 +958,12 @@ async def test_the_same_folder_still_imports_on_this_machine(
     # unavailable, so the image import is at risk) -- not the refusal route.
     screen._submit_library_ingest_form()
     await pilot.pause()
-    consent = screen._library_ingest_start_consent
+    consent = screen._ingest_state.start_consent
     assert consent is not None
     assert consent.owed is True
     assert consent.active_job_ids == ()
     assert consent.tooling_affected_count > 0
-    screen._library_ingest_start_confirm_armed_at -= 1.0
+    screen._ingest_state.start_confirm_armed_at -= 1.0
     screen._submit_library_ingest_form()
     await pilot.pause()
     await pilot.pause()

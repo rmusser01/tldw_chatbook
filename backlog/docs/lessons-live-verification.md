@@ -1,5 +1,23 @@
 # Lessons: verifying against the real thing
 
+## A mount-started worker may run before is_mounted becomes true
+
+**TASK-31645 post-merge UAT, 2026-09-05.** Normal real-terminal Library entry
+stayed on Loading local recovery through reopening and restart, despite the
+earlier mounted-test passes. Temporary tracing observed the Lab load worker
+enter and exit with `is_mounted=False`, its message widget present and no
+coordinator. Textual sets the mounted flag after Mount dispatch; an inherited
+handler can yield while a worker started by the subclass already runs. The
+worker's teardown guard silently rejected this valid initialization attempt.
+A yielding inherited Mount-handler regression failed with readiness timeout;
+deferring lazy dispatch with `call_after_refresh` made it pass while retaining
+teardown protection. Real A/B, local save and force-kill recovery then worked.
+
+**What to do.** Schedule mount-sensitive background initialization after the
+mount boundary, and keep its teardown guard. Test a yielding Mount handler,
+not just an immediately completing fixture. Verify real route entry; passing
+tests that await an already-mounted screen cannot alone qualify that ordering.
+
 ## Send synthetic Paste through the app, not directly to TextArea
 
 **TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an
@@ -23,6 +41,45 @@ preconditions were made explicit.
 
 Traps found by running the app and talking to a real server, which the test suite
 structurally could not surface. Every entry states the incident that produced it.
+
+## Modal return can race an admitted operation (TASK-31552, 2026-09-05)
+
+The llama.cpp snapshot live UAT saved successfully but rejected confirmed Restore
+three times with `launch_unavailable`. Returning from the confirmation scheduled
+a screen-reentry readiness refresh; its temporary `ready=False` collided with the
+already-admitted Restore's staging. The same real runtime/image round-trip passed
+when only that callback was suppressed. Retaining the last completed observation
+while a new probe is pending fixes that distinction; actual failed probes must
+still invalidate readiness. Test these interleavings with barriers, including
+failure assertions **after** operation settlement, not merely after releasing it.
+
+The subsequent UAT retention loop also sent Enter twice within Textual Button's
+0.2-second `-active` feedback interval. The second key was ignored, and a harness
+waiting only for completion misreported a ten-minute operation timeout. Wait for
+the control to accept keyboard input and separately bound operation admission;
+do not infer that a server request exists just because the harness sent a key.
+
+---
+
+## Opaque-origin module-worker policy must be proven in the target browser
+
+**TASK-31226, 2026-09-03.** The Canvas renderer's first implementation used the
+obvious `new Worker(new URL("worker.js", import.meta.url), {type: "module"})`
+inside an iframe sandboxed without `allow-same-origin`. Unit reasoning said the
+worker was a packaged same-site asset, but real Chromium rejected the constructor
+because the iframe's effective origin was opaque. Wrapping that URL in a blob
+module failed for the same reason. A fixed `data:` module bootstrap could import
+the packaged CORS-enabled worker, but the next real run showed that QuickJS's
+embedded WASM also required the narrower CSP token `wasm-unsafe-eval`. Neither
+failure was visible to source checks or Python unit tests.
+
+**What to do.** Qualify worker construction and WASM compilation from the exact
+production iframe sandbox and response CSP in every mandatory browser. Record
+all startup requests before acknowledging generated execution. When a trusted
+bootstrap is unavoidable, keep its bytes and imported URL entirely renderer-owned,
+scope CSP to the minimum scheme, and prove generated input cannot influence it.
+Do not infer opaque-origin behavior from same-origin pages or substitute
+`unsafe-eval` for `wasm-unsafe-eval`.
 
 ---
 
@@ -1742,22 +1799,31 @@ every corrected config value. Moving the server to an unused port (`:8010`, a
 `server_id` with no keyring entry) made the identical client and identical config
 authenticate on the first request.
 
-**What to do.** `TLDW_CONFIG_PATH` isolates the config *file*; it does not isolate
-the keyring, and neither does `users_name`. For a live server run: pick a
-`server_id` (host:port) no other profile on the machine has used, or clear the
-entry first — `KeyringServerCredentialStore().clear_server("<base_url>")`. Clear
-the entries you created when you are done; they hold a live credential. And treat
-"the wire carries the right key but the server says 401" as evidence that the app
-is not reading the credential you edited, not as a server problem.
-
-**The sibling trap that seeded it.** A scratch `[tldw_api]` written with only
-`api_key = <real>` comes back from the first boot with the app's own
-`auth_token = "default-secret-key-for-single-user"` added beside it — and
-`build_runtime_api_client` resolves `auth_token or api_key or bearer_token`, so the
-placeholder wins. `config.py` screens *provider* keys for placeholder values
-(`resolve_provider_api_key`); the `[tldw_api]` token gets no such check. Write
-`auth_token`, not `api_key`, in a scratch profile, and re-read the file after the
-first boot to see what the app made of it.
+**Fixed (task-31416, task-31417).** Both root causes are closed now, not worked
+around. `RuntimeServerContextProvider` takes a `credential_profile_id` and every
+credential read/write goes through `ServerCredentialScope` keyed on
+`(server_profile_id, normalized_origin, purpose)` instead of the bare `server_id`.
+`app.py` wires `default_server_credential_profile_id()`: the default
+(un-retargeted) config path keeps `server_profile_id == server_id` — byte-for-byte
+the old unscoped behavior, so an existing single-profile install needs no
+re-entry — but a `TLDW_CONFIG_PATH`-retargeted profile gets `server_profile_id =
+str(get_cli_config_path())`, its own namespace distinct from every other
+profile's, even at the same base URL. A scratch profile's first-boot import can
+no longer seed an entry that outranks another profile's corrected config.
+Separately, `_legacy_config_token` now screens `auth_token` through
+`config.py`'s `resolve_tldw_api_auth_token` (reusing `resolve_provider_api_key` +
+`TLDW_API_PLACEHOLDER_AUTH_TOKEN`) before letting it beat `api_key`/
+`bearer_token`, so the boot-rewrite placeholder falls through to a real
+`api_key` instead of winning. Both the credential-store import and the
+placeholder-screened fallback now log which source was chosen
+(`Imported [tldw_api] config credential...`; `auth_token is the boot-rewrite
+placeholder; using api_key instead...`), so "the wire carries the right key but
+the server says 401" is diagnosable from the log, not just from reading the
+resolver. **If you still hit this on a live run**, you are on code that predates
+the fix; the port-picking workaround (`:8010`, a fresh `server_id`) and writing
+`auth_token` instead of `api_key` still apply there, but treat them as pre-fix
+workarounds, not the current guidance — verify `credential_profile_id` is wired
+in `app.py`'s `_wire_server_context_provider` first.
 
 ---
 
@@ -1935,6 +2001,49 @@ edit used to test code provenance MUST be verified to have landed
 (`assert old in s` before replace) — an unverified no-op replace produced a
 false "app runs foreign code" scare mid-hunt.
 
+---
+
+## `Tab` walks the ENTIRE nav bar before reaching screen content, and "clicks don't reach Buttons/Selects" can itself be a symptom of a rendering bug, not a platform limit (TASK-31551 task 13, 2026-09-04)
+
+**Incident.** Driving the Meetings screen for live verification, `tmux send-keys
+... Tab` was sent repeatedly to reach the Start button, per the standard
+"Tab through the rail, verify focus by capture, press Enter" recipe. 17
+consecutive Tab presses never left the nav bar: diffing full-pane ANSI captures
+before/after each press showed only the underlined nav-bar destination moving
+(Home → ... → wrapping back around), never any change inside the screen's own
+content. `MainNavigationBar` is composed BEFORE `Container(id="screen-content")`
+in `BaseAppScreen.compose()` (see that file), so Tab's DOM-order focus chain
+visits every one of the ~14 nav-bar destinations before it ever reaches a
+screen's own Select/Button/Input — on a screen with this many nav items, that is
+a lot of wasted Tab presses and diff-reading before concluding anything about
+the screen itself. `F6` ("next pane") does NOT help either: on a screen that
+never registers a workbench pane focus target (Meetings did not), it only shows
+"No workbench pane focus target is available." and changes nothing.
+
+Separately, this same session initially trusted a controller note claiming "SGR
+mouse clicks do NOT reach Textual Buttons or Selects" on this screen. That note
+had been written against the screen while it was suffering the CSS-collapse bug
+in the entry above ("the shared UI harness never loads the app stylesheet")
+— every visible control was squeezed into zero rows, so of course a click at
+any coordinate hit nothing. Once the CSS bug was fixed and the rail actually
+painted, an SGR click at the real character coordinates of both a `Select` (`\
+x1b[<0;COL;ROWM\x1b[<0;COL;ROWm` via `tmux load-buffer`/`paste-buffer`) and a
+`Button` worked immediately and reliably for the rest of the session (Start,
+Stop, Recover, Open in Library, a queued Library-import row) — no Tab
+navigation was needed at all once the geometry was real.
+
+**What to do.** To reach a specific screen's own control from a cold launch,
+prefer a direct SGR mouse click at freshly-recomputed coordinates (recompute
+the row/column from the CURRENT capture, per the existing "re-locate every
+control in the same capture you click from" entry) over counting Tab presses
+through the nav bar — it is faster and does not depend on knowing the nav bar's
+current item count. If a click appears not to land, before concluding the
+platform/widget cannot be clicked, first suspect that the target genuinely has
+no paintable area (check with a plain `tmux capture-pane -p` for an empty
+bordered box, per the CSS-collapse entry above) rather than trusting a prior
+session's negative claim about clickability — a screen that cannot render its
+own controls will fail every click for a reason that has nothing to do with
+mouse-event routing.
 ## A live report names a SYMPTOM — re-derive the mechanism from code before you fix it (schedules-handoff PR-6 rounds 1-2, 2026-09-02)
 
 **What happened.** A live run is expensive, so its findings arrive with authority: you
@@ -2125,3 +2234,16 @@ check the initialisation artifact on disk (here: does the shadow repo have a
 `HEAD`?) before filing a defect against the surface that is merely reporting it.
 An empty state that cannot distinguish "nothing to show" from "the thing that
 would show it is broken" is itself worth recording as a product concern.
+
+## Capture native-run revision and exit identity together (PR #2418, 2026-09-05)
+
+**Incident.** Migu move/resize/restart receipts captured geometry and PIDs but omitted
+the Git revision and dirty state. The separate exit file reported a null app exception
+without a PID, timestamp, or return code. Qodo review exposed that these artifacts
+could not establish the claimed exact tested revision or the preceding process's
+graceful exit; the published claims were narrowed rather than backfilled.
+
+**What to do.** At launch, capture the resolved source revision and dirty state with
+a run ID/PID. Bind the final exception and process-exit result to that same identity.
+Keep source-checkout paths distinct from runtime/evidence directories. When historical
+receipts omit these fields, preserve the originals and state the evidence limits.

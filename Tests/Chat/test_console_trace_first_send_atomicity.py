@@ -565,10 +565,14 @@ async def test_postcommit_trace_provenance_failure_pauses_and_retry_reuses_froze
     frozen_fingerprint = continuation.fingerprint
     frozen_messages = tuple(dict(row) for row in continuation.provider_messages)
     assert entries == []
-    assert db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 2
-    checkpoint = db.get_connection().execute(
-        "SELECT * FROM console_dispatch_checkpoints"
-    ).fetchone()
+    assert (
+        db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 2
+    )
+    checkpoint = (
+        db.get_connection()
+        .execute("SELECT * FROM console_dispatch_checkpoints")
+        .fetchone()
+    )
     assert checkpoint is not None
     assert "secret durable body" not in repr(dict(checkpoint))
 
@@ -633,9 +637,12 @@ async def test_postcommit_trace_provenance_cancel_retires_all_durable_owners(
     assert store.preparation_for_session("session-1") is None
     assert paused.preparation_id not in controller._durable_postcommit_continuations
     assert store.durable_acceptance_retired(paused.preparation_id, fingerprint)
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+        .fetchone()[0]
+        == 0
+    )
     assert db.get_message_by_id(first.user_message_id) is None
     assert db.get_message_by_id(first.assistant_message_id) is None
     restarted = ConsoleChatStore(persistence=ChatPersistenceService(db))

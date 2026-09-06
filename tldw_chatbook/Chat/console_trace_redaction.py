@@ -59,7 +59,9 @@ _BUILTIN_PII_RULES = (
     (
         "builtin-email",
         "email",
-        re.compile(r"(?i)(?<![\w.+-])[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"),
+        re.compile(
+            r"(?i)(?<![\w.+-])[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
+        ),
     ),
     (
         "builtin-ssn",
@@ -415,9 +417,7 @@ def redact_pii_value(
                 return result
             finally:
                 active.remove(identity)
-        if isinstance(item, Sequence) and not isinstance(
-            item, (str, bytes, bytearray)
-        ):
+        if isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray)):
             identity = id(item)
             if identity in active:
                 raise ValueError("recursive")
@@ -498,12 +498,9 @@ def apply_frozen_pii_masks(
                     raise ValueError("masked key collision")
                 result[masked_key] = visit(child, path=f"{path}/@{ordinal}")
             return result
-        if isinstance(item, Sequence) and not isinstance(
-            item, (str, bytes, bytearray)
-        ):
+        if isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray)):
             return [
-                visit(child, path=f"{path}/{index}")
-                for index, child in enumerate(item)
+                visit(child, path=f"{path}/{index}") for index, child in enumerate(item)
             ]
         return item
 
@@ -554,9 +551,8 @@ class CredentialSanitizer:
         filtered_credentials = tuple(
             value for value in known_credentials if isinstance(value, str) and value
         )
-        if (
-            len(filtered_credentials) > DEFAULT_CREDENTIAL_MAX_KNOWN_VALUES
-            or any(len(value) > max_text_codepoints for value in filtered_credentials)
+        if len(filtered_credentials) > DEFAULT_CREDENTIAL_MAX_KNOWN_VALUES or any(
+            len(value) > max_text_codepoints for value in filtered_credentials
         ):
             raise ValueError("known_credentials")
         self._known_credentials = filtered_credentials
