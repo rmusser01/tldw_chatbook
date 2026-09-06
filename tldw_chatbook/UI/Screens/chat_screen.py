@@ -5082,7 +5082,11 @@ class ChatScreen(BaseAppScreen):
         )
 
     async def _open_console_character_library(
-        self, result: ConsoleSwitcherCharacterResult
+        self,
+        result: ConsoleSwitcherCharacterResult,
+        *,
+        is_current: Callable[[], bool] | None = None,
+        on_commit_started: Callable[[], bool] | None = None,
     ) -> bool:
         """Route an exact inspection and await the app's navigation completion."""
 
@@ -5105,11 +5109,14 @@ class ChatScreen(BaseAppScreen):
         if unresolved is None:
             return False
         controller = self._character_context
+        if is_current is not None and not is_current():
+            return False
         snapshot = await controller._capture_scope()
         if (
             snapshot.database is None
             or snapshot.fingerprint.data_authority_id != unresolved.data_authority_id
             or not await controller._scope_is_current(snapshot)
+            or (is_current is not None and not is_current())
         ):
             return False
         completion = asyncio.get_running_loop().create_future()
@@ -5125,6 +5132,9 @@ class ChatScreen(BaseAppScreen):
                 unresolved, RoleplayReturnTarget.console_context_character()
             ),
             on_completion=completed,
+            require_character_inspection_admission=True,
+            is_current=is_current,
+            on_commit_started=on_commit_started,
         )
         return await completion
 

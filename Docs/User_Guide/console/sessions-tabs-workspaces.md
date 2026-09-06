@@ -140,6 +140,10 @@ only after the exact conversation is visible. **Esc** or the always-visible
 Character preflight it cancels the open, while a finishing commit must settle.
 
 Unavailable Character rows offer **Open Library** for the exact local chat.
+The switcher stays open while Library checks that exact local selection and pending
+saves. Cancel stops that attempt without losing the query or highlighted row;
+Finishing begins only after admission and cannot be cancelled. Transcript rendering
+then continues in Library for the admitted conversation.
 Library Back returns to Console Context Character where supported, with Console's
 visible fallback at narrow widths. It does not restore the previous switcher visit;
 a fresh Ctrl+K starts in Active.

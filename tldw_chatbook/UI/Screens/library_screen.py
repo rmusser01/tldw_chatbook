@@ -9578,6 +9578,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_screen_suspended = False
         self.call_after_refresh(self._navigation_controller.present_pending_repair)
         self.call_after_refresh(self.refresh_notes_sync_runtime)
+        if getattr(self, "_prepared_library_inspection_entry", None) is not None:
+            from ..Library_Modules.library_inspection_admission import (
+                consume_prepared_character_inspection,
+            )
+
+            self.run_worker(
+                consume_prepared_character_inspection(self),
+                exclusive=True,
+                group="library_nav_character",
+            )
         self._refresh_library_visit_surfaces()
 
     def _stop_library_media_selection_debounce(self) -> None:
@@ -9602,6 +9612,7 @@ class LibraryScreen(BaseAppScreen):
             and self._pending_library_source_open is None
             and self._pending_library_character_navigation is None
             and self._library_unavailable_browse_scope is None
+            and getattr(self, "_prepared_library_inspection_entry", None) is None
         ):
             self._start_library_conversation_page_request(
                 self._conversations_state.requested_page,
@@ -11186,6 +11197,26 @@ class LibraryScreen(BaseAppScreen):
         """Admit route context through the Library-owned navigation controller."""
         self._navigation_controller.apply_navigation_context(context)
 
+    async def prepare_character_inspection(
+        self, context: Mapping[str, Any], *, is_current: Callable[[], bool]
+    ) -> Any:
+        """Prepare exact local inspection without replacing the retained view."""
+        from ..Library_Modules.library_inspection_admission import (
+            prepare_character_inspection,
+        )
+
+        return await prepare_character_inspection(
+            self, context, is_current=is_current
+        )
+
+    def commit_character_inspection(self, prepared) -> bool:
+        """Consume the Library-owned preparation synchronously."""
+        from ..Library_Modules.library_inspection_admission import (
+            commit_character_inspection,
+        )
+
+        return commit_character_inspection(self, prepared)
+
     def _library_navigation_context_target_row(
         self,
         context: Mapping[str, Any],
@@ -11290,34 +11321,26 @@ class LibraryScreen(BaseAppScreen):
         character_admission: _LibraryCharacterNavigationAdmission | None = None,
     ) -> None:
         """Apply mounted navigation context while source admission is held."""
+        from ..Library_Modules.library_inspection_admission import (
+            _flush_library_navigation_sources,
+        )
+
         if self._prompts_state.mutation_in_flight:
             return
         if generation != self._library_navigation_context_generation:
             return
-        note_flush = await self._flush_library_note_save()
-        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+        def source_is_current() -> bool:
+            return (
+                generation == self._library_navigation_context_generation
+                and self._unavailable_navigation._library_character_admission_is_current(
+                    self, character_admission
+                )
+            )
+
+        if not await _flush_library_navigation_sources(
+            self, is_current=source_is_current
+        ):
             self._unavailable_navigation._discard_library_character_admission(self, character_admission)
-            return
-        if generation != self._library_navigation_context_generation:
-            return
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        prompt_flush_allowed = await self._flush_library_prompt_save()
-        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
-            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
-            return
-        if generation != self._library_navigation_context_generation:
-            return
-        if not prompt_flush_allowed:
-            return
-        skill_flush_allowed = await self._flush_library_skill_save()
-        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
-            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
-            return
-        if generation != self._library_navigation_context_generation:
-            return
-        if not skill_flush_allowed:
-            self._notify_skill_dirty_veto()
             return
         if target_row_id != LIBRARY_ROW_BROWSE_PROMPTS:
             self._clear_library_prompt_selection(announce=True)

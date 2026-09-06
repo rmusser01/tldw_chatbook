@@ -84,7 +84,7 @@ CharacterActivator = Callable[
 CharacterCommitWaiter = Callable[
     [CharacterConversationActivationRequest], Awaitable[None]
 ]
-CharacterRecovery = Callable[[ConsoleSwitcherCharacterResult], Awaitable[bool]]
+CharacterRecovery = Callable[..., Awaitable[bool]]
 AuthoritySnapshot = Callable[[], tuple[str, str, int]]
 ActiveProjectionLoader = Callable[
     [],
@@ -2233,6 +2233,8 @@ class ConsoleSessionSwitcherModal(
     @on(Button.Pressed, "#console-switcher-recovery")
     async def _recover_character_activation(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._activation_in_flight:
+            return
         recovery = event.button
         failure = self._activation_failure_kind
         retry_entry = self._committed_character_result
@@ -2242,19 +2244,15 @@ class ConsoleSessionSwitcherModal(
             and retry_entry is not None
         ):
             recovery.disabled = True
+            self._activation_cancellation = asyncio.Event()
+            self._activation_phase = ConsoleActivationPhase.OPENING_CANCELLABLE
+            self._set_activation_controls_disabled(True)
             self._set_status("Opening Library…")
-            try:
-                accepted = await self._character_open_library(retry_entry)
-            except Exception:  # noqa: BLE001 - destination rejection stays visible
-                accepted = False
-            if accepted:
-                self.dismiss_safe_once(None)
-                return
-            recovery.disabled = False
-            recovery.display = True
-            self._set_status("Character unavailable")
-            self._sync_candidate_labels()
-            self._update_selected_detail()
+            self._activation_task = asyncio.create_task(
+                self._run_character_library_recovery(
+                    retry_entry, self._activation_cancellation, self._request_generation
+                )
+            )
             return
         recovery.display = False
         self._activation_failure_kind = None
@@ -2269,6 +2267,51 @@ class ConsoleSessionSwitcherModal(
             self._begin_character_activation(retry_entry)
             return
         self._load_current_page()
+
+    async def _run_character_library_recovery(
+        self,
+        entry: ConsoleSwitcherCharacterResult,
+        cancellation: asyncio.Event,
+        generation: int,
+    ) -> None:
+        """Keep the modal pump live while the app prepares exact inspection."""
+
+        def visit_is_current() -> bool:
+            return bool(
+                not self._closed
+                and self.is_mounted
+                and self._request_generation == generation
+                and self._committed_character_result is entry
+                and self._activation_cancellation is cancellation
+            )
+
+        def is_current() -> bool:
+            return visit_is_current() and not cancellation.is_set()
+
+        def on_commit_started() -> bool:
+            if not is_current():
+                return False
+            self._activation_phase = ConsoleActivationPhase.COMMITTING
+            self._set_activation_controls_disabled(True)
+            self._set_status("Finishing…")
+            self._sync_candidate_labels()
+            self._update_hints(entry)
+            self._update_selected_detail()
+            return True
+
+        try:
+            accepted = await self._character_open_library(
+                entry, is_current=is_current, on_commit_started=on_commit_started
+            )
+        except Exception:  # noqa: BLE001 - rejected inspection preserves this visit
+            accepted = False
+        if not visit_is_current():
+            return
+        if accepted:
+            self.dismiss_safe_once(None)
+            return
+        self.query_one("#console-switcher-recovery", Button).disabled = False
+        self._show_activation_failure(ConsoleActivationResultKind.CHARACTER_UNAVAILABLE)
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source

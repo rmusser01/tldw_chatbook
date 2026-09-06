@@ -13806,7 +13806,30 @@ class TldwCli(
                 navigation_context = self._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT.get(
                     requested_screen, {}
                 )
-            if navigation_context and hasattr(new_screen, "apply_navigation_context"):
+            if message.require_character_inspection_admission:
+                prepared = None
+                try:
+                    current = message.is_current or (lambda: True)
+                    prepare = getattr(new_screen, "prepare_character_inspection", None)
+                    commit = getattr(new_screen, "commit_character_inspection", None)
+                    if not current() or not callable(prepare) or not callable(commit):
+                        return False
+                    prepared = await prepare(navigation_context, is_current=current)
+                    if prepared is None or not prepared.is_current():
+                        return False
+                    # Final validation, source acknowledgement, and exact Library
+                    # commit form one synchronous boundary before overlay teardown.
+                    if (
+                        message.on_commit_started is not None
+                        and not message.on_commit_started()
+                    ):
+                        return False
+                    if not commit(prepared):
+                        return False
+                finally:
+                    if prepared is not None:
+                        prepared.discard()
+            elif navigation_context and hasattr(new_screen, "apply_navigation_context"):
                 try:
                     result = new_screen.apply_navigation_context(navigation_context)
                     if inspect.isawaitable(result):
