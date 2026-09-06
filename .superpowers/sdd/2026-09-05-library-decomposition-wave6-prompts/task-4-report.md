@@ -10,7 +10,7 @@ Wave-6 start commit: `e5e03846a`
 | `33cffc4a4` | `docs(library): wave-6 stale-prose sweep -- comment-only, line-neutral` |
 | `3cf89dbe9` | `docs(backlog): file the two cross-wave follow-ups the prompts wave surfaced` |
 | `a595347f3` | `docs(library): wave-6 close -- recipe institutional memory, sweep + probe evidence` (also carries the TASK-31816 AC correction) |
-| _(filled by the follow-up below)_ | `docs(sdd): wave-6 task-4 report + brief (durable evidence)` |
+| `12749306d` | `docs(sdd): wave-6 task-4 report + brief (durable evidence)` |
 
 All hashes read out of `git rev-parse HEAD` / `git log --oneline` at the
 moment each commit was made. The evidence commit's own hash could not be
