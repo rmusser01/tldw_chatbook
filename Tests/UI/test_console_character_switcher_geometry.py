@@ -178,3 +178,56 @@ async def test_context_handoff_is_contained_and_transfers_exact_query():
         button.press()
         await pilot.pause()
         assert [handoff.query for handoff in handoffs] == ["needle"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(52, 20), (120, 50)])
+async def test_unavailable_unicode_rows_keep_metadata_on_their_second_painted_line(
+    size,
+):
+    from Tests.UI.test_console_character_switcher import (
+        _CharacterSwitcherApp,
+        _unavailable_row,
+    )
+    from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+        UnavailableCharacterReason,
+    )
+
+    rows = tuple(
+        _unavailable_row(
+            str(index),
+            "研究🙂 Long unavailable conversation " * 4,
+            UnavailableCharacterReason.MISSING_CARD,
+            "2026-09-03T12:00:00Z",
+        )
+        for index in range(4)
+    )
+
+    async def loader(**_kwargs):
+        return CharacterConversationPage(rows, 4, None, 4)
+
+    app = _CharacterSwitcherApp(
+        character_loader=loader, initial_mode=SwitcherMode.CHARACTER_CHATS
+    )
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        strips = screen._compositor.render_strips()
+        buttons = list(screen.query(".console-switcher-result"))
+        assert len(buttons) == 4
+        for button in buttons:
+            assert button.region.height == 2
+            second = (
+                strips[button.region.y + 1]
+                .crop(button.region.x, button.region.right)
+                .text
+            )
+            assert "Historical Ada" in second
+            assert "Local" in second
+            assert all(
+                line.cell_length
+                <= button.content_size.width - 2 * button.styles.line_pad
+                for line in button.label.split("\n")
+            )
+        frame = "\n".join(strip.text for strip in strips)
+        assert "Cancel" in frame

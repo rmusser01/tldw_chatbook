@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-09-06 15:02'
+updated_date: '2026-09-06 15:23'
 labels:
   - console
   - switcher
@@ -58,4 +58,6 @@ Task5 delivery after PR2452 merge5894f4755 (2026-09-06): preserve the existing s
 
 <!-- SECTION:NOTES:BEGIN -->
 Task5 Keyword-only delivery integrated on frozen dev 5894f4755 in codex/task-31245-character-switcher. Scoped replay of 968680200,45c1f378e,04e04288d and applicable a1fd9c34a/b09c7af2fc/5359324c6 hunks adds Character chats, independent query ownership, typed activation, Context handoff and production-CSS compact layout. Existing ADR120/085/031/083 govern; no new ADR, Meaning, dependency or cap change. New Character-specific shared validation preserves raw 200-character/control boundary without narrowing incumbent Active/History or Context.search. Library completion waits for app navigation and retains the existing Context Character return anchor, but exact Library inspection admission remains unresolved pending scope choice; late global overlay-teardown failure remains inherited. One owning aggregate:381 passed7 failed (six exact baseline dismissal failures plus stale owned 512 expectation); the owned expectation and bounded painted/containment regressions passed subsequent focused checks, no aggregate repeat. Current startup635/660 imports,972/972 UI-ready,499/500 preimport modules,364400/378740 preimport LOC; final CSS796086/804000. No new Ruff diagnostic deltas; inherited size gates remain failing (ChatScreen whole-file +104 lines). Two synthetic production-CSS capture batches only; recovery-row wrapping and absent native/equal-terminal/scale evidence remain open. Report and complete log/capture inventory: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-5-delivery-report.md. Keep In Progress and acceptance unchecked for independent review; no blanket Done claim.
+
+Review fix round1 (I1-I3 only, reviewed BASE91eb8c3cd): pending Character search now owns the visible divider and clears stale selected detail/action hints; a redundant initial settled-query Input event no longer starts another search. Frozen activation identity is retained in flight, while failed recovery ownership is retired on row/query/mode transition and selected detail/Help follow the highlight. Character labels use mounted Button content width minus Textual line padding, preserving long unavailable/Unicode metadata on the second physical row. Focused RED9failed; final scoped GREEN9passed; one covering run59passed2failed (initial-query error cases), followed by exact correction3passed. No covering/aggregate/startup repeat. Three changed Python files pass Ruff/format; reviewed/full BASE whitespace pass; CSS unchanged. One review-directed synthetic12-state compact/wide SVG+text batch retained with existing bootstrap/native/font limitations. I4 exact Library admission remains open and unwaived; task remains In Progress for scoped re-review. Full appended evidence in task-5-delivery-report.md.
 <!-- SECTION:NOTES:END -->
