@@ -1,11 +1,11 @@
 ---
 id: TASK-31733
 title: Include the Subagents inspector section in staged-context ordering coverage
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 19:28'
-updated_date: '2026-09-06 03:16'
+updated_date: '2026-09-06 03:37'
 labels: []
 dependencies: []
 ---
@@ -21,7 +21,8 @@ Preserve the inspector ordering contract after upstream moved Subagents into the
 - [x] #1 The inspector body explicitly orders Environment, Tasks, Subagents, then staged context
 - [x] #2 Staged context remains above run and source-readiness content with mounted geometry assertions unchanged
 - [x] #3 The full Console session settings file and static checks pass
-- [ ] #4 The workbench contract also retains the exact Subagents-before-staged-context ordering; complete workbench and right-rail files pass with independent review.
+- [x] #4 The workbench contract also retains the exact Subagents-before-staged-context ordering; complete workbench and right-rail files pass with independent review.
+- [x] #5 A deterministic late geometry invalidation is drained before both initial and swapped-state assertions, retaining exact geometry, widget identity, owner-pass counts and bounded waits.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -34,6 +35,7 @@ Reason: Test-only reconciliation with the established upstream right-rail topolo
 2. Add the exact Subagents child expectation and preserve relative and painted geometry assertions.
 3. Run the targeted topology test and full settings file with static checks.
 4. Follow-up: the complete workbench file reproduces the same missed ordering expectation (1 failed/71 passed). Add its exact Subagents slot before staged context, preserving left-rail exclusion, pinned-authority ownership and staged-before-readiness assertions. Verify both complete workbench and right-rail files and obtain independent review. Existing session-settings evidence remains historical, not a new run.
+5. Timing follow-up: add deterministic initial/swapped late-geometry variants using the real geometry-reconcile entry point at a controlled Pilot pause boundary. Observe their failure before changing wait ordering. Move the optional paint pause before the final predicate wait, so assertions immediately consume qualified state without another yield. Keep the shared bounded helper, all limits and every existing behavioral assertion unchanged; rerun both complete files and review the regression controls.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -69,3 +71,26 @@ task remains In Progress with follow-up qualification open; diagnose the late
 layout invalidation and reproduce it deterministically before changing the
 readiness helper or runtime. No geometry, reconciliation-count or timing bound
 assertion was relaxed.
+
+### Right-rail timing closeout
+
+The late-invalidation regression is now deterministic: initial and swapped phases
+in both directions request real geometry reconciliation at the paint-pause return
+boundary. With the old wait ordering, all four injected cases failed and both
+ordinary cases passed (`/private/tmp/tldw-rail-late-geometry-red.xml`). The one-shot
+injector restores the original pause and verifies exactly one injection occurred.
+
+Moved each paint pause before its final bounded predicate wait, leaving no yield
+between qualified state and assertions. All physical row geometry, stable widget
+identity, local-before-outer ordering and exact logical owner-pass counts remain
+unchanged. No production code, scheduler flags, shared helper or timing bounds
+were changed. This test-only repair requires no new ADR.
+
+Fresh complete right-rail + workbench verification: **112 passed in 241.61 seconds**
+with three existing dependency warnings
+(`/private/tmp/tldw-rail-late-geometry-final.xml`). Full-file Ruff lint,
+changed-region formatting and diff checks pass. Independent review found no
+actionable issues. Added the observed asynchronous-readiness trap to
+`backlog/docs/lessons-testing-evidence.md`. This supersedes the open timing result
+above; the original session-settings evidence remains historical. Broader review
+failures and full-suite qualification remain outside this completed task.

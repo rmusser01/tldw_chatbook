@@ -517,6 +517,7 @@ async def test_sources_use_exact_twenty_line_content_ceiling():
         ("readiness-to-pending", 250, 10, "not_configured", 15, 21),
     ),
 )
+@pytest.mark.parametrize("late_geometry", [None, "initial", "swapped"])
 @pytest.mark.asyncio
 async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
     monkeypatch,
@@ -526,6 +527,7 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
     acp_status,
     before_demand,
     after_demand,
+    late_geometry,
 ):
     async with make_console_pilot(size=(terminal_width, 52)) as pilot:
         await pilot.click("#console-inspector-rail-open")
@@ -567,6 +569,31 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
                 and bounded.hint.display is (before_demand > bounded.max_content_lines)
             )
 
+        injected_geometry = []
+
+        async def arm_late_geometry(phase, predicate):
+            # Start from a genuinely settled rail, then deliver one real
+            # geometry invalidation as the next paint pause returns. This
+            # reproduces a late Resize without writing scheduler flags.
+            await _wait_for_right_rail_condition(
+                pilot, predicate, description=f"{phase} injection precondition"
+            )
+            original_pause = pilot.pause
+
+            async def pause_then_invalidate(*args, **kwargs):
+                await original_pause(*args, **kwargs)
+                monkeypatch.setattr(pilot, "pause", original_pause)
+                rail._request_outer_geometry_reconcile()
+                injected_geometry.append(phase)
+
+            monkeypatch.setattr(pilot, "pause", pause_then_invalidate)
+
+        if late_geometry == "initial":
+            await arm_late_geometry("initial", initial_geometry_is_stable)
+
+        # Paint first, then consume the qualified geometry without yielding
+        # again: a new Resize may legitimately queue work during any pause.
+        await pilot.pause()
         await _wait_for_right_rail_condition(
             pilot,
             initial_geometry_is_stable,
@@ -578,7 +605,6 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
                 f"hint={bounded.hint.display}"
             ),
         )
-        await pilot.pause()
         assert initial_geometry_is_stable(), (
             bounded.desired_content_lines,
             viewport.content_region.width,
@@ -631,6 +657,10 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
                 and bounded.hint is hint
             )
 
+        if late_geometry == "swapped":
+            await arm_late_geometry("swapped", swapped_geometry_is_stable)
+
+        await pilot.pause()
         await _wait_for_right_rail_condition(
             pilot,
             swapped_geometry_is_stable,
@@ -644,8 +674,8 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
                 f"{rail._outer_owner_reconcile_count - baseline}"
             ),
         )
-        await pilot.pause()
         assert swapped_geometry_is_stable()
+        assert injected_geometry == ([] if late_geometry is None else [late_geometry])
 
         assert order[:2] == ["local", "outer"]
         assert rail.query_one("#console-live-work-section") is live_root
