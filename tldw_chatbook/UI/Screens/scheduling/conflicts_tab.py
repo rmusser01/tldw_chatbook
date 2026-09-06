@@ -48,7 +48,14 @@ class ConflictsTab(Vertical):
         height: 1fr;
     }
     #scheduling-conflicts-table {
-        height: 1fr;
+        /* 31713 AC#4: a `height: 1fr` table left a handful of conflict
+           rows sitting atop a wall of blank DataTable background in a
+           full-height pushed pane. Bounded to a reasonable row count
+           (independently scrollable beyond it, nothing lost) and the
+           freed space goes to the detail pane below, which is the
+           actually content-rich half of this screen. */
+        height: auto;
+        max-height: 15;
     }
     #scheduling-conflicts-empty {
         color: $text-muted;
@@ -59,8 +66,10 @@ class ConflictsTab(Vertical):
         height: auto;
     }
     #scheduling-conflict-detail {
-        height: auto;
-        max-height: 9;
+        /* 31713 AC#4: grows into the space the table above no longer
+           claims, instead of clipping a version comparison to 9 rows
+           regardless of how much screen is free. */
+        height: 1fr;
         padding: 0 1;
         color: $text;
         border-top: solid $surface-lighten-2;

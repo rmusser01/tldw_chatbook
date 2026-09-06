@@ -257,7 +257,14 @@ class ResultsTab(Vertical):
         height: 1fr;
     }
     #scheduling-results-table {
-        height: 1fr;
+        /* 31713 AC#4: same fix as `ConflictsTab`'s table -- a `height:
+           1fr` table left a handful of result rows sitting atop a wall
+           of blank DataTable background in a full-height pushed pane.
+           Bounded to a reasonable row count (independently scrollable
+           beyond it, nothing lost) and the freed space goes to the
+           detail pane below. */
+        height: auto;
+        max-height: 15;
     }
     #scheduling-results-empty {
         color: $text-muted;
@@ -265,8 +272,10 @@ class ResultsTab(Vertical):
         display: none;
     }
     #scheduling-results-detail {
-        height: auto;
-        max-height: 14;
+        /* 31713 AC#4: grows into the space the table above no longer
+           claims, instead of clipping an answer/evidence/review-metadata
+           readout to 14 rows regardless of how much screen is free. */
+        height: 1fr;
         padding: 0 1;
         color: $text;
         border-top: solid $surface-lighten-2;

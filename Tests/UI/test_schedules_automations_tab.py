@@ -295,8 +295,9 @@ async def test_server_rows_are_rebound_to_the_connection_owner_scope():
     as `owner_id` ("1"), which is NOT the client's `server:<id>` scope.
     Every row from the server fetch must be rebound to the CONNECTION's
     scope at ingestion, or the whole downstream stack reads it as local:
-    the Name cell says "[This device]", run-now routes to the local
-    executor, and "move to this device" refuses as not-found.
+    the Name cell carries no owner suffix at all (31713 AC#1: a local row
+    is bare, same as a local reminder's queue title), run-now routes to
+    the local executor, and "move to this device" refuses as not-found.
     """
     server_client = AutomationsServerClient()
     app = AutomationsTestApp(AutomationsMockService(server_client))
@@ -310,7 +311,9 @@ async def test_server_rows_are_rebound_to_the_connection_owner_scope():
         first_cell = _queue_titles(workbench)[
             _queue_row_index(workbench, "def-1")
         ]
-        assert first_cell == "[server-1] Morning brief"
+        # 31713 AC#1: owner suffix, not prefix -- matches the reminder
+        # queue-title convention (`" (server: <id>)"`) exactly.
+        assert first_cell == "Morning brief (server: server-1)"
         assert "This device" not in first_cell
 
 
@@ -320,15 +323,20 @@ async def test_owner_prefix_and_bracket_name_render_literally():
 
     `DataTable` formats string cells with `rich.text.Text.from_markup`,
     whose tag regex matches `\\[[a-z#/@]...]`. A real server id is a base
-    URL, so the Name cell reads `[http://127.0.0.1:8020] ...` -- `http`
-    starts with a lowercase letter, the whole prefix parsed as a markup
-    tag, and server rows rendered with NO ownership prefix at all while
-    the pane's count line still said "1 automation on the server".
+    URL: the OLD bracket-prefix format (`"[http://127.0.0.1:8020] ..."`)
+    let `http`'s lowercase leading letter parse the whole prefix as a
+    markup tag, silently eating the ownership prefix while the pane's
+    count line still said "1 automation on the server". 31713 AC#1 moved
+    the owner label to a parenthetical SUFFIX (`" (server: <id>)"`,
+    matching the reminder queue-title convention) -- parens are not a
+    Rich markup delimiter, so this specific failure mode cannot recur for
+    the owner label. The bracket literals inside the NAME
+    (`"Nightly [bold] digest"`) and the Model cell
+    (`"[deprecated] Qwen2.5"`) are still real, independent escaping risks
+    this test keeps covering.
 
     Asserted on the PAINTED cells: `get_cell_at` returns the stored
-    string and passes either way. Note the old `server:42` fixture value
-    would have been eaten identically -- no fixture shape could have
-    caught this, only a render-level assertion.
+    string and passes either way.
     """
     server_client = AutomationsServerClient()
     server_client.list_automation_definitions = AsyncMock(
@@ -363,7 +371,7 @@ async def test_owner_prefix_and_bracket_name_render_literally():
         workbench = await _settled_workbench(pilot)
 
         assert _queue_titles(workbench) == [
-            "[http://127.0.0.1:8020] Nightly [bold] digest"
+            "Nightly [bold] digest (server: http://127.0.0.1:8020)"
         ]
         # redesign PR-4 task 5: the retired table's Model COLUMN carried
         # server-derived text too, and its escaping had to be pinned for
@@ -421,6 +429,70 @@ async def test_server_run_now_refusal_surfaces_without_raising():
         server_client.run_automation_definition_now.assert_awaited_once()
         # The refusal path must not raise out of the action handler.
         assert workbench._selected_row_id == "definition:def-1"
+
+
+@pytest.mark.asyncio
+async def test_server_run_now_reports_honest_copy_when_capabilities_are_absent():
+    """31713 AC#3: gated the SAME way `SyncEngine._pull_results` gates its
+    own network call -- `_automation_capabilities_available() == False`
+    (a server old enough to predate Scheduled Tasks automation entirely)
+    must report the honest "server too old" copy and never even attempt
+    the network call, not the raw client-exception text."""
+    server_client = AutomationsServerClient()
+    server_client.run_automation_definition_now = AsyncMock(
+        side_effect=AssertionError("must not be called when capabilities are absent")
+    )
+    service = AutomationsMockService(server_client)
+    service.sync_engine = SimpleNamespace(
+        _automation_capabilities_available=AsyncMock(return_value=False)
+    )
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        workbench = await _settled_workbench(pilot)
+        await _select_queue_definition(pilot, workbench, "def-1")
+
+        workbench.action_run_task_now()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        server_client.run_automation_definition_now.assert_not_awaited()
+        notifications = list(pilot.app._notifications)
+        assert any(
+            "does not support running automations on demand" in n.message
+            for n in notifications
+        ), notifications
+        assert not any("Failed to run" in n.message for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_server_run_now_reports_honest_copy_on_a_missing_run_route():
+    """31713 AC#3: mirrors `_pull_results`'s OTHER case -- capabilities
+    exist (this server supports automations generally) but THIS specific
+    route 404s (a mid-rollout server new enough for capabilities, too old
+    for `/definitions/{id}/run`). Same honest copy as the absent-
+    capabilities case, not the raw `ServerClientNotFoundError` text."""
+    server_client = AutomationsServerClient()
+    server_client.run_automation_definition_now = AsyncMock(
+        side_effect=ServerClientNotFoundError("no such route")
+    )
+    app = AutomationsTestApp(AutomationsMockService(server_client))
+    async with app.run_test() as pilot:
+        workbench = await _settled_workbench(pilot)
+        await _select_queue_definition(pilot, workbench, "def-1")
+
+        workbench.action_run_task_now()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        server_client.run_automation_definition_now.assert_awaited_once()
+        notifications = list(pilot.app._notifications)
+        assert any(
+            "does not support running automations on demand" in n.message
+            for n in notifications
+        ), notifications
+        assert not any("no such route" in n.message for n in notifications)
 
 
 @pytest.mark.asyncio
@@ -653,7 +725,8 @@ async def test_local_automation_appears_with_recomputed_health():
     async with app.run_test() as pilot:
         workbench = await _settled_workbench(pilot)
 
-        assert _queue_titles(workbench) == ["[This device] Local digest"]
+        # 31713 AC#1: a local row's title carries no owner label at all.
+        assert _queue_titles(workbench) == ["Local digest"]
         # No `library_rag_search_service` on the bare test app ->
         # capability_unavailable, NOT the DB row's stored
         # "execution_unavailable" placeholder. redesign PR-4 task 5: the
@@ -679,11 +752,13 @@ async def test_merged_list_shows_both_local_and_server_rows_with_owner_prefix():
         # redesign PR-4 task 5: the queue SORTS its rows (`sort_rows`)
         # rather than preserving the loader's merge order, so the merge is
         # asserted as a set of painted titles rather than by position.
+        # 31713 AC#1: local row bare, server rows carry the shared
+        # " (server: <id>)" suffix (same wording as a reminder row's).
         assert sorted(_queue_titles(workbench)) == sorted(
             [
-                "[This device] Local one",
-                "[server-1] Morning brief",
-                "[server-1] Paused one",
+                "Local one",
+                "Morning brief (server: server-1)",
+                "Paused one (server: server-1)",
             ]
         )
 
@@ -706,7 +781,7 @@ async def test_offline_server_owned_row_is_listed_as_pending_sync():
     async with app.run_test() as pilot:
         workbench = await _settled_workbench(pilot)
 
-        assert "[server-1 · pending sync] Queued digest" in _queue_titles(
+        assert "Queued digest (server: server-1 · pending sync)" in _queue_titles(
             workbench
         )
         # Its `id` is the LOCAL one; editing must not treat it as a server
@@ -801,7 +876,8 @@ async def test_refresh_after_local_save_shows_the_new_row():
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert _queue_titles(workbench) == ["[This device] Just saved"]
+        # 31713 AC#1: a local row's title carries no owner label at all.
+        assert _queue_titles(workbench) == ["Just saved"]
 
 
 # --- task-5 fix round: edit affordance ---------------------------------------

@@ -448,6 +448,17 @@ def _queue_owner_suffix(task: ReminderTask | ScheduledTask, *, compact: bool) ->
 #: config to read (survey §4), so this is a fixed label, never derived.
 _REMINDER_NOTIFICATIONS_LABEL = "Inbox + toast"
 
+#: 31712 AC#1: this row's affordance stays permanently off (no `row_key`,
+#: `affordance` left at its default False) while an automation's own
+#: Notifications row (`definition_detail.py`) is an editable On/Off toggle
+#: -- explains the difference in the row itself rather than leaving two
+#: same-named rows silently inconsistent.
+_REMINDER_NOTIFICATIONS_TOOLTIP = (
+    "Fixed: a reminder always notifies via inbox + toast. Unlike an "
+    "automation's Notifications row, there is no per-reminder setting to "
+    "turn on/off."
+)
+
 
 def _reminder_runs_on_label(task: ReminderTask) -> str:
     """'Runs on' row value (spec §5 Details group): the shared prose owner
@@ -535,6 +546,15 @@ class TaskDetail(Vertical):
         width: 10;
     }
 
+    /* 31712 AC#5: "Recent runs:"/"Open incidents:" are stacked labels (own
+       line, value on the next), not paired with a value in a Horizontal --
+       the shared class's fixed 10-column width above wraps them instead of
+       aligning anything. */
+    .scheduling-detail-label-stacked {
+        width: auto;
+        min-width: 0;
+    }
+
     .scheduling-detail-value {
         color: $text;
     }
@@ -558,6 +578,11 @@ class TaskDetail(Vertical):
         self._at_row: DetailValueRow | None = None
         self._timezone_row: DetailValueRow | None = None
         self._last_fire_row: DetailValueRow | None = None
+        #: 31712 AC#5: "Run history" -> "See list below" -- rather than
+        #: leave the pseudo-link value inert, activating it scrolls the
+        #: already-visible "Recent runs:" section into view (a real
+        #: affordance, not a wording change dressing up dead text).
+        self._history_link_row: DetailValueRow | None = None
         self._body_card: Static | None = None
         # PR-3 task 3: cached from `set_lifecycle_lock` (never re-derived
         # here, same "one source of truth" rule survey §8 names) so the
@@ -765,6 +790,7 @@ class TaskDetail(Vertical):
                     "Notifications",
                     _REMINDER_NOTIFICATIONS_LABEL,
                     value_id="scheduling-detail-notifications",
+                    tooltip=_REMINDER_NOTIFICATIONS_TOOLTIP,
                 )
                 yield DetailGroup(
                     self._repeat_row,
@@ -780,22 +806,40 @@ class TaskDetail(Vertical):
                 # Final review N2: labelled "Recent runs" pointing at a
                 # section whose own label is also "Recent runs" -- one of
                 # the two had to be renamed.
-                history_link_row = DetailValueRow(
+                # 31712 AC#5: real affordance, not dead pseudo-link text --
+                # activating this row scrolls the pane to the "Recent
+                # runs:" section it names (`on_detail_value_row_activated`
+                # below), and `affordance=True`/`can_focus=True` show the
+                # same `▾` glyph the editable Frequency rows use so the
+                # click/Enter target is honest about being actionable.
+                self._history_link_row = DetailValueRow(
                     "Run history",
                     "See list below",
                     value_id="scheduling-detail-history-link",
+                    row_key="history_link",
+                    affordance=True,
+                    can_focus=True,
                 )
                 yield DetailGroup(
                     self._last_fire_row,
-                    history_link_row,
+                    self._history_link_row,
                     title="History",
                     collapsed=True,
                     id="scheduling-detail-group-history",
                 )
             # TASK-26026: durable per-dispatch run history -- the whole
             # point is that run N-1 is recoverable, not just the latest.
+            # 31712 AC#5: unlike the Title/Status/Next-Run trio above,
+            # this label and its value are stacked (plain siblings of this
+            # Vertical, not paired in a Horizontal) -- the shared
+            # `.scheduling-detail-label` class's fixed `width: 10` buys no
+            # column alignment here and only wrapped "Recent runs:" (12
+            # chars) across two lines. `-stacked` overrides just these two
+            # rows' width to `auto`, leaving the trio's aligned columns
+            # untouched.
             yield Static(
-                "Recent runs:", classes="scheduling-detail-label"
+                "Recent runs:",
+                classes="scheduling-detail-label scheduling-detail-label-stacked",
             )
             yield Static(
                 "No runs recorded yet",
@@ -804,7 +848,8 @@ class TaskDetail(Vertical):
             )
             # TASK-26027: open failure incidents + an acknowledge action.
             yield Static(
-                "Open incidents:", classes="scheduling-detail-label"
+                "Open incidents:",
+                classes="scheduling-detail-label scheduling-detail-label-stacked",
             )
             yield Static(
                 "No open incidents",
@@ -1107,6 +1152,17 @@ class TaskDetail(Vertical):
         -- show why editing is refused instead of doing nothing (ruling 2).
         """
         row = event.row
+        if row is self._history_link_row:
+            # 31712 AC#5: not an editor -- scroll the pane to the section
+            # this row names. Checked before `_editable_rows()` below,
+            # which this row deliberately is NOT part of (it has no
+            # editor to open or close).
+            event.stop()
+            run_history = self.query_one(
+                "#scheduling-task-detail-run-history", Static
+            )
+            run_history.scroll_visible()
+            return
         if row not in self._editable_rows():
             return
         event.stop()
@@ -1649,6 +1705,15 @@ class TaskInspector(Vertical):
             id="scheduling-task-inspector-header",
             classes="scheduling-column-title",
         )
+        # 31712 AC#6: same "empty state replaces the real content" idiom
+        # `TaskDetail` already uses (`scheduling-task-detail-empty-state`)
+        # -- "no task selected" is now a distinct message, not the same
+        # "-" a selected task with nothing to report also shows in every
+        # metadata row below.
+        yield Static(
+            "Select a task to see sync, conflict, and run details.",
+            id="scheduling-task-inspector-empty-state",
+        )
         with Vertical(id="scheduling-inspector-metadata"):
             yield Horizontal(
                 Static("Sync:", classes="scheduling-inspector-label"),
@@ -1681,13 +1746,22 @@ class TaskInspector(Vertical):
 
     def set_task(self, task: ReminderTask | ScheduledTask | None) -> None:
         """Update the inspector view for the given task (or clear it)."""
+        empty_state = self.query_one("#scheduling-task-inspector-empty-state", Static)
+        metadata = self.query_one("#scheduling-inspector-metadata", Vertical)
+        conflict_card = self.query_one("#scheduling-conflict-card", Vertical)
         if task is None:
+            empty_state.display = True
+            metadata.display = False
+            conflict_card.display = False
             self._update_static("scheduling-inspector-sync", "-")
             self._update_static("scheduling-inspector-last-run", "-")
             self._update_static("scheduling-inspector-owner", "-")
             self._update_conflict_card(None)
             return
 
+        empty_state.display = False
+        metadata.display = True
+        conflict_card.display = True
         self._update_static("scheduling-inspector-sync", _task_sync_label(task))
         self._update_static("scheduling-inspector-last-run", _format_last_run(task))
         self._update_static("scheduling-inspector-owner", _task_owner_label(task))

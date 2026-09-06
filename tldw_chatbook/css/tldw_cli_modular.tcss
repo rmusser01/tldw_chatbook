@@ -13038,9 +13038,32 @@ DetailValueRow .detail-value-row-error {
     margin: 0 0 0 1;
 }
 
+/* 31712 AC#4: Textual's own `Collapsible`/`Contents` body chrome --
+ * `Collapsible`'s widget-tier `padding-bottom: 1`, the app-wide
+ * `Collapsible { margin-bottom: 1 }` / `Collapsible { border: tall
+ * $surface }` / `Collapsible > Contents { padding: 1 }` rules
+ * (`tldw_cli_modular.tcss`, "Collapsible styling enhancements") -- costs 5
+ * blank rows per EXPANDED group before a single row of real content is
+ * drawn (measured: a 4-row Frequency group rendered at height 13, only 4
+ * of those rows readable). The stray `border: tall` is the sneaky one:
+ * this rule already set `border-top` only, but CSS `border-top` never
+ * clears the other 3 edges, so the app-wide rule's bottom/left/right
+ * `tall` border kept bleeding through underneath a rule that reads as a
+ * full override -- an explicit `border: none;` before `border-top:` is
+ * what actually clears it. Same idiom `LibraryIngestCanvas Collapsible`/
+ * `Collapsible Contents` already uses for the same complaint (task-2043)
+ * -- scoped to `DetailGroup` only, not the app-wide type, so every other
+ * Collapsible in the app keeps its own spacing/border. */
 DetailGroup {
     background: $ds-surface-panel;
+    border: none;
     border-top: hkey $ds-grid-line;
+    padding-bottom: 0;
+    margin-bottom: 0;
+}
+
+DetailGroup Contents {
+    padding: 0 0 0 3;
 }
 
 /* redesign PR-4, Task 1: `WorkbenchHostScreen` (the narrow-layout/overlay

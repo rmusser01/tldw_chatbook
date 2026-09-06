@@ -1635,6 +1635,26 @@
 
 
 
+/* ===== WIDGET: TaskDetail (UI/Screens/scheduling/task_detail.py) ===== */
+
+
+
+
+
+
+
+    /* 31712 AC#5: "Recent runs:"/"Open incidents:" are stacked labels (own
+       line, value on the next), not paired with a value in a Horizontal --
+       the shared class's fixed 10-column width above wraps them instead of
+       aligning anything. */
+
+
+
+
+
+
+
+
 /* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */
 
     TrajectoryScreen {

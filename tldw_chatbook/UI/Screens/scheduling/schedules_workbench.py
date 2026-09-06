@@ -49,6 +49,7 @@ from ....Scheduling.events import (
 from ....Scheduling.models import ReminderTask, ScheduledTask
 from ....Scheduling.services.server_client import (
     ServerClientError,
+    ServerClientNotFoundError,
     ServerClientValidationError,
 )
 from ....Scheduling.services.sync_engine import (
@@ -141,6 +142,15 @@ SCHEDULER_LIVENESS_REFRESH_SECONDS = 5.0
 #: loop exists so the tail of a large definition list is never silently
 #: hidden, not to render unbounded rows.
 AUTOMATIONS_LOAD_MAX_ROWS = 500
+
+#: 31713 AC#3: honest Run-now copy for a server too old to support the
+#: control-plane run endpoint at all -- same wording family as
+#: `SyncEngine._pull_results`'s "This server does not provide the results
+#: inbox (server too old)." for the analogous missing-route case.
+_RUN_NOW_UNSUPPORTED_COPY = (
+    "This server does not support running automations on demand "
+    "(server too old)."
+)
 
 #: Debounce before acting on a notification-triggered results pull
 #: (schedules-handoff PR-6 task 4) -- a burst of `automation_run_*` events
@@ -1449,6 +1459,15 @@ class SchedulesWorkbench(BaseAppScreen):
         compact_owner_suffix = self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH
 
         table = self.query_one("#scheduling-task-table", DataTable)
+        # 31713 AC#2: `DataTable.clear()` unconditionally resets
+        # `scroll_x` to 0 (`textual.widgets._data_table.DataTable.clear`)
+        # -- every render pass (including the 60s ticker's, which changes
+        # no COLUMN layout, only cell text) was yanking a user reading a
+        # truncated subtitle back to column 0. Row count/columns are
+        # unchanged by this pass, so restoring the captured value verbatim
+        # is safe; `move_cursor` below still auto-adjusts it if the
+        # restored row's cursor cell would otherwise be off screen.
+        saved_scroll_x = table.scroll_x
         table.clear()
         for row in self._visible_rows:
             # Every cell is `Text`, never `str` (D8: `DataTable` runs a
@@ -1465,6 +1484,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 Text(_row_subtitle(row, render_now)),
                 key=row.row_id,
             )
+        table.scroll_x = saved_scroll_x
         self._update_pane_notice()
 
         if self._visible_rows:
@@ -3916,11 +3936,35 @@ class SchedulesWorkbench(BaseAppScreen):
         definition_id = str(definition.get("id"))
         name = str(definition.get("name") or definition_id)
 
+        # 31713 AC#3: mirror the results-pull honesty fix
+        # (`SyncEngine._pull_results`) instead of a parallel gate -- reuse
+        # the SAME `_automation_capabilities_available()` probe. A real
+        # `SchedulingService` always constructs `self.sync_engine`
+        # unconditionally, but the test suite's `MockSchedulingServiceMixin`
+        # (and every stub built on it) defaults `sync_engine = None` --
+        # `None` skips the gate rather than crashing, the same
+        # fail-open philosophy `_automation_capabilities_available` itself
+        # documents for "a transient probe failure must not silently stop"
+        # a caller that otherwise works fine.
+        sync_engine = getattr(service, "sync_engine", None)
+
         async def _run() -> None:
+            if sync_engine is not None and not (
+                await sync_engine._automation_capabilities_available()
+            ):
+                self.app_instance.notify(
+                    _RUN_NOW_UNSUPPORTED_COPY, severity="warning"
+                )
+                return
             try:
                 result = await server_client.run_automation_definition_now(
                     definition_id
                 )
+            except ServerClientNotFoundError:
+                self.app_instance.notify(
+                    _RUN_NOW_UNSUPPORTED_COPY, severity="warning"
+                )
+                return
             except ServerClientValidationError as exc:
                 # Lifecycle refusals (paused/archived) and policy denials
                 # arrive here with the server's own reason text.

@@ -333,7 +333,7 @@ class AutomationDefinitionForm(ModalScreen):
             yield Select(
                 [(kind.value.replace("_", " ").title(), kind.value) for kind in ScheduleKind],
                 allow_blank=False,
-                value=ScheduleKind.ONE_TIME.value,
+                value=self._default_schedule_kind(),
                 id="automation-schedule-kind",
             )
             yield Static("", id="automation-schedule-error", classes="error-text")
@@ -419,10 +419,27 @@ class AutomationDefinitionForm(ModalScreen):
                     yield Button("Save", variant="success", id="automation-save")
                     yield Button("Cancel", id="automation-cancel")
 
+    def _default_schedule_kind(self) -> str:
+        """Create mode's Schedule Kind default (31712 AC#2).
+
+        This form's whole purpose is authoring a RECURRING question, so a
+        brand-new definition now preselects `Recurring` -- a user creating
+        a one-off no longer has to switch it every time. Edit mode keeps
+        `One Time` as its own fallback default (unchanged): it is what
+        `_prefill_from_row` leaves standing for a schedule shape this form
+        cannot itself reverse-map (`test_edit_mode_unrecognized_schedule_
+        falls_back_to_create_defaults`), and that fallback must stay
+        `one_time`/blank run-at regardless of what a brand-new form
+        defaults to.
+        """
+        if self._definition_row is not None:
+            return ScheduleKind.ONE_TIME.value
+        return ScheduleKind.RECURRING.value
+
     def on_mount(self) -> None:
         self.query_one("#automation-preset-time", Input).value = DEFAULT_TIME_OF_DAY
         self.query_one("#automation-cron", Input).value = "0 9 * * *"
-        self._update_schedule_field_visibility(ScheduleKind.ONE_TIME.value)
+        self._update_schedule_field_visibility(self._default_schedule_kind())
         self._update_preset_field_visibility("daily")
         self._update_scope_field_visibility("all_searchable_library")
         if self._definition_row is not None:
