@@ -275,3 +275,111 @@ def test_six_node_branch_rejoin_preserves_source_order(direction):
             {"from": "E", "to": "F", "label": ""},
         ],
     }
+
+
+@pytest.mark.parametrize("suffix", ["", " ", "\t", " \t", " ;"])
+def test_review_compound_edges_refuse_all_trailing_whitespace(suffix):
+    result = run_mermaid_case(
+        {"operation": "parse", "source": "flowchart TD\nA-->B-->C" + suffix}
+    )
+    assert result["ok"] is False, result
+    assert result["error"]["code"] == "unsupported-syntax"
+
+
+def test_review_percent_pairs_are_exact_sequence_label_content():
+    result = run_mermaid_case(
+        {
+            "operation": "parse",
+            "source": "%% ordinary comment\nsequenceDiagram\nparticipant A as 50%% complete\nparticipant B\nA->>B: 50%% complete\nNote over B: 50%% complete\n%% ordinary comment",
+        }
+    )
+    assert result == {
+        "ok": True,
+        "error": None,
+        "model": {
+            "kind": "sequence",
+            "participants": [
+                {"id": "A", "label": "50%% complete"},
+                {"id": "B", "label": "B"},
+            ],
+            "messages": [
+                {
+                    "from": "A",
+                    "to": "B",
+                    "label": "50%% complete",
+                    "dashed": False,
+                    "order": 0,
+                }
+            ],
+            "notes": [
+                {
+                    "side": "over",
+                    "participants": ["B"],
+                    "label": "50%% complete",
+                    "order": 1,
+                }
+            ],
+        },
+    }
+
+
+def test_review_percent_pairs_are_exact_flow_label_content():
+    result = run_mermaid_case(
+        {
+            "operation": "parse",
+            "source": '%% ordinary comment\nflowchart TD\nA[50%% complete]-->|50%% complete|B["50%% complete"] %% trailing comment',
+        }
+    )
+    assert result == {
+        "ok": True,
+        "error": None,
+        "model": {
+            "kind": "flow",
+            "direction": "TD",
+            "nodes": [
+                {"id": "A", "label": "50%% complete", "shape": "rect"},
+                {"id": "B", "label": "50%% complete", "shape": "rect"},
+            ],
+            "edges": [{"from": "A", "to": "B", "label": "50%% complete"}],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "label", ["*emphasis*!", "_emphasis_!", "(*emphasis*)", "‘_emphasis_’"]
+)
+@pytest.mark.parametrize("family", ["flow", "sequence"])
+def test_review_emphasis_with_punctuation_is_refused(label, family):
+    source = (
+        f'flowchart TD\nA["{label}"]'
+        if family == "flow"
+        else "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: " + label
+    )
+    result = run_mermaid_case({"operation": "parse", "source": source})
+    assert result["ok"] is False, result
+    assert result["error"]["code"] == "unsupported-label"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "sequenceDiagram\nparticipant A\n%%{init: {}}%%",
+        "%%{init: {}}%%\nsequenceDiagram\nparticipant A",
+        "flowchart TD\nA-->B %%{init: {}}%%",
+    ],
+)
+def test_review_comment_directives_still_refuse(source):
+    result = run_mermaid_case({"operation": "parse", "source": source})
+    assert result["ok"] is False
+    assert result["error"]["code"] == "unsupported-syntax"
+
+
+def test_review_long_sequence_comment_keeps_raw_input_accounting():
+    source = "sequenceDiagram\nparticipant A\n%%" + "x" * 6000
+    result = run_mermaid_case({"operation": "parse", "sources": [source] * 3})
+    assert result["error"] == {
+        "code": "input-limit",
+        "ordinal": 3,
+        "line": None,
+        "column": None,
+    }
