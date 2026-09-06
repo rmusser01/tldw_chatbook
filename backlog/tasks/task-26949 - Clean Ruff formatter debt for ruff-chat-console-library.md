@@ -5,7 +5,7 @@ status: Done
 assignee:
   - codex
 created_date: '2026-08-31 18:31'
-updated_date: '2026-09-05 17:45'
+updated_date: '2026-09-05 18:18'
 labels:
   - maintenance
   - formatting
@@ -107,3 +107,12 @@ Historical initial branch base: `2b4973971e5dcf101c5a6ddcc55aa082ff22f814`. New 
 - Authoritative current post-rebase final gates: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/check_persistent_diagnostic_inventory.py --diff` -> `no drift: the committed inventory matches the rebuild exactly.` and `diagnostic inventory verified: 580 owners, 1336 TASK-492 calls, 30 TASK-31551 calls, 7617 TASK-494 calls, 12 sink files` (exit 0); `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/CI/test_backlog_task_id_uniqueness.py` -> `Running 3 items in this shard` and `3 passed, 2 warnings in 2.27s` (exit 0); `git diff --check origin/dev...HEAD` -> no output (exit 0).
 - Review/CI provenance: the prior Qodo review reported Critical 0, Important 0, Minor 0, and CI was green for old head `f0f949338a2aa41320d3391c76efd3ec65743837`. Those external results do not attach to the rebased head; Qodo and CI will be rerun after the required force-push.
 - Qodo remediation: the two `7615 TASK-494 calls` results above are truthful historical snapshots from the initial base and first integration refresh. The authoritative post-rebase inventory is `7617 TASK-494 calls`; a fresh `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/check_persistent_diagnostic_inventory.py --diff` rerun confirmed that total with no drift, so no generated inventory change is required.
+
+### Second strict-base refresh
+
+PR #2442 advanced `origin/dev` and the branch merge-base from `56376e1fc188938bf350c62d3a9f95e820b93c40` to `3ff76c89e0ffc3fc947be9cdba31d1379f911e52`; the pre-refresh rebased head was `4a06e69e0d3d112072802cfb24ff990a9c135abc`. `git diff --name-status 56376e1fc188938bf350c62d3a9f95e820b93c40 3ff76c89e0ffc3fc947be9cdba31d1379f911e52 -- <nine assigned Python paths> <task record> <implementation plan>` produced no output, proving zero drift across the nine assigned paths and both TASK-26949 documents. `git range-diff` confirmed six patch-equivalent mappings: `8a4d5c542b1eca71aed23adde972b179e6b9e6f4` -> `5f90a2a4a9124454054153f13b142035db07a598`; `6044f645e65103d8dc9c07f2786606ee244ded4e` -> `03f9a1566e8424a9f66f1cff85566191c11ffc94`; `d72fe36dc67f5d538750cbf0722777d6384302fd` -> `b62c975b69869d3028493b96bcb4f2c50d6a8ee3`; `edeffdd357efe7a9d164a7fec17460b288738ae8` -> `bd664d624cc4c76b1a3314744914f371adc67e92`; `e59cdda98c7d398e5ab40fed5efb7cfeacb587b2` -> `c4614496b90075af988b432c7381d4ff22edc55c`; and `63dd0ad6730d752ffe3db7052152b8fe9da7706e` -> `4a06e69e0d3d112072802cfb24ff990a9c135abc`.
+
+- Fresh base-sensitive gates: the Python 3.12.11 structural guard reported `structural evidence matches for 9 paths`; Ruff 0.15.22 `check` reported `All checks passed!`; Ruff `format --check` reported `9 files already formatted`; and deterministic Ruff replay from every `3ff76c89e0ffc3fc947be9cdba31d1379f911e52` blob matched all nine branch files byte-for-byte (all exit 0).
+- Focused gate: the exact five assigned modules passed `103 passed, 2 warnings in 17.89s`, with JUnit evidence at `/tmp/task26949_post_rebase_2.xml` (`errors=0`, `failures=0`, `skipped=0`, `tests=103`; exit 0). No full suite was run.
+- Final governance gates: the persistent diagnostic inventory reported no drift and `7617 TASK-494 calls`; Backlog uniqueness passed `3 passed, 2 warnings in 2.83s`; and `git diff --check origin/dev...HEAD` produced no output (all exit 0). The earlier `7615` outputs remain truthful historical snapshots, while `7617` is the authoritative current total.
+- Review provenance: prior Qodo and CI results belong to their recorded pre-rebase heads and must be rerun after the force-push; this refresh does not relabel them as results for the second rebased head.

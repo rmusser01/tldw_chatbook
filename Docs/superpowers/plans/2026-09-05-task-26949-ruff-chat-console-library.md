@@ -114,6 +114,12 @@ The historical initial base `2b4973971e5dcf101c5a6ddcc55aa082ff22f814` advanced 
 
 Fresh post-rebase structural comparison, Ruff lint/format, deterministic new-base replay, persistent diagnostic inventory, Backlog uniqueness, and merge-candidate diff gates passed. The exact five assigned test modules passed `103 passed, 2 warnings in 16.13s`; no full suite was run. The prior Qodo Critical 0 / Important 0 / Minor 0 review and green CI applied to old head `f0f949338a2aa41320d3391c76efd3ec65743837`; both will be rerun after force-pushing the rebased branch.
 
+## Second Strict-base Integration Evidence
+
+PR #2442 advanced `origin/dev` and the merge-base again, from `56376e1fc188938bf350c62d3a9f95e820b93c40` to `3ff76c89e0ffc3fc947be9cdba31d1379f911e52`; the pre-refresh rebased head was `4a06e69e0d3d112072802cfb24ff990a9c135abc`. There was zero intervening drift across the nine assigned Python paths and both TASK-26949 documents. `git range-diff` proved the following patch-equivalent mapping: `8a4d5c542b1eca71aed23adde972b179e6b9e6f4` -> `5f90a2a4a9124454054153f13b142035db07a598`, `6044f645e65103d8dc9c07f2786606ee244ded4e` -> `03f9a1566e8424a9f66f1cff85566191c11ffc94`, `d72fe36dc67f5d538750cbf0722777d6384302fd` -> `b62c975b69869d3028493b96bcb4f2c50d6a8ee3`, `edeffdd357efe7a9d164a7fec17460b288738ae8` -> `bd664d624cc4c76b1a3314744914f371adc67e92`, `e59cdda98c7d398e5ab40fed5efb7cfeacb587b2` -> `c4614496b90075af988b432c7381d4ff22edc55c`, and `63dd0ad6730d752ffe3db7052152b8fe9da7706e` -> `4a06e69e0d3d112072802cfb24ff990a9c135abc`.
+
+Fresh gates passed: structural comparison `9/9`; Ruff `check` passed and `format --check` reported `9 files already formatted`; the exact five-module focused command passed `103 passed, 2 warnings in 17.89s` with JUnit `/tmp/task26949_post_rebase_2.xml`; deterministic new-base Ruff replay matched `9/9`; the persistent diagnostic inventory reported no drift at the authoritative `7617 TASK-494 calls`; Backlog uniqueness passed `3 passed, 2 warnings in 2.83s`; and `git diff --check origin/dev...HEAD` passed. No full suite was run. The historical `7615` diagnostic outputs remain recorded as truthful snapshots, and the Qodo remediation establishing `7617` as authoritative remains in force. Prior Qodo and CI results apply only to their recorded pre-rebase heads and must be rerun after force-push.
+
 ADR required: no
 ADR path: N/A
 Reason: This is mechanical formatter cleanup under TASK-26000's accepted contract and introduces no architectural, persistence, security, dependency, or long-lived UX decision.
