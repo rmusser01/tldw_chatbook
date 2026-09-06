@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import ExitStack, contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -143,3 +144,100 @@ async def test_resource_cleanup_attempts_every_owner_before_reporting_errors(
             expected_types.append(asyncio.CancelledError)
             assert caught.exceptions[-1] is auxiliary_cancel
         assert [type(error) for error in caught.exceptions] == expected_types
+
+
+@pytest.mark.parametrize("failure", [None, "runtime", "runtime_cancel", "database"])
+async def test_app_cleanup_owns_only_importing_module_builder_products(
+    monkeypatch, failure
+):
+    events = []
+    build_calls = []
+    runtime_error = (
+        asyncio.CancelledError("runtime cancelled")
+        if failure == "runtime_cancel"
+        else RuntimeError("runtime failed")
+    )
+    database_error = RuntimeError("database close failed")
+
+    def build_app(name, *, marker):
+        build_calls.append((name, marker))
+
+        def database(kind):
+            def close():
+                events.append(("close", name, kind))
+                if name == "second" and kind == "evals" and failure == "database":
+                    raise database_error
+
+            return SimpleNamespace(close=close)
+
+        async def shutdown():
+            events.append(("runtime", name))
+            if name == "second" and failure in {"runtime", "runtime_cancel"}:
+                raise runtime_error
+
+        return SimpleNamespace(
+            _shutdown_console_runtime=shutdown,
+            local_workspace_db=database("workspace"),
+            subscriptions_db=database("subscriptions"),
+            local_library_collections_db=database("collections"),
+            evaluation_orchestrator=SimpleNamespace(db=database("evals")),
+        )
+
+    module = SimpleNamespace(_build_test_app=build_app)
+    foreign_module = SimpleNamespace(_build_test_app=build_app)
+    existing = build_app("preexisting", marker=0)
+    auxiliary = ExitStack()
+    with monkeypatch.context() as patch:
+        fixture = resources.close_owned_console_test_apps.__wrapped__(
+            SimpleNamespace(module=module), patch, auxiliary
+        )
+        await anext(fixture)
+        module._build_test_app("first", marker=1)
+        module._build_test_app("second", marker=2)
+        foreign = foreign_module._build_test_app("foreign", marker=3)
+        assert foreign_module._build_test_app is build_app
+        assert events == []
+
+        caught = None
+        try:
+            await anext(fixture)
+        except StopAsyncIteration:
+            pass
+        except BaseException as exc:
+            caught = exc
+        finally:
+            await fixture.aclose()
+
+        assert events == [("runtime", "second"), ("runtime", "first")]
+        if failure in {"runtime", "runtime_cancel"}:
+            assert isinstance(caught, BaseExceptionGroup)
+            assert caught.exceptions == (runtime_error,)
+        else:
+            assert caught is None
+
+        # Shared controller/ChaChaNotes cleanup owns closing this stack later.
+        if failure == "database":
+            with pytest.raises(RuntimeError) as raised:
+                auxiliary.close()
+            assert raised.value is database_error
+        else:
+            auxiliary.close()
+
+    assert module._build_test_app is build_app
+    assert build_calls == [
+        ("preexisting", 0),
+        ("first", 1),
+        ("second", 2),
+        ("foreign", 3),
+    ]
+    assert events == [
+        ("runtime", "second"),
+        ("runtime", "first"),
+        *[
+            ("close", name, kind)
+            for name in ("second", "first")
+            for kind in ("evals", "collections", "subscriptions", "workspace")
+        ],
+    ]
+    # Retain both foreign owners throughout teardown so GC cannot hide a close.
+    assert existing is not foreign
