@@ -725,3 +725,22 @@ bounded repair. No schema, capture authority or diagnostic pin changed.
 
 Broader behavioral failures, architecture ceilings and both pending task-ID
 decisions remain open. This is not full-suite or merge-readiness evidence.
+
+## Guarded outbox corruption fixture
+
+TASK-31810 restores the outbox illegal-nonassistant-state test, whose raw SQL
+setup now correctly hits the semantic mutation guard. The existing private
+authorization is used only for deliberate fixture corruption of one message,
+not for a production write. The test first reads a valid source proof, checks
+that direct mutation fails both before injection and after its scope, then
+reopens the database to verify the illegal persisted state and original proof
+rejection. No production code or semantic guard trigger changes were needed.
+
+Fresh outbox + sync-retention baseline: **3 failed / 51 passed**
+(`/private/tmp/tldw-guarded-sync-baseline.xml`). The outbox failure is repaired;
+the two raw hard-delete retention probes remain unresolved. Complete outbox and
+v57 semantic-mutation-guard files pass **45 tests**, with two existing dependency
+warnings (`/private/tmp/tldw-outbox-guard-final.xml`). Full-file lint, changed-test
+formatting and diff checks pass; unrelated whole-file format drift is retained.
+Independent review found no actionable issues. The conversation-delete property
+and broader failure families are not qualified by this targeted run.
