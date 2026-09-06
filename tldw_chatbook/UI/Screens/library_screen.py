@@ -481,6 +481,7 @@ from ...Widgets.Library.library_media_canvas import (
     LibraryMediaRowGeometry,
     LibraryMediaRowGeometryChanged,
     LibraryMediaRowScroll,
+    can_rename_meeting_speakers,
 )
 from ...Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
@@ -15803,6 +15804,13 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_canvas_presentation(self) -> dict[str, Any]:
         """Return controller-owned inputs shared by every Media canvas path."""
         controller = self._library_media_browse_controller
+        backing_id = self._library_media_selected_backing_id()
+        db = getattr(self.app_instance, "media_db", None)
+        can_rename = (
+            backing_id is not None
+            and db is not None
+            and can_rename_meeting_speakers(db, backing_id)
+        )
         return {
             "pager": controller.pager,
             "type_options": self._library_media_type_options(),
@@ -15822,7 +15830,31 @@ class LibraryScreen(BaseAppScreen):
             "analysis_action_reason": self._library_media_analyze_reason(),
             "compact": False,
             "show_preview": False,
+            # Task 8 (meeting diarization spec): whether the selected item is
+            # a finished meeting recording whose speakers can still be
+            # renamed, plus what a canvas needs to actually do that (the
+            # real DB and the resolved backing id -- `media_db`/
+            # `speaker_rename_media_id` are harmless when `can_rename` is
+            # False; the canvas only uses them when it's True).
+            "can_rename_speakers": can_rename,
+            "media_db": db,
+            "speaker_rename_media_id": backing_id,
         }
+
+    def _library_media_selected_backing_id(self) -> int | None:
+        """Resolve the selected Media list identity to its positive int id.
+
+        ``self._selected_media_id`` is the canonical ``"local:media:<id>"``
+        list identity, not a bare id -- ``_library_media_backing_id``
+        (already used by every real mutation path in this screen) does the
+        actual resolution; this just narrows its ``int | str`` result to
+        "a usable id, or None".
+        """
+        media_id = self._selected_media_id
+        if not media_id:
+            return None
+        backing_id = self._library_media_backing_id(media_id)
+        return backing_id if type(backing_id) is int and backing_id > 0 else None
 
     def _library_media_type_options(self) -> tuple[str | None, ...]:
         """Return the unfiltered sentinel plus every complete stored facet."""
