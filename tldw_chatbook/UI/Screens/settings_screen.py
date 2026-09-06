@@ -10816,6 +10816,35 @@ class SettingsScreen(BaseAppScreen):
             )
         return "Provider readiness: needs provider and model"
 
+    def _provider_overview_readiness_status(self) -> str:
+        """One-line send-path readiness verdict for the Overview status row.
+
+        TASK-31805: the Overview 'Status:' must reflect the SAME credential
+        readiness the send path enforces (``get_provider_readiness`` /
+        ``resolve_provider_api_key``), never the mere presence of a
+        provider/model name. Without this, a fresh profile with no API key
+        read as usable ("Status: OpenAI / gpt-4o") while an actual send
+        failed with "OpenAI API Key is required but not found." Now a
+        provider with no valid credential resolving reports "Not ready:
+        Missing API key", matching what a send would do.
+
+        Returns:
+            "Ready" when a send would proceed credential-wise, "Not ready:
+            <reason>" when it is blocked, or "needs provider and model" when
+            no provider is selected yet.
+        """
+        resolved = self._resolve_provider_model_for_settings()
+        provider = str(resolved.provider or "").strip()
+        if not provider or provider == "not selected":
+            return "needs provider and model"
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_readiness_app_config(),
+        )
+        if readiness.ready:
+            return "Ready"
+        return f"Not ready: {readiness.reason}"
+
     def _provider_draft(self) -> SettingsDraft | None:
         return self._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -15321,7 +15350,7 @@ class SettingsScreen(BaseAppScreen):
             {
                 "configuration": (
                     f"{provider or 'Not selected'} / {model}; Status: "
-                    f"{self._provider_readiness_label().removeprefix('Provider readiness: ')}"
+                    f"{self._provider_overview_readiness_status()}"
                 ),
                 "last_connection_test": self._provider_test_result,
                 "storage_privacy": (

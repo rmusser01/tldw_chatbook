@@ -12710,6 +12710,60 @@ async def test_settings_overview_front_door_is_four_status_rows_with_open_afford
 
 
 @pytest.mark.asyncio
+async def test_settings_overview_status_reports_not_ready_without_credential(
+    monkeypatch,
+):
+    """TASK-31805: the Overview 'Status:' reflects send-path readiness.
+
+    The status must derive from the SAME check the send path uses
+    (``get_provider_readiness`` / ``resolve_provider_api_key``), not the mere
+    presence of a provider/model name. A profile with a selected provider but
+    no API key must read 'Status: Not ready: Missing API key' -- an identity
+    echo ("Status: OpenAI / gpt-4.1") implied usability while an actual send
+    failed with "OpenAI API Key is required but not found."
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = ""
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        config_text = str(
+            screen.query_one("#settings-overview-configuration", Static).renderable
+        )
+        assert "; Status: Not ready: Missing API key" in config_text
+        # The provider/model identity still shows; only the honesty of the
+        # trailing Status verdict changed.
+        assert "OpenAI / gpt-4.1" in config_text
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_status_reports_ready_with_credential(monkeypatch):
+    """Paired arm: a resolvable API key still reads 'Status: Ready'."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = "sk-test-overview-ready-0123456789"
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        config_text = str(
+            screen.query_one("#settings-overview-configuration", Static).renderable
+        )
+        assert "; Status: Ready" in config_text
+        assert "Not ready" not in config_text
+
+
+@pytest.mark.asyncio
 async def test_settings_overview_open_category_buttons_switch_category():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
