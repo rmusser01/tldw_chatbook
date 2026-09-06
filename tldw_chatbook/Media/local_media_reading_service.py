@@ -486,7 +486,14 @@ class LocalMediaReadingService:
                 LIBRARY_BROWSE_SEARCH_FIELDS,
             )
 
-            if tuple(filters.get("fields") or ()) == LIBRARY_BROWSE_SEARCH_FIELDS:
+            # ...and only while the text branch still carries its LIKE legs:
+            # a preformatted ``fts_match_query`` makes ``search_media_db``
+            # drop the title/content LIKE legs, and the probe's
+            # "under-report, never over-report" argument rests on them.
+            if (
+                tuple(filters.get("fields") or ()) == LIBRARY_BROWSE_SEARCH_FIELDS
+                and not filters.get("fts_match_query")
+            ):
                 payload["match_reasons"] = db.library_browse_keyword_only_matches(
                     [row["id"] for row in items], query
                 )

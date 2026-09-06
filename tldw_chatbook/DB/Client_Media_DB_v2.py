@@ -3185,7 +3185,10 @@ class MediaDatabase:
             return {}
         try:
             return self._library_browse_keyword_only_matches(ids, query)
-        except sqlite3.Error:
+        except (sqlite3.Error, DatabaseError):
+            # ``DatabaseError`` is this class's own connect-failure wrapper
+            # (a bare Exception subclass, not a sqlite3.Error) -- the
+            # docstring's "not a page failure" has to hold for it too.
             return {}
 
     def _library_browse_keyword_only_matches(

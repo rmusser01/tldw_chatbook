@@ -80,11 +80,14 @@ list-and-preview layout.
 **Row markers.** An item's second row says what it is and how old it is, and
 adds **· analysed** when that item already carries an analysis — so you can
 see what is worth generating without opening anything (`document · 5m ·
-analysed`). Its title row starts with a single one-cell **state slot**, which
-is blank until a review set is active (see "Review these" below). While one
-is: every item in the set carries **·** until you review it and **✓**
-afterwards, and items outside the set stay blank — the marks update the moment
-you mark an item reviewed in the Reader, without leaving it. Select mode
+analysed`). Its title row starts with a single one-cell **state slot**. With
+no review set active it carries only the current-row pointer **▸** in the wide
+layout (blank otherwise); once a set is active (see "Review these" below),
+every item in the set carries **·** until you review it and **✓** afterwards,
+and items outside the set keep the pointer or stay blank — the current row is
+still highlighted, so nothing is lost when its **▸** gives way to a mark. The
+marks update the moment you mark an item reviewed in the Reader, without
+leaving it. Select mode
 reuses that same cell for its **☑/☐**, so a row never carries two markers.
 
 While a filter is active, a row it found only through one of its **keywords**
