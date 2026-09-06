@@ -58,6 +58,8 @@ DIRECT_TRANSITION_ROUTES = frozenset(
         "publish_durable_recovery_owner",
         "publish_durable_turn_identity",
         "publish_durable_turn_owners",
+        "publish_first_persisted_conversation",
+        "rebind_persisted_conversation",
         "refresh_session_roleplay_projections",
         "rename_session",
         "release_dispatch_recovery_action",
