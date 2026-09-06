@@ -1998,6 +1998,9 @@ class PersonasScreen(BaseAppScreen):
                             classes="console-action-subdued",
                         )
                     )
+            for button in self.query("#personas-conversation-back-source"):
+                button.display = link.return_target is not None
+            self._sync_responsive_workbench()
             if link.conversation_id is not None and self.size.width <= 60:
                 self._compact_active_pane = "inspector"
                 self._sync_personas_rails()
@@ -2127,8 +2130,6 @@ class PersonasScreen(BaseAppScreen):
     def _sync_responsive_workbench(self) -> None:
         compact = self.size.width <= PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH
         narrow = self.size.width <= 60
-        if self._workbench_compact == compact and self._workbench_narrow == narrow:
-            return
         # At 52 columns each action gets one full-width terminal row.
         try:
             actions = self.query_one("#personas-conversation-actions")
@@ -2149,8 +2150,11 @@ class PersonasScreen(BaseAppScreen):
             for button in actions.query(Button):
                 button.styles.height = 1 if narrow else 3
                 button.styles.min_height = 1 if narrow else 3
+            self.query_one(PersonasConversationTranscriptWidget).set_compact(narrow)
         except QueryError:
             pass
+        if self._workbench_compact == compact and self._workbench_narrow == narrow:
+            return
         try:
             workbench = self.query_one("#personas-workbench")
         except QueryError:
@@ -2170,23 +2174,22 @@ class PersonasScreen(BaseAppScreen):
                 )
             except QueryError:
                 continue
-        if narrow:
-            for pane_id in (
-                "#personas-library-pane",
-                "#personas-work-area",
-                "#personas-inspector-pane",
-            ):
-                pane = self.query_one(pane_id)
-                pane.styles.width = "1fr"
-                pane.styles.min_width = 0
-            for handle_id in (
-                "#personas-library-rail-handle",
-                "#personas-inspector-rail-handle",
-            ):
-                handle = self.query_one(handle_id)
-                handle.styles.width = 3
-                handle.styles.min_width = 3
-                handle.styles.max_width = 3
+        for pane_id in (
+            "#personas-library-pane",
+            "#personas-work-area",
+            "#personas-inspector-pane",
+        ):
+            pane = self.query_one(pane_id)
+            pane.styles.width = "1fr" if narrow else None
+            pane.styles.min_width = 0 if narrow else None
+        for handle_id in (
+            "#personas-library-rail-handle",
+            "#personas-inspector-rail-handle",
+        ):
+            handle = self.query_one(handle_id)
+            handle.styles.width = 3 if narrow else None
+            handle.styles.min_width = 3 if narrow else None
+            handle.styles.max_width = 3 if narrow else None
         self._sync_personas_rails()
 
     def _sync_personas_rails(self) -> None:
@@ -2203,11 +2206,16 @@ class PersonasScreen(BaseAppScreen):
                     self._compact_active_pane == "work"
                 )
                 self.query_one("#personas-inspector-pane").display = inspector_active
-                self.query_one("#personas-library-rail-handle").display = not (library_active or preview_active)
-                self.query_one("#personas-inspector-rail-handle").display = not (inspector_active or preview_active)
+                self.query_one("#personas-library-rail-handle").display = not (
+                    library_active or preview_active
+                )
+                self.query_one("#personas-inspector-rail-handle").display = not (
+                    inspector_active or preview_active
+                )
                 return
             library_open = not self._library_rail_collapsed
             inspector_open = not self._inspector_rail_collapsed
+            self.query_one("#personas-work-area").display = True
             self.query_one("#personas-library-pane").display = library_open
             self.query_one("#personas-library-rail-handle").display = not library_open
             self.query_one("#personas-inspector-pane").display = inspector_open
@@ -15528,6 +15536,9 @@ class PersonasScreen(BaseAppScreen):
         self.query_one("#personas-workbench").set_class(
             actions.display, "personas-transcript-active"
         )
+        # Preview display changes after row navigation revealed the work pane;
+        # re-evaluate its rails using the newly committed center view.
+        self._sync_personas_rails()
 
     def _aggregate_roleplay_draft_snapshot(self) -> RoleplayDraftSnapshot:
         """Capture every Roleplay draft and save owner in one stable snapshot."""

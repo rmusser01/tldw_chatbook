@@ -197,7 +197,7 @@ class LibraryCharacterRepairController:
                 + self.status_copy
             )
 
-    def select(self, key: ResolvedLocalCharacterKey) -> bool:
+    def select(self, key: ResolvedLocalCharacterKey | None) -> bool:
         """Select only an enumerated candidate; display names never select."""
 
         candidate = next(
@@ -205,6 +205,8 @@ class LibraryCharacterRepairController:
         )
         self.selected_candidate = candidate
         self._confirmation_requested = False
+        if candidate is None:
+            self.status_copy = "Choose a replacement before repairing."
         return candidate is not None
 
     def request_confirmation(self) -> bool:
@@ -335,6 +337,9 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
         self.query_one("#library-character-repair-next").disabled = (
             busy or self.controller.next_offset is None
         )
+        self.query_one("#library-character-repair-apply").disabled = (
+            busy or self.controller.selected_candidate is None
+        )
         self.query_one("#library-character-repair-cancel", Button).disabled = (
             busy and lock_cancel
         )
@@ -392,8 +397,6 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
     @on(Select.Changed, "#library-character-repair-candidate")
     def _candidate_changed(self, event: Select.Changed) -> None:
         event.stop()
-        if event.value is Select.NULL:
-            return
         candidate = next(
             (
                 item
@@ -402,10 +405,18 @@ class LibraryCharacterRepairDialog(ModalScreen[None]):
             ),
             None,
         )
-        if candidate is not None and self.controller.select(candidate.key):
+        selected = self.controller.select(candidate.key if candidate else None)
+        button = self.query_one("#library-character-repair-apply", Button)
+        button.label = "Repair"
+        button.disabled = not selected or self._operation_token is not None
+        if selected:
             old, selected = self.controller.identity_comparison or ("", "")
             self.query_one("#library-character-repair-status", Static).update(
                 f"Replace {old} with {selected}. Press Repair to review."
+            )
+        else:
+            self.query_one("#library-character-repair-status", Static).update(
+                self.controller.status_copy
             )
 
     @on(Button.Pressed, "#library-character-repair-refresh")

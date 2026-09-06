@@ -260,6 +260,56 @@ def test_cancel_keeps_navigation_context_and_conversation_unchanged() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", (Select.NULL, "8"), ids=("blank", "other"))
+async def test_candidate_change_revokes_armed_repair_in_real_dialog(
+    replacement,
+) -> None:
+    service = _Service(
+        tuple(
+            CharacterRepairCandidate(
+                ResolvedLocalCharacterKey("authority-A", key), name, 1
+            )
+            for key, name in ((7, "Current Ada"), (8, "Other Ada"))
+        )
+    )
+    controller, *_ = _controller(service)
+    app = App()
+    async with app.run_test() as pilot:
+        await app.push_screen(LibraryCharacterRepairDialog(controller, CONTEXT))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        select = app.screen.query_one("#library-character-repair-candidate", Select)
+        apply = app.screen.query_one("#library-character-repair-apply", Button)
+        select.value = "7"
+        await pilot.pause()
+        apply.press()
+        await pilot.pause()
+        assert str(apply.label) == "Confirm repair"
+        select.value = replacement
+        await pilot.pause()
+        assert str(apply.label) == "Repair"
+        assert not controller._confirmation_requested
+        if replacement is Select.NULL:
+            assert controller.selected_candidate is None
+            apply.press()
+            await pilot.pause()
+            assert service.request is None
+            select.value = "7"
+            await pilot.pause()
+        apply.press()
+        await pilot.pause()
+        assert str(apply.label) == "Confirm repair"
+        assert service.request is None
+        apply.press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.request is not None
+        assert service.request.replacement.character_id == (
+            8 if replacement == "8" else 7
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
 async def test_real_textual_pilot_shows_explicit_repair_and_stale_refresh(
     size,

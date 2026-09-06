@@ -74,6 +74,14 @@ class PersonasConversationTranscriptWidget(Container):
             str(title or "Conversation")
         )
 
+    def set_compact(self, compact: bool) -> None:
+        """Keep the preview limit readable without displacing narrow body rows."""
+        self.query_one("#personas-transcript-preview-note", Static).update(
+            "Preview: up to 200 messages."
+            if compact
+            else "Preview shows up to 200 messages. Resume opens the saved chat in Console."
+        )
+
     async def show_loading(self, render_attempt: object | None = None) -> bool:
         """Replace the transcript with a loading placeholder.
 

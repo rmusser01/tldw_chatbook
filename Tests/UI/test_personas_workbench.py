@@ -6405,6 +6405,158 @@ class TestConversationsPanel:
             assert back.region.width == library.region.width
             assert resume.region.y < send.region.y < back.region.y
 
+    @pytest.fixture
+    def late_link_database(self, tmp_path):
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        db = CharactersRAGDB(tmp_path / "late-link.sqlite", client_id="late-link")
+        try:
+            character_id = db.add_character_card({"name": "Lab Assistant"})
+            db.add_conversation(
+                {
+                    "id": "conv-1",
+                    "title": "First case",
+                    "character_id": character_id,
+                    "assistant_kind": "character",
+                    "assistant_id": str(character_id),
+                    "assistant_authority_id": db.get_local_authority_id(),
+                }
+            )
+            db.add_message(
+                {
+                    "id": "message-1",
+                    "conversation_id": "conv-1",
+                    "sender": "User",
+                    "role": "user",
+                    "content": "Hello there",
+                }
+            )
+            db.set_conversation_active_leaf("conv-1", "message-1")
+            yield db, character_id
+        finally:
+            with db.quiesce_connections(timeout_seconds=2.0):
+                pass
+            assert db.registered_connection_count() == 0
+
+    @pytest.mark.parametrize("input_kind", ("pointer", "keyboard"))
+    async def test_late_compact_deep_link_allocates_back_to_console(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+        input_kind,
+        late_link_database,
+    ):
+        from tldw_chatbook.Constants import (
+            CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
+            ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION,
+        )
+        from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
+            RoleplayReturnTarget,
+            serialize_roleplay_character_conversation_link,
+        )
+
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(52, 20)) as pilot:
+            screen = await _mounted(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
+                conversation_id="conv-1",
+                data_revision=db.get_character_conversation_search_revision(),
+                return_target=RoleplayReturnTarget.console_context_character(),
+            )
+            screen.apply_navigation_context(
+                {
+                    ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION: serialize_roleplay_character_conversation_link(
+                        link
+                    )
+                }
+            )
+            assert (
+                await screen._apply_pending_character_conversation_link()
+                is CharacterConversationLinkOutcome.APPLIED
+            )
+            await app.workers.wait_for_complete()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            conversation_list.focus()
+            conversation_list.index = 0
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            painted = "\n".join(
+                strip.text for strip in screen._compositor.render_strips()
+            )
+            assert "Back to Console" in painted, painted
+            for label in (
+                "Resume chat",
+                "Send transcript to Console draft",
+                "Back to conversations",
+                "Open in Library",
+                "Hello there",
+            ):
+                assert label in painted, painted
+            back = screen.query_one("#personas-conversation-back-source", Button)
+            hit, _ = screen.get_widget_at(*back.content_region.center)
+            assert hit is back
+            if input_kind == "pointer":
+                if qa_root := os.environ.get("TASK_31243_QA_DIR"):
+                    app.save_screenshot(
+                        filename="roleplay-preview-return-52x20.svg", path=qa_root
+                    )
+                assert await pilot.click(back)
+            else:
+                screen.query_one("#personas-conversation-open-library", Button).focus()
+                await pilot.press("tab")
+                assert app.focused is back
+                await pilot.press("enter")
+            await pilot.pause()
+            assert app.nav_routes == [TAB_CHAT]
+            assert app.nav_contexts == [
+                {CHARACTER_NAV_CONTEXT_RETURN_FOCUS: "console-context-character"}
+            ]
+
+    @pytest.mark.parametrize("side", ("library", "inspector"))
+    async def test_compact_side_pane_resize_restores_wide_workspace(
+        self, mock_app_instance, stub_characters, stub_conversations, side
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(52, 20)) as pilot:
+            screen = await _mounted(pilot)
+            await app.workers.wait_for_complete()
+            screen.query_one(f"#personas-{side}-rail-open", Button).press()
+            await pilot.pause()
+            assert not screen.query_one("#personas-work-area").display
+            await pilot.resize_terminal(120, 50)
+            await pilot.pause()
+            work = screen.query_one("#personas-work-area")
+            assert work.display
+            for name in ("library", "inspector"):
+                pane = screen.query_one(f"#personas-{name}-pane")
+                assert not pane.styles._inline_styles.has_rule("width")
+                assert not pane.styles._inline_styles.has_rule("min_width")
+                handle = screen.query_one(f"#personas-{name}-rail-handle")
+                for rule in ("width", "min_width", "max_width"):
+                    assert not handle.styles._inline_styles.has_rule(rule)
+            action = screen.query_one("#personas-card-conversations", Button)
+            action.scroll_visible(immediate=True)
+            await pilot.pause()
+            hit, _ = screen.get_widget_at(*action.content_region.center)
+            assert hit is action
+            assert await pilot.click(action)
+            await pilot.pause()
+            await screen.conversations.open_conversation("conv-1")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            back = screen.query_one("#personas-conversation-back", Button)
+            hit, _ = screen.get_widget_at(*back.content_region.center)
+            assert hit is back
+
     @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
     async def test_task_31243_real_pilot_preview_back_and_focus_evidence(
         self, mock_app_instance, stub_characters, stub_conversations, size
@@ -6446,6 +6598,12 @@ class TestConversationsPanel:
             assert "Send transcript to Console draft" in painted, painted
             assert "Open in Library" in painted, painted
             if size[0] <= 60:
+                send = screen.query_one("#personas-conversation-continue-console", Button)
+                send_line = painted.splitlines()[send.content_region.y]
+                fragment_x = send_line.find(" In")
+                if fragment_x >= 0:
+                    owner, _ = screen.get_widget_at(fragment_x + 1, send.content_region.y)
+                    pytest.fail(f"Orphaned compact paint: {owner!r}; ancestors={list(owner.ancestors)!r}; line={send_line!r}")
                 assert sum(
                     screen.query_one(selector).display
                     for selector in (
