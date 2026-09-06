@@ -12,6 +12,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from tldw_chatbook.Audio.meeting_session import (
@@ -23,6 +24,7 @@ from tldw_chatbook.Audio.meeting_session import (
     normalize_speaker_name,
     read_meeting_json,
     render_label,
+    render_markdown,
     update_meeting_json,
 )
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
@@ -94,6 +96,38 @@ def _render_meeting_transcript(
         label = render_label(segment, names, user_display_name, diarize_mic=diarize_mic)
         lines.append(f"{stamp} {label}: {segment.text}" if label else f"{stamp} {segment.text}")
     return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _render_meeting_markdown(meeting: dict, segments: list[MeetingSegment], names: dict) -> str:
+    """Render the SAME `transcript.md` the meeting itself wrote to the Library.
+
+    With `post_transcribe = false` the Library copy is not the plain render
+    above but `LocalMeetingSink.on_stopped`'s `transcript.md`: a header block
+    plus `[hh:mm:ss] **Name:** text` lines (final review I2).
+
+    The real `render_markdown` is reused rather than re-implemented, so the
+    two can never drift apart. It reads its inputs as attributes off a
+    `MeetingResult`, and `meeting.json`'s stopped payload is exactly
+    `MeetingResult.to_json()` -- every field the header needs (`started_at`,
+    `folder`, `mode`, `duration_s`, `provider`, `model`) is in it -- so a
+    namespace over that payload stands in for the finished result the sink
+    had, with `names` swapped in for the current map.
+
+    Args:
+        meeting: The `meeting.json` payload.
+        segments: The transcript's segments, in order.
+        names: The speaker name map to render with.
+
+    Returns:
+        The Markdown document, newline-terminated.
+
+    Raises:
+        Exception: The payload is missing what the header needs (a meeting
+            that never stopped); the caller reads that as "not this shape".
+    """
+    meta = SimpleNamespace(**{**meeting, "speaker_names": dict(names)})
+    result = SimpleNamespace(meta=meta, duration_s=meeting.get("duration_s", 0.0))
+    return render_markdown(result, segments)
 
 
 def _write_meeting_transcript_row(
@@ -209,9 +243,13 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
     `post_transcribe` default the Library item's content is the ingest's
     offline transcription of `mixed.wav`, which a rename would otherwise
     silently destroy. Re-rendering the transcript with the CURRENT (pre-
-    rename) name map and comparing is that proof; an empty render (a missing
-    or emptied `transcript.jsonl`, Qodo Q16) is refused for the same reason.
-    A refusal touches neither the DB nor `meeting.json`.
+    rename) name map and comparing is that proof -- against BOTH shapes a
+    meeting can leave behind (final review I2): the plain
+    "[hh:mm:ss] Name: text" render, and `transcript.md`'s Markdown, which is
+    what lands in the Library whenever `post_transcribe` is off. The shape
+    that matched is the shape the rewrite re-renders in. An empty render (a
+    missing or emptied `transcript.jsonl`, Qodo Q16) is refused for the same
+    reason. A refusal touches neither the DB nor `meeting.json`.
 
     Args:
         db: The `MediaDatabase`.
@@ -246,17 +284,40 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
     current_content = _render_meeting_transcript(segments, names, user_display_name, diarize_mic)
     if not current_content.strip():
         return SpeakerRenameResult(False, RENAME_REFUSED_EMPTY_TRANSCRIPT)
-    if (row["content"] or "").strip() != current_content.strip():
-        return SpeakerRenameResult(False, RENAME_REFUSED_NOT_MEETING_CONTENT)
+    # BOTH app-produced shapes count (final review I2). The plain render is
+    # what the meeting's own transcript looks like; with `post_transcribe =
+    # false` the Library copy is instead `transcript.md`, the sink's
+    # `render_markdown` output -- and matching only the plain shape refused
+    # EVERY such recording, which is exactly the configuration the docs said
+    # the rename worked in. Whichever shape matched is the one the rewrite
+    # below re-renders in, so the item keeps the form it already has;
+    # matching neither means the content came from ingest (fix C2).
+    stored = (row["content"] or "").strip()
+    if stored == current_content.strip():
+        markdown_shape = False
+    else:
+        try:
+            markdown_content = _render_meeting_markdown(meeting, segments, names)
+        except Exception:  # noqa: BLE001 - a partial/never-stopped meeting.json
+            markdown_content = ""
+        if not markdown_content.strip() or stored != markdown_content.strip():
+            return SpeakerRenameResult(False, RENAME_REFUSED_NOT_MEETING_CONTENT)
+        markdown_shape = True
 
     name = normalize_speaker_name(name)
     if name:
         names[cluster_id] = name
     else:
         names.pop(cluster_id, None)
+    # Rendered BEFORE `meeting.json` is rewritten: a render that failed after
+    # that write would leave the two authorities disagreeing.
+    new_content = (
+        _render_meeting_markdown(meeting, segments, names)
+        if markdown_shape
+        else _render_meeting_transcript(segments, names, user_display_name, diarize_mic)
+    )
     update_meeting_json(folder, speaker_names=names)
 
-    new_content = _render_meeting_transcript(segments, names, user_display_name, diarize_mic)
     new_hash = hashlib.sha256(new_content.encode()).hexdigest()
 
     media_uuid = row["uuid"]

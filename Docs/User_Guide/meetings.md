@@ -196,10 +196,14 @@ what happens to a meeting once it's queued.
   transcript in Meetings.", changing nothing on disk or in the database —
   whenever that stored text is not the meeting's own render, which is the
   case whenever the offline ingest pass produced the Library copy
-  (`post_transcribe` left on). It refuses the same way when the recording
-  folder's `transcript.jsonl` is missing or empty. When
-  it does go through, the replaced text is kept as a document version, so
-  the change can be rolled back.
+  (`post_transcribe` left on). It **does** work on either shape the app
+  itself writes: the plain `[hh:mm:ss] Name: text` transcript, and the
+  Markdown `transcript.md` that goes to the Library when `post_transcribe`
+  is off — a rename re-renders in whichever shape the item already has, so
+  a Markdown transcript keeps its header and its `**Name:**` lines. It
+  refuses the same way when the recording folder's `transcript.jsonl` is
+  missing or empty. When it does go through, the replaced text is kept as a
+  document version, so the change can be rolled back.
 - **Each transcript row is a per-segment final, not a whole-meeting
   transcript.** Rows can lag live speech by up to roughly the length of one
   segment (up to ~10 seconds) plus however long that segment took to
@@ -231,8 +235,14 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against feat/meeting-diarization @ 14bbf2a7f + the PR #2456 fix
-wave — 2026-09-06. The rows added in that wave (the "Live speaker labels"
+*Verified against feat/meeting-followups @ e060f8d27 + the final-review fix
+wave — 2026-09-06. That wave made the "either shape the app itself writes"
+sentence above true (the rename used to refuse every `post_transcribe =
+false` recording, which this page had implied it accepted); it is covered by
+`Tests/UI/test_library_media_speaker_rename.py::
+test_rename_works_on_the_markdown_transcript_and_keeps_its_shape`, not by a
+live session. Earlier stamp: feat/meeting-diarization @ 14bbf2a7f + the PR
+#2456 fix wave — 2026-09-06. The rows added in that wave (the "Live speaker labels"
 status line, the footer's "Speaker labels unavailable" / "Speaker merge to
 resolve" copy, and the Library rename's refusal rules) are covered by pilot
 tests in `Tests/UI/test_meetings_screen.py` and

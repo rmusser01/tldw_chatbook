@@ -254,6 +254,35 @@ def test_rename_refuses_when_the_library_content_is_not_the_meeting_render(
     assert json.loads((folder / "meeting.json").read_text())["speaker_names"] == {}
 
 
+def test_rename_works_on_the_markdown_transcript_and_keeps_its_shape(
+    tmp_media_db, meeting_folder_media_item
+):
+    """Final review I2: with `post_transcribe = false` the Library copy is
+    `transcript.md` -- `render_markdown`'s header block plus
+    "[hh:mm:ss] **Name:** text" lines -- so a guard that only knew the plain
+    render refused EVERY app-produced recording, the very configuration the
+    user guide said the rename worked in. The rename must go through AND
+    re-render in the shape the item already has."""
+    from tldw_chatbook.Widgets.Library.library_media_canvas import rename_meeting_speaker
+
+    media_id, _folder = meeting_folder_media_item(
+        names={}, segments=[("S1", "hello")], markdown=True,
+    )
+    before = tmp_media_db.get_media_by_id(media_id)["content"]
+    assert before.startswith("# Meeting ")           # the shape under test
+    assert "**Speaker 1:**" in before
+
+    assert rename_meeting_speaker(tmp_media_db, media_id, "S1", "Alice").ok is True
+
+    after = tmp_media_db.get_media_by_id(media_id)["content"]
+    assert "**Alice:**" in after                     # markdown shape preserved
+    assert "Alice:" in after and "\n[00:00:00] Alice:" not in after  # not the plain render
+    # The header block survives verbatim -- only the speaker line changed.
+    assert after.splitlines()[:7] == before.splitlines()[:7]
+    hits, _total = tmp_media_db.search_media_db(search_query="Alice")
+    assert any(h["id"] == media_id for h in hits)
+
+
 def test_rename_refuses_when_the_transcript_is_missing(tmp_media_db, meeting_folder_media_item):
     """Qodo Q16: a missing/empty transcript.jsonl rendered as "" and the
     rename wrote that empty string over `Media.content` AND its FTS row."""
