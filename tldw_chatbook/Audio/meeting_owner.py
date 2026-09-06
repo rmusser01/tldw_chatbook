@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .meeting_session import (
     Diarizer,
@@ -88,7 +88,10 @@ class MeetingSettings(BaseModel):
     post_diarize: bool = True
     live_diarization: bool = False
     diarizer_backend: str = "local"
-    max_speakers: int = 8
+    #: Qodo Q7: 0 or a negative value silently disabled the Stop pass (the
+    #: clusterer can hold no clusters), so it is refused at the boundary
+    #: like every other unusable config value here.
+    max_speakers: int = Field(8, ge=1)
 
     @field_validator("recordings_dir", mode="before")
     @classmethod
@@ -514,15 +517,20 @@ class MeetingSessionOwner:
                     system_source=self.prepared.tap_mode.reason,
                     provider=self.prepared.provider, model=self.prepared.model,
                 )
-                # A live diarizer's Stop-pass reconciliation (spec §3.3) needs
-                # the batch pass to run even when the user left `post_diarize`
-                # off -- that flag was meant to skip the offline-only fallback,
-                # not the reconciliation a live backend depends on.
+                # Two independent mechanisms, deliberately NOT conflated
+                # (Qodo Q12): the live backend's authoritative Stop pass is
+                # driven by `MeetingSession`'s own `_diarizer` (below), while
+                # the sink's `post_diarize` only asks the Library ingest for a
+                # SECOND, offline diarization of mixed.wav that knows nothing
+                # of the live cluster ids or the user's renames. Forcing the
+                # latter on because a live diarizer exists overrode an
+                # explicit `post_diarize = false` and could relabel the
+                # Library copy with generic ids.
                 diarizer = build_diarizer(self.settings)
-                post_diarize = self.settings.post_diarize or diarizer is not None
                 self.local_sink = LocalMeetingSink(
                     folder, submit=self._submit_on_ui_thread,
-                    post_transcribe=self.settings.post_transcribe, post_diarize=post_diarize,
+                    post_transcribe=self.settings.post_transcribe,
+                    post_diarize=self.settings.post_diarize,
                 )
                 facade, cfg = self._facade, self._cfg
                 session = MeetingSession(

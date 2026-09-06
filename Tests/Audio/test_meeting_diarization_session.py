@@ -264,3 +264,23 @@ def test_stop_merge_of_two_named_clusters_keeps_both_names_and_flags(tmp_path, m
     persisted = read_meeting_json(tmp_path)
     assert persisted["speaker_names"]["S1"] == "Alice / Bob"
     assert persisted["flagged_speakers"] == ["S1"]
+
+
+def test_stop_captures_the_backend_coarse_reason_for_the_footer(tmp_path, meeting_session_with_fake_capture):
+    """Fix I4 / spec §7: a backend that degraded to coarse labels has to reach
+    the user. `close()` tears the reason down, so `stop()` reads it first."""
+
+    class CrashedDiarizer(FakeDiarizer):
+        coarse_reason = "backend crashed"
+
+    session = meeting_session_with_fake_capture(diarizer=CrashedDiarizer([]), mode="call")
+    session.start()
+    result = session.stop()
+    assert result.speaker_labels_reason == "backend crashed"
+    assert read_meeting_json(tmp_path)["speaker_labels_reason"] == "backend crashed"
+
+
+def test_stop_reports_no_reason_when_the_backend_was_fine(meeting_session_with_fake_capture):
+    session = meeting_session_with_fake_capture(diarizer=FakeDiarizer([]), mode="call")
+    session.start()
+    assert session.stop().speaker_labels_reason is None

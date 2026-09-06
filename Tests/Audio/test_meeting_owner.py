@@ -192,6 +192,33 @@ def test_diarizer_built_when_live_on_and_deps_present(tmp_path, monkeypatch):
     assert session._diarizer is built["d"]
 
 
+def test_max_speakers_must_be_at_least_one(tmp_path):
+    """Qodo Q7: 0/negative silently disabled the Stop pass instead of failing
+    at the settings boundary like every other unusable config value."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        _settings(tmp_path, max_speakers=0)
+    with pytest.raises(pydantic.ValidationError):
+        _settings(tmp_path, max_speakers=-3)
+    assert _settings(tmp_path, max_speakers=1).max_speakers == 1
+
+
+def test_a_live_diarizer_does_not_force_the_offline_ingest_pass(tmp_path, monkeypatch):
+    """Qodo Q12: `post_diarize` only asks Library ingest for a SECOND, offline
+    diarization of mixed.wav that knows nothing of the live ids or renames.
+    The live backend's own Stop pass is driven by the session's `_diarizer`,
+    so building one must not override an explicit `post_diarize = false`."""
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings: object())
+    owner, _, _ = _owner(tmp_path, live_diarization=True, post_diarize=False)
+    owner.prepare()
+    session = owner.start()
+    assert owner.local_sink.post_diarize is False   # the user's setting stands
+    assert session._diarizer is not None            # ... the Stop pass still runs
+    owner.stop()
+
+
 def test_live_on_missing_deps_falls_back_to_coarse(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "diarization_requirements", lambda: ("torch",))
     owner, _, _ = _owner(tmp_path, live_diarization=True)

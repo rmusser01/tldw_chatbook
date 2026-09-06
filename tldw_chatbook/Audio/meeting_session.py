@@ -7,6 +7,7 @@ service surface, and a list of sinks.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -98,6 +99,10 @@ class MeetingResult:
     # were kept as "Alice / Bob" for the user to resolve (spec §4). Empty
     # unless the batch pass folded two differently-named live clusters.
     flagged_speakers: list[str] = field(default_factory=list)
+    #: Static reason live speaker labels were not produced (spec §7 footer
+    #: copy), e.g. "backend unavailable" / "backend crashed". None when live
+    #: labelling was never requested or ran fine. Never a path or a name.
+    speaker_labels_reason: str | None = None
 
     def to_json(self) -> dict:
         """Return the full `meeting.json` payload (metadata plus outcome)."""
@@ -107,6 +112,7 @@ class MeetingResult:
             transcription_complete=self.transcription_complete, failed_segments=self.failed_segments,
             stop_reason=self.stop_reason, recovered=self.recovered,
             flagged_speakers=list(self.flagged_speakers),
+            speaker_labels_reason=self.speaker_labels_reason,
         )
         return payload
 
@@ -205,10 +211,56 @@ def update_meeting_json(folder: Path, **fields: Any) -> dict:
     return payload
 
 
+#: Speaker names are typed by the user and land in `meeting.json`, the
+#: transcript render, `Media.content` and FTS -- bound them at the one
+#: boundary both rename paths share (Qodo Q2).
+MAX_SPEAKER_NAME_CHARS = 64
+_WIDGET_SAFE_CLUSTER_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+def normalize_speaker_name(value: str) -> str:
+    """Clean one user-typed speaker name for storage and display.
+
+    Args:
+        value: The raw submitted name.
+
+    Returns:
+        The name stripped of surrounding whitespace and truncated to
+        `MAX_SPEAKER_NAME_CHARS`; `""` means "remove this speaker's name".
+    """
+    return (value or "").strip()[:MAX_SPEAKER_NAME_CHARS]
+
+
+def is_widget_safe_cluster_id(cluster_id: str) -> bool:
+    """Whether `cluster_id` can be interpolated into a Textual widget id.
+
+    Cluster ids come from `transcript.jsonl`, which a user can hand-edit; a
+    value with a space or a "#" would raise out of `compose()` and take the
+    screen down, so callers skip the legend row instead.
+
+    Args:
+        cluster_id: The candidate id.
+
+    Returns:
+        True when it matches Textual's identifier rules.
+    """
+    return bool(cluster_id) and bool(_WIDGET_SAFE_CLUSTER_ID.match(cluster_id))
+
+
 def render_label(segment: MeetingSegment, names: dict[str, str], user_display_name: str) -> str | None:
     """Display name for a segment: the user for the mic channel, else the
-    named or generic speaker; None when the segment has no label (room mode
-    pre-diarization) or is overlap-coarse."""
+    named or generic speaker.
+
+    Args:
+        segment: The transcript segment to label.
+        names: The meeting's `cluster_id -> user name` map; ids absent from
+            it fall back to a generic "Speaker N".
+        user_display_name: What stands in for the mic channel ("You").
+
+    Returns:
+        The display name, or None when the segment carries no label at all
+        (room mode before diarization) or is overlap-coarse.
+    """
     if segment.label == "you":
         return user_display_name
     if segment.speaker_id:
@@ -388,6 +440,7 @@ class MeetingSession:
         except Exception as exc:  # noqa: BLE001
             logger.error("capture stop failed: {}", exc)
         flagged_speakers: list[str] = []
+        speaker_labels_reason: str | None = None
         if self._diarizer is not None:
             # Best-effort authoritative batch pass (spec §3.3/§4): a failure
             # here must never block the meeting result. `assign` labelled what
@@ -443,6 +496,10 @@ class MeetingSession:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("meeting: diarizer stop pass failed ({})", type(exc).__name__)
             finally:
+                # Read BEFORE close(): the footer needs to say why the meeting
+                # ran on coarse labels (spec §7), and close() tears the
+                # backend down. Static string only -- never a path or a name.
+                speaker_labels_reason = getattr(self._diarizer, "coarse_reason", None)
                 try:
                     self._diarizer.close()
                 except Exception as exc:  # noqa: BLE001
@@ -456,6 +513,7 @@ class MeetingSession:
             failed_segments=self.failed_segments,
             stop_reason=reason,
             flagged_speakers=flagged_speakers,
+            speaker_labels_reason=speaker_labels_reason,
         )
         payload = read_meeting_json(self.meta.folder)
         payload.update(result.to_json())
