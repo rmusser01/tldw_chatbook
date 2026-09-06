@@ -8752,10 +8752,18 @@ class ConsoleChatController:
             raise TraceProvenancePersistenceError() from None
 
         saved_by_position = dict(zip(saved_positions, saved, strict=True))
+        system_end = 0
+        while (
+            system_end < len(visible_messages)
+            and visible_messages[system_end].get("role") == "system"
+        ):
+            system_end += 1
         descriptors = tuple(
             saved_by_position.get(index)
             or ProviderArtifactTraceProvenance(
-                TraceProvenanceSource.ACTIVE_REQUEST,
+                TraceProvenanceSource.RENDERED_SYSTEM
+                if index < system_end
+                else TraceProvenanceSource.ACTIVE_REQUEST,
                 policy,
             )
             for index in range(len(visible_messages))

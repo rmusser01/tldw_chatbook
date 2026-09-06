@@ -21,6 +21,14 @@ from pathlib import Path
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+from Tests.UI.test_screen_reuse import (
+    _build_test_app,
+    close_owned_real_app_notifications as close_owned_real_app_notifications,
+)
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
 
 
@@ -82,9 +90,8 @@ async def test_console_reuse_timer_quiescence_and_runtime_attachment(
         tmp_path: Pytest fixture providing the scratch profile root.
     """
     _scratch_env(monkeypatch, tmp_path)
-    from tldw_chatbook.app import TldwCli
 
-    app = TldwCli()
+    app = _build_test_app()
     async with app.run_test(size=(170, 48)) as pilot:
         await _boot_settled(app, pilot)
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
@@ -132,9 +139,8 @@ async def test_console_resume_restarts_sync_timer_for_active_run(
         tmp_path: Pytest fixture providing the scratch profile root.
     """
     _scratch_env(monkeypatch, tmp_path)
-    from tldw_chatbook.app import TldwCli
 
-    app = TldwCli()
+    app = _build_test_app()
     async with app.run_test(size=(170, 48)) as pilot:
         await _boot_settled(app, pilot)
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
@@ -171,9 +177,8 @@ async def test_console_confirm_navigation_no_longer_gates_switches(
         tmp_path: Pytest fixture providing the scratch profile root.
     """
     _scratch_env(monkeypatch, tmp_path)
-    from tldw_chatbook.app import TldwCli
 
-    app = TldwCli()
+    app = _build_test_app()
     async with app.run_test(size=(170, 48)) as pilot:
         await _boot_settled(app, pilot)
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")

@@ -12198,3 +12198,27 @@ control made its children require 47. The synthetic Send fixture also omitted
 normal composer focus, causing mouse-down reflow, but repairing that precondition
 alone did not fix clipping. Reject the workaround: preserve the original red
 test and fix the actual width/state contract before claiming a real click works.
+
+**Approved repair follow-up.** Containment alone still missed the click: Stop
+moved up one row between mouse-down and mouse-up because focusing it finally
+recomputed draft wrapping after run-state width changes. Reusing deferred reflow
+at that state transition stabilized the real click without pre-focusing Stop.
+
+## A claimed handoff is not an acknowledged handoff
+
+**TASK-31823, 2026-09-06 warm-Console repair.** A new real navigation regression
+created the right session, observed `has_pending() == False`, and saw another
+`claim()` return None. Review showed that all three also hold if acknowledgement
+does nothing: the first claim stays in flight and blocks another claim. Capture
+the revision returned by `stage()` and require its exact status to be `settled`.
+The tests now distinguish durable acknowledgement from merely successful work.
+
+## A covered modal, not its parent, receives the next suspension
+
+**TASK-31817, 2026-09-06 retry-audio repair.** Preserving audio when Console was
+covered by its owned retry dialog fixed the original failure, but pushing another
+screen over that dialog never suspended Console a second time. A fake dialog
+future concealed this. Real mounted overlay/navigation controls reproduced the
+leak; the owned modal now abandons its exact audio session when suspended without
+a decision. Confirm and Escape record their decision before removal, preserving
+their intended behavior. Test actual modal stacking, not only the parent hook.

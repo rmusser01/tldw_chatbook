@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,12 @@ from Tests.console_resource_fixtures import (
     close_owned_console_resources as close_owned_console_resources,
 )
 
+from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_controller import (
+    NATIVE_MESSAGE_ID_KEY,
+    ConsoleChatController,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -45,6 +50,17 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionWriter,
+)
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenanceSource,
 )
 from tldw_chatbook.Chat.library_preparation import (
     LibraryPreparationContribution,
@@ -578,3 +594,160 @@ def test_success_persists_exact_attachment_state_hash_sync_intent_and_private_ch
         "provider_request",
     ):
         assert forbidden not in serialized
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("leading", [(), ("unsaved",), ("saved", "unsaved", "unsaved")])
+async def test_durable_capture_classifies_only_unsaved_leading_system_rows(
+    tmp_path: Path, leading: tuple[str, ...]
+) -> None:
+    """Saved ownership wins; system artifacts stop at the first non-system row."""
+    db, _service, store, preparation, acceptance = _ready_store(
+        tmp_path, attachments=False
+    )
+    commit = store.commit_durable_turn(acceptance)
+    gateway = ConsoleProviderGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    try:
+        messages = []
+        for index, owner in enumerate(leading):
+            row = {"role": "system", "content": f"instruction {index}"}
+            if owner == "saved":
+                saved = store.append_message(
+                    preparation.session_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=row["content"],
+                    persist=True,
+                )
+                assert saved.persisted_message_id is not None
+                row[NATIVE_MESSAGE_ID_KEY] = saved.id
+            messages.append(row)
+        messages.extend(
+            [
+                {"role": "user", "content": "unsaved active request"},
+                {"role": "system", "content": "nonleading system"},
+                {"role": "assistant", "content": "unsaved prefill"},
+            ]
+        )
+
+        request = controller._build_durable_trace_request(
+            preparation=replace(
+                preparation, capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON
+            ),
+            provider_messages=messages,
+            trace_source_messages=tuple(messages),
+            echoed_user_id=preparation.transient_user_message_id,
+            committed_user_id=commit.user_message_id,
+            route=ConsoleRequestRoute.FRESH,
+        )
+
+        assert request is not None and request.provenance is not None
+        assert len(request.provenance.system) == len(leading)
+        for owner, descriptor in zip(leading, request.provenance.system, strict=True):
+            if owner == "saved":
+                assert isinstance(descriptor, SavedRevisionTraceProvenance)
+                revision = (
+                    db.get_connection()
+                    .execute(
+                        "SELECT source_message_id FROM console_trace_semantic_revisions WHERE revision_id = ?",
+                        (descriptor.revision_id,),
+                    )
+                    .fetchone()
+                )
+                assert revision[0] == saved.persisted_message_id
+            else:
+                assert isinstance(descriptor, ProviderArtifactTraceProvenance)
+                assert descriptor.source is TraceProvenanceSource.RENDERED_SYSTEM
+        assert [dict(row) for row in request.active_request] == messages[len(leading) :]
+        assert len(request.provenance.active_request) == 3
+        for descriptor in request.provenance.active_request:
+            assert isinstance(descriptor, ProviderArtifactTraceProvenance)
+            assert descriptor.source is TraceProvenanceSource.ACTIVE_REQUEST
+    finally:
+        await controller.shutdown()
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_durable_capture_on_system_prompt_reaches_provider_and_trace(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+
+    db = CharactersRAGDB(tmp_path / "system-capture.sqlite", client_id="task31825")
+    factory = ConsoleTraceBoundaryFactory(db)
+    requests, provider_calls = [], []
+
+    def boundary(request, resolution, route):
+        result = factory(request, resolution, route)
+        requests.append(request)
+        return result
+
+    def adapter(**kwargs):
+        provider_calls.append(kwargs)
+        return {"choices": [{"message": {"content": "Bonjour."}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter, trace_call_boundary_factory=boundary
+    )
+
+    async def resolve_for_send(_selection):
+        return ConsoleProviderResolution(
+            execution_key="openai",
+            ready=True,
+            provider="openai",
+            model="test-model",
+            base_url="https://api.openai.com/v1",
+            visible_copy="",
+            streaming=False,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="openai",
+                model="test-model",
+                endpoint_identity="https://api.openai.com/v1",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    monkeypatch.setattr(gateway, "resolve_for_send", resolve_for_send)
+    preparation_type = controller_module.ConsoleTurnPreparation
+
+    def capture_on(**kwargs):
+        return preparation_type(
+            **{**kwargs, "capture_mode": ConsoleTraceCaptureMode.CAPTURE_ON}
+        )
+
+    monkeypatch.setattr(controller_module, "ConsoleTurnPreparation", capture_on)
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(
+        settings=controller_module.ConsoleSessionSettings(
+            provider="openai", model="test-model", system_prompt="Answer in French."
+        )
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    try:
+        result = await controller.submit_draft("Hello.", session_id=session.id)
+
+        assert result.provider_started, result.visible_copy
+        assert len(provider_calls) == len(requests) == 1
+        assert provider_calls[0]["system_message"] == "Answer in French."
+        request = requests[0]
+        assert request.semantic.provenance is not None
+        (descriptor,) = request.semantic.provenance.system
+        assert isinstance(descriptor, ProviderArtifactTraceProvenance)
+        assert descriptor.source is TraceProvenanceSource.RENDERED_SYSTEM
+        assert dict(request.semantic.system[0]) == {
+            "role": "system",
+            "content": "Answer in French.",
+        }
+        assert isinstance(
+            request.semantic.provenance.active_request[0], SavedRevisionTraceProvenance
+        )
+        user = store.messages_for_session(session.id)[0]
+        calls = ConsoleTraceNativeReader(db).read_calls(user.persisted_message_id)
+        assert len(calls) == 1
+        assert calls[0].capture.request.get("omitted") is None
+        assert calls[0].capture.request["system_message"] == "Answer in French."
+    finally:
+        await controller.shutdown()
+        await gateway.aclose()
