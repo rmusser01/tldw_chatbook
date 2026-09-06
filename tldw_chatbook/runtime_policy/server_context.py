@@ -593,6 +593,38 @@ class RuntimeServerContextProvider:
         self._invalidate_cached_client()
         return purpose
 
+    def store_scoped_credential(self, server_id: str, purpose: str, secret: str) -> None:
+        """Persist ``secret`` for ``server_id``/``purpose``, profile-scoped (task-31821).
+
+        Generic scoped-write seam mirroring the store's ``set_scoped_secret``,
+        but keyed by the plain ``server_id``/``purpose`` pair a caller already
+        has -- it derives the ``ServerCredentialScope`` (including
+        ``server_profile_id``) the same way every other write on this
+        provider does, so callers outside this module never need their own
+        scoping logic. For the default (un-retargeted) profile this lands
+        byte-for-byte where the legacy ``credential_store.set_secret`` call
+        would have (task-31416 AC#4 equivalence).
+
+        Args:
+            server_id: Server profile the secret belongs to.
+            purpose: Credential purpose (e.g. ``SERVER_CREDENTIAL_BEARER_TOKEN``).
+            secret: Secret value to persist.
+        """
+        self.credential_store.set_scoped_secret(
+            self._credential_scope(server_id, purpose), secret
+        )
+
+    def delete_scoped_credential(self, server_id: str, purpose: str) -> None:
+        """Delete the ``server_id``/``purpose`` credential, profile-scoped (task-31821).
+
+        Args:
+            server_id: Server profile the secret belongs to.
+            purpose: Credential purpose (e.g. ``SERVER_CREDENTIAL_BEARER_TOKEN``).
+        """
+        self.credential_store.delete_scoped_secret(
+            self._credential_scope(server_id, purpose)
+        )
+
     def resolve_target(self) -> ConfiguredServerTarget | None:
         active_server_id = self._require_active_server_id()
         target = self.target_store.get_target(active_server_id)
