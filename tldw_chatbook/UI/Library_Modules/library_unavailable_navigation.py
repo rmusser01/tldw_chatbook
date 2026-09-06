@@ -592,7 +592,7 @@ def _apply_navigation_context_state(
         LIBRARY_NOTES_SOURCE_DATABASE,
     )
 
-    if self._library_prompts_mutation_in_flight:
+    if self._prompts_state.mutation_in_flight:
         return
     if character_admission is not None:
         if not _library_character_admission_is_current(self, character_admission):
@@ -781,10 +781,10 @@ def _apply_navigation_context_state(
             self._selected_conversation_id = open_source_id
         elif open_source_type == "prompt":
             try:
-                self._selected_prompt_id = int(open_source_id)
+                self._prompts_state.selected_prompt_id = int(open_source_id)
             except ValueError:
-                self._selected_prompt_id = None
-            self._library_prompts_view = "list"
+                self._prompts_state.selected_prompt_id = None
+            self._prompts_state.view = "list"
     if should_open_pending_source and self.is_mounted:
         self.run_worker(
             self._open_pending_library_source(),

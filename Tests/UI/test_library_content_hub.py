@@ -345,6 +345,26 @@ async def test_library_source_rail_marks_active_mode_without_mutating_action_lab
         assert collections_row.tooltip == "Collections"
 
 
+def test_navigation_uses_extracted_prompt_state_before_and_after_admission():
+    app = _build_test_app()
+    screen = library_screen_module.LibraryScreen(app)
+    state = screen._prompts_state
+    state.mutation_in_flight = True
+    state.selected_prompt_id = 99
+    state.view = "editor"
+    context = {"open_source_type": "prompt", "open_source_id": "7"}
+    before_generation = screen._library_navigation_context_generation
+    screen.apply_navigation_context(context)
+    screen._apply_navigation_context_state(context, recompose=False)
+    assert screen._library_navigation_context_generation == before_generation
+    assert (state.selected_prompt_id, state.view) == (99, "editor")
+    state.mutation_in_flight = False
+    screen._apply_navigation_context_state(context, recompose=False)
+    assert (state.selected_prompt_id, state.view) == (7, "list")
+    assert not hasattr(screen, "_selected_prompt_id")
+    assert not hasattr(screen, "_library_prompts_view")
+
+
 @pytest.mark.asyncio
 async def test_library_navigation_context_opens_requested_conversation() -> None:
     app = _build_test_app()

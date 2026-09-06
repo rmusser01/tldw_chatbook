@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:08'
-updated_date: '2026-09-06 06:47'
+updated_date: '2026-09-06 13:53'
 labels:
   - console
   - context
@@ -62,4 +62,6 @@ Fix round1 closes post-await generation admission, retained-profile Start, off-l
 Fix round 2 preserves the committed unavailable Library route, browse projection, and Back action through invalid or save-vetoed incoming navigation. Validated candidates are staged separately, with monotonic attempt generations and promotion only after guarded admission; a late superseded save cannot resurrect ownership. Direct ADR120 implementation, no new ADR. Genuine RED: 4 failures; final affected Library/payload/diagnostic/complete-return gate: 85 passed, 1 known incumbent empty-preview deselected; scoped size/slack gate: 4 passed. The still-unmerged helper initial pin is 811 (+8), explicitly approved; incumbent caps and both screens are unchanged. No new Ruff diagnostics; four incumbent diagnostics remain. Native/platform/resource qualifications remain open; status and AC unchanged. Full evidence: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-4-fix-2-report.md.
 
 PR2452 fix round 3 reuses strict shared 512-character Console query validation in the widget and controller before trimming or DB work. Invalid edits restore the last valid visible query with bounded native feedback; clear, Enter safety, and later valid search are covered. Added Google-style documentation to all four new unavailable route APIs. Removed the redundant cold-resume Character worker through the existing mount-visit guard, preserving mounted initial groups and warm refresh; no allowlist or cap change. Direct ADR120/shared-validation implementation, no new ADR. Focused RED/GREEN 10 failures to 12 passes; final covering 136 passed/1 unchanged pre-Console splash/stagger observation failure, also isolated. Worker census, exact warm handoff, and UI-ready 971/972 pass; no new lint/format diagnostics. Status/AC and qualification gaps unchanged. Full evidence: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-4-fix-3-report.md.
+
+Latest-dev integration onto f356ddc4a9b37d5c272d8398376764b9d83e04a1: preserved reviewed cb2 safety ref and rebased all four Task4 commits. Retargeted four deleted Prompt flat fields to the upstream state owner; simplified only the affected navigation admission method to retain the new 198-line incumbent cap (helper 811, no cap or allowlist changes). Genuine integration RED retained; final focused 8 passed, covering 170 passed / 1 known empty-preview deselected, 11 warnings; inventory no drift and zero new correction Ruff diagnostics. Exact range-diff, corrections, logs and source equivalence: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-4-approved-merge-rebase-report.md. User-approved manual/resource/scale/baseline qualifications remain deferred, not passed; controller owns review, publication, CI and merge. No Done change.
 <!-- SECTION:NOTES:END -->
