@@ -2167,7 +2167,16 @@ async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
     screen._request_library_media_page(1, focus_identity=None)
     await _wait_for_condition(
         pilot,
-        lambda: controller.failure is not None and not controller.loading,
+        lambda: (
+            controller.failure is not None
+            and not controller.loading
+            # The callout composes before the row scroll: settle on BOTH the
+            # mounted callout and the remounted retained rows, not on the
+            # controller alone (a single pause raced the mount elsewhere).
+            and bool(screen.query("#library-media-load-failure-copy"))
+            and len(screen.query(".library-media-row"))
+            == len(controller.retained_items)
+        ),
         message="The forced Media page failure never settled.",
     )
     await pilot.pause()

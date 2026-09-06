@@ -11911,3 +11911,25 @@ Do not make successful completion of every app worker a navigation assertion;
 observe the destination's completion state. Preserve genuine late-publish
 stacks separately: this incident also found and fixed an owned Character
 presentation callback running after its screen stack had been removed.
+
+### PR G (task-31632): a shallower widget's presence does not mean the deeper ones remounted -- and the rerun set is the census, not the files you edited
+
+PR G moved the Media Retry from the pager strip into a failure callout that
+composes BEFORE the row scroll. Three tests waited for "Retry is present" and
+then immediately asserted the retained row count; after the move the wait was
+satisfied mid-recompose (callout mounted, rows not yet) and
+`test_library_media_side_by_side.py::test_compact_media_stale_and_retry_actions_remain_truthful`
+went red WHOLE-FILE on dev while passing alone (`assert 0 == 20`; a probe
+showed the canvas state holding 20 rows and the row scroll holding 0 children).
+G's own fix-round had caught and commented exactly this race at one site in
+`test_library_shell.py` -- and fixed only that site. It shipped because G's
+rerun set was the files G edited plus its neighbours; `side_by_side` was not
+in it, and the Fast Lane does not run it either. Bisected on detached
+worktrees: dev parent green, G's merge commit red.
+
+**What to do.** When a widget moves in compose order, grep EVERY test that
+waits on its selector and check what the next assertions read; the wait
+condition must cover the deepest thing they touch (the row count itself, not
+the Retry that used to imply it). And a PR's rerun set is the census of every
+file that references the ids it moves (`grep -l '<id>' Tests/UI/*.py`), run
+whole-file in separate processes -- not the files the diff touched.
