@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 21:37'
-updated_date: '2026-09-06 04:21'
+updated_date: '2026-09-06 04:45'
 labels:
   - canvas
   - review
@@ -33,7 +33,7 @@ Resolve every finding posted on PR 2432 with verified corrections or evidence-ba
 - [x] #9 Short-lived trace worker operations release only their owned database handles on completion, failure and cancellation; repeated real agent and settlement operations do not accumulate exited-thread handles, and caller-owned or same-file observer connections remain usable.
 - [x] #10 After a proven pre-dispatch trace failure, explicit Send without capture and Cancel work for ordinary and agent sends without reviving terminal trace calls, weakening uncertain-delivery guards, or dispatching automatically.
 - [x] #11 The explicitly owner-approved M5 Max reference fixture is versioned and documented in ADR-097; workload and numerical limits are unchanged, and a retained benchmark artifact proves environment matching and threshold enforcement.
-- [ ] #12 Latest-dev integration preserves canonical character-search and Canvas migration histories, verifies genuine upgrades and rollback, refuses incompatible pre-release predecessor databases without mutation, and resolves task-ID collisions with provenance-aware reference updates.
+- [x] #12 Latest-dev integration preserves canonical character-search and Canvas migration histories, verifies genuine upgrades and rollback, refuses incompatible pre-release predecessor databases without mutation, and resolves task-ID collisions with provenance-aware reference updates.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -68,6 +68,8 @@ Broad repair review found fresh AGENT_FIRST actor/chain identities could replay 
 Final scoped rereview of f55ab2cbe..ee27c7193 approves runtimeI1 and minorM2 with no new Critical/Important fix breakage. I2 reference-hardware numerical latency and I3 actual-dev migration/task reconciliation plus current-head PR/Qodo/CI remain unaddressed merge gates. Current code has172focused passes,90Chromium passes(two optional skips),1compound-growth pass and all6preflight guards. No rebase, push, merge or V2 in this checkpoint; keep In Progress/AC4 unchecked. Reference M4Pro14CPU48GiB availability requested from user; actual hostM5Max cannot satisfy the unchanged identity gate.
 
 Owner-approved reference update: amended backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md and the repair plan before changing fixture hardware/version only (v5 M5 Max18CPU128GiB). Fresh v4 gate fails on the four hardware fields:1failed1Requests warning32.25s. Full v5 latency file passes19tests1Requests warning43.11s, environment_match=true and threshold_gate_applied=true with no opt-in. Reservation/dispatch p95 2.811ms/max4.467ms and settlement p95 1.701ms satisfy unchanged10/50/25ms limits; all five per-database checks pass. Both raw sample artifacts retained in the local SDD evidence workspace with SHA-256 digests and exact commands in Docs/Canvas/V1_VERIFICATION.md. No runtime/test-logic changes or claim of performance on the former M4 Pro. I2 closed for this checkpoint; I3 latest-dev migration/task-ID reconciliation, rebase, Qodo/current-headCI and merge remain open. AC4 stays unchecked and task remains In Progress.
+
+I3 integrated and independently approved: canonical character-search65→66 retained, Canvas66→67→68, real predecessor/refusal/rollback/state preservation and exact index census verified. Later task collisions renumbered31812/31813 with all tracked pointers and provenance. Final root gates:179growth/runtime/recovery passes;19approved-reference latency passes;90Chromium passes/2optional skips;110startup/controller passes;all6preflight guards. Warnings remain qualified in Docs/Canvas/V1_VERIFICATION.md. Latest devcc22deb0a adds only two CI workflow fixes; final143commit rebase is exactly equivalent for every replay commit, and resulting tree differs only in those workflows. Independent I3 follow-up approves pointer correction with no blocking findings. Retained recovery ref codex/canvas-v1-before-ci-dev-20260905. AC4/current-head Qodo/CI remain pending; no merge or V2 yet.
 <!-- SECTION:NOTES:END -->
 
 ### Approved integration expansion, 2026-09-05

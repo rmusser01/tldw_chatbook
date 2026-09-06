@@ -72,8 +72,13 @@ Buddy task pointer; the pointer is corrected with historical provenance, with
 scoped follow-up verification pending. Publication, current-head Qodo/CI and
 normal merge remain pending. A fresh fetch found dev
 `cc22deb0a` adds only 14 lines in two CI workflow files beyond the tested base;
-it will be carried forward before publication, without claiming those workflows
-have already run on the unpublished integration head.
+it was carried forward in the final rebase to `a42cf746e`. All 143 replay commits
+are exactly equivalent, and the tree differs from the tested recovery head only
+in those two workflow files. The retained
+`codex/canvas-v1-before-ci-dev-20260905` ref preserves the tested source and
+evidence. Scoped I3 follow-up approves the corrected pointer and integrated
+evidence with no blocking findings. This does not claim the newly carried-forward
+workflows have already run on the unpublished integration head.
 
 ### Earlier trace-repair checkpoint
 
