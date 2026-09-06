@@ -27,6 +27,17 @@ computation). Since this local preview never round-trips to a server, it
 adds a `next_occurrences` key -- up to three upcoming run times computed
 via `schedule_compute.compute_next_run_at` -- so an authoring modal has
 something concrete to show the user for "when will this run".
+
+`recurring_question`'s ``config.scope``/``finding_policy``/
+``retention_policy``/``generation_mode`` backfill is a deliberate LOCAL
+divergence from the ported server behavior (task-31414, not a parity
+bug to re-sync away): this module's own `mode` (``"create"``/
+``"update"``, already required for the mode-required/not-allowed checks
+above) is threaded into `validate_recurring_question_config` so an
+``"update"`` preview only normalizes a key the payload actually carried,
+leaving a genuinely-absent one absent in `normalized_config["config"]`
+rather than inventing a default -- a `"create"` preview still backfills
+all four exactly as the server does.
 """
 
 from __future__ import annotations
@@ -188,7 +199,7 @@ def preview_automation_definition(payload: dict[str, Any], *, now: datetime | No
 
     family_errors: list[dict[str, Any]] = []
     if family is AutomationFamily.RECURRING_QUESTION:
-        normalized, errors, warnings = validate_recurring_question_config(base)
+        normalized, errors, warnings = validate_recurring_question_config(base, mode=mode)
     else:
         normalized = dict(base)
         errors = []

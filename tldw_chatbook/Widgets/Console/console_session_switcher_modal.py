@@ -296,7 +296,9 @@ class ConsoleSessionSwitcherModal(
         if self._active_projection_timer is not None:
             self._active_projection_timer.stop()
             self._active_projection_timer = None
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_unmount separately for this Unmount event
+        # (TASK-31418).
 
     def _poll_active_projection(self) -> None:
         """Reconcile one memory-only live snapshot while the modal is open."""

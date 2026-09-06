@@ -22,6 +22,35 @@ from tldw_chatbook.Chat.message_metadata import (
 )
 
 
+def test_canvas_origin_remap_changes_only_matching_typed_card_origin() -> None:
+    from tldw_chatbook.Chat.message_metadata import (
+        CanvasCardMetadata,
+        CanvasCardOriginMetadata,
+    )
+
+    metadata = MessageMetadata(
+        provider="kept",
+        canvas_cards=(
+            CanvasCardMetadata(
+                canvas_id="canvas",
+                revision_id="revision",
+                title="Title",
+                sequence=1,
+                digest="a" * 64,
+                status="temporary",
+                origin=CanvasCardOriginMetadata("native", "run"),
+                reopenable=True,
+            ),
+        ),
+    )
+
+    remapped = metadata.remap_canvas_origins({"native": "durable"})
+
+    assert remapped.provider == "kept"
+    assert remapped.canvas_cards[0].origin.message_id == "durable"
+    assert "html" not in remapped.to_json()
+
+
 def test_defaults_are_the_no_metadata_state():
     metadata = MessageMetadata()
 

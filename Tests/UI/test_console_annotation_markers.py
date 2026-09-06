@@ -345,7 +345,12 @@ async def test_edit_then_delete_round_trip_pins_the_sidecar_row(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -641,7 +646,12 @@ async def test_double_trigger_pushes_exactly_one_modal_and_reads_once(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store

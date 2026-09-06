@@ -21,6 +21,9 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import (
     SyncStatusWidget,
 )
+from tldw_chatbook.UI.Screens.scheduling.unified_rows import (
+    _format_local_timestamp,
+)
 
 
 from types import SimpleNamespace
@@ -114,9 +117,14 @@ async def test_sync_that_transfers_reports_counts():
 
         messages = [n.message for n in pilot.app._notifications]
         assert "Sync completed — pulled 2, pushed 1." in messages, messages
-        # And the bar shows the recorded pull timestamp.
+        # And the bar shows the recorded pull timestamp, human-readable and
+        # LOCAL (task-31711 AC#3), not the raw ISO-8601 string -- pin the
+        # shared formatter's own output rather than a literal clock value
+        # (which shifts with the test host's TZ).
         pull = workbench.query_one("#scheduling-last-pull", Static)
-        assert "2026-08-28" in str(pull.render())
+        rendered = str(pull.render())
+        assert "2026-08-28T12:00:00+00:00" not in rendered
+        assert _format_local_timestamp("2026-08-28T12:00:00+00:00") in rendered
 
 
 @pytest.mark.asyncio

@@ -26,7 +26,7 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     CredentialSanitizationResult,
     CredentialSanitizer,
 )
-from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+from tldw_chatbook.Chat.console_trace_models import SemanticRevisionRef, new_opaque_id
 from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
@@ -182,6 +182,25 @@ class VerifiedSurfaceReplacementRange:
 
 
 @dataclass(frozen=True, slots=True)
+class CompletedToolTurnWitness:
+    """Content-free evidence rechecked against the durable call ledger."""
+
+    origin_call_id: str
+    terminal_call_id: str
+    assistant_revision_id: str
+    user_revision_id: str
+
+    def __post_init__(self) -> None:
+        for identity in (
+            self.origin_call_id,
+            self.terminal_call_id,
+            self.assistant_revision_id,
+            self.user_revision_id,
+        ):
+            SemanticRevisionRef(identity)
+
+
+@dataclass(frozen=True, slots=True)
 class SurfaceDeltaAdmission:
     """Preparation-owned declaration containing only newly admitted descriptors."""
 
@@ -194,6 +213,9 @@ class SurfaceDeltaAdmission:
     projection_checkpoint: object | None = field(default=None, repr=False)
     replacement_range: VerifiedSurfaceReplacementRange | None = field(
         default=None, repr=False
+    )
+    completed_tool_turn: CompletedToolTurnWitness | None = field(
+        default=None, kw_only=True
     )
 
     def __post_init__(self) -> None:
@@ -208,7 +230,21 @@ class SurfaceDeltaAdmission:
             raise ValueError("surface_delta_admission")
         if not self.descriptors and self.predecessor_surface_head_id is None:
             raise ValueError("surface_delta_admission")
-        if self.replacement_range is not None and len(self.descriptors) != 1:
+        if self.completed_tool_turn is not None:
+            witness = self.completed_tool_turn
+            if (
+                type(witness) is not CompletedToolTurnWitness
+                or self.replacement_range is None
+                or self.replacement_range.component_name != "messages_payload"
+                or self.route_identity not in {"agent_first", "fresh"}
+                or self.descriptors
+                != (
+                    SavedRevisionTraceProvenance(witness.assistant_revision_id),
+                    SavedRevisionTraceProvenance(witness.user_revision_id),
+                )
+            ):
+                raise ValueError("surface_delta_shape")
+        elif self.replacement_range is not None and len(self.descriptors) != 1:
             raise ValueError("surface_delta_shape")
 
 
@@ -224,6 +260,9 @@ class VerifiedSurfaceDelta:
     child_binding: object | None = field(default=None, repr=False)
     items: tuple[VerifiedSurfaceDeltaItem, ...] = field(default=(), repr=False)
     replacement: VerifiedSurfaceReplacement | None = field(default=None, repr=False)
+    completed_tool_turn: CompletedToolTurnWitness | None = field(
+        default=None, kw_only=True
+    )
 
     def __post_init__(self) -> None:
         if (
@@ -233,7 +272,23 @@ class VerifiedSurfaceDelta:
             or not self.preparation_identity
         ):
             raise ValueError("surface_delta_identity")
-        if self.replacement is not None and self.items:
+        if self.completed_tool_turn is not None:
+            witness = self.completed_tool_turn
+            if (
+                type(witness) is not CompletedToolTurnWitness
+                or self.replacement is None
+                or len(self.items) != 1
+                or self.route_identity not in {"agent_first", "fresh"}
+                or self.replacement.item.component_name != "messages_payload"
+                or self.items[0].component_name != "messages_payload"
+                or self.items[0].ordinal != self.replacement.item.ordinal + 1
+                or self.replacement.item.provenance
+                != SavedRevisionTraceProvenance(witness.assistant_revision_id)
+                or self.items[0].provenance
+                != SavedRevisionTraceProvenance(witness.user_revision_id)
+            ):
+                raise ValueError("surface_delta_shape")
+        elif self.replacement is not None and self.items:
             raise ValueError("surface_delta_shape")
         if (
             self.replacement is None
@@ -353,7 +408,7 @@ def build_verified_surface_delta(
         if replacement_range is not None:
             ordinal = replacement_range.current_ordinal
             if (
-                delta_count != 1
+                delta_count != (2 if admission.completed_tool_turn is not None else 1)
                 or ordinal < 0
                 or ordinal >= len(full_messages) + len(full_continuations)
             ):
@@ -402,7 +457,7 @@ def build_verified_surface_delta(
             )
     replacement: VerifiedSurfaceReplacement | None = None
     if admission.replacement_range is not None:
-        if len(items) != 1:
+        if len(items) != (2 if admission.completed_tool_turn is not None else 1):
             raise ValueError("surface_delta_shape")
         replacement_range = admission.replacement_range
         if items[0].component_name != replacement_range.component_name or (
@@ -419,7 +474,7 @@ def build_verified_surface_delta(
             current_ordinal=replacement_range.current_ordinal,
             item=items[0],
         )
-        items = ()
+        items = items[1:]
     child_binding = None
     if bundle.available:
         issuer = bundle.surface_boundary or admission.projection_checkpoint
@@ -430,7 +485,7 @@ def build_verified_surface_delta(
             admission=admission,
             replacement=replacement,
             preparation_identity=bundle.preparation_identity,
-            items=(replacement.item,) if replacement is not None else items,
+            items=((replacement.item,) + items) if replacement is not None else items,
             bundle=bundle,
             surface_boundary_identity=id(bundle.surface_boundary),
             provenance=provenance,
@@ -444,6 +499,7 @@ def build_verified_surface_delta(
         child_binding=child_binding,
         items=items,
         replacement=replacement,
+        completed_tool_turn=admission.completed_tool_turn,
     )
 
 

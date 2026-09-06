@@ -66,7 +66,11 @@ class LibraryConversationsCanvas(
         pager = self.canvas.pager
         title_count = pager.title_count if pager is not None else None
         title = (
-            "Conversations" if title_count is None else f"Conversations ({title_count})"
+            self.canvas.title
+            if self.canvas.title != "Conversations"
+            else "Conversations"
+            if title_count is None
+            else f"Conversations ({title_count})"
         )
         yield Static(
             title,

@@ -43,6 +43,72 @@ from tldw_chatbook.Chat.console_prompt_queue import QueueMutationStatus
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
 
+def test_runtime_composes_one_shared_canvas_owner_into_real_store(tmp_path) -> None:
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "runtime-canvas.sqlite", "runtime-canvas")
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    try:
+        store = runtime.ensure_chat_store()
+        session = store.create_session(ephemeral=True)
+
+        assert runtime.canvas_controller is not None
+        assert store.canvas_turn_controller is runtime.canvas_controller
+        assert store.canvas_promotion_participant is runtime.canvas_controller
+        assert session.id in runtime.canvas_controller._session_owners
+    finally:
+        asyncio.run(runtime.dispose())
+        db.close_connection()
+
+
+def test_runtime_forwards_live_session_and_branch_transitions_to_canvas_authority():
+    observed: list[str | None] = []
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=None))
+    runtime._canvas_native_authority = SimpleNamespace(
+        sync_live_context=observed.append
+    )
+    store = runtime.ensure_chat_store()
+
+    first = store.create_session(ephemeral=True)
+    root = store.append_message(
+        first.id,
+        role="user",
+        content="root",
+    )
+    child = store.append_message(
+        first.id,
+        role="assistant",
+        content="child",
+    )
+    observed.clear()
+
+    store.set_active_leaf(first.id, root.id)
+    second = store.create_session(ephemeral=True)
+    store.switch_session(first.id)
+    store.set_active_leaf(first.id, child.id)
+
+    assert observed == [first.id, second.id, first.id, first.id]
+
+
+@pytest.mark.asyncio
+async def test_runtime_disposes_canvas_authority_after_revoking_gateway():
+    order: list[str] = []
+
+    class CanvasGateway:
+        async def aclose(self):
+            order.append("gateway")
+
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=None))
+    runtime._canvas_gateway = CanvasGateway()
+    runtime._canvas_native_authority = SimpleNamespace(
+        dispose=lambda: order.append("authority")
+    )
+
+    await runtime.dispose()
+
+    assert order[:2] == ["gateway", "authority"]
+
+
 @pytest.mark.unit
 def test_trace_rollout_modules_stay_off_the_ui_ready_import_path() -> None:
     """Metrics and write planning load only when a trace actually uses them."""

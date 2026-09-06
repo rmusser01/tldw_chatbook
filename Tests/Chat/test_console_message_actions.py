@@ -3,18 +3,106 @@ from dataclasses import replace
 import pytest
 
 from tldw_chatbook.Chat import console_message_actions as message_actions
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleVariantSet,
 )
-from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
     action_row_guide,
+    assistant_canvas_html_blocks,
 )
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+
+
+def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="assistant-canvas",
+        role=ConsoleMessageRole.ASSISTANT,
+        content=(
+            "A prose mention of ```html is not a block.\n\n"
+            "```python\nprint('<p>not html</p>')\n```\n\n"
+            "```html\n<!doctype html><title>One</title><p>safe</p>\n```\n"
+        ),
+    )
+
+    blocks = assistant_canvas_html_blocks(message)
+    actions = service.available_actions(message)
+
+    assert len(blocks) == 1
+    assert blocks[0].identity == "assistant-canvas:canvas-html:0"
+    assert blocks[0].compatible is None
+    canvas_action_ids = [
+        action.action_id
+        for action in actions
+        if action.action_id.startswith("canvas-")
+    ]
+    assert canvas_action_ids == [
+        "canvas-open-0",
+        "canvas-open-new-0",
+    ]
+    result = service.dispatch("canvas-open-0", message)
+    assert result.status == "canvas_open_requested"
+    assert result.target_content is None
+    assert result.canvas_block_ref is not None
+    assert result.canvas_block_ref.message_id == message.id
+    assert result.canvas_block_ref.block_index == 0
+    assert result.canvas_block_ref.identity == blocks[0].identity
+    assert repr(result).find("<!doctype") == -1
+    open_as_new = service.dispatch("canvas-open-new-0", message)
+    assert open_as_new.status == "canvas_open_requested"
+    assert open_as_new.canvas_block_ref is not None
+    assert open_as_new.canvas_block_ref.create_new is True
+
+
+def test_canvas_candidate_defers_compatibility_validation_until_open():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="assistant-incompatible",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="```html\n<script src='https://example.com/app.js'></script>\n```",
+    )
+
+    block = assistant_canvas_html_blocks(message)[0]
+    result = service.dispatch("canvas-open-0", message)
+
+    assert block.identity == "assistant-incompatible:canvas-html:0"
+    assert result.status == "canvas_open_requested"
+    assert result.target_content is None
+    assert result.canvas_block_ref is not None
+    assert result.canvas_block_ref.identity == block.identity
+
+
+def test_canvas_action_discovery_and_dispatch_do_not_compile_candidates(
+    monkeypatch,
+):
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        id="assistant-many-candidates",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="".join(
+            f"```html\n<!doctype html><p>{index}</p>\n```\n" for index in range(8)
+        ),
+    )
+
+    def fail_if_compiled(_source):
+        pytest.fail("candidate discovery/dispatch compiled on the caller thread")
+
+    monkeypatch.setattr(
+        message_actions, "compile_canvas_document", fail_if_compiled, raising=False
+    )
+
+    actions = service.available_actions(message)
+    result = service.dispatch("canvas-open-7", message)
+
+    assert len([item for item in actions if item.action_id.startswith("canvas-")]) == 16
+    assert result.status == "canvas_open_requested"
+    assert result.canvas_block_ref is not None
+    assert result.canvas_block_ref.block_index == 7
 
 
 def test_assistant_message_actions_include_required_order():

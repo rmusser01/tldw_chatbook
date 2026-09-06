@@ -59,6 +59,11 @@ from tldw_chatbook.Agents.agent_service import (
     build_first_request_schema_plan,
     catalog_schema_tokens,
 )
+from tldw_chatbook.Agents.canvas_tool_provider import (
+    CANVAS_RUNTIME_GUIDANCE,
+    CANVAS_TOOL_NAMES,
+    CanvasToolProvider,
+)
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
@@ -67,6 +72,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -380,6 +386,70 @@ def _schema(name: str, description: str = "compact") -> ToolSchema:
     )
 
 
+def _canvas_schemas() -> tuple[ToolSchema, ...]:
+    return tuple(
+        _schema(name, f"{name} schema")
+        for name in ("canvas_list", "canvas_read", "canvas_create", "canvas_update")
+    )
+
+
+class _NoopCanvasCoordinator:
+    def is_scope_current(self, _scope):
+        return True
+
+    def list_canvases(self, _scope):
+        return ()
+
+    def read_canvas(self, _scope, _canvas_id):
+        raise AssertionError("not invoked")
+
+    def create_canvas(self, _scope, **_kwargs):
+        raise AssertionError("not invoked")
+
+    def update_canvas(self, _scope, **_kwargs):
+        raise AssertionError("not invoked")
+
+
+def _canvas_registry():
+    provider = CanvasToolProvider(
+        _NoopCanvasCoordinator(),
+        scope=CanvasScope("session", "conversation", (), None, None, "run"),
+        enabled_reader=lambda: True,
+    )
+    authority = provider.issue_registration_authority()
+    registry = ToolCatalogRegistry()
+    assert registry.register_canvas_provider(provider, authority)
+    allowed = tuple(entry.name for entry in provider.list_catalog())
+    return registry, allowed, provider, authority
+
+
+@pytest.mark.parametrize("disclosed_name", ("canvas_create", "canvas_update"))
+def test_model_request_guidance_tracks_the_exact_disclosed_canvas_schema_set(
+    db, disclosed_name
+):
+    service = AgentService(
+        db=db, registry=ToolCatalogRegistry(), chat_call=lambda **_: {}
+    )
+    config = dataclasses.replace(CFG, native_tools=True)
+    disclosed_schema = next(
+        schema for schema in _canvas_schemas() if schema.name == disclosed_name
+    )
+
+    request = service._build_model_request(
+        config,
+        "openai",
+        [],
+        [{"role": "user", "content": "build it"}],
+        (disclosed_schema,),
+    )
+    system = request.messages[0]["content"]
+
+    assert disclosed_name in system
+    assert "V1 supports inline HTML/CSS and classic scripts" in system
+    for undisclosed_name in CANVAS_TOOL_NAMES - {disclosed_name}:
+        assert undisclosed_name not in system
+
+
 def test_catalog_schema_tokens_measures_one_complete_native_schema_set(monkeypatch):
     schemas = (_schema("alpha"), _schema("beta"))
     measured: list[str] = []
@@ -636,6 +706,50 @@ def test_first_request_plan_drops_discovery_tools_when_only_no_tool_request_fits
     assert plan.runtime_schemas == ()
     assert plan.offer_find_load is False
     assert plan.system_prompt == "direct"
+
+
+def test_first_request_plan_counts_canvas_guidance_before_direct_disclosure(
+    monkeypatch,
+):
+    registry, allowed, _provider, _authority = _canvas_registry()
+    config = AgentConfig(
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
+        budget=RunBudget(max_subagents=0),
+        native_tools=True,
+        response_reserve_tokens=10,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100)
+    monkeypatch.setattr(
+        agent_service, "provider_supports_native_tools", lambda *_a: True
+    )
+    monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 5)
+
+    def count(messages, *_args, **_kwargs):
+        system = str(messages[0].get("content", ""))
+        return 91 if CANVAS_RUNTIME_GUIDANCE in system else 80
+
+    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+
+    plan = build_first_request_schema_plan(
+        registry,
+        allowed,
+        config,
+        "openai",
+        [{"role": "user", "content": "go"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+        direct_system_prompt="direct",
+        discovery_system_prompt="discovery",
+    )
+
+    assert plan.request_fits is True
+    assert plan.active_schemas == ()
+    assert plan.offer_find_load is True
+    assert plan.system_prompt == "discovery"
 
 
 def test_first_request_plan_stops_before_provider_when_even_no_tool_request_fails(
@@ -2875,6 +2989,40 @@ def test_protocol_rerenders_when_load_tools_admits_new_schema(db):
     post_load_system = chat.calls[1]["messages_payload"][0]["content"]
     assert "calculator" not in pre_load_system
     assert "calculator" in post_load_system
+
+
+def test_load_tools_adds_canvas_guidance_on_the_next_budgeted_request(db):
+    registry, _allowed, _provider, _authority = _canvas_registry()
+    chat = ScriptedChat(
+        [
+            fence(
+                LOAD_TOOLS_NAME,
+                {"ids": [f"canvas:{name}" for name in CANVAS_TOOL_NAMES]},
+            ),
+            "done",
+        ]
+    )
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=tuple(CANVAS_TOOL_NAMES),
+        budget=RunBudget(max_steps=20, max_subagents=0),
+    )
+    service = AgentService(db=db, registry=registry, chat_call=chat)
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="canvas-guidance-load",
+        messages=[{"role": "user", "content": "build a visual"}],
+        config=config,
+        api_endpoint="llama_cpp",
+        first_request_schema_plan=_forced_discovery_plan(),
+    )
+
+    assert outcome.status == RUN_DONE
+    pre_load_system = chat.calls[0]["messages_payload"][0]["content"]
+    post_load_system = chat.calls[1]["messages_payload"][0]["content"]
+    assert CANVAS_RUNTIME_GUIDANCE not in pre_load_system
+    assert CANVAS_RUNTIME_GUIDANCE in post_load_system
 
 
 def test_protocol_rerenders_when_replacement_changes_same_named_schema(

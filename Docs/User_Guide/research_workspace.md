@@ -186,7 +186,9 @@ Grounded Chat exposes a canonical message owner.
   records the authority, canonical-owner, overlay, and unlink boundaries.
 
 —
-*Verified against `fix/task-23024` — 2026-08-27. Targeted Research
-Workspace verification was run (source rows and operation receipts now
-mount as data arrives rather than as pre-built empty pools — no visible
-behavior change); the full pytest suite was not run.*
+*Verified against `fix/research-runs-collapsed-layout` — 2026-09-05
+(TASK-31795: the Runs screen previously rendered collapsed to one
+squashed row; it now lays out toolbar, create-run row, run list and
+detail panel vertically — verified live in tmux plus production-CSS
+geometry tests). Previous stamp: `fix/task-23024` — 2026-08-27; the full
+pytest suite was not run.*

@@ -1,6 +1,6 @@
 """First-run wizard cancellation routing.
 
-UAT (2026-08-31, TASK-31226 triage): Esc-exiting the boot-offered setup
+UAT (2026-08-31, TASK-31813 triage): Esc-exiting the boot-offered setup
 wizard left the user on Home -- the screen the wizard was pushed over --
 because a cancelled result carries no route and the handler returned early.
 Cancellation must land on the Console workbench; cancelling a Settings /

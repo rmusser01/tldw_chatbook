@@ -1988,6 +1988,38 @@ class ConsoleTraceRepository:
         ).fetchall()
         return self._call(rows[0]) if len(rows) == 1 else None
 
+    def has_unresolved_call_for_turn(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        turn_id: str,
+    ) -> bool:
+        """Check one owner's saved turn without materializing its call history.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            owner_id: Exact attached trace owner.
+            turn_id: Saved user-turn identity whose replay is being considered.
+
+        Returns:
+            Whether any call for this owner and turn remains unresolved.
+        """
+        # The existing owner-order index starts with (owner_id, turn_id).
+        return cursor.execute(
+            """SELECT 1 FROM console_trace_calls
+                WHERE owner_id = ? AND turn_id = ? AND state IN (?, ?, ?, ?)
+                LIMIT 1""",
+            (
+                owner_id,
+                turn_id,
+                TraceCallState.RESERVED.value,
+                TraceCallState.DISPATCH_STARTED.value,
+                TraceCallState.DISPATCH_UNKNOWN.value,
+                TraceCallState.RESPONSE_STARTED.value,
+            ),
+        ).fetchone() is not None
+
     def get_latest_call_boundary(
         self, cursor: sqlite3.Cursor, segment_id: str
     ) -> TraceEventRecord | None:

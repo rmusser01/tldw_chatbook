@@ -244,7 +244,6 @@ from ...Library.library_conversation_reader_state import (
     project_conversation_multiselect,
 )
 from ...Library.library_conversations_state import (
-    build_library_conversations_state,
     validate_library_conversation_page,
 )
 from ...Library.library_export_scope import ExportScope
@@ -935,60 +934,9 @@ class LibraryConversationsController:
         return "Updated: unknown"
 
     def _build_library_conversations_state(self):
-        """Build the conversations canvas display state from local records."""
-        state = build_library_conversations_state(
-            self._conversation_records(),
-            query=self._library_conversation_query,
-            selected_id=self._selected_conversation_id,
-            select_mode=self._library_conversations_select_mode,
-            selected_ids=self._library_conversations_row_selection.ids,
-            page=self._library_conversation_page,
-            requested_page=self._library_conversation_requested_page,
-            page_size=self._library_conversation_page_size,
-            total_count=self._library_conversation_total,
-            total_known=self._library_conversation_total_known,
-            has_more=self._library_conversation_has_more,
-            freshness=self._library_conversation_freshness,
-            stale_copy=self._library_conversation_stale_copy,
-            loading=self._library_conversation_loading,
-            error_copy=self._library_conversation_error,
-            selection_notice=self._library_conversation_selection_notice,
-        )
-        state = dataclasses.replace(
-            state,
-            query=self._library_conversation_requested_query,
-            status_copy=(
-                state.status_copy or self._library_conversation_selection_notice
-            ),
-        )
-        retained_reader_id = self._library_conversation_reader_state.selected_id
-        if (
-            retained_reader_id
-            and not self._library_conversation_reader_state.unavailable
-            and all(row.conversation_id != retained_reader_id for row in state.rows)
-        ):
-            state = dataclasses.replace(
-                state,
-                selected_id="",
-                preview_lines=(),
-                rows=tuple(
-                    dataclasses.replace(row, selected=False) for row in state.rows
-                ),
-            )
-        if self._library_conversation_deleted_selection_id:
-            state = dataclasses.replace(
-                state,
-                selected_id="",
-                preview_lines=(),
-                rows=tuple(
-                    dataclasses.replace(row, selected=False) for row in state.rows
-                ),
-            )
-        if self._library_conversations_select_mode:
-            self._library_conversations_row_selection.reconcile(
-                r.conversation_id for r in state.rows
-            )
-        return state
+        from .library_unavailable_navigation import build_canvas_state
+
+        return build_canvas_state(self)
 
     def _sync_library_conversation_canvas(
         self, *, then: Callable[[], None] | None = None

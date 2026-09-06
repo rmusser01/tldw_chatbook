@@ -1,13 +1,14 @@
 import asyncio
-from copy import deepcopy
 import json
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
-from threading import Event, Thread, get_ident
+from threading import Event, Thread, current_thread, get_ident
 from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Canvas.staging import CanvasStagingError, CanvasStagingStore
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
@@ -21,13 +22,17 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleGenerationProjectionQuarantined,
 )
-from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
-from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
-from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
-from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
 from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
@@ -39,19 +44,19 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_coordinator import (
     ConsoleLibraryPolicyCoordinator,
 )
-from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_dispatch_checkpoint import (
-    ConsoleEgressClass,
-    ConsoleLibraryItemScopeSnapshot,
-    ConsoleProviderIntent,
-    ConsoleResolvedDestination,
-    ConsoleTurnLibraryAuthority,
-)
+from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import ConsoleRoleplayContext
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_speech import (
+    ConsoleSpeechSnapshotRejected,
+    ConsoleSpeechSnapshotRejectionCode,
+)
+from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
+from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
@@ -65,10 +70,6 @@ from tldw_chatbook.tldw_api import SyncV2Envelope
 from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import video_content_marker
-from tldw_chatbook.Chat.console_speech import (
-    ConsoleSpeechSnapshotRejected,
-    ConsoleSpeechSnapshotRejectionCode,
-)
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 
 
@@ -1505,6 +1506,55 @@ def test_successful_edit_publishes_one_coherent_node_to_every_transcript_view():
     assert store.active_path_message_ids(session.id) == [message.id]
 
 
+def test_canvas_scope_inputs_map_only_the_selected_native_branch_to_persisted_ids():
+    """Durable Canvas scope assembly must follow the in-memory selected branch."""
+
+    store = ConsoleChatStore()
+    root = ConsoleChatMessage(
+        id="native-root",
+        role=ConsoleMessageRole.USER,
+        content="root",
+        persisted_message_id="persisted-root",
+    )
+    left = ConsoleChatMessage(
+        id="native-left",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="left",
+        persisted_message_id="persisted-left",
+        parent_message_id="persisted-root",
+    )
+    right = ConsoleChatMessage(
+        id="native-right",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="right",
+        persisted_message_id="persisted-right",
+        parent_message_id="persisted-root",
+    )
+    session = store.restore_persisted_session(
+        title="Canvas branches",
+        workspace_id=None,
+        persisted_conversation_id="persisted-conversation",
+        all_nodes=[root, left, right],
+        active_leaf_persisted_id="persisted-left",
+    )
+
+    def persisted_active_path() -> tuple[str | None, ...]:
+        return tuple(
+            store.persisted_message_id_for_session_node(session.id, native_id)
+            for native_id in store.active_path_message_ids(session.id)
+        )
+
+    assert store.active_path_message_ids(session.id) == [root.id, left.id]
+    assert persisted_active_path() == ("persisted-root", "persisted-left")
+    assert "persisted-right" not in persisted_active_path()
+
+    store.set_active_leaf(session.id, right.id)
+
+    assert store.active_path_message_ids(session.id) == [root.id, right.id]
+    assert persisted_active_path() == ("persisted-root", "persisted-right")
+    assert "persisted-left" not in persisted_active_path()
+
+
 def test_store_restores_exact_message_state_when_durable_edit_is_rejected():
     class RejectingPersistence(FakePersistence):
         def update_message_content(self, **kwargs):
@@ -2151,6 +2201,7 @@ class FakePersistence:
         self.speech_update_result = True
         self.restored_speech_preferences = None
         self.last_create_kwargs = None
+        self.promotion_trace_boundaries = []
         self._message_versions = {}
 
     def create_conversation(self, **kwargs):
@@ -2171,9 +2222,11 @@ class FakePersistence:
         project_context_json=None,
         context_policy_overrides=None,
         contributions=(),
+        trace_boundary=None,
     ):
         if contributions:
             raise RuntimeError("FakePersistence does not execute contributions")
+        self.promotion_trace_boundaries.append(trace_boundary)
         self.created_conversations.append(
             {"conversation_id": conversation_id, **dict(conversation_kwargs)}
         )
@@ -7900,6 +7953,7 @@ def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_pa
     assert conversation_id is not None
     assert temporary.ephemeral is False
     assert temporary.persisted_conversation_id == conversation_id
+    assert persistence.promotion_trace_boundaries[-1] is None
     roleplay = persistence.last_create_kwargs["metadata"]["console_roleplay_context"]
     assert roleplay["user_name_override"] == "Rowan"
     assert roleplay["character_name_snapshot"] == "Alraune"
@@ -8524,3 +8578,704 @@ def test_atomic_promotion_adapter_failure_preserves_ephemeral_fake_state():
 
     assert persistence.created_conversations == []
     assert session.ephemeral is True
+
+
+def test_canvas_participant_joins_promotion_and_confirms_only_after_success(tmp_path):
+    """Omitting the participant or confirming before commit loses temporary history."""
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion.sqlite", "canvas-promotion")
+    try:
+        staging = CanvasStagingStore()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        staged = staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+        updated_origin = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas updated.",
+        )
+        staging.update_canvas(
+            owner=owner,
+            run_id="run-update",
+            tool_call_id="call-update",
+            canvas_id=staged.revision.canvas_id,
+            expected_parent_revision_id=staged.revision.revision_id,
+            source="<!doctype html><html><body>updated planner</body></html>",
+            origin_message_id=updated_origin.id,
+        )
+        rename_origin = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Call it Schedule.",
+        )
+        renamed = staging.rename_canvas(
+            owner=owner,
+            run_id="run-rename",
+            tool_call_id="call-rename",
+            canvas_id=staged.revision.canvas_id,
+            expected_parent_revision_id=staged.revision.revision_id,
+            title="Schedule",
+            origin_message_id=rename_origin.id,
+        )
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT revision.origin_message_id, revision.origin_turn_id "
+                "FROM canvas_revisions AS revision WHERE revision.id = ?",
+                (staged.revision.revision_id,),
+            )
+            .fetchone()
+        )
+        assert row is not None
+        assert row[0] == store.get_message(assistant.id).persisted_message_id
+        assert row[1] == "run-create"
+        history = (
+            db.get_connection()
+            .execute(
+                "SELECT parent_revision_id, sequence, title, actor_kind, origin_message_id "
+                "FROM canvas_revisions WHERE canvas_id = ? ORDER BY sequence",
+                (staged.revision.canvas_id,),
+            )
+            .fetchall()
+        )
+        assert [tuple(row[:4]) for row in history] == [
+            (None, 1, "Planner", "assistant"),
+            (staged.revision.revision_id, 2, "Planner", "assistant"),
+            (staged.revision.revision_id, 3, "Schedule", "user_rename"),
+        ]
+        assert (
+            history[1][4] == store.get_message(updated_origin.id).persisted_message_id
+        )
+        assert history[2][4] == store.get_message(rename_origin.id).persisted_message_id
+        assert (
+            db.get_connection()
+            .execute(
+                "SELECT last_canvas_id FROM canvas_conversation_hints "
+                "WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            .fetchone()[0]
+            == renamed.revision.canvas_id
+        )
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM sync_log WHERE entity LIKE 'canvas%'")
+            .fetchone()[0]
+            == 0
+        )
+        assert staging.staged_revision_count(session.id) == 0
+        assert session.ephemeral is False
+    finally:
+        db.close_connection()
+
+
+def test_failed_canvas_promotion_preserves_chat_and_staging_for_retry(
+    tmp_path, monkeypatch
+):
+    """Publishing identities or clearing staging on rollback makes retry impossible."""
+
+    from tldw_chatbook.Chat import console_transaction_contribution as seam
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion-retry.sqlite", "canvas-retry")
+    try:
+        staging = CanvasStagingStore()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        staged = staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>private planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+        original_execute = seam._CursorConsoleTransactionWriter.execute
+        failed = False
+
+        def fail_once(self, statement, parameters):
+            nonlocal failed
+            original_execute(self, statement, parameters)
+            if statement.startswith("INSERT INTO canvas_documents") and not failed:
+                failed = True
+                raise RuntimeError("injected_canvas_write_failure")
+
+        monkeypatch.setattr(seam._CursorConsoleTransactionWriter, "execute", fail_once)
+        with pytest.raises(RuntimeError, match="canvas_promotion_failed"):
+            store.promote_ephemeral_session(session.id)
+
+        assert session.ephemeral is True
+        assert session.persisted_conversation_id is None
+        assert assistant.persisted_message_id is None
+        assert staging.staged_revision_count(session.id) == 1
+        connection = db.get_connection()
+        assert (
+            connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+        )
+        assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT COUNT(*) FROM canvas_documents").fetchone()[0]
+            == 0
+        )
+
+        retry_origin = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas retry update.",
+        )
+        retry_update = staging.update_canvas(
+            owner=owner,
+            run_id="run-retry-update",
+            tool_call_id="call-retry-update",
+            canvas_id=staged.revision.canvas_id,
+            expected_parent_revision_id=staged.revision.revision_id,
+            source="<!doctype html><html><body>retry planner</body></html>",
+            origin_message_id=retry_origin.id,
+        )
+
+        monkeypatch.setattr(
+            seam._CursorConsoleTransactionWriter, "execute", original_execute
+        )
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        assert session.ephemeral is False
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
+                (staged.revision.revision_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
+                (retry_update.revision.revision_id,),
+            ).fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+def test_console_lifecycle_discards_exact_canvas_staging() -> None:
+    """A close, restore replacement, or app teardown retaining plans leaks source."""
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(canvas_promotion_participant=staging)
+    closed = store.create_session(ephemeral=True)
+    _create_staged_canvas_for_console(staging, closed.id, "closed")
+    survivor = store.create_session(ephemeral=True)
+    _create_staged_canvas_for_console(staging, survivor.id, "survivor")
+
+    store.close_session(closed.id)
+
+    assert staging.staged_revision_count(closed.id) == 0
+    assert staging.staged_revision_count(survivor.id) == 1
+
+    replacement = replace(survivor)
+    store.restore_state(sessions=[replacement], messages_by_session={survivor.id: ()})
+
+    assert staging.staged_revision_count(survivor.id) == 0
+    _create_staged_canvas_for_console(staging, survivor.id, "teardown")
+    store.end_app_runtime()
+    assert staging.staged_revision_count(survivor.id) == 0
+
+
+def test_canvas_promotion_lease_rejects_concurrent_update_without_stranding_graph(
+    tmp_path,
+) -> None:
+    """A write racing between snapshot and commit must not become unpromotable."""
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion-race.sqlite", "canvas-race")
+    entered = Event()
+    release = Event()
+
+    class PausingPersistence:
+        def __init__(self) -> None:
+            self.delegate = ChatPersistenceService(db)
+
+        def promote_console_conversation_bundle(self, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return self.delegate.promote_console_conversation_bundle(**kwargs)
+
+    try:
+        staging = CanvasStagingStore()
+        store = ConsoleChatStore(
+            persistence=PausingPersistence(),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+        outcome = {}
+
+        def promote() -> None:
+            outcome["conversation_id"] = store.promote_ephemeral_session(session.id)
+
+        thread = Thread(target=promote)
+        thread.start()
+        assert entered.wait(timeout=5)
+        with pytest.raises(CanvasStagingError, match="promotion_in_flight"):
+            staging.update_canvas(
+                owner=owner,
+                run_id="run-racing",
+                tool_call_id="call-racing",
+                canvas_id=created.revision.canvas_id,
+                expected_parent_revision_id=created.revision.revision_id,
+                source="<!doctype html><html><body>racing</body></html>",
+                origin_message_id=assistant.id,
+            )
+        release.set()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        assert outcome["conversation_id"] is not None
+        assert session.ephemeral is False
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM canvas_revisions")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        release.set()
+        db.close_connection()
+
+
+def test_canvas_promotion_reservation_refuses_close_and_same_id_recreate(
+    tmp_path,
+) -> None:
+    """Close/recreate during SQLite work must not replace the promotion owner."""
+
+    db = CharactersRAGDB(tmp_path / "canvas-promotion-close-race.sqlite", "close-race")
+    entered = Event()
+    release = Event()
+
+    class PausingPersistence:
+        def __init__(self) -> None:
+            self.delegate = ChatPersistenceService(db)
+
+        def promote_console_conversation_bundle(self, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return self.delegate.promote_console_conversation_bundle(**kwargs)
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(
+        persistence=PausingPersistence(),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+    outcome: dict[str, object] = {}
+
+    def promote() -> None:
+        try:
+            outcome["conversation_id"] = store.promote_ephemeral_session(session.id)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    thread = Thread(target=promote)
+    thread.start()
+    try:
+        assert entered.wait(timeout=5)
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+            store.close_session(session.id)
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+            store.create_session(session_id=session.id, ephemeral=True)
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+    try:
+        assert not thread.is_alive()
+        assert "error" not in outcome
+        assert store._sessions[session.id] is session
+        assert session.ephemeral is False
+        assert staging.staged_revision_count(session.id) == 0
+        assert store.promote_ephemeral_session(session.id) is None
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+def test_canvas_promotion_reservation_refuses_restore_and_runtime_teardown(
+    tmp_path,
+) -> None:
+    """Restore or teardown during SQLite work must not replace the live owner."""
+
+    db = CharactersRAGDB(
+        tmp_path / "canvas-promotion-restore-race.sqlite", "restore-race"
+    )
+    entered = Event()
+    release = Event()
+
+    class PausingPersistence:
+        def __init__(self) -> None:
+            self.delegate = ChatPersistenceService(db)
+
+        def promote_console_conversation_bundle(self, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return self.delegate.promote_console_conversation_bundle(**kwargs)
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(
+        persistence=PausingPersistence(),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+    replacement = replace(session)
+    outcome: dict[str, object] = {}
+
+    def promote() -> None:
+        try:
+            outcome["conversation_id"] = store.promote_ephemeral_session(session.id)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    thread = Thread(target=promote)
+    thread.start()
+    try:
+        assert entered.wait(timeout=5)
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+            store.restore_state(
+                sessions=[replacement],
+                messages_by_session={replacement.id: ()},
+            )
+        with pytest.raises(RuntimeError, match="Temporary chat save.*in progress"):
+            store.end_app_runtime()
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+    try:
+        assert not thread.is_alive()
+        assert "error" not in outcome
+        assert store._sessions[session.id] is session
+        assert session.ephemeral is False
+        assert replacement.ephemeral is True
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+def test_delayed_second_promotion_returns_idempotently_before_any_write(
+    tmp_path,
+) -> None:
+    """A caller delayed before reservation must recheck the durable decision."""
+
+    class WriteProbe:
+        def __init__(self) -> None:
+            self.write_count = 0
+
+        def write(self, *, writer, conversation_id, message_ids) -> None:
+            self.write_count += 1
+
+    db = CharactersRAGDB(
+        tmp_path / "canvas-promotion-delayed-entrant.sqlite",
+        "delayed-entrant",
+    )
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(
+        persistence=ChatPersistenceService(db),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+    delayed_at_reservation = Event()
+    release_delayed = Event()
+    original_reserve = store._reserve_ephemeral_promotion
+    probe = WriteProbe()
+    outcome: dict[str, object] = {}
+
+    def pause_delayed(session_to_reserve):
+        if current_thread().name == "promotion-b":
+            delayed_at_reservation.set()
+            assert release_delayed.wait(timeout=5)
+        return original_reserve(session_to_reserve)
+
+    store._reserve_ephemeral_promotion = pause_delayed
+
+    def promote_delayed() -> None:
+        try:
+            outcome["result"] = store.promote_ephemeral_session(
+                session.id,
+                contributions=(probe,),
+            )
+        except Exception as exc:
+            outcome["error"] = exc
+
+    delayed = Thread(target=promote_delayed, name="promotion-b")
+    delayed.start()
+    try:
+        assert delayed_at_reservation.wait(timeout=5)
+        first_conversation_id = store.promote_ephemeral_session(session.id)
+    finally:
+        release_delayed.set()
+        delayed.join(timeout=5)
+
+    try:
+        assert not delayed.is_alive()
+        assert "error" not in outcome
+        assert outcome["result"] is None
+        assert first_conversation_id == session.persisted_conversation_id
+        assert probe.write_count == 0
+        assert staging.staged_revision_count(session.id) == 0
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("confirm_behavior", ["false", "exception"])
+def test_postcommit_canvas_confirm_failure_leaves_chat_durable_and_stage_retired(
+    tmp_path, confirm_behavior
+) -> None:
+    """SQLite cannot roll back after return, so publication must survive confirm."""
+
+    class ConfirmFailureStaging(CanvasStagingStore):
+        def __init__(self):
+            super().__init__()
+            self.retire_calls = 0
+
+        def confirm_contribution(self, session_id, contribution):
+            if confirm_behavior == "exception":
+                raise RuntimeError("private confirm detail")
+            return False
+
+        def retire_contribution(self, session_id, contribution):
+            self.retire_calls += 1
+            return super().retire_contribution(session_id, contribution)
+
+        def discard_session(self, session_id):
+            raise AssertionError("postcommit cleanup must be exact")
+
+    db = CharactersRAGDB(
+        tmp_path / f"canvas-confirm-{confirm_behavior}.sqlite",
+        f"canvas-confirm-{confirm_behavior}",
+    )
+    try:
+        staging = ConfirmFailureStaging()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db),
+            canvas_promotion_participant=staging,
+        )
+        session = store.create_session(ephemeral=True)
+        owner = staging.session_owner(session.id)
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Canvas created.",
+        )
+        staging.create_canvas(
+            owner=owner,
+            run_id="run-create",
+            tool_call_id="call-create",
+            title="Planner",
+            source="<!doctype html><html><body>planner</body></html>",
+            origin_message_id=assistant.id,
+        )
+
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert conversation_id is not None
+        assert session.ephemeral is False
+        assert session.persisted_conversation_id == conversation_id
+        assert staging.staged_revision_count(session.id) == 0
+        assert staging.retire_calls == 1
+        assert db.get_conversation_by_id(conversation_id) is not None
+    finally:
+        db.close_connection()
+
+
+def test_canvas_abort_cleanup_cannot_mask_primary_persistence_failure() -> None:
+    """Participant cleanup failure must not replace the database exception."""
+
+    class FailingPersistence(FakePersistence):
+        def promote_console_conversation_bundle(self, **kwargs):
+            raise ValueError("primary persistence failure")
+
+    class AbortFailureStaging(CanvasStagingStore):
+        def abort_contribution(self, session_id, contribution):
+            raise RuntimeError("private abort failure")
+
+    staging = AbortFailureStaging()
+    store = ConsoleChatStore(
+        persistence=FailingPersistence(),
+        canvas_promotion_participant=staging,
+    )
+    session = store.create_session(ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Canvas created.",
+    )
+    staging.create_canvas(
+        owner=staging.session_owner(session.id),
+        run_id="run-create",
+        tool_call_id="call-create",
+        title="Planner",
+        source="<!doctype html><html><body>planner</body></html>",
+        origin_message_id=assistant.id,
+    )
+
+    with pytest.raises(ValueError, match="primary persistence failure"):
+        store.promote_ephemeral_session(session.id)
+
+    assert session.ephemeral is True
+
+
+def test_canvas_owner_fences_late_callbacks_across_close_restore_and_shutdown() -> None:
+    """Lifecycle deletion alone permits same-id ABA and post-shutdown resurrection."""
+
+    staging = CanvasStagingStore()
+    store = ConsoleChatStore(canvas_promotion_participant=staging)
+    session = store.create_session(session_id="same-id", ephemeral=True)
+    closed_owner = staging.session_owner(session.id)
+    store.close_session(session.id)
+    replacement = store.create_session(session_id="same-id", ephemeral=True)
+    replacement_owner = staging.session_owner(replacement.id)
+
+    with pytest.raises(CanvasStagingError, match="session_retired"):
+        staging.create_canvas(
+            owner=closed_owner,
+            run_id="run-closed",
+            tool_call_id="call-closed",
+            title="Closed",
+            source="<!doctype html><html><body>closed</body></html>",
+            origin_message_id="assistant-closed",
+        )
+
+    store.restore_state(sessions=[replace(replacement)], messages_by_session={})
+    restored_owner = staging.session_owner(replacement.id)
+    assert restored_owner is not replacement_owner
+    with pytest.raises(CanvasStagingError, match="session_retired"):
+        staging.create_canvas(
+            owner=replacement_owner,
+            run_id="run-replaced",
+            tool_call_id="call-replaced",
+            title="Replaced",
+            source="<!doctype html><html><body>replaced</body></html>",
+            origin_message_id="assistant-replaced",
+        )
+
+    store.end_app_runtime()
+    with pytest.raises(CanvasStagingError, match="runtime_closed"):
+        staging.create_canvas(
+            owner=restored_owner,
+            run_id="run-ended",
+            tool_call_id="call-ended",
+            title="Ended",
+            source="<!doctype html><html><body>ended</body></html>",
+            origin_message_id="assistant-ended",
+        )
+
+
+def _create_staged_canvas_for_console(
+    staging: CanvasStagingStore, session_id: str, suffix: str
+):
+    return staging.create_canvas(
+        owner=staging.session_owner(session_id),
+        run_id=f"run-{suffix}",
+        tool_call_id=f"call-{suffix}",
+        title="Temporary",
+        source=f"<!doctype html><html><body>{suffix}</body></html>",
+        origin_message_id=f"assistant-{suffix}",
+    )

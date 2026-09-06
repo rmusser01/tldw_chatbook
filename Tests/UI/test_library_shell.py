@@ -15,6 +15,7 @@ from typing import Mapping
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from loguru import logger as loguru_logger
 from rich.cells import cell_len
 from textual import events
 from textual.app import App, ComposeResult
@@ -418,14 +419,14 @@ def test_library_reader_settings_generation_uses_one_read_only_snapshot(
             screen._library_media_reader_preferences,
             screen._conversations_state.reader_preferences,
             screen._library_notes_reader_preferences,
-            screen._library_prompts_reader_preferences,
+            screen._prompts_state.reader_preferences,
         )
     }
     assert shared == {(False, True, 35)}
     assert screen._library_media_reader_preferences.items_open is False
     assert screen._conversations_state.reader_preferences.items_open is True
     assert screen._library_notes_reader_preferences.items_open is False
-    assert screen._library_prompts_reader_preferences.items_open is True
+    assert screen._prompts_state.reader_preferences.items_open is True
 
 
 @pytest.mark.asyncio
@@ -794,8 +795,8 @@ def test_library_prompt_selection_is_ephemeral_save_state() -> None:
     """Cross-search Prompt selection never enters Library restore state."""
     app = _build_test_app()
     screen = LibraryScreen(app)
-    screen._library_prompt_select_mode = True
-    screen._library_prompt_selection = PromptSelectionBasket(
+    screen._prompts_state.select_mode = True
+    screen._prompts_state.selection = PromptSelectionBasket(
         (PromptSelectionEntry(7, 4, "Literal [name] 🌐", "prompt"),),
         generation=1,
     )
@@ -805,8 +806,8 @@ def test_library_prompt_selection_is_ephemeral_save_state() -> None:
     restored.restore_state(saved)
 
     assert not any("prompt_selection" in key for key in saved)
-    assert restored._library_prompt_select_mode is False
-    assert restored._library_prompt_selection == PromptSelectionBasket()
+    assert restored._prompts_state.select_mode is False
+    assert restored._prompts_state.selection == PromptSelectionBasket()
 
 
 def test_library_conversation_applied_scope_save_restore_excludes_transients() -> None:
@@ -4609,7 +4610,7 @@ async def test_library_retained_prompt_editor_keeps_back_authoritative() -> None
         assert screen._library_emergency_stage is None
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_prompts_view == "editor"
+        assert screen._prompts_state.view == "editor"
         assert screen._library_emergency_stage is None
 
 
@@ -5304,7 +5305,7 @@ async def test_library_retained_prompt_conflict_keeps_specific_action_authoritat
         assert screen._library_emergency_stage is None
         await pilot.press("escape")
         await pilot.pause()
-        assert screen._library_prompt_conflict_snapshot is None
+        assert screen._prompts_state.conflict_snapshot is None
         assert screen._library_emergency_stage is None
 
 
@@ -10735,6 +10736,21 @@ def _painted_cells(host, region):
     return cells
 
 
+def _painted_text(host, region) -> str:
+    """Compositor-rendered text for every row inside ``region``.
+
+    Same shape as ``test_library_media_render_fixes.py``'s ``_painted`` --
+    asserting the actual painted glyphs, not a widget's ``.renderable``,
+    is how task-31221's ``*:focus`` bug (a solid outline painting OVER
+    content while region/renderable assertions stayed green) got caught.
+    """
+    strips = list(host.screen._compositor.render_strips())
+    return "\n".join(
+        strips[y].crop(region.x, region.right).text
+        for y in range(region.y, min(region.bottom, len(strips)))
+    )
+
+
 def _row_is_painted_focused(host, row) -> bool:
     """Whether ``row`` really carries the media row focus cue on screen.
 
@@ -12431,7 +12447,13 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         await _wait_for_condition(
             pilot,
             lambda: (
-                controller.error_copy and len(screen.query("#library-media-retry")) == 1
+                controller.error_copy
+                and len(screen.query("#library-media-retry")) == 1
+                # task-31632: the one Retry now mounts INSIDE the failure
+                # callout, which composes before the pager -- so the Retry
+                # no longer implies the pager's own children are mounted,
+                # and the page-status read below raced the mount.
+                and bool(screen.query("#library-media-page-status"))
             ),
             message="Initial Media error never exposed one Retry action.",
         )
@@ -15960,6 +15982,266 @@ async def test_library_shell_error_snapshot_is_not_cached_for_instant_apply(
 
         await pilot.pause()
         await pilot.pause()
+
+
+# --- task-31632 AC#2/#3: the source snapshot's own failure callout --------
+
+
+class _SlowLibraryNotesScopeService:
+    """A notes source that never answers inside the snapshot deadline."""
+
+    def __init__(self, delay: float = 1.0) -> None:
+        self.delay = delay
+
+    def list_notes(self, **_kwargs):
+        time.sleep(self.delay)
+        return {"items": []}
+
+
+class _RaisingLibraryNotesScopeService:
+    """A notes source whose read fails hard, private message and all."""
+
+    def list_notes(self, **_kwargs):
+        raise RuntimeError("private-snapshot-failure")
+
+
+def _library_source_failure_app(notes_service):
+    """One Library app whose ONLY broken source seam is notes."""
+    app = _build_test_app()
+    app.notes_scope_service = notes_service
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    return app
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_timeout_paints_a_warning_callout_with_its_own_retry(
+    monkeypatch,
+):
+    """task-31632 AC#2/#3: a snapshot that misses its deadline is a WARNING
+    that names how long was waited, inside one ``ds-recovery-callout`` whose
+    own Retry re-runs the snapshot -- not the flat sentence "Library source
+    services unavailable; retry Library later." above a lower-stakes card,
+    whose only control was Continue.
+    """
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
+    )
+    app = _library_source_failure_app(_SlowLibraryNotesScopeService())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot timeout never produced a recovery state.",
+        )
+        state = screen._library_lookup_recovery_state
+        assert state.severity == "warning"
+        assert state.retry_id == "library-source-retry"
+        assert state.message == "Library sources did not answer · waited 0.05 s"
+        assert screen._library_lookup_error == state.message
+
+        callout = await _wait_for_selector(screen, pilot, "#library-hub-load-failure")
+        assert callout.has_class("ds-recovery-callout")
+        assert not callout.has_class("is-blocked")
+        copy = screen.query_one("#library-hub-load-failure-copy", Static)
+        assert str(copy.renderable) == state.message
+        retry = screen.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button)), (
+            "the Retry must live INSIDE the callout, next to the reason"
+        )
+        # Final review M-6: the actual PAINTED glyphs, not just the
+        # Static's ``.renderable`` -- an app-global focus outline can paint
+        # over content while a renderable/CSS-class assertion stays green
+        # (the task-31221 lesson `_painted_text` exists for).
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "Retry" in _painted_text(host, retry.region)
+        # AC#3: Continue is no longer the failure's control, and nothing
+        # navigated away from Library.
+        assert not screen.query("#library-hub-continue")
+        assert host.seen_routes == []
+        # No false zeros anywhere: the callout carries the failure instead.
+        hub_counts = str(screen.query_one("#library-hub-counts", Static).renderable)
+        assert "Notes (0)" not in hub_counts
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_timeout_logs_one_warning_with_a_deadline_marker(
+    monkeypatch,
+):
+    """task-31632 final review I-2: splitting the deadline into its own
+    ``except TimeoutError`` branch (AC#2) dropped the only log line the old
+    bare ``except`` gave every failure kind, timeouts included -- a hung
+    snapshot became diagnosable only from the running UI. The fix routes the
+    timeout through the SAME warning call the hard-failure branch already
+    emits (no new ``logger.*`` call site), with a marker naming the deadline.
+    """
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
+    )
+    app = _library_source_failure_app(_SlowLibraryNotesScopeService())
+    host = LibraryHarness(app)
+
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING")
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lookup_recovery_state is not None,
+                message="Snapshot timeout never produced a recovery state.",
+            )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    matches = [
+        text
+        for text in messages
+        if "Failed to load local Library source snapshot." in text
+    ]
+    assert len(matches) == 1, (
+        f"expected exactly one warning for the timeout, found {matches!r}"
+    )
+    assert "waited 0.05 s" in matches[0]
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_hard_failure_paints_an_error_callout_named_by_class():
+    """task-31632 AC#2/#3: a hard failure is tinted as an error and names the
+    exception CLASS as its reason -- never the exception text, which can carry
+    a private path (the ``private-media-failure`` rule).
+    """
+    app = _library_source_failure_app(_RaisingLibraryNotesScopeService())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        state = screen._library_lookup_recovery_state
+        assert state.severity == "error"
+        assert state.why == "RuntimeError"
+        assert state.unavailable_what == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
+        assert state.retry_id == "library-source-retry"
+
+        callout = await _wait_for_selector(screen, pilot, "#library-hub-load-failure")
+        assert callout.has_class("ds-recovery-callout")
+        assert callout.has_class("is-blocked")
+        copy = screen.query_one("#library-hub-load-failure-copy", Static)
+        retry = screen.query_one("#library-source-retry", Button)
+        assert retry in list(callout.query(Button))
+        # Final review M-6: painted glyphs, not just ``.renderable`` (see the
+        # timeout test's own comment for why).
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "Retry" in _painted_text(host, retry.region)
+        assert not screen.query("#library-hub-continue")
+        assert host.seen_routes == []
+        assert "private-snapshot-failure" not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_repeated_identical_failure_still_repaints():
+    """task-31632 final review I-1: ``_apply_local_source_snapshot``'s
+    dataclass-equality dedup treats two separately-built
+    ``DestinationRecoveryState``s with identical fields as unchanged, so
+    pressing Retry against a PERSISTENT, byte-identical hard failure produced
+    zero visible change -- the exact "Retry reads as inert" class of bug this
+    branch fixes everywhere else. A repeat failure must bump ``attempt`` so
+    equality breaks and the callout reads a fresh attempt number.
+    """
+    app = _library_source_failure_app(_RaisingLibraryNotesScopeService())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        first_state = screen._library_lookup_recovery_state
+        assert first_state.attempt == 1
+        first_generation = screen._library_snapshot_state_generation
+        await _wait_for_selector(screen, pilot, "#library-source-retry")
+
+        await pilot.click("#library-source-retry")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_snapshot_state_generation > first_generation,
+            message="Retry against an identical failure produced no repaint.",
+        )
+
+        second_state = screen._library_lookup_recovery_state
+        assert second_state.attempt == 2, (
+            "a repeated, byte-identical failure must still visibly repaint"
+        )
+        copy = str(
+            screen.query_one("#library-hub-load-failure-copy", Static).renderable
+        )
+        assert "attempt 2" in copy
+
+
+@pytest.mark.asyncio
+async def test_library_reentry_auto_retries_a_timeout_but_not_a_hard_failure(
+    monkeypatch,
+):
+    """task-31632 AC#2: returning to Library re-runs a TIMED-OUT snapshot
+    exactly once (the reusable route's ``on_screen_resume`` visit-refresh
+    seam). A hard failure does not auto-retry -- its callout stands with the
+    Retry the user can press.
+    """
+    from tldw_chatbook.UI.destination_recovery import load_failure_recovery_state
+
+    app = _build_test_app()
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    def _failure(kind):
+        return load_failure_recovery_state(
+            what="Library sources did not answer",
+            reason="waited 5 s",
+            retry_id="library-source-retry",
+            stable_selector="#library-hub-load-failure",
+            kind=kind,
+        )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        refreshes = Mock()
+        monkeypatch.setattr(screen, "_refresh_local_source_snapshot", refreshes)
+
+        screen._library_lookup_recovery_state = _failure("timeout")
+        screen._library_lookup_error = screen._library_lookup_recovery_state.message
+        screen.on_screen_resume()
+        assert refreshes.call_count == 1, (
+            "a timed-out snapshot must retry itself once on return to Library"
+        )
+
+        refreshes.reset_mock()
+        screen._library_lookup_recovery_state = _failure("error")
+        screen._library_lookup_error = screen._library_lookup_recovery_state.message
+        screen.on_screen_resume()
+        assert refreshes.call_count == 0, (
+            "a hard failure must not auto-retry; its callout carries the Retry"
+        )
+
+        refreshes.reset_mock()
+        screen._library_lookup_recovery_state = None
+        screen._library_lookup_error = None
+        screen.on_screen_resume()
+        assert refreshes.call_count == 1, (
+            "the ordinary per-visit snapshot refresh must be untouched"
+        )
 
 
 @pytest.mark.asyncio
@@ -24079,8 +24361,8 @@ async def test_library_shell_search_result_open_prompt_lands_in_editor(tmp_path)
             await _wait_for_selector(screen, pilot, "#library-prompt-name")
             for _ in range(120):
                 if (
-                    screen._selected_prompt_id == prompt_id
-                    and screen._library_prompts_view == "editor"
+                    screen._prompts_state.selected_prompt_id == prompt_id
+                    and screen._prompts_state.view == "editor"
                 ):
                     break
                 await pilot.pause(0.02)

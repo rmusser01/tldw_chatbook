@@ -4837,8 +4837,21 @@ class ConsoleWorkspaceController:
         focus_id = screen._pending_character_return_focus_id
         if focus_id is None or screen.app.screen is not screen:
             return
+        if focus_id == "console-context-character":
+            screen._character_context.return_reveal = True
+            rail_state = screen._current_console_rail_state()
+            screen._sync_console_rail_visibility_if_changed(rail_state)
+            if not rail_state.left_open:
+                self._focus_composer_if_needed_fn(force=True)
+                return
+            # Rail reveal restores saved child display flags. Apply the
+            # transient disclosure afterwards, without persisting a gesture.
+            screen.query_one("#console-left-rail").sync_sections(rail_state)
+            focus_id = "console-character-search"
         try:
-            screen.set_focus(screen.query_one(f"#{focus_id}"))
+            target = screen.query_one(f"#{focus_id}")
+            screen.set_focus(target)
+            target.scroll_visible(animate=False)
         except NoMatches:
             return
         screen._pending_character_return_focus_id = None

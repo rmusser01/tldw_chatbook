@@ -348,6 +348,18 @@ async def test_finding_policy_top_k_override_out_of_range_falls_back_to_default(
     assert captured["top_k"] == 10
 
 
+def test_resolve_finding_policy_absent_resolves_to_balanced_default():
+    """task-31414 regression pin: the authoring-side fix (`automation_
+    validation.py`'s edit-mode gate) leaves a genuinely-absent
+    `finding_policy` unset in STORAGE, but execution-time resolution must
+    keep resolving that absence to the same default it always has --
+    `_resolve_finding_policy` itself is untouched by this task; this pins
+    that its runtime behavior didn't drift."""
+    top_k, high_confidence_only = automation_execution._resolve_finding_policy(None)
+    assert top_k == automation_execution._FINDING_POLICY_TOP_K_DEFAULT
+    assert high_confidence_only is False
+
+
 @pytest.mark.asyncio
 async def test_high_confidence_only_drops_weak_scored_rows(monkeypatch):
     strong = _row(result_id="strong", score=0.9)

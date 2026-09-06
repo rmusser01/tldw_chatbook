@@ -28,7 +28,7 @@ Stop was requested after20.01s. The dictation state returned idle, then wrapper9
 
 `captured_bytes=97920` counts only VAD-forwarded speech chunks, not the entire20s microphone buffer. `dictation_session_released=false` reports the cached session wrapper, which the successful dictation path intentionally retains; it does not establish an open recorder. The controller claims/stops its active service, and final process exit closes any remaining device handles.
 
-Migu remained idle during actual capture (`buddy_capture_states=[idle]`). TASK31741 tracks connecting local dictation lifecycle to the existing request-owned Buddy listening state. The voice conversation works, but the listening visual is not accepted.
+Migu remained idle during actual capture (`buddy_capture_states=[idle]`). TASK31812 (formerly TASK31741 before current-dev task-ID reconciliation) tracks connecting local dictation lifecycle to the existing request-owned Buddy listening state. The voice conversation works, but the listening visual is not accepted.
 
 Two earlier attempts are preserved: [first attempt](microphone-20260905-1b48acf67c/execution.json) exited1 because the harness read `draft_text` without calling it; [second attempt](microphone-20260905-84cb282039/microphone.json) returned no transcript and sent nothing externally because the user missed its recording window. The successful run added a five-second countdown. Neither earlier attempt is counted as a microphone-transcription pass.
 

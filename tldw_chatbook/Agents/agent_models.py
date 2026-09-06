@@ -12,7 +12,8 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Callable, Literal, TypeAlias
+from types import MappingProxyType
+from typing import Callable, Literal, Mapping, TypeAlias
 
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
@@ -90,6 +91,10 @@ TOOL_OUTCOME_BLOCKED = "blocked"
 TOOL_OUTCOME_TIMEOUT = "timeout"
 TOOL_OUTCOME_CANCELLED = "cancelled"
 ToolOutcome: TypeAlias = Literal["success", "failed", "blocked", "timeout", "cancelled"]
+
+ToolProjectionAudience: TypeAlias = Literal[
+    "display", "log", "cycle", "continuation"
+]
 
 # The two steering sources (spec SS6: "two paths, one mechanism"). The label
 # the child sees is derived from the source by `format_steering_message`
@@ -346,6 +351,57 @@ class ToolResult:
             A failed tool result explicitly classified as blocked.
         """
         return cls(ok=False, error=error, outcome=TOOL_OUTCOME_BLOCKED)
+
+
+@dataclass(frozen=True)
+class ToolRecordProjection:
+    """One content boundary's immutable view of a tool call and result.
+
+    ``arguments`` is a detached, read-only mapping.  Providers may replace it
+    with content-free metadata for sensitive tools; ordinary providers receive
+    the compatibility projection from :func:`default_tool_record_projection`.
+    """
+
+    arguments: Mapping[str, object] = field(default_factory=dict)
+    content: str = ""
+    error: str = ""
+    ok: bool | None = None
+    error_category: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+
+
+def default_tool_record_projection(
+    call: ToolCall, result: ToolResult | None
+) -> ToolRecordProjection:
+    """Return the byte-compatible projection for providers without a hook."""
+    return ToolRecordProjection(
+        arguments=call.args,
+        content=result.content if result is not None else "",
+        error=result.error if result is not None else "",
+        ok=result.ok if result is not None else None,
+    )
+
+
+def failed_tool_record_projection(
+    call: ToolCall, result: ToolResult | None, error_category: str
+) -> ToolRecordProjection:
+    """Return bounded metadata when an audience projection cannot run."""
+    category = error_category[:64] or "ProjectionError"
+    message = f"Tool record projection failed ({category})."
+    return ToolRecordProjection(
+        arguments={
+            "tool_name": call.name[:128],
+            "call_id": call.call_id[:128],
+            "success": bool(result.ok) if result is not None else False,
+            "error_category": category,
+        },
+        content=message,
+        error=message,
+        ok=result.ok if result is not None else False,
+        error_category=category,
+    )
 
 
 @dataclass(frozen=True)

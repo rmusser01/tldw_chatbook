@@ -505,6 +505,14 @@ ENHANCED_PICKER_COMPATIBILITY_TYPES = (EnhancedFileOpen, EnhancedFileSave)
 
 _LIBRARY_SCREEN_FILE = "tldw_chatbook/UI/Screens/library_screen.py"
 _COLLECTIONS_FILE = "tldw_chatbook/UI/Library_Modules/prompt_collections.py"
+#: Wave-6 task 2 moved 139 prompt-cluster methods off `LibraryScreen` into
+#: `LibraryPromptsController`; four of the edges below launch their modal
+#: from a body that now lives there, so discovery has to parse that file
+#: too or a repointed edge is simply never found (and the bidirectional
+#: assertion fails the other way).
+_PROMPTS_CONTROLLER_FILE = (
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py"
+)
 _FILE_NOTES_WORKSPACE_FILE = (
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py"
 )
@@ -520,6 +528,7 @@ class _OwnerScope:
 _SUPPORTED_OWNER_SCOPES = (
     _OwnerScope(_LIBRARY_SCREEN_FILE, "LibraryScreen"),
     _OwnerScope(_COLLECTIONS_FILE, "LibraryPromptCollectionsController"),
+    _OwnerScope(_PROMPTS_CONTROLLER_FILE, "LibraryPromptsController"),
     _OwnerScope(_FILE_NOTES_WORKSPACE_FILE, "LibraryFileNotesWorkspace"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "LibraryFileNotesGitPanel"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "PushDestinationAuthorizationDialog"),
@@ -576,14 +585,14 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         SkillTrustBootstrapModal,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _PROMPTS_CONTROLLER_FILE,
+        "LibraryPromptsController",
         "handle_library_prompts_import_browse",
         FileOpen,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _PROMPTS_CONTROLLER_FILE,
+        "LibraryPromptsController",
         "handle_library_prompt_history_restore",
         ConfirmationDialog,
     ),
@@ -594,14 +603,14 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         PromptVariablesDialog,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _PROMPTS_CONTROLLER_FILE,
+        "LibraryPromptsController",
         "_export_library_prompt",
         FileSave,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _PROMPTS_CONTROLLER_FILE,
+        "LibraryPromptsController",
         "_open_library_prompt_delete_confirmation",
         PromptDeleteConfirmationModal,
     ),

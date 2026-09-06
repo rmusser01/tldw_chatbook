@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Canvas.repository import CanvasImportBatch
 
 _SIMPLE_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _INSERT_VALUES_PATTERN = re.compile(
@@ -36,6 +39,15 @@ class ConsoleTransactionWriter(Protocol):
     ) -> None:
         """Execute parameterized INSERT rows through the caller transaction."""
 
+    def append_canvas_batch(
+        self,
+        batch: "CanvasImportBatch",
+        *,
+        anchor_message_id: str,
+        require_active_path: bool = True,
+    ) -> None:
+        """Append through Canvas' canonical caller-owned transaction validator."""
+
 
 class ConsoleTransactionContribution(Protocol):
     """Write one sidecar through an existing atomic Console transaction."""
@@ -48,6 +60,27 @@ class ConsoleTransactionContribution(Protocol):
         message_ids: Mapping[str, str],
     ) -> None:
         """Write through the caller-owned capability without committing."""
+
+
+class ConsoleExactNativeIdTransactionContribution(ABC):
+    """Write a sidecar using only exact native-to-durable message identities."""
+
+    __slots__ = ()
+
+    @abstractmethod
+    def write_exact(
+        self,
+        *,
+        writer: ConsoleTransactionWriter,
+        conversation_id: str,
+        native_message_ids: Mapping[str, str],
+    ) -> None:
+        """Write without the legacy user/assistant role aliases."""
+
+
+ConsolePromotionTransactionContribution = (
+    ConsoleTransactionContribution | ConsoleExactNativeIdTransactionContribution
+)
 
 
 class ConsoleDurableFingerprintContribution(Protocol):
@@ -131,6 +164,23 @@ class _CursorConsoleTransactionWriter:
                 "Console INSERT executemany requires non-empty rows of matching arity."
             )
         self.__cursor.executemany(statement, rows)
+
+    def append_canvas_batch(
+        self,
+        batch: "CanvasImportBatch",
+        *,
+        anchor_message_id: str,
+        require_active_path: bool = True,
+    ) -> None:
+        self.__require_active()
+        from tldw_chatbook.Canvas.repository import CanvasRepository
+
+        CanvasRepository.append_batch_in_transaction(
+            self.__cursor,
+            batch,
+            anchor_message_id=anchor_message_id,
+            require_active_path=require_active_path,
+        )
 
     def _revoke(self) -> None:
         self.__active = False

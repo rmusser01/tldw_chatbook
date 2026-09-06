@@ -2402,7 +2402,7 @@ def prompt_editor_meta_line(
             edits. A plain pure-function input (never derived from
             ``editor_state`` itself, which only ever reflects the
             last-saved record) -- callers thread the screen's own
-            ``_library_prompt_dirty`` flag through. Defaults to ``False``
+            ``_prompts_state.dirty`` flag through. Defaults to ``False``
             so every pre-existing call site is unaffected.
 
     Returns:

@@ -569,8 +569,10 @@ def test_prompts_sort_choice_requests_exact_scope():
         applied_scope = PromptBrowseScope(sort_by=sort_by)
         return SimpleNamespace(
             # task-15790: production gained this in-flight guard; stale double.
-            _library_prompts_mutation_in_flight=False,
-            _library_prompts_sort_choices_visible=True,
+            _prompts_state=SimpleNamespace(
+                mutation_in_flight=False,
+                sort_choices_visible=True,
+            ),
             _library_prompt_browse_controller=SimpleNamespace(
                 scope=applied_scope,
                 visible_result=SimpleNamespace(scope=applied_scope),
@@ -589,7 +591,7 @@ def test_prompts_sort_choice_requests_exact_scope():
         button=SimpleNamespace(choice_value="name"),
     )
     LibraryScreen.handle_library_prompts_sort_choice(fake, event)
-    assert fake._library_prompts_sort_choices_visible is False
+    assert fake._prompts_state.sort_choices_visible is False
     assert len(requests) == 1
     scope, focus_identity = requests[0]
     assert (scope.sort_by, scope.sort_order, scope.page) == ("name", "asc", 1)
@@ -603,7 +605,7 @@ def test_prompts_sort_choice_requests_exact_scope():
         button=SimpleNamespace(choice_value="newest"),
     )
     LibraryScreen.handle_library_prompts_sort_choice(fake, event)
-    assert fake._library_prompts_sort_choices_visible is False
+    assert fake._prompts_state.sort_choices_visible is False
     assert requests == []
     assert refreshes == [True]
 

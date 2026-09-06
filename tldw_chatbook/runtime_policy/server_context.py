@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 from uuid import UUID
@@ -25,6 +26,7 @@ from .server_credentials import (
     SERVER_CREDENTIAL_API_KEY,
     SERVER_CREDENTIAL_BEARER_TOKEN,
     SERVER_CREDENTIAL_REFRESH_TOKEN,
+    ServerCredentialScope,
     ServerCredentialStore,
 )
 from .types import (
@@ -36,6 +38,33 @@ from .types import (
 _CHARACTER_AUTHORITY_DOMAIN = b"tldw-chatbook.character-authority"
 _CHARACTER_AUTHORITY_VERSION = b"1"
 _MAX_SERVER_USER_ID = 2**63 - 1
+
+
+def default_server_credential_profile_id() -> str | None:
+    """Return the credential-scope profile id for the process's effective config.
+
+    None for the default (un-retargeted) config path: the provider then uses
+    the origin server_id itself as the profile id, byte-for-byte what
+    `ServerCredentialScope.legacy` already produced before per-profile
+    scoping existed, so existing single-profile installs keep resolving
+    whatever they already have stored under the shared keyring namespace
+    with no re-entry prompt (task-31416 AC#4).
+
+    A config retargeted via `TLDW_CONFIG_PATH` -- the scratch/multi-profile
+    case the live incident hit -- gets its own namespace keyed by the
+    resolved config path, so two profiles pointed at the same base URL no
+    longer share a credential (AC#1/#2). This is a thin wrapper the ONE
+    production wiring call site (`app.py`'s `_wire_server_context_provider`)
+    uses; `RuntimeServerContextProvider` itself never reads the environment
+    directly, so tests that construct it explicitly (the overwhelming
+    majority of `Tests/RuntimePolicy/`) keep getting the unscoped default
+    with no changes required.
+    """
+    if not os.environ.get("TLDW_CONFIG_PATH"):
+        return None
+    from tldw_chatbook.config import get_cli_config_path
+
+    return str(get_cli_config_path())
 
 
 def encode_server_user_character_authority(
@@ -171,6 +200,7 @@ class RuntimeServerContextProvider:
         credential_store: ServerCredentialStore | None = None,
         credential_store_factory: Callable[[], ServerCredentialStore] | None = None,
         app_config: Mapping[str, Any] | None,
+        credential_profile_id: str | None = None,
     ) -> None:
         """Compose the runtime server-context provider.
 
@@ -185,6 +215,16 @@ class RuntimeServerContextProvider:
                 keyring backend discovery -- stays off the startup path
                 (TASK-21111(b)).
             app_config: The loaded application config, or None.
+            credential_profile_id: Namespaces every credential read/write
+                under this id instead of the bare server_id (task-31416).
+                None (the default) reproduces the pre-scoping behavior
+                exactly -- the server_id doubles as its own profile id, so
+                existing installs keep resolving whatever they already have
+                stored with no re-entry prompt. Callers that need isolation
+                across config profiles (e.g. a `TLDW_CONFIG_PATH`-retargeted
+                profile) pass a value stable for that profile and distinct
+                from every other profile's -- see
+                `default_server_credential_profile_id`.
 
         Raises:
             ValueError: If neither or both of ``credential_store`` and
@@ -200,6 +240,7 @@ class RuntimeServerContextProvider:
         self._credential_store = credential_store
         self._credential_store_factory = credential_store_factory
         self.app_config = app_config or {}
+        self._credential_profile_id = credential_profile_id
         self._legacy_cleared_server_ids: set[str] = set()
         self._cached_client_key: _CachedClientKey | None = None
         self._cached_client: TLDWAPIClient | None = None
@@ -217,6 +258,27 @@ class RuntimeServerContextProvider:
     @credential_store.setter
     def credential_store(self, store: ServerCredentialStore) -> None:
         self._credential_store = store
+
+    def _credential_profile_scope_id(self, server_id: str) -> str:
+        """Return the profile id a credential for ``server_id`` is scoped under."""
+        return (
+            server_id if self._credential_profile_id is None else self._credential_profile_id
+        )
+
+    def _credential_scope(self, server_id: str, purpose: str) -> ServerCredentialScope:
+        """Return the scope a credential for ``server_id``/``purpose`` is stored under.
+
+        `server_profile_id` distinguishes config profiles; `normalized_origin`
+        distinguishes servers within one profile. Defaulting the profile id to
+        `server_id` itself reproduces `ServerCredentialScope.legacy` exactly,
+        so an unconfigured (default) provider is byte-for-byte identical to
+        the pre-task-31416 unscoped calls.
+        """
+        return ServerCredentialScope(
+            server_profile_id=self._credential_profile_scope_id(server_id),
+            normalized_origin=server_id,
+            credential_type=purpose,
+        )
 
     def get_active_context(self) -> ActiveServerContext:
         active_server_id = self._require_active_server_id()
@@ -388,12 +450,16 @@ class RuntimeServerContextProvider:
 
     def clear_active_server_credentials(self) -> None:
         active_server_id = self._require_active_server_id()
-        self.credential_store.clear_server(active_server_id)
+        self.credential_store.clear_server(
+            self._credential_profile_scope_id(active_server_id)
+        )
         self._mark_legacy_server_id_cleared(active_server_id)
         self._invalidate_cached_client()
 
     def clear_server_credentials(self, server_id: str) -> None:
-        self.credential_store.clear_server(server_id)
+        self.credential_store.clear_server(
+            self._credential_profile_scope_id(server_id)
+        )
         self._mark_legacy_server_id_cleared(server_id)
         self._invalidate_cached_client()
 
@@ -447,11 +513,11 @@ class RuntimeServerContextProvider:
 
     def clear_active_server_auth_tokens(self) -> None:
         active_server_id = self._require_active_server_id()
-        self.credential_store.delete_secret(
-            active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN
+        self.credential_store.delete_scoped_secret(
+            self._credential_scope(active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN)
         )
-        self.credential_store.delete_secret(
-            active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN
+        self.credential_store.delete_scoped_secret(
+            self._credential_scope(active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN)
         )
         self._invalidate_cached_client()
 
@@ -463,15 +529,17 @@ class RuntimeServerContextProvider:
     ) -> None:
         context = self.get_active_context()
         if access_token:
-            self.credential_store.set_secret(
-                context.active_server_id,
-                SERVER_CREDENTIAL_ACCESS_TOKEN,
+            self.credential_store.set_scoped_secret(
+                self._credential_scope(
+                    context.active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN
+                ),
                 access_token,
             )
         if refresh_token:
-            self.credential_store.set_secret(
-                context.active_server_id,
-                SERVER_CREDENTIAL_REFRESH_TOKEN,
+            self.credential_store.set_scoped_secret(
+                self._credential_scope(
+                    context.active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN
+                ),
                 refresh_token,
             )
         if access_token or refresh_token:
@@ -518,8 +586,8 @@ class RuntimeServerContextProvider:
             SERVER_CREDENTIAL_ACCESS_TOKEN,
         )
         purpose = purposes[0]
-        self.credential_store.set_secret(
-            normalized_server_id, purpose, normalized_secret
+        self.credential_store.set_scoped_secret(
+            self._credential_scope(normalized_server_id, purpose), normalized_secret
         )
         self._legacy_cleared_server_ids.discard(normalized_server_id)
         self._invalidate_cached_client()
@@ -689,6 +757,12 @@ class RuntimeServerContextProvider:
         if purpose is not None:
             secret = self._get_credential_secret(server_id, purpose)
             if secret is not None:
+                logger.debug(
+                    "Resolved server credential from credential_store "
+                    "(purpose={}, profile={}).",
+                    purpose,
+                    self._credential_profile_scope_id(server_id),
+                )
                 return secret, f"credential_store:{purpose}"
             return None, "none"
 
@@ -700,6 +774,12 @@ class RuntimeServerContextProvider:
                 credential_error = exc
                 break
             if secret is not None:
+                logger.debug(
+                    "Resolved server credential from credential_store "
+                    "(purpose={}, profile={}).",
+                    candidate_purpose,
+                    self._credential_profile_scope_id(server_id),
+                )
                 return secret, f"credential_store:{candidate_purpose}"
 
         if allow_legacy_config:
@@ -754,7 +834,9 @@ class RuntimeServerContextProvider:
 
     def _get_credential_secret(self, server_id: str, purpose: str) -> str | None:
         try:
-            return self.credential_store.get_secret(server_id, purpose)
+            return self.credential_store.get_scoped_secret(
+                self._credential_scope(server_id, purpose)
+            )
         except CredentialStoreUnavailable as exc:
             raise ServerCredentialsUnavailable(
                 "Credential store is unavailable for the active server.",
@@ -769,16 +851,49 @@ class RuntimeServerContextProvider:
             ) from exc
 
     def _legacy_config_token(self) -> str | None:
-        api_config = self._legacy_api_config()
-        token = (
-            api_config.get("auth_token")
-            or api_config.get("api_key")
-            or api_config.get("bearer_token")
+        """Resolve the legacy `[tldw_api]` credential, screening `auth_token`.
+
+        `auth_token` still wins over `api_key`/`bearer_token` when it is a
+        genuine value (task-31417 AC#3) -- but the app's own config load
+        synthesizes `auth_token = TLDW_API_PLACEHOLDER_AUTH_TOKEN` into
+        `[tldw_api]` whenever a profile's file omits it, so a real `api_key`
+        the user actually configured must not lose to that placeholder
+        (AC#1). Screening reuses `config.py`'s existing constant and
+        validity check (AC#2) rather than a second copy of the rule.
+        """
+        from tldw_chatbook.config import (
+            TLDW_API_PLACEHOLDER_AUTH_TOKEN,
+            resolve_provider_api_key,
+            resolve_tldw_api_auth_token,
         )
-        if token is None:
-            return None
-        normalized = str(token).strip()
-        return normalized or None
+
+        api_config = self._legacy_api_config()
+        raw_auth_token = api_config.get("auth_token")
+        auth_token = resolve_tldw_api_auth_token(raw_auth_token)
+        if auth_token is not None:
+            return auth_token
+
+        placeholder_auth_token_rejected = (
+            resolve_provider_api_key(raw_auth_token) == TLDW_API_PLACEHOLDER_AUTH_TOKEN
+        )
+
+        api_key = resolve_provider_api_key(api_config.get("api_key"))
+        if api_key is not None:
+            if placeholder_auth_token_rejected:
+                logger.info(
+                    "[tldw_api] auth_token is the boot-rewrite placeholder; "
+                    "using api_key instead (credential_source=config:api_key)."
+                )
+            return api_key
+
+        bearer_token = resolve_provider_api_key(api_config.get("bearer_token"))
+        if bearer_token is not None and placeholder_auth_token_rejected:
+            logger.info(
+                "[tldw_api] auth_token is the boot-rewrite placeholder; "
+                "using bearer_token instead "
+                "(credential_source=config:bearer_token)."
+            )
+        return bearer_token
 
     def _legacy_api_config(self) -> Mapping[str, Any]:
         from tldw_chatbook.config import resolve_tldw_api_config
@@ -830,8 +945,11 @@ class RuntimeServerContextProvider:
             return None
 
         purpose = purposes[0]
+        profile_id = self._credential_profile_scope_id(server_id)
         try:
-            self.credential_store.set_secret(server_id, purpose, token)
+            self.credential_store.set_scoped_secret(
+                self._credential_scope(server_id, purpose), token
+            )
         except CredentialStoreUnavailable as exc:
             logger.warning(
                 "Legacy token keyring import skipped; credential store "
@@ -847,6 +965,12 @@ class RuntimeServerContextProvider:
                 type(exc).__name__,
             )
             return None
+        logger.info(
+            "Imported [tldw_api] config credential into the credential store "
+            "(purpose={}, profile={}).",
+            purpose,
+            profile_id,
+        )
         return purpose
 
     def _invalidate_cached_client(self) -> None:

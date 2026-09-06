@@ -68,9 +68,14 @@ class NewTaskChoiceModal(SafeModalDismissMixin, ModalScreen[NewTaskChoice | None
         with Vertical(classes="new-task-choice-modal"):
             yield Static("New scheduled task", classes="new-task-choice-title", markup=False)
             yield Static(
-                "A reminder fires once or on a cron schedule. A recurring "
-                "question runs a scoped search on a schedule and reports "
-                "what it finds.",
+                # task-31710 AC#1: "scheduled task" is the locked noun for
+                # this primitive elsewhere on the screen (task-23106; the
+                # form this button opens titles itself "New Scheduled
+                # Task") -- this modal used to say "reminder" instead,
+                # a third wording for the same thing.
+                "A scheduled task fires once or on a cron schedule. A "
+                "recurring question runs a scoped search on a schedule "
+                "and reports what it finds.",
                 classes="new-task-choice-copy",
                 markup=False,
             )
@@ -80,7 +85,7 @@ class NewTaskChoiceModal(SafeModalDismissMixin, ModalScreen[NewTaskChoice | None
                     "Recurring question…", id="new-task-choice-automation"
                 )
                 yield Button(
-                    "Reminder…", id="new-task-choice-reminder", variant="primary"
+                    "Scheduled task…", id="new-task-choice-reminder", variant="primary"
                 )
 
     def on_mount(self) -> None:

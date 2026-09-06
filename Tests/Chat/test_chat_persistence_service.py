@@ -4,12 +4,17 @@ import json
 import pytest
 
 from Tests.Chat.test_citation_trace_repository import (
-    _TrackingKeyProvider,
     _exact_governed_payload_write,
-    _identity as citation_identity,
-    _repository as citation_repository,
     _sealed_write,
+    _TrackingKeyProvider,
 )
+from Tests.Chat.test_citation_trace_repository import (
+    _identity as citation_identity,
+)
+from Tests.Chat.test_citation_trace_repository import (
+    _repository as citation_repository,
+)
+from tldw_chatbook.Canvas.staging import CanvasStagingStore
 from tldw_chatbook.Chat.chat_persistence_service import (
     ChatPersistenceService,
     CitationPersistenceUnavailable,
@@ -27,9 +32,17 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyCandidate,
+)
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
+)
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleExactNativeIdTransactionContribution,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
@@ -56,6 +69,336 @@ def db_instance(db_path, client_id):
 
 @pytest.mark.integration
 class TestChatPersistenceService:
+    def test_generation_contribution_metadata_distinguishes_omitted_from_empty(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console"
+        )
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="failed",
+            metadata_json=MessageMetadata(engine="pipeline").to_json(),
+        )
+        initial = db_instance.get_message_by_id(message_id)
+
+        service.replace_assistant_generation_projection_with_contributions(
+            native_message_id="native-assistant",
+            message_id=message_id,
+            content="ordinary replacement",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state="complete",
+            usage_json=None,
+            metadata_json=None,
+            update_metadata=False,
+            contributions=(),
+            expected_version=initial["version"],
+        )
+        preserved = db_instance.get_message_by_id(message_id)
+        assert MessageMetadata.from_json(preserved["metadata_json"]) == (
+            MessageMetadata(engine="pipeline")
+        )
+
+        service.replace_assistant_generation_projection_with_contributions(
+            native_message_id="native-assistant",
+            message_id=message_id,
+            content="explicit empty replacement",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state="complete",
+            usage_json=None,
+            metadata_json=MessageMetadata().to_json(),
+            update_metadata=True,
+            contributions=(),
+            expected_version=preserved["version"],
+        )
+        cleared = db_instance.get_message_by_id(message_id)
+        assert MessageMetadata.from_json(cleared["metadata_json"]).is_empty is True
+
+    def test_canvas_origin_uses_exact_native_id_when_id_matches_legacy_role_alias(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        """Legacy role aliases must not overwrite Canvas's exact native mapping."""
+
+        class LegacyAliasProbe:
+            def __init__(self) -> None:
+                self.assistant_id = None
+
+            def write(self, *, writer, conversation_id, message_ids) -> None:
+                self.assistant_id = message_ids["assistant"]
+
+        staging = CanvasStagingStore()
+        owner = staging.activate_session("temporary-session")
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="turn-1",
+            tool_call_id="call-1",
+            title="Temporary",
+            source="<!doctype html><html><body>one</body></html>",
+            origin_message_id="assistant",
+        )
+        contribution = staging.promotion_contribution("temporary-session")
+        assert contribution is not None
+        legacy_probe = LegacyAliasProbe()
+        first_id = "00000000-0000-4000-8000-000000000002"
+        second_id = "00000000-0000-4000-8000-000000000003"
+
+        ChatPersistenceService(db_instance).promote_console_conversation_bundle(
+            conversation_id="00000000-0000-4000-8000-000000000001",
+            policy_candidate=ConsoleLibraryPolicyCandidate(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+            conversation_kwargs={"conversation_title": "Promoted"},
+            messages=(
+                {
+                    "native_id": "assistant",
+                    "create_kwargs": {
+                        "message_id": first_id,
+                        "sender": "assistant",
+                        "content": "First assistant",
+                        "parent_message_id": None,
+                        "feedback": None,
+                    },
+                },
+                {
+                    "native_id": "later-assistant",
+                    "create_kwargs": {
+                        "message_id": second_id,
+                        "sender": "assistant",
+                        "content": "Second assistant",
+                        "parent_message_id": first_id,
+                        "feedback": None,
+                    },
+                },
+            ),
+            active_leaf_message_id=second_id,
+            contributions=(contribution, legacy_probe),
+        )
+
+        row = (
+            db_instance.get_connection()
+            .execute(
+                "SELECT origin_message_id FROM canvas_revisions WHERE id = ?",
+                (created.revision.revision_id,),
+            )
+            .fetchone()
+        )
+        assert row is not None
+        assert row[0] == first_id
+        assert legacy_probe.assistant_id == second_id
+
+    def test_exact_native_message_ids_are_immutable_between_contributions(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        """One exact contribution must not redirect a later Canvas origin."""
+
+        class PoisoningExactContribution(ConsoleExactNativeIdTransactionContribution):
+            def __init__(self) -> None:
+                self.mutation_blocked = False
+
+            def write_exact(
+                self, *, writer, conversation_id, native_message_ids
+            ) -> None:
+                try:
+                    native_message_ids["assistant"] = (
+                        "00000000-0000-4000-8000-000000000003"
+                    )
+                except TypeError:
+                    self.mutation_blocked = True
+
+        staging = CanvasStagingStore()
+        owner = staging.activate_session("temporary-session")
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="turn-1",
+            tool_call_id="call-1",
+            title="Temporary",
+            source="<!doctype html><html><body>one</body></html>",
+            origin_message_id="assistant",
+        )
+        canvas_contribution = staging.promotion_contribution("temporary-session")
+        assert canvas_contribution is not None
+        poison = PoisoningExactContribution()
+        first_id = "00000000-0000-4000-8000-000000000002"
+        second_id = "00000000-0000-4000-8000-000000000003"
+
+        ChatPersistenceService(db_instance).promote_console_conversation_bundle(
+            conversation_id="00000000-0000-4000-8000-000000000001",
+            policy_candidate=ConsoleLibraryPolicyCandidate(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+            conversation_kwargs={"conversation_title": "Promoted"},
+            messages=(
+                {
+                    "native_id": "assistant",
+                    "create_kwargs": {
+                        "message_id": first_id,
+                        "sender": "assistant",
+                        "content": "First assistant",
+                        "parent_message_id": None,
+                        "feedback": None,
+                    },
+                },
+                {
+                    "native_id": "later-assistant",
+                    "create_kwargs": {
+                        "message_id": second_id,
+                        "sender": "assistant",
+                        "content": "Second assistant",
+                        "parent_message_id": first_id,
+                        "feedback": None,
+                    },
+                },
+            ),
+            active_leaf_message_id=second_id,
+            contributions=(poison, canvas_contribution),
+        )
+
+        origin_id = (
+            db_instance.get_connection()
+            .execute(
+                "SELECT origin_message_id FROM canvas_revisions WHERE id = ?",
+                (created.revision.revision_id,),
+            )
+            .fetchone()[0]
+        )
+        assert poison.mutation_blocked is True
+        assert origin_id == first_id
+
+    def test_legacy_contribution_with_unrelated_write_exact_property_is_not_probed(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        """Structural probing can execute an unrelated legacy property."""
+
+        class LegacyContribution:
+            def __init__(self) -> None:
+                self.assistant_id = None
+
+            @property
+            def write_exact(self):
+                raise AssertionError("unrelated property was probed")
+
+            def write(self, *, writer, conversation_id, message_ids) -> None:
+                self.assistant_id = message_ids["assistant"]
+
+        contribution = LegacyContribution()
+        assistant_id = "00000000-0000-4000-8000-000000000002"
+
+        ChatPersistenceService(db_instance).promote_console_conversation_bundle(
+            conversation_id="00000000-0000-4000-8000-000000000001",
+            policy_candidate=ConsoleLibraryPolicyCandidate(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            ),
+            conversation_kwargs={"conversation_title": "Promoted"},
+            messages=(
+                {
+                    "native_id": "native-assistant",
+                    "create_kwargs": {
+                        "message_id": assistant_id,
+                        "sender": "assistant",
+                        "content": "Assistant",
+                        "parent_message_id": None,
+                        "feedback": None,
+                    },
+                },
+            ),
+            active_leaf_message_id=assistant_id,
+            contributions=(contribution,),
+        )
+
+        assert contribution.assistant_id == assistant_id
+
+    @pytest.mark.parametrize("fail_after_write", [1, 2, 3, 4])
+    def test_canvas_promotion_rolls_back_every_canvas_write_prefix(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+        fail_after_write: int,
+    ) -> None:
+        """Any Canvas INSERT escaping the bundle rollback leaves an orphan graph."""
+
+        from tldw_chatbook.Chat import console_transaction_contribution as seam
+
+        staging = CanvasStagingStore()
+        owner = staging.activate_session("temporary-session")
+        created = staging.create_canvas(
+            owner=owner,
+            run_id="turn-1",
+            tool_call_id="call-1",
+            title="Temporary",
+            source="<!doctype html><html><body>one</body></html>",
+            origin_message_id="native-assistant",
+        )
+        staging.update_canvas(
+            owner=owner,
+            run_id="turn-2",
+            tool_call_id="call-2",
+            canvas_id=created.revision.canvas_id,
+            expected_parent_revision_id=created.revision.revision_id,
+            source="<!doctype html><html><body>two</body></html>",
+            origin_message_id="native-assistant",
+        )
+        contribution = staging.promotion_contribution("temporary-session")
+        assert contribution is not None
+        original_execute = seam._CursorConsoleTransactionWriter.execute
+        write_count = 0
+
+        def fail_at_prefix(self, statement, parameters):
+            nonlocal write_count
+            original_execute(self, statement, parameters)
+            if statement.startswith("INSERT INTO canvas_"):
+                write_count += 1
+                if write_count == fail_after_write:
+                    raise RuntimeError("private source must not escape")
+
+        monkeypatch.setattr(
+            seam._CursorConsoleTransactionWriter, "execute", fail_at_prefix
+        )
+        service = ChatPersistenceService(db_instance)
+        with pytest.raises(RuntimeError) as captured:
+            service.promote_console_conversation_bundle(
+                conversation_id="00000000-0000-4000-8000-000000000001",
+                policy_candidate=ConsoleLibraryPolicyCandidate(
+                    auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                    assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                ),
+                conversation_kwargs={"conversation_title": "Promoted"},
+                messages=(
+                    {
+                        "native_id": "native-assistant",
+                        "create_kwargs": {
+                            "message_id": "00000000-0000-4000-8000-000000000002",
+                            "sender": "assistant",
+                            "content": "Canvas origin",
+                            "parent_message_id": None,
+                            "feedback": None,
+                        },
+                    },
+                ),
+                active_leaf_message_id="00000000-0000-4000-8000-000000000002",
+                contributions=(contribution,),
+            )
+
+        assert "one" not in str(captured.value)
+        assert "two" not in str(captured.value)
+        connection = db_instance.get_connection()
+        for table in (
+            "conversations",
+            "messages",
+            "canvas_documents",
+            "canvas_revisions",
+            "canvas_conversation_hints",
+        ):
+            assert (
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+            )
+
     def test_roleplay_version_readers_reject_boolean_versions(
         self, db_instance: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
     ):

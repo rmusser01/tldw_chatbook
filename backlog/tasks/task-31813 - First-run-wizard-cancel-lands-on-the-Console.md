@@ -1,5 +1,5 @@
 ---
-id: TASK-31226
+id: TASK-31813
 title: First-run wizard cancel lands on the Console
 status: Done
 assignee: []
@@ -30,6 +30,12 @@ Esc-exiting the first-run setup wizard leaves the user on Home (the screen it wa
 3. Suites, lint, live UAT (fresh profile, Esc-exit lands on Console), PR.
 
 ## Implementation Notes
+
+Renumbering provenance: Canvas claimed TASK-31226 in811fe0188 on2026-09-03
+at17:26:11-07:00; this task was added later in df645d94c on2026-09-05
+at17:17:29-07:00. The all-remote/worktree sweep found maximum31811, with31812
+subsequently assigned to the other collision in this integration. This task and
+all shipped references move to31813; implementation and acceptance are unchanged.
 
 UAT triage (2026-08-31) of three findings; one product fix, two pins.
 

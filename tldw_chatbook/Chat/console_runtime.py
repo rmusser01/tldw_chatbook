@@ -463,6 +463,17 @@ class ConsoleViewHookSlot:
     why: str = ""
 
 
+@dataclass(frozen=True)
+class _CanvasNativeViewBinding:
+    """Latest mounted Console callbacks for the lazy native authority."""
+
+    scope_resolver: Callable[[str], Any]
+    bridge_sink: Callable[[Any, str], None] | None
+    bridge_prepare: Callable[[Any], Callable[[str], None]] | None
+    auto_open: Callable[[str, Any], None] | None
+    publication_guard: Callable[[Any], bool] | None
+
+
 #: **The one enumerated list of screen-owned hook slots.** `attach_view`
 #: sets every entry from the view's `console_view_hooks()` map and
 #: `detach_view` restores every entry's `viewless_default` — the same list
@@ -698,7 +709,12 @@ class ConsoleRuntime:
     _console_chat_store` followed by an `is None` early return).
     """
 
-    def __init__(self, app: Any) -> None:
+    def __init__(
+        self,
+        app: Any,
+        *,
+        canvas_enabled_reader: Callable[[], bool] | None = None,
+    ) -> None:
         """Bind the holder to one app object.
 
         Args:
@@ -725,6 +741,20 @@ class ConsoleRuntime:
         self._activity_hydration_task: asyncio.Task[int] | None = None
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
+        self._canvas_controller: Any | None = None
+        self._canvas_gateway: Any | None = None
+        self._canvas_gateway_authority: Any | None = None
+        self._canvas_native_authority: Any | None = None
+        self._canvas_native_view_binding: _CanvasNativeViewBinding | None = None
+        self._canvas_native_lock = Lock()
+        self._canvas_settlement_listener = self._forward_canvas_settlement
+        if canvas_enabled_reader is None:
+            from tldw_chatbook.config import get_canvas_execution_enabled
+
+            canvas_enabled_reader = get_canvas_execution_enabled
+        self._canvas_enabled_reader = canvas_enabled_reader
+        self._canvas_disabled_latched = not self._read_canvas_enabled()
+        self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         # One app-wide mutation lane for exact persisted-conversation opens.
         # Individual ChatScreen workspaces are disposable views over this
@@ -753,6 +783,7 @@ class ConsoleRuntime:
         #: it already holds afterwards and builds nothing new -- see
         #: `dispose` for why a rebuild during quit is the hazard.
         self._disposed: bool = False
+        self._start_canvas_policy_watcher()
         self.authority_token = str(uuid4())
         database = getattr(app, "chachanotes_db", None)
         database_path = getattr(database, "db_path", None)
@@ -836,6 +867,18 @@ class ConsoleRuntime:
         """The built app-owned Change Review coordinator, if available."""
         return self._change_review_coordinator
 
+    @property
+    def canvas_controller(self) -> Any | None:
+        """The single process-runtime Canvas lifecycle owner."""
+
+        return self._canvas_controller
+
+    @property
+    def canvas_gateway(self) -> Any | None:
+        """The one lazy native Canvas browser gateway for this app runtime."""
+
+        return self._canvas_gateway
+
     # -- handle writes (the screen's properties, and 59 test sites) --------
 
     def set_chat_store(self, value: Any) -> None:
@@ -853,6 +896,225 @@ class ConsoleRuntime:
     def set_chat_controller(self, value: Any) -> None:
         """Replace the chat-controller handle."""
         self._chat_controller = value
+
+    def ensure_canvas_gateway(self, *, authority: Any) -> Any:
+        """Return this app runtime's native Canvas gateway, creating it lazily."""
+
+        if not self._canvas_enabled():
+            return None
+        if self._canvas_gateway is not None:
+            if self._canvas_gateway_authority is not authority:
+                raise ValueError("Canvas gateway is bound to a different authority")
+            binder = getattr(authority, "bind_gateway_invalidator", None)
+            if callable(binder):
+                binder(self._canvas_gateway.mark_browser_session_unavailable)
+            return self._canvas_gateway
+        if self._disposed:
+            return None
+        from tldw_chatbook.Canvas.gateway import CanvasGateway
+
+        self._canvas_gateway = CanvasGateway(authority=authority)
+        self._canvas_gateway_authority = authority
+        binder = getattr(authority, "bind_gateway_invalidator", None)
+        if callable(binder):
+            binder(self._canvas_gateway.mark_browser_session_unavailable)
+        self._start_canvas_policy_watcher()
+        return self._canvas_gateway
+
+    def bind_canvas_native_view(
+        self,
+        *,
+        scope_resolver: Callable[[str], Any],
+        bridge_sink: Callable[[Any, str], None] | None = None,
+        bridge_prepare: Callable[[Any], Callable[[str], None]] | None = None,
+        auto_open: Callable[[str, Any], None] | None = None,
+        publication_guard: Callable[[Any], bool] | None = None,
+    ) -> Any:
+        """Bind the latest view without importing the native authority."""
+
+        binding = _CanvasNativeViewBinding(
+            scope_resolver=scope_resolver,
+            bridge_sink=bridge_sink,
+            bridge_prepare=bridge_prepare,
+            auto_open=auto_open,
+            publication_guard=publication_guard,
+        )
+        with self._canvas_native_lock:
+            if not self._canvas_enabled():
+                return None
+            self._canvas_native_view_binding = binding
+            controller = self._canvas_controller
+            if controller is not None:
+                controller.add_settlement_listener(self._canvas_settlement_listener)
+            authority = self._canvas_native_authority
+            if authority is not None:
+                authority.rebind_view(
+                    scope_resolver=binding.scope_resolver,
+                    bridge_sink=binding.bridge_sink,
+                    bridge_prepare=binding.bridge_prepare,
+                    auto_open=binding.auto_open,
+                    publication_guard=binding.publication_guard,
+                )
+            return authority
+
+    def _materialize_canvas_native_authority(self) -> Any:
+        """Construct the single authority for an actual publication/open."""
+
+        with self._canvas_native_lock:
+            if not self._canvas_enabled():
+                return None
+            binding = self._canvas_native_view_binding
+            controller = self._canvas_controller
+            if binding is None or controller is None:
+                return None
+            if self._canvas_native_authority is not None:
+                return self._canvas_native_authority
+            from tldw_chatbook.Canvas.native_authority import (
+                NativeConsoleCanvasAuthority,
+            )
+
+            self._canvas_native_authority = NativeConsoleCanvasAuthority(
+                scope_resolver=binding.scope_resolver,
+                canvas_controller=controller,
+                bridge_sink=binding.bridge_sink,
+                bridge_prepare=binding.bridge_prepare,
+                auto_open=binding.auto_open,
+                publication_guard=binding.publication_guard,
+                enabled_reader=self._canvas_enabled,
+            )
+            return self._canvas_native_authority
+
+    def _forward_canvas_settlement(self, publication: Any) -> None:
+        """Materialize and synchronously forward the first settled mutation."""
+
+        authority = self._materialize_canvas_native_authority()
+        if authority is not None:
+            authority.on_settlement_publication(publication)
+
+    def ensure_canvas_native_authority(
+        self,
+        *,
+        scope_resolver: Callable[[str], Any],
+        bridge_sink: Callable[[Any, str], None] | None = None,
+        bridge_prepare: Callable[[Any], Callable[[str], None]] | None = None,
+        auto_open: Callable[[str, Any], None] | None = None,
+        publication_guard: Callable[[Any], bool] | None = None,
+    ) -> Any:
+        """Return the single Console-bound Canvas browser authority."""
+
+        self.bind_canvas_native_view(
+            scope_resolver=scope_resolver,
+            bridge_sink=bridge_sink,
+            bridge_prepare=bridge_prepare,
+            auto_open=auto_open,
+            publication_guard=publication_guard,
+        )
+        return self._materialize_canvas_native_authority()
+
+    def _read_canvas_enabled(self) -> bool:
+        """Read the shared policy without changing the process-lifetime latch."""
+
+        try:
+            return self._canvas_enabled_reader() is True
+        except Exception:  # noqa: BLE001 - execution policy fails closed
+            return False
+
+    def _canvas_enabled(self) -> bool:
+        """Read the global kill switch and the restart-required runtime latch."""
+
+        if self._disposed or self._canvas_disabled_latched:
+            return False
+        if not self._read_canvas_enabled():
+            self._canvas_disabled_latched = True
+            return False
+        return True
+
+    def canvas_enabled(self) -> bool:
+        """Expose this app runtime's restart-latched Canvas availability."""
+
+        return self._canvas_enabled()
+
+    def canvas_authority_is_current(self, authority: Any) -> bool:
+        """Return whether *authority* still owns enabled Canvas effects."""
+
+        return self._canvas_enabled() and self._canvas_native_authority is authority
+
+    def latch_canvas_disabled(self) -> None:
+        """Synchronously accept a disable before asynchronous cleanup begins."""
+
+        with self._canvas_native_lock:
+            self._canvas_disabled_latched = True
+
+    def start_async_lifecycles(self) -> None:
+        """Start loop-bound runtime work after the Textual loop is running.
+
+        ``TldwCli`` is constructed synchronously before ``App.run`` creates
+        its event loop, so the constructor's best-effort watcher start cannot
+        cover the shipping CLI lifecycle by itself.  App mount calls this
+        idempotent handoff independently of Canvas preview creation.
+        """
+
+        self._start_canvas_policy_watcher()
+
+    async def apply_canvas_policy(self) -> None:
+        """Idempotently revoke all browser delivery after Canvas is disabled.
+
+        Re-enabling requires a process restart. Stored and staged artifact data
+        remain owned by their existing repositories and lifecycle controllers.
+        """
+
+        if self._canvas_enabled():
+            return
+        self.latch_canvas_disabled()
+        with self._canvas_native_lock:
+            gateway, self._canvas_gateway = self._canvas_gateway, None
+            authority, self._canvas_native_authority = (
+                self._canvas_native_authority,
+                None,
+            )
+            self._canvas_gateway_authority = None
+            self._canvas_native_view_binding = None
+        close_gateway = getattr(gateway, "aclose", None)
+        if callable(close_gateway):
+            result = close_gateway()
+            if inspect.isawaitable(result):
+                await result
+        dispose_authority = getattr(authority, "dispose", None)
+        if callable(dispose_authority):
+            result = dispose_authority()
+            if inspect.isawaitable(result):
+                await result
+
+    def _start_canvas_policy_watcher(self) -> None:
+        """Watch shared config while a native Canvas preview can be open."""
+
+        if self._disposed:
+            return
+        task = self._canvas_policy_watch_task
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._canvas_policy_watch_task = loop.create_task(
+            self._watch_canvas_policy(),
+            name="console-canvas-policy-watch",
+        )
+
+    async def _watch_canvas_policy(self) -> None:
+        """Revoke native delivery promptly after an external config disable."""
+
+        while self._canvas_enabled():
+            await asyncio.sleep(0.25)
+        await self.apply_canvas_policy()
+
+    def _sync_canvas_native_context(self, session_id: str | None) -> None:
+        """Forward live store context changes to an already-built authority."""
+
+        authority = self._canvas_native_authority
+        if authority is not None:
+            authority.sync_live_context(session_id)
 
     # -- construction ------------------------------------------------------
 
@@ -955,6 +1217,20 @@ class ConsoleRuntime:
                 )
         else:
             legacy_normalization_enabled = False
+        from tldw_chatbook.Chat.console_canvas_controller import (
+            ConsoleCanvasController,
+        )
+
+        durable_canvas_service = None
+        if db is not None:
+            from tldw_chatbook.Canvas.service import CanvasService
+            from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+            if isinstance(db, CharactersRAGDB):
+                durable_canvas_service = CanvasService(db)
+        self._canvas_controller = ConsoleCanvasController(
+            durable_service=durable_canvas_service
+        )
         self._chat_store = ConsoleChatStore(
             persistence=persistence,
             settle_provider_traces_off_thread=True,
@@ -990,6 +1266,9 @@ class ConsoleRuntime:
             thinking_history_policy_default_provider=lambda: (
                 _current_thinking_history_policy_default(self._app)
             ),
+            canvas_promotion_participant=self._canvas_controller,
+            canvas_turn_controller=self._canvas_controller,
+            on_canvas_context_changed=self._sync_canvas_native_context,
         )
         if db is not None and legacy_normalization_enabled:
             self._schedule_legacy_trace_maintenance(db, get_legacy_normalizer)
@@ -1371,6 +1650,7 @@ class ConsoleRuntime:
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
         kwargs.setdefault("scratch_spaces", self._scratch_spaces)
         kwargs.setdefault("activity_receipts", self._activity_receipts)
+        kwargs.setdefault("canvas_enabled_reader", self._canvas_enabled)
         raw_cli_runtime = getattr(self._app, "raw_cli_runtime", None)
         kwargs.setdefault(
             "cancel_raw_cli_session",
@@ -1652,7 +1932,17 @@ class ConsoleRuntime:
         refuses work through its permanently-set cancellation Event, which
         is exactly the right answer at exit.
         """
-        self._disposed = True
+        with self._canvas_native_lock:
+            self._disposed = True
+            self._canvas_native_view_binding = None
+        canvas_policy_watch_task = self._canvas_policy_watch_task
+        self._canvas_policy_watch_task = None
+        if canvas_policy_watch_task is not None and not canvas_policy_watch_task.done():
+            canvas_policy_watch_task.cancel()
+            try:
+                await canvas_policy_watch_task
+            except asyncio.CancelledError:
+                pass
         maintenance_task = self._legacy_trace_maintenance_task
         if maintenance_task is not None and not maintenance_task.done():
             maintenance_task.cancel()
@@ -1664,6 +1954,8 @@ class ConsoleRuntime:
         self._scratch_spaces.tombstone_all()
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
+        canvas_gateway = self._canvas_gateway
+        canvas_authority = self._canvas_native_authority
         coordinator, runs_db = (
             self._change_review_coordinator,
             self._agent_runs_db,
@@ -1673,6 +1965,28 @@ class ConsoleRuntime:
         self._activity_hydration_task = None
         if hydration_task is not None and not hydration_task.done():
             hydration_task.cancel()
+        # Revoke browser admission before tearing down any controller/store
+        # authority that gateway callbacks could otherwise reach.
+        close_canvas_gateway = getattr(canvas_gateway, "aclose", None)
+        if callable(close_canvas_gateway):
+            try:
+                result = close_canvas_gateway()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:  # noqa: BLE001 - app exit must keep progressing
+                logger.warning(
+                    "Console runtime: Canvas gateway close failed at dispose."
+                )
+        dispose_canvas_authority = getattr(canvas_authority, "dispose", None)
+        if callable(dispose_canvas_authority):
+            try:
+                result = dispose_canvas_authority()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:  # noqa: BLE001 - app exit must keep progressing
+                logger.warning(
+                    "Console runtime: Canvas authority dispose failed at exit."
+                )
         if controller is not None:
             try:
                 await controller.shutdown()

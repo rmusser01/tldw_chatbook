@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     read_thinking_blocks_json,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleExactNativeIdTransactionContribution,
     _scoped_console_transaction_writer,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -973,6 +974,28 @@ class ConsoleDispatchRepository:
             )
             if updated.rowcount != 1:
                 return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
+            message_ids: Mapping[str, str] = {
+                settlement.assistant_message_id: settlement.assistant_message_id,
+                "assistant": settlement.assistant_message_id,
+            }
+            with _scoped_console_transaction_writer(
+                cursor, str(row["conversation_id"])
+            ) as writer:
+                for contribution in settlement.contributions:
+                    if isinstance(
+                        contribution, ConsoleExactNativeIdTransactionContribution
+                    ):
+                        contribution.write_exact(
+                            writer=writer,
+                            conversation_id=str(row["conversation_id"]),
+                            native_message_ids=message_ids,
+                        )
+                    else:
+                        contribution.write(
+                            writer=writer,
+                            conversation_id=str(row["conversation_id"]),
+                            message_ids=message_ids,
+                        )
             deleted = cursor.execute(
                 """
                 DELETE FROM console_dispatch_checkpoints

@@ -193,12 +193,56 @@ class ConsoleCharacterController:
     async def _apply_console_character_choice_async(
         self,
         choice: ConsoleCharacterChoice,
+        *,
+        expected_key: Any = None,
+        required_database: Any = None,
+        commit_is_current: Callable[[], bool] | None = None,
     ) -> None:
         """Apply a picked character to this session or a fresh one."""
-        card = await asyncio.to_thread(
-            self._fetch_character_card_for_avatar,
-            choice.character_id,
-        )
+        if expected_key is None:
+            card = await asyncio.to_thread(
+                self._fetch_character_card_for_avatar, choice.character_id
+            )
+        else:
+            from ...Character_Chat.character_conversation_navigation import (
+                ResolvedLocalCharacterKey,
+            )
+
+            def admission_is_current() -> bool:
+                return (
+                    isinstance(expected_key, ResolvedLocalCharacterKey)
+                    and expected_key.character_id == choice.character_id
+                    and required_database is not None
+                    and self._character_db_accessor() is required_database
+                    and commit_is_current is not None
+                    and commit_is_current()
+                )
+
+            if not admission_is_current():
+                return
+
+            def fetch_exact() -> dict | None:
+                try:
+                    if (
+                        required_database.get_local_authority_id()
+                        != expected_key.data_authority_id
+                    ):
+                        return None
+                    result = required_database.get_character_card_by_id(
+                        expected_key.character_id
+                    )
+                    return (
+                        result
+                        if required_database.get_local_authority_id()
+                        == expected_key.data_authority_id
+                        else None
+                    )
+                except Exception:  # noqa: BLE001 - reject unavailable retained storage
+                    return None
+
+            card = await asyncio.to_thread(fetch_exact)
+            if not admission_is_current():
+                return
         if card is None:
             display_name = (
                 sanitize_character_display_label(
@@ -246,7 +290,7 @@ class ConsoleCharacterController:
                 runtime_backend="local",
                 assistant_kind="character",
                 assistant_id=str(choice.character_id),
-                assistant_authority_id=None,
+                assistant_authority_id=(expected_key.data_authority_id if expected_key is not None else None),
                 character_id=choice.character_id,
                 character_name=seed.name,
             )

@@ -231,13 +231,13 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
             assert app.current_tab == TAB_LIBRARY
             assert library._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
 
-            library._library_prompts_import_path = str(prompt_path)
+            library._prompts_state.import_path = str(prompt_path)
             prompt_worker = library._start_library_prompts_import()
             assert prompt_worker is not None
             assert prompt_worker.node is app
             await prompt_worker.wait()
             await pilot.pause()
-            assert library._library_prompts_import_status == (
+            assert library._prompts_state.import_status == (
                 "1 imported · 0 skipped (duplicate name)"
             )
             persisted_prompt = await app.prompt_scope_service.get_prompt(
@@ -263,12 +263,12 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                 ),
                 encoding="utf-8",
             )
-            library._library_prompts_import_path = str(prompt_path)
+            library._prompts_state.import_path = str(prompt_path)
             duplicate_worker = library._start_library_prompts_import()
             assert duplicate_worker is not None
             assert duplicate_worker.node is app
             await duplicate_worker.wait()
-            assert library._library_prompts_import_status == (
+            assert library._prompts_state.import_status == (
                 "0 imported · 1 skipped (duplicate name)"
             )
             persisted_prompt = await app.prompt_scope_service.get_prompt(
@@ -297,21 +297,21 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                     encoding="utf-8",
                 )
             (prompt_folder / "ignored.dat").write_text("unsupported", encoding="utf-8")
-            library._library_prompts_import_path = str(prompt_folder)
+            library._prompts_state.import_path = str(prompt_folder)
             folder_worker = library._start_library_prompts_import()
             assert folder_worker is not None
             assert folder_worker.node is app
             await folder_worker.wait()
-            assert library._library_prompts_import_status == (
+            assert library._prompts_state.import_status == (
                 "2 imported · 0 skipped (duplicate name)"
             )
 
-            library._library_prompts_import_path = str(tmp_path / "does-not-exist.json")
+            library._prompts_state.import_path = str(tmp_path / "does-not-exist.json")
             invalid_path_worker = library._start_library_prompts_import()
             assert invalid_path_worker is not None
             assert invalid_path_worker.node is app
             await invalid_path_worker.wait()
-            assert library._library_prompts_import_status == (
+            assert library._prompts_state.import_status == (
                 "Could not find that file or folder."
             )
 
@@ -324,12 +324,12 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
 
             with monkeypatch.context() as folder_failure:
                 folder_failure.setattr(Path, "iterdir", fail_prompt_folder_enumeration)
-                library._library_prompts_import_path = str(prompt_folder)
+                library._prompts_state.import_path = str(prompt_folder)
                 permission_worker = library._start_library_prompts_import()
                 assert permission_worker is not None
                 assert permission_worker.node is app
                 await permission_worker.wait()
-            assert library._library_prompts_import_status == (
+            assert library._prompts_state.import_status == (
                 "Could not read that folder."
             )
 
@@ -343,12 +343,12 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                 "save_prompt",
                 fail_prompt_save,
             )
-            library._library_prompts_import_path = str(failed_prompt_path)
+            library._prompts_state.import_path = str(failed_prompt_path)
             failed_prompt_worker = library._start_library_prompts_import()
             assert failed_prompt_worker is not None
             assert failed_prompt_worker.node is app
             await failed_prompt_worker.wait()
-            assert "1 failed" in library._library_prompts_import_status
+            assert "1 failed" in library._prompts_state.import_status
 
             app.post_message(NavigateToScreen("ccp"))
             stale_personas = await _wait_for_screen(
@@ -534,7 +534,7 @@ async def test_real_library_prompt_batch_survives_owner_unmount(
                 "save_prompt",
                 delayed_save_prompt,
             )
-            library._library_prompts_import_path = str(prompt_path)
+            library._prompts_state.import_path = str(prompt_path)
             import_worker = library._start_library_prompts_import()
             assert import_worker is not None
             assert import_worker.node is app

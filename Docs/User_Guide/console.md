@@ -17,6 +17,7 @@ This page is the orientation tour; the details live on the child pages below:
 - [Attachments, images & voice](console/attachments-images-voice.md) — Attach picker, paste/drop, clipboard images, image generation, dictation.
 - [Video generation, playback & streaming](console/video.md) — `/generate-video`, ephemeral videos & tombstones, in-app playback, `/stream-video`.
 - [Agent runs & tools](console/agent-runs-and-tools.md) — per-tab runs, fleet markers, approvals, skills, MCP tools.
+- [Canvas](console/canvas.md) — create, revise, inspect, recover, and safely export interactive artifacts.
 - [Context & RAG](console/context-and-rag.md) — "Chat Context" viewer, prompts, retrieval scope, staged sources, Library RAG.
 - [Semantic trace capture](console/semantic-trace-capture.md) — what Capture On saves, Safe/Full views, masking, forks, legacy traces, export, and purge.
 
@@ -174,7 +175,11 @@ a phone surface: the app runs on your computer (or any box that stays
 on), and the phone opens a plain web page — no terminal app needed on
 the phone beyond the browser.
 
-**Start the server** (requires the `web` extra: `pip install -e ".[web]"`):
+**Start the server** (requires the `web` extra: `pip install -e ".[web]"`).
+The remote example below assumes you have already configured a dedicated
+Chatbook web access token, an exact HTTPS `public_url`, and either direct TLS
+or a trusted TLS-terminating proxy as described in the
+[Web Server operations guide](../../tldw_chatbook/Web_Server/README.md):
 
 ```bash
 tldw-cli --serve --host 0.0.0.0 --port 8765
@@ -185,9 +190,11 @@ python -m tldw_chatbook.app --serve --host 0.0.0.0 --port 8765
 Both entry points accept the same flags (`--host`, `--port`,
 `--web-title`, `--debug`; without `--port` the server binds the
 `[web_server]` config's port, default 8000). `--host 0.0.0.0` makes the
-server reachable from other devices on your LAN — then open
-`http://<your-computer's-LAN-IP>:8765` in the phone's browser. Keep
-`--serve` bound to `localhost` when you do not want that.
+server listen on every interface, but Chatbook refuses remote admission unless
+the authenticated TLS policy is valid. Open the configured HTTPS `public_url`
+in the phone's browser. Keep `--serve` bound to `localhost` when you do not want
+remote access; a firewall alone is not a substitute for authentication and
+encrypted transport.
 
 **Make it phone-shaped.** Focus mode is the phone surface — press
 `Ctrl+Shift+F` from a desktop session first, or launch the server with

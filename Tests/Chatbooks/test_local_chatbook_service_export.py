@@ -27,8 +27,10 @@ def test_export_forwards_hooks_and_maps_cancelled(tmp_path):
 
     def cb(evt):
         return None
+
     def cc():
         return True
+
     with patch("tldw_chatbook.Chatbooks.local_chatbook_service.ChatbookCreator") as CC:
         CC.return_value.create_chatbook.side_effect = fake_create
         result = asyncio.run(
@@ -54,7 +56,12 @@ def test_export_success_reports_not_cancelled(tmp_path):
         CC.return_value.create_chatbook.return_value = (
             True,
             "ok",
-            {"missing_dependencies": [], "auto_included": []},
+            {
+                "missing_dependencies": [],
+                "auto_included": [],
+                "archive_version": "3.0",
+                "canvas_included": True,
+            },
         )
         result = asyncio.run(
             svc.export_chatbook(
@@ -67,3 +74,5 @@ def test_export_success_reports_not_cancelled(tmp_path):
         )
     assert result["cancelled"] is False
     assert result["success"] is True
+    assert result["archive_version"] == "3.0"
+    assert result["canvas_included"] is True

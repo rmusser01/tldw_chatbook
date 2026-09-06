@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_endpoint_provenance import (
     ConsoleEndpointProvenance,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsolePromotionTransactionContribution,
     ConsoleTransactionContribution,
 )
 
@@ -219,6 +220,9 @@ class ConsoleAssistantSettlement:
     usage_json: str | None = None
     provider_continuation_json: str | None = None
     thinking_blocks_json: str | None = field(default=None, repr=False)
+    contributions: tuple[ConsolePromotionTransactionContribution, ...] = field(
+        default=(), repr=False
+    )
 
 
 @dataclass(frozen=True, slots=True)

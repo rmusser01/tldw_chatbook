@@ -303,8 +303,11 @@ class ConsoleTraceSettlementCoordinator:
     ) -> bool:
         """Settle one lock-claimed signal, atomically releasing queue ownership."""
 
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
         try:
-            self._settle_prepared(database, prepared)
+            with operation_owned_connection(database):
+                self._settle_prepared(database, prepared)
         except (_SettlementConflict, TraceIdentityConflict):
             with self._queue_lock:
                 self._inflight.pop(prepared.call_id, None)

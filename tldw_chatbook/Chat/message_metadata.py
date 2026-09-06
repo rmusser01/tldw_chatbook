@@ -24,7 +24,8 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import asdict, dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 #: Closed vocabulary for ``MessageMetadata.transcript_status``.
@@ -93,6 +94,82 @@ _EXPRESSION_KEY_RE = re.compile(
     r"custom:[a-z0-9][a-z0-9_]{0,39})\Z"
 )
 _TOPIC_RE = re.compile(r"[a-z0-9]{1,40}\Z")
+_CANVAS_CARD_STATUSES = frozenset({"updated", "temporary", "discarded", "failed"})
+_CANVAS_ERROR_RE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasCardOriginMetadata:
+    """Source-free assistant origin for one transcript Canvas card."""
+
+    message_id: str
+    run_id: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.message_id, str)
+            or not self.message_id
+            or len(self.message_id.encode("utf-8")) > 256
+        ):
+            raise ValueError("Canvas card message identity is invalid")
+        if (
+            not isinstance(self.run_id, str)
+            or not self.run_id
+            or len(self.run_id.encode("utf-8")) > 256
+        ):
+            raise ValueError("Canvas card run identity is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasCardMetadata:
+    """Bounded metadata-only transcript projection for one Canvas revision."""
+
+    canvas_id: str
+    revision_id: str | None
+    title: str
+    sequence: int
+    digest: str
+    status: str
+    origin: CanvasCardOriginMetadata
+    reopenable: bool
+    error_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.canvas_id, str)
+            or not self.canvas_id
+            or len(self.canvas_id.encode("utf-8")) > 256
+        ):
+            raise ValueError("Canvas card identity is invalid")
+        if self.revision_id is not None and (
+            not isinstance(self.revision_id, str)
+            or not self.revision_id
+            or len(self.revision_id.encode("utf-8")) > 256
+        ):
+            raise ValueError("Canvas card revision identity is invalid")
+        if not isinstance(self.title, str) or len(self.title.encode("utf-8")) > 4096:
+            raise ValueError("Canvas card title is too large")
+        if type(self.sequence) is not int or self.sequence < 1:
+            raise ValueError("Canvas card sequence is invalid")
+        if (
+            not isinstance(self.digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.digest) is None
+        ):
+            raise ValueError("Canvas card digest is invalid")
+        if self.status not in _CANVAS_CARD_STATUSES:
+            raise ValueError("Canvas card status is invalid")
+        if not isinstance(self.origin, CanvasCardOriginMetadata):
+            raise ValueError("Canvas card origin is invalid")
+        if type(self.reopenable) is not bool:
+            raise ValueError("Canvas card reopenable flag is invalid")
+        if self.error_code is not None and _CANVAS_ERROR_RE.fullmatch(
+            self.error_code
+        ) is None:
+            raise ValueError("Canvas card error code is invalid")
+        if self.reopenable and (
+            self.revision_id is None or self.status in {"discarded", "failed"}
+        ):
+            raise ValueError("Reopenable Canvas card requires a committed revision")
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +303,7 @@ class MessageMetadata:
     template_source: str = ""
     origin: str = ""
     character_emote: CharacterEmoteMetadata | None = None
+    canvas_cards: tuple[CanvasCardMetadata, ...] = ()
 
     def __post_init__(self) -> None:
         if self.transcript_status not in TRANSCRIPT_STATUSES:
@@ -238,6 +316,12 @@ class MessageMetadata:
                 "origin must be one of "
                 f"{sorted(MESSAGE_ORIGINS)}; got {self.origin!r}"
             )
+        if (
+            not isinstance(self.canvas_cards, tuple)
+            or len(self.canvas_cards) > 32
+            or not all(isinstance(card, CanvasCardMetadata) for card in self.canvas_cards)
+        ):
+            raise ValueError("canvas_cards must contain at most 32 Canvas cards")
         if (
             not isinstance(self.template_kind, str)
             or self.template_kind not in TEMPLATE_KINDS
@@ -272,6 +356,23 @@ class MessageMetadata:
             A stable (key-sorted) JSON object string.
         """
         return json.dumps(asdict(self), sort_keys=True)
+
+    def remap_canvas_origins(self, message_ids: Mapping[str, str]) -> "MessageMetadata":
+        """Return metadata with only Canvas card message origins remapped."""
+
+        cards = tuple(
+            replace(
+                card,
+                origin=replace(
+                    card.origin,
+                    message_id=message_ids.get(
+                        card.origin.message_id, card.origin.message_id
+                    ),
+                ),
+            )
+            for card in self.canvas_cards
+        )
+        return replace(self, canvas_cards=cards)
 
     @classmethod
     def from_json(cls, raw: str | None) -> "MessageMetadata | None":
@@ -319,6 +420,7 @@ class MessageMetadata:
                 template_source=template_source,
                 origin=_as_origin(data.get("origin")),
                 character_emote=_as_character_emote(data.get("character_emote")),
+                canvas_cards=_as_canvas_cards(data.get("canvas_cards")),
             )
         except ValueError:
             # Direct construction remains strict. Stored data is an untrusted
@@ -328,6 +430,47 @@ class MessageMetadata:
 
 def _as_text(value: Any) -> str:
     return str(value) if value else ""
+
+
+def _as_canvas_cards(value: Any) -> tuple[CanvasCardMetadata, ...]:
+    if not isinstance(value, list) or len(value) > 32:
+        return ()
+    cards: list[CanvasCardMetadata] = []
+    try:
+        for raw in value:
+            if not isinstance(raw, dict) or set(raw) != {
+                "canvas_id",
+                "revision_id",
+                "title",
+                "sequence",
+                "digest",
+                "status",
+                "origin",
+                "reopenable",
+                "error_code",
+            }:
+                return ()
+            origin = raw["origin"]
+            if not isinstance(origin, dict) or set(origin) != {"message_id", "run_id"}:
+                return ()
+            cards.append(
+                CanvasCardMetadata(
+                    canvas_id=raw["canvas_id"],
+                    revision_id=raw["revision_id"],
+                    title=raw["title"],
+                    sequence=raw["sequence"],
+                    digest=raw["digest"],
+                    status=raw["status"],
+                    origin=CanvasCardOriginMetadata(
+                        message_id=origin["message_id"], run_id=origin["run_id"]
+                    ),
+                    reopenable=raw["reopenable"],
+                    error_code=raw["error_code"],
+                )
+            )
+    except (KeyError, TypeError, ValueError):
+        return ()
+    return tuple(cards)
 
 
 #: Payload spellings of a true boolean, lowercased. Anything not in here --

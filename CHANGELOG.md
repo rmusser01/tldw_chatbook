@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Some kind of Versioning
     
+## [0.2.0] - 2026-09-06
+
+First minor release cut from eight weeks of dev work since 0.1.8.x. Highlights:
+
+### Added
+- Console: durable agent runs, git modes, Inspect rail, conversation inspector,
+  environment panel, cost ticker, voice dictation, turn file cards
+- Library: unified Notes/Prompts/Search workbench, ingest jobs pipeline, reader
+- Agents runtime: native tool-calls, MCP bridge, supervisor fleet, tool gates
+- Personal context profiles (`tldw_profile_core`), conversation canvases
+- Video generation foundation; expanded TTS/STT stacks
+- First-run setup wizard
+
+### Changed
+- Database schema v17 → v65 (existing databases migrate automatically at first boot)
+- Screen navigation rebuilt around a shared registry with screen-instance reuse
+
+### Fixed
+- Fresh-install boot no longer depends on an undeclared `packaging` module
+- Wheel/sdist now package every DB migration (task-19860)
+
 ## [0.1.8.1] - 2026-09-03
 
 ### Added

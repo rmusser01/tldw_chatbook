@@ -127,8 +127,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             trailing "Unsaved changes" marker via ``prompt_editor_meta_line``
             on this initial compose. Per-keystroke updates never recompose
             this widget at all (the screen updates ``#library-prompt-meta``
-            in place instead -- see
-            ``LibraryScreen._update_library_prompt_meta_static``); this
+            in place instead -- see the prompts controller's
+            ``_update_library_prompt_meta_static``); this
             constructor argument only matters for the handful of flows that
             already do a full recompose while dirty (initial load, Duplicate,
             conflict entry/resolution).

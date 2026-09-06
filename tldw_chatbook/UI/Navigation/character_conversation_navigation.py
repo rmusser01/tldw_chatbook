@@ -155,6 +155,38 @@ class LibraryCharacterRepairContext:
 
 
 @dataclass(frozen=True)
+class LibraryUnavailableConversationInspection:
+    """Library detail link for one exact unresolved local conversation."""
+
+    unresolved: UnresolvedConversationKey
+    return_target: RoleplayReturnTarget
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.unresolved, UnresolvedConversationKey):
+            raise TypeError("unresolved must be an UnresolvedConversationKey")
+        if not isinstance(self.return_target, RoleplayReturnTarget):
+            raise TypeError("return_target must be a RoleplayReturnTarget")
+        if self.return_target != RoleplayReturnTarget.console_context_character():
+            raise ValueError("unavailable inspection must return to Console Character")
+
+
+@dataclass(frozen=True)
+class LibraryUnavailableConversationsBrowse:
+    """Library archive link for all unavailable chats with a selected anchor."""
+
+    selected: UnresolvedConversationKey
+    return_target: RoleplayReturnTarget
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.selected, UnresolvedConversationKey):
+            raise TypeError("selected must be an UnresolvedConversationKey")
+        if not isinstance(self.return_target, RoleplayReturnTarget):
+            raise TypeError("return_target must be a RoleplayReturnTarget")
+        if self.return_target != RoleplayReturnTarget.console_context_character():
+            raise ValueError("unavailable browse must return to Console Character")
+
+
+@dataclass(frozen=True)
 class RoleplayDraftSnapshot:
     """Aggregate dirty and in-flight state owned by the Roleplay surface."""
 
@@ -361,3 +393,134 @@ def deserialize_library_character_repair_context(
             wire.return_target.screen_id, wire.return_target.focus_id
         ),
     )
+
+
+def _serialize_unresolved_library_link(
+    unresolved: UnresolvedConversationKey,
+    return_target: RoleplayReturnTarget,
+    *,
+    identity_field: str,
+) -> dict[str, object]:
+    return {
+        "version": _PAYLOAD_VERSION,
+        "source": "local",
+        "data_authority_id": unresolved.data_authority_id,
+        identity_field: serialize_character_conversation_key(unresolved),
+        "return_target": _serialize_return_target(return_target),
+    }
+
+
+def _deserialize_unresolved_library_link(
+    payload: Mapping[str, Any],
+    *,
+    identity_field: str,
+    name: str,
+) -> tuple[UnresolvedConversationKey, RoleplayReturnTarget]:
+    from ._character_conversation_wire import (
+        _LibraryUnavailableBrowseWire,
+        _LibraryUnavailableInspectionWire,
+    )
+
+    model = (
+        _LibraryUnavailableInspectionWire
+        if identity_field == "unresolved"
+        else _LibraryUnavailableBrowseWire
+    )
+    wire = model.model_validate(payload)
+    identity = getattr(wire, identity_field)
+    return (
+        UnresolvedConversationKey(identity.data_authority_id, identity.conversation_id),
+        RoleplayReturnTarget(wire.return_target.screen_id, wire.return_target.focus_id),
+    )
+
+
+def serialize_library_unavailable_inspection(
+    link: LibraryUnavailableConversationInspection,
+) -> dict[str, object]:
+    """Serialize an exact non-mutating Library conversation inspection.
+
+    Args:
+        link: Validated inspection with an unresolved identity and Console return.
+
+    Returns:
+        A versioned local payload preserving the identity and return anchor.
+
+    Raises:
+        TypeError: If link is not a LibraryUnavailableConversationInspection.
+    """
+
+    if not isinstance(link, LibraryUnavailableConversationInspection):
+        raise TypeError("link must be a LibraryUnavailableConversationInspection")
+    return _serialize_unresolved_library_link(
+        link.unresolved, link.return_target, identity_field="unresolved"
+    )
+
+
+def deserialize_library_unavailable_inspection(
+    payload: Mapping[str, Any],
+) -> LibraryUnavailableConversationInspection:
+    """Validate one exact non-mutating Library conversation inspection.
+
+    Args:
+        payload: Untrusted versioned local inspection payload.
+
+    Returns:
+        A typed inspection with a same-authority identity and Console return.
+
+    Raises:
+        ValueError: Including Pydantic ValidationError, if payload fields,
+            identity, authority, version, or return anchor are invalid.
+    """
+
+    unresolved, return_target = _deserialize_unresolved_library_link(
+        payload,
+        identity_field="unresolved",
+        name="Library unavailable inspection",
+    )
+    return LibraryUnavailableConversationInspection(unresolved, return_target)
+
+
+def serialize_library_unavailable_browse(
+    link: LibraryUnavailableConversationsBrowse,
+) -> dict[str, object]:
+    """Serialize a complete Library unavailable-list browse link.
+
+    Args:
+        link: Validated unavailable browse with a selected identity and Console return.
+
+    Returns:
+        A versioned local payload preserving the selection and return anchor.
+
+    Raises:
+        TypeError: If link is not a LibraryUnavailableConversationsBrowse.
+    """
+
+    if not isinstance(link, LibraryUnavailableConversationsBrowse):
+        raise TypeError("link must be a LibraryUnavailableConversationsBrowse")
+    return _serialize_unresolved_library_link(
+        link.selected, link.return_target, identity_field="selected"
+    )
+
+
+def deserialize_library_unavailable_browse(
+    payload: Mapping[str, Any],
+) -> LibraryUnavailableConversationsBrowse:
+    """Validate one complete Library unavailable-list browse link.
+
+    Args:
+        payload: Untrusted versioned local unavailable-browse payload.
+
+    Returns:
+        A typed browse with a same-authority selected identity and Console return.
+
+    Raises:
+        ValueError: Including Pydantic ValidationError, if payload fields,
+            identity, authority, version, or return anchor are invalid.
+    """
+
+    selected, return_target = _deserialize_unresolved_library_link(
+        payload,
+        identity_field="selected",
+        name="Library unavailable browse",
+    )
+    return LibraryUnavailableConversationsBrowse(selected, return_target)
