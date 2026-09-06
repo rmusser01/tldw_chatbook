@@ -18,6 +18,16 @@ interruption); see the main checkpoint report. This is not final closeout eviden
 This implements DESIGN.md §7 and the approved screen-decomposition design.
 No new ADR is required: ADR-033's application-session ownership remains intact.
 
+TASK-31750.1 follow-up (2026-09-06): citation signature, repository readiness,
+and modal currentness now live beside citation-body selection in the existing
+message controller. No constructor dependency was added. DOM, workers, count
+caches and the logger patch point remain on the screen. Live store/repository
+replacement is characterized before and after extraction. The formatted screen
+measures **16,811 lines / 505 methods**, and the ratchet is lowered to that exact
+count. Complete citation, size and private-delegate guards pass **127 tests**
+with no retained SQLite handles; independent review confirms equivalent bodies.
+This closes the size gap without extending the original 64-delegate inventory.
+
 ## Ownership
 
 | Controller | Responsibility moved from the screen |
