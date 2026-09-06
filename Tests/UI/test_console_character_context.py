@@ -175,6 +175,150 @@ async def test_controller_enforces_four_by_five_and_eight_search_bounds() -> Non
     assert controller.state.restore_scroll_offset == 6
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", [None, 42, b"needle", "x" * 513, " " * 513])
+async def test_character_query_validation_rejects_before_state_or_database(query):
+    from tldw_chatbook.Utils.input_validation import validate_console_switcher_query
+
+    with pytest.raises(ValueError):
+        validate_console_switcher_query(query)
+    controller = _controller()
+    await controller.refresh()
+    await controller.search("needle")
+    before = controller.state
+    generation = controller._generation
+    _Service.search_calls.clear()
+    with pytest.raises(ValueError):
+        await controller.search(query)
+    assert controller.state is before
+    assert controller._generation == generation
+    assert _Service.search_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query, expected", [(" " + "é" * 510 + " ", "é" * 510), ("  needle  ", "needle")]
+)
+async def test_character_query_validation_preserves_bounded_trimmed_keyword(
+    query, expected
+):
+    from tldw_chatbook.Utils.input_validation import validate_console_switcher_query
+
+    assert validate_console_switcher_query(query) == query
+    controller = _controller()
+    _Service.search_calls.clear()
+    await controller.search(query)
+    assert controller.state.query == expected
+    assert _Service.search_calls == [(expected, 8)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["x" * 513, " " * 513, None, 42])
+@pytest.mark.parametrize("previous_query", ["", "needle"])
+async def test_widget_query_validation_preserves_search_and_clear(
+    invalid, previous_query, monkeypatch
+):
+    from textual.widgets import Input
+
+    activated = []
+
+    async def activate(request, _cancel):
+        activated.append(request)
+
+    controller = _controller(activate_target=activate)
+    app = _CharacterIdentityApp(controller)
+    async with app.run_test(size=(80, 35)) as pilot:
+        await pilot.pause()
+        await controller.search(previous_query)
+        await pilot.pause()
+        widget = app.query_one(ConsoleCharacterContext)
+        field = widget.query_one("#console-character-search", Input)
+        field.focus()
+        before = controller.state
+        _Service.search_calls.clear()
+        feedback = []
+        monkeypatch.setattr(
+            widget, "notify", lambda message, **kwargs: feedback.append(message)
+        )
+        if isinstance(invalid, str):
+            field.value = invalid
+        else:
+            widget._search_changed(Input.Changed(field, invalid))
+        await pilot.pause()
+        assert controller.state is before
+        assert _Service.search_calls == []
+        assert len(feedback) == 1 and "512" in feedback[0] and len(feedback[0]) < 100
+        assert invalid is None or str(invalid) not in feedback[0]
+        assert field.value == previous_query == controller.state.query
+        await pilot.press("enter")
+        await pilot.pause()
+        assert activated == []
+        field.value = "  next  "
+        await pilot.pause()
+        assert controller.state.query == "next"
+        assert _Service.search_calls == [("next", 8)]
+        field = widget.query_one("#console-character-search", Input)
+        field.focus()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert controller.state.query == ""
+        assert len(widget.query(".console-character-group")) == 4
+
+
+@pytest.mark.asyncio
+async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker(
+    monkeypatch,
+):
+    from Tests.UI.test_console_left_rail import make_console_pilot
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        _sync_character_context_presentation,
+    )
+
+    revision = [7]
+    database = SimpleNamespace(
+        get_local_authority_id=lambda: "authority",
+        get_character_conversation_search_revision=lambda: revision[0],
+    )
+    original_build = chat_screen_module.build_console_controllers
+    original_worker = chat_screen_module.ChatScreen.run_worker
+    refresh_workers = []
+
+    def build(screen, *args, **kwargs):
+        original_build(screen, *args, **kwargs)
+        screen._character_context = _controller(
+            database_accessor=lambda: database,
+            state_changed=lambda state: _sync_character_context_presentation(
+                screen, state
+            ),
+        )
+
+    def run_worker(screen, work, *args, **kwargs):
+        if kwargs.get("group") == "console-character-context-refresh":
+            refresh_workers.append(work)
+        return original_worker(screen, work, *args, **kwargs)
+
+    monkeypatch.setattr(chat_screen_module, "build_console_controllers", build)
+    monkeypatch.setattr(chat_screen_module.ChatScreen, "run_worker", run_worker)
+    async with make_console_pilot(size=(120, 50)) as pilot:
+        screen = pilot.app.screen
+        for _ in range(40):
+            if screen._character_context.state.groups:
+                break
+            await pilot.pause(0.05)
+        assert len(screen.query(".console-character-group")) == 4
+        assert screen._character_context.state.scope_fingerprint.data_revision == 7
+        assert refresh_workers == []
+        revision[0] = 8
+        screen.on_screen_resume()
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if screen._character_context.state.scope_fingerprint.data_revision == 8:
+                break
+        assert len(refresh_workers) == 1
+        assert screen._character_context.state.scope_fingerprint.data_revision == 8
+        assert len(screen.query(".console-character-group")) == 4
+
+
 def test_accordion_keeps_at_most_one_stable_typed_key_expanded() -> None:
     controller = _controller()
     controller._publish(ConsoleCharacterContextState(groups=_groups()))

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:08'
-updated_date: '2026-09-06 06:06'
+updated_date: '2026-09-06 06:47'
 labels:
   - console
   - context
@@ -60,4 +60,6 @@ Implemented the bounded, avatar-independent Character Context browser, exact typ
 Fix round1 closes post-await generation admission, retained-profile Start, off-loop Library authority reads, recompose focus ownership and route-owned Back to Console. ADR120 now clarifies the two new routes originate only in Console Context; incumbent repair origins remain unchanged. Return reveal is transient, preserves manual disclosure policy, and keeps the semantic anchor with visible composer fallback at52x20 without resize focus theft. Search copy is Search chats. Covering gate231 passed/3 fixture-wait failures; corrected final ownership/return confirmation19 passed; final static/startup/CSS/canary17 passed. The new unmerged helper initial pin is803 (+90), explicitly approved; all incumbent caps fixed. Native/platform/resource attribution remains unqualified; no Done or AC change. Full fix evidence and capture/source manifests: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-4-fix-1-report.md.
 
 Fix round 2 preserves the committed unavailable Library route, browse projection, and Back action through invalid or save-vetoed incoming navigation. Validated candidates are staged separately, with monotonic attempt generations and promotion only after guarded admission; a late superseded save cannot resurrect ownership. Direct ADR120 implementation, no new ADR. Genuine RED: 4 failures; final affected Library/payload/diagnostic/complete-return gate: 85 passed, 1 known incumbent empty-preview deselected; scoped size/slack gate: 4 passed. The still-unmerged helper initial pin is 811 (+8), explicitly approved; incumbent caps and both screens are unchanged. No new Ruff diagnostics; four incumbent diagnostics remain. Native/platform/resource qualifications remain open; status and AC unchanged. Full evidence: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-4-fix-2-report.md.
+
+PR2452 fix round 3 reuses strict shared 512-character Console query validation in the widget and controller before trimming or DB work. Invalid edits restore the last valid visible query with bounded native feedback; clear, Enter safety, and later valid search are covered. Added Google-style documentation to all four new unavailable route APIs. Removed the redundant cold-resume Character worker through the existing mount-visit guard, preserving mounted initial groups and warm refresh; no allowlist or cap change. Direct ADR120/shared-validation implementation, no new ADR. Focused RED/GREEN 10 failures to 12 passes; final covering 136 passed/1 unchanged pre-Console splash/stagger observation failure, also isolated. Worker census, exact warm handoff, and UI-ready 971/972 pass; no new lint/format diagnostics. Status/AC and qualification gaps unchanged. Full evidence: .superpowers/sdd/2026-09-05-character-keyword-release-isolation/task-4-fix-3-report.md.
 <!-- SECTION:NOTES:END -->

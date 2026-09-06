@@ -21991,11 +21991,11 @@ class ChatScreen(BaseAppScreen):
             self.run_worker(
                 self._skill._refresh_console_skill_candidates(), exclusive=False
             )
-        self.run_worker(
-            self._character_context.refresh_if_scope_changed(),
-            exclusive=True,
-            group="console-character-context-refresh",
-        )
+            self.run_worker(  # The Character widget owns initial load.
+                self._character_context.refresh_if_scope_changed(),
+                exclusive=True,
+                group="console-character-context-refresh",
+            )
         # Textual's MRO dispatch also invokes BaseAppScreen's shared reconciliation;
         # this handler extends that resume event with Console-owned replay work.
 

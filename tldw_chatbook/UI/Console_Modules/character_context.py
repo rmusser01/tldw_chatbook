@@ -679,9 +679,18 @@ class ConsoleCharacterContextController:
         return rows, page.keyword_status or status
 
     async def search(self, query: str) -> None:
-        """Search at most eight local rows and restore semantic browse state."""
+        """Search at most eight local rows and restore semantic browse state.
 
-        normalized = str(query or "").strip()
+        Args:
+            query: Raw text validated before trimming or changing state.
+
+        Raises:
+            ValueError: If query is not text or exceeds the shared Console limit.
+        """
+
+        from ...Utils.input_validation import validate_console_switcher_query
+
+        normalized = validate_console_switcher_query(query).strip()
         if not normalized:
             self._generation += 1
             snapshot = self._browse_snapshot

@@ -491,7 +491,21 @@ class ConsoleCharacterContext(Vertical):
 
     @on(Input.Changed, f"#{CONSOLE_CHARACTER_SEARCH_ID}")
     def _search_changed(self, event: Input.Changed) -> None:
-        query = event.value.strip()
+        from ...Utils.input_validation import (
+            CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
+            validate_console_switcher_query,
+        )
+
+        try:
+            query = validate_console_switcher_query(event.value).strip()
+        except ValueError:
+            event.input.value = self._state.query
+            self.notify(
+                f"Search must be text, at most {CONSOLE_SWITCHER_QUERY_MAX_LENGTH} "
+                "characters. Previous search kept.",
+                severity="warning",
+            )
+            return
         if query == self._state.query:
             return
         if query and not self._state.query:

@@ -437,7 +437,17 @@ def _deserialize_unresolved_library_link(
 def serialize_library_unavailable_inspection(
     link: LibraryUnavailableConversationInspection,
 ) -> dict[str, object]:
-    """Serialize an exact non-mutating Library conversation inspection."""
+    """Serialize an exact non-mutating Library conversation inspection.
+
+    Args:
+        link: Validated inspection with an unresolved identity and Console return.
+
+    Returns:
+        A versioned local payload preserving the identity and return anchor.
+
+    Raises:
+        TypeError: If link is not a LibraryUnavailableConversationInspection.
+    """
 
     if not isinstance(link, LibraryUnavailableConversationInspection):
         raise TypeError("link must be a LibraryUnavailableConversationInspection")
@@ -449,7 +459,18 @@ def serialize_library_unavailable_inspection(
 def deserialize_library_unavailable_inspection(
     payload: Mapping[str, Any],
 ) -> LibraryUnavailableConversationInspection:
-    """Validate one exact non-mutating Library conversation inspection."""
+    """Validate one exact non-mutating Library conversation inspection.
+
+    Args:
+        payload: Untrusted versioned local inspection payload.
+
+    Returns:
+        A typed inspection with a same-authority identity and Console return.
+
+    Raises:
+        ValueError: Including Pydantic ValidationError, if payload fields,
+            identity, authority, version, or return anchor are invalid.
+    """
 
     unresolved, return_target = _deserialize_unresolved_library_link(
         payload,
@@ -462,7 +483,17 @@ def deserialize_library_unavailable_inspection(
 def serialize_library_unavailable_browse(
     link: LibraryUnavailableConversationsBrowse,
 ) -> dict[str, object]:
-    """Serialize a complete Library unavailable-list browse link."""
+    """Serialize a complete Library unavailable-list browse link.
+
+    Args:
+        link: Validated unavailable browse with a selected identity and Console return.
+
+    Returns:
+        A versioned local payload preserving the selection and return anchor.
+
+    Raises:
+        TypeError: If link is not a LibraryUnavailableConversationsBrowse.
+    """
 
     if not isinstance(link, LibraryUnavailableConversationsBrowse):
         raise TypeError("link must be a LibraryUnavailableConversationsBrowse")
@@ -474,7 +505,18 @@ def serialize_library_unavailable_browse(
 def deserialize_library_unavailable_browse(
     payload: Mapping[str, Any],
 ) -> LibraryUnavailableConversationsBrowse:
-    """Validate one complete Library unavailable-list browse link."""
+    """Validate one complete Library unavailable-list browse link.
+
+    Args:
+        payload: Untrusted versioned local unavailable-browse payload.
+
+    Returns:
+        A typed browse with a same-authority selected identity and Console return.
+
+    Raises:
+        ValueError: Including Pydantic ValidationError, if payload fields,
+            identity, authority, version, or return anchor are invalid.
+    """
 
     selected, return_target = _deserialize_unresolved_library_link(
         payload,
