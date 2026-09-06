@@ -2569,13 +2569,7 @@ PromptVariablesDialog {
     text-overflow: clip;
 }
 
-/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
-   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
-   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
-   scrollers. `$ds-text-muted` is the app's established thumb token (the
-   Library screen's own rules already use it) and is generated per theme
-   polarity; `scrollbar-color-active` keeps the accent so a drag still
-   reads as a drag. */
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #prompt-variables-scroll {
     width: 100%;
     height: 1fr;

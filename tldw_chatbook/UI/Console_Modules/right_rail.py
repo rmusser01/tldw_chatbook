@@ -1568,7 +1568,9 @@ class ConsoleInspectorRail(Vertical):
             collapse_button = Button(
                 f"{resolve_glyph(GLYPH_COLLAPSE_RIGHT)} Inspect",
                 id="console-inspector-rail-collapse",
-                classes="console-rail-collapse-button",
+                # `console-rail-focus-carrier` keys the focus-edge rule
+                # (TASK-31663); see `console_inspector_section.py`'s toggle.
+                classes="console-rail-collapse-button console-rail-focus-carrier",
                 compact=True,
             )
             collapse_button.tooltip = "Collapse Inspector rail"

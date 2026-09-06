@@ -14858,7 +14858,9 @@ class ChatScreen(BaseAppScreen):
             Button(
                 "Search Library",
                 id="console-run-library-rag",
-                classes="destination-action-button",
+                # `console-rail-focus-carrier` keys the focus-edge rule
+                # (TASK-31663); see `console_inspector_section.py`'s toggle.
+                classes="destination-action-button console-rail-focus-carrier",
             ),
             id="console-library-search-region",
             classes="console-inspector-context-section",

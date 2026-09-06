@@ -154,13 +154,12 @@ ConsoleSettingsModal {
     padding: 1 2;
 }
 
-/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
-   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
-   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
-   scrollers. `$ds-text-muted` is the app's established thumb token (the
-   Library screen's own rules already use it) and is generated per theme
-   polarity; `scrollbar-color-active` keeps the accent so a drag still
-   reads as a drag. */
+/* TASK-31665 AC#15: visible scrollbar thumb. `$ds-grid-line` on a
+   `$ds-surface-panel` track measured 1.01:1 -- a scroller advertising a fold
+   it cannot show a position for. `$ds-text-muted` is the app's established
+   thumb token, generated per theme polarity; `scrollbar-color-active` keeps
+   the accent so a drag still reads as a drag. Applied to five more scrollers
+   below (same rationale). */
 #console-settings-body {
     height: 1fr;
     min-height: 0;
@@ -727,13 +726,7 @@ PromptVariablesDialog {
     text-overflow: clip;
 }
 
-/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
-   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
-   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
-   scrollers. `$ds-text-muted` is the app's established thumb token (the
-   Library screen's own rules already use it) and is generated per theme
-   polarity; `scrollbar-color-active` keeps the accent so a drag still
-   reads as a drag. */
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #prompt-variables-scroll {
     width: 100%;
     height: 1fr;
@@ -1049,13 +1042,7 @@ ConsoleRunLogModal {
     overflow-x: hidden;
 }
 
-/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
-   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
-   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
-   scrollers. `$ds-text-muted` is the app's established thumb token (the
-   Library screen's own rules already use it) and is generated per theme
-   polarity; `scrollbar-color-active` keeps the accent so a drag still
-   reads as a drag. */
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #settings-detail-pane-body,
 #settings-impact-pane-body {
     width: 100%;
@@ -3550,13 +3537,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0;
 }
 
-/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
-   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
-   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
-   scrollers. `$ds-text-muted` is the app's established thumb token (the
-   Library screen's own rules already use it) and is generated per theme
-   polarity; `scrollbar-color-active` keeps the accent so a drag still
-   reads as a drag. */
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #library-media-viewer {
     height: 100%;
     overflow-y: auto;
@@ -4343,13 +4324,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     background: $ds-surface-panel;
 }
 
-/* TASK-31665 AC#15 (31663 review M6): the SAME invisible thumb 31663 fixed
-   on #console-inspector-rail-body -- `$ds-grid-line` (#2d2d2d) on a
-   `$ds-surface-panel` (#242f38) track, 1.01:1 -- shipped on five more
-   scrollers. `$ds-text-muted` is the app's established thumb token (the
-   Library screen's own rules already use it) and is generated per theme
-   polarity; `scrollbar-color-active` keeps the accent so a drag still
-   reads as a drag. */
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #console-left-rail-body {
     width: 100%;
     min-width: 0;
@@ -4406,17 +4381,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0;
 }
 
-/* TASK-31663 AC#4: the thumb was `$ds-grid-line` (#2d2d2d) on a
-   `$ds-surface-panel` (#242f38) track -- two near-identical dark greys
-   measuring 1.01:1 through the compositor at both 80x24 and 200x50, i.e.
-   a scroller that advertises a fold it cannot show a position for. The
-   thumb has to clear the 3:1 non-text floor against ITS OWN track, and on
-   this near-black theme nothing in the surface family does: $ds-column-line
-   reaches 1.28:1 and even $panel-lighten-3 only 2.16:1. `$ds-text-muted` is
-   the app's other established scrollbar thumb (seven rules across the
-   Library screen already use it) and is generated per theme polarity, so it
-   stays right on light themes too. `scrollbar-color-active` keeps the
-   accent, so dragging is still distinguishable from resting. */
+/* TASK-31663 AC#4: the thumb measured 1.01:1 against its own track. It must
+   clear the 3:1 non-text floor and nothing in the surface family does on
+   this theme ($ds-column-line 1.28:1, $panel-lighten-3 2.16:1), so it takes
+   $ds-text-muted -- the app's other established thumb token, generated per
+   theme polarity. See TASK-31663 notes. */
 #console-inspector-rail-body {
     width: 100%;
     min-width: 0;
@@ -4442,18 +4411,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow: hidden;
 }
 
-/* TASK-31663 AC#5: the constrained-height form. At 80x24 the rail's pinned
-   stack was eight rows (header 1 + project instruction 1 + this block's 6)
-   over a THREE-row scroll body, so the Environment section -- seven rows at
-   rest since TASK-31662 -- could never show its four rows. Two rows here
-   makes that body seven. `ConsoleInspectorRail._sync_authority_summary_
-   density` flips this class and pins the same two numbers INLINE (inline
-   wins over CSS in Textual, and the widget has always carried its own
-   geometry so a bare harness measures the right box); the pair is kept in
-   step so the stylesheet never disagrees with the widget about how tall it
-   is. The class carries the `console-` prefix so `build_css`'s owner
-   classifier files this rule with the rest of the Console screen's CSS
-   instead of leaving it in the always-loaded boot bundle. */
+/* TASK-31663 AC#5: constrained-height form. At 80x24 a six-row block left a
+   THREE-row scroll body, too short for the Environment section; two rows
+   makes it seven. `ConsoleInspectorRail._sync_authority_summary_density`
+   pins the SAME numbers inline (inline wins in Textual) -- keep them in
+   step. `console-` prefix keeps this out of the boot bundle. */
 #console-send-authority-summary.console-authority-compact {
     height: 2;
     min-height: 2;
@@ -4916,11 +4878,9 @@ ConsoleBoundedSection {
     scrollbar-gutter: stable;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    /* TASK-31663 AC#4: same 1.01:1 invisible thumb as the rail's outer
-       scroller above -- this is the SECTION-inner bar the critique
-       measured. Raised here too rather than only on the outer one: they
-       are the same convention, and fixing one would leave a rail with two
-       scrollbars whose thumbs disagree about whether they can be seen. */
+    /* TASK-31663 AC#4: the SECTION-inner bar, same invisible thumb as the
+       outer scroller above -- fixing only one would leave the rail's two
+       scrollbars disagreeing about whether they can be seen. */
     scrollbar-color: $ds-text-muted;
     scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
@@ -4977,98 +4937,38 @@ ConsoleBoundedSection {
     outline-left: thick $ds-action-focus;
 }
 
-/* TASK-31663 AC#1/AC#2: the accent edge above, extended from the two
-   containers TASK-24702 styled to every BUTTON in the rail's focus ring.
-   (Buttons only -- rows carry a different, deliberately distinguishable cue;
-   see the block two rules down.) Measured through the compositor with focus
-   parked on the composer between stops (so a scroll-into-view cannot be
-   mistaken for a cue), SEVEN stops painted byte-identical text focused and
-   unfocused at both 80x24 and 200x50: the "▸ Inspect" header button, the
-   project-instruction status button, the section chevron, the section's
-   "Refresh" tail, "Search Library", "Narrow…" and the More toggle. Their
-   entire indication was Textual's own focus background swap -- #1e1e1e ->
-   #1c4666, measured 1.68:1, inside the 1.03-1.79:1 band the critique
-   reported. TASK-24702 already proved a tint cannot be rescued on this
-   near-black theme (opaque accent is 3.77:1; 45% is ~1.74:1), so the
-   carrier has to change CELLS.
-
-   Lossless, verified per button rather than assumed: every focusable
-   Button in this rail already paints at least one leading space -- Textual's
-   own `padding: 0 1`, or the centring of a fixed-width one (" ▾ ",
-   " Narrow… ") -- so `thick`'s block glyph lands on padding and no label
-   character is overwritten. `Tests/UI/test_console_inspector_focus_
-   carriers.py::test_rail_button_focus_edge_costs_no_label_character` pins
-   that for every button in the live ring, so a future label that fills its
-   own first column fails there rather than shipping as "█arrow…". */
-#console-right-rail Button:focus {
+/* TASK-31663 AC#1/AC#2: the rail's Button focus carrier. Seven ring stops
+   painted identical text focused and unfocused (background swap only,
+   1.68:1) and a tint cannot reach 3:1 on this theme, so the cue must change
+   CELLS. Lossless: every rail Button already paints a leading space.
+   Class-keyed, NOT `#console-right-rail Button` -- that form taxed every
+   Button in the app (test_textual_css_fastpath.py's ratchet). Coverage and
+   losslessness pinned by test_console_inspector_focus_carriers.py. */
+Button.console-rail-focus-carrier:focus {
     outline-left: thick $ds-action-focus;
 }
 
-/* The COLLAPSED rail's handle is a Button too, but it lives in
-   `#console-inspector-rail-handle`, outside the rail, so the rule above
-   misses it -- and it is the rail's shipping default state, which makes it
-   the stop that matters most. Measured before this rule: focusing it changed
-   nothing at all, at 140x40 and 200x50 alike (below ~84 columns the handle is
-   hidden and Alt+I is the only route, so there is no stop to indicate).
-
-   RIGHT edge here, not left, and that is measured rather than stylistic: the
-   shell gives this button ten columns for an eleven-column box, and the
-   column the clip drops is the leading pad -- so its col 0 carries the "◂" of
-   "◂ Inspect" at every width the handle is shown, while its last column is
-   blank on every row. A left edge would paint "█ Inspect"; the right edge is
-   lossless. `Tests/UI/test_console_inspector_focus_carriers.py` asserts the
-   carrier column is blank BEFORE focus, so this stays honest if the label
-   changes. */
+/* The COLLAPSED rail's handle -- the shipping default state, and before this
+   rule focusing it changed nothing at all. RIGHT edge, measured not
+   stylistic: the shell clips this button's leading pad, so col 0 carries the
+   "◂" of "◂ Inspect" while the last column is always blank. A left edge would
+   paint "█ Inspect". See TASK-31663 notes. */
 #console-inspector-rail-open:focus {
     outline-right: thick $ds-action-focus;
 }
 
-/* Inspector ROWS are deliberately NOT in the rule above, and this comment is
-   the correction of a wrong premise shipped in the first cut of TASK-31663.
-   Rows do NOT rely on `background: $ds-action-focus 20%` alone: the app-wide
-   fallback `*:focus { outline: solid $ds-focus-accent }` in
-   `css/core/_reset.tcss` reaches them (nothing opts rows out the way
-   `Button:focus` opts buttons out with `outline: none`), so a focused row has
-   always painted corner brackets -- measured, `[ Changes  +3 −1 ]` becomes
-   `┌Changes  +3 −1┐`, landing on the row's own `padding: 0 1` and costing no
-   text. The critique's "row focus is shape-carried (good)" was right.
+/* Inspector ROWS are deliberately absent above: the `*:focus` fallback in
+   `css/core/_reset.tcss` already gives them corner brackets on their own
+   padding -- a cue deliberately DISTINCT from the `█` column the focused
+   scroller paints. An `outline-left: thick` here was dead code (a 1-2 line
+   row has no middle line to paint on). See TASK-31663 notes. */
 
-   An `outline-left: thick` here was DEAD CODE and was removed. Textual takes a
-   row's left cell from the TOP edge's glyph set whenever that line is the
-   widget's top line, and since TASK-31662 a row is one or two lines tall --
-   every line is a top or bottom line, never a middle one -- so the thick left
-   edge had no line to paint on and the resolved `Edges(top=solid, left=thick)`
-   rendered `┌` regardless. Making it visible would have meant `outline: none`
-   first, i.e. REPLACING a working, distinct cue: brackets wrap the one focused
-   row, while `█` down a column is what the focused SCROLLER paints beside
-   every row (see the section-body rule below). Keeping them different is what
-   tells those two states apart. */
-
-/* The rail's SCROLLER is the one stop the edge above cannot carry on its
-   own. Textual composites children OVER a container's own strips, so
-   `#console-inspector-rail-body:focus`'s edge is painted only in the rows no
-   child covers -- the gaps between sections. At 200x50 there are several; at
-   80x24 there are none (measured with the Environment section's four rows
-   landed, the seven-row body is fully covered), so the container's own edge
-   shows nothing there at all. The innermost widget with a column no child
-   occupies is the section body, whose `padding: 0 0 0 1` reserves exactly
-   one; putting the same edge there draws the accent down the left of the
-   focused scroller's content at every size.
-
-   Known cost, measured and accepted: `outline-left` is a `BoxProperty` whose
-   setter calls `refresh(layout=True)` when the rule is set or cleared, and
-   the CSS path assigns through those descriptors (`Stylesheet.replace_rules`)
-   -- so this rule turns each focus-enter/leave of the SCROLLER into a layout
-   refresh on every mounted section body. It was investigated as the cause of
-   an intermittent rail-reconciliation test failure and CLEARED, twice over:
-   the failing test never focuses the rail body (opening the rail focuses the
-   collapse button or the pinned summary, per `CONSOLE_FOCUS_TARGETS_BY_PANE`),
-   and removing this rule entirely did not stop the failure. Left in place
-   because it is the only carrier the 80x24 scroller stop has. */
-#console-inspector-rail-body:focus .console-inspector-section-body {
-    outline-left: thick $ds-action-focus;
-}
-
+/* The rail's SCROLLER stop. Textual paints children OVER a container's own
+   strips, so the body's edge shows only in inter-section gaps -- none at
+   80x24. The section body's `padding-left: 1` is the innermost free column.
+   Accepted cost: `outline-left` is a `BoxProperty` forcing
+   `refresh(layout=True)`, so scroller focus enter/leave relayouts each
+   section body; investigated as a flake cause and CLEARED twice. */
 #console-workspace-tree {
     width: 100%;
     min-width: 0;
@@ -5338,11 +5238,9 @@ Button.console-inspector-action:disabled {
     padding: 0 0 0 1;
 }
 
-/* TASK-31662: one line per row unless the row's own pair needs two (see
-   `ConsoleInspectorSectionRow`'s docstring). The floor was `2`, which
-   made every row two lines tall whatever it had to say -- 25% of the
-   Environment section's row-lines were blank, and an 80x24 rail's 3-line
-   scroll body showed a single row that restated its own header. */
+/* TASK-31662: one line per row unless its pair needs two (see
+   `ConsoleInspectorSectionRow`). A floor of `2` left 25% of the Environment
+   section's row-lines blank. */
 .console-inspector-section-row {
     height: auto;
     min-height: 1;
@@ -5367,22 +5265,9 @@ Button.console-inspector-action:disabled {
     text-overflow: ellipsis;
 }
 
-/* TASK-31665 AC#9: `text-style: dim` was DOUBLE-dimming an already-muted
-   token. Measured through the real compositor at 235x52, the secondary
-   painted #7a8086 on the rail's $ds-surface-panel backdrop -- 3.42:1, an
-   AA fail -- while every other muted string in the same rail (the staged-
-   context empty copy, the scope label, "▼ more sections") painted the
-   undimmed #a7abaf at 5.91:1. That pair IS the critique's "same secondary
-   fg measures 3.44:1 on one line and 5.24:1 on the next": two different
-   FOREGROUNDS on one background, not one foreground on two backgrounds
-   (see AC#1's finding). Solved for from the three sampled colours, `dim`
-   RETAINS ~65% of the foreground and moves it ~35% toward the background
-   -- so it is a real second dimming step applied on top of a token that
-   was already the muted one, not a no-op on it. Dropping `dim` puts the
-   row secondary on the same token as its neighbours, at 5.91:1 on
-   $ds-surface-panel (measured) and 6.42:1 on the $surface islands the
-   rail's Buttons/Inputs paint (computed from the two tokens -- no row
-   embeds a control today, so nothing samples that pair). */
+/* TASK-31665 AC#9: no `text-style: dim` -- it DOUBLE-dimmed an already-muted
+   token to 3.42:1 (AA fail) where sibling muted strings paint 5.91:1. `dim`
+   is a real second step (~65% fg retained), not a no-op. */
 .console-inspector-section-row-secondary {
     height: 1;
     color: $ds-text-muted;
@@ -5397,11 +5282,9 @@ Button.console-inspector-action:disabled {
    docstring: "f-strings ... are out of scope"); these rules are shipped
    for real styling, not to satisfy that contract.
 
-   DESCENDANT, not child (`>`), since TASK-31662: in the one-line form the
-   primary sits inside `.console-inspector-section-row-line`, so a child
-   combinator silently dropped the status colour for every row narrow
-   enough to share a line -- the fleet's running/done/error rows among
-   them. */
+   DESCENDANT, not child (`>`), since TASK-31662: the one-line form nests
+   the primary in `.console-inspector-section-row-line`, so `>` silently
+   dropped the status colour for every row sharing a line. */
 .console-inspector-section-row-running .console-inspector-section-row-primary {
     color: $ds-status-running;
 }
@@ -5410,37 +5293,23 @@ Button.console-inspector-action:disabled {
     color: $ds-status-ready;
 }
 
-/* TASK-31664 (a11y), round 2 fix: this row's text must be READ (a
-   failing-check name), not merely glanced at as a status dot -- so it
-   takes the READABLE error token, not the decorative one. $ds-status-error
-   stays $error (measured 3.06:1, an AA fail per `_variables.tcss`'s own
-   guidance comment); $ds-status-error-readable is Textual's
-   per-theme-computed $text-error, tuned for exactly this. */
+/* TASK-31664 (a11y): this text must be READ (a failing-check name), so it
+   takes the READABLE token. $ds-status-error is $error at 3.06:1 (AA fail);
+   $ds-status-error-readable is the per-theme $text-error. */
 .console-inspector-section-row-error .console-inspector-section-row-primary {
     color: $ds-status-error-readable;
 }
 
-/* Round-1 review correction: the row the critique actually measured at
-   2.53:1 (the "Environment unavailable — Refresh to retry" copy, and
-   every stale Changes/branch/PR row via `_git_status_class`) carries
-   status="blocked", NOT "error" -- the rule above never reached it. Both
-   "blocked" and "error" are must-be-READ states (a real failure and data
-   that might be lying, respectively), so both take the same readable
-   token; they intentionally converge on one hue rather than each getting
-   its own, which would need a second bespoke a11y-checked token for no
-   behavioral gain. */
+/* The row the critique measured at 2.53:1 carries status="blocked", NOT
+   "error", so the rule above never reached it. Both are must-be-READ states
+   and deliberately share one readable token. See TASK-31664 notes. */
 .console-inspector-section-row-blocked .console-inspector-section-row-primary {
     color: $ds-status-error-readable;
 }
 
-/* TASK-31665 AC#5: the tail button used to reserve a blank line above
-   itself (`margin: 1 0 0 0`). With the Environment section's own
-   `margin: 0 0 1 0` below it, "Refresh" floated between two blank lines
-   with nothing visually attaching it to the section whose data it
-   refreshes -- the critique measured it "orphaned ... ~28 lines from its
-   data when Changes is expanded". It now sits flush under the last row,
-   inside the section box, so its owner is unambiguous; its scope is named
-   in the tooltip (`ConsoleInspectorSection.compose`). */
+/* TASK-31665 AC#5: no top margin. With the section's own bottom margin the
+   tail button floated between two blank lines, "orphaned ~28 lines from its
+   data"; flush under the last row makes its owner unambiguous. */
 .console-inspector-section-view-all {
     width: 100%;
     height: 1;

@@ -465,7 +465,15 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 toggle = Button(
                     self._toggle_label(),
                     id=self._toggle_id,
-                    classes="console-inspector-section-toggle",
+                    # `console-rail-focus-carrier`: the class that KEYS the
+                    # focus-edge rule (TASK-31663). It replaced a
+                    # `#console-right-rail Button:focus` ancestor scope,
+                    # which taxed every Button in the app -- see
+                    # `Tests/Performance/test_textual_css_fastpath.py`.
+                    classes=(
+                        "console-inspector-section-toggle "
+                        "console-rail-focus-carrier"
+                    ),
                     compact=True,
                 )
                 toggle.tooltip = self._toggle_tooltip()
@@ -488,7 +496,10 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             view_all = Button(
                 VIEW_ALL_BUSY_LABEL if self._view_all_busy else self.view_all_label,
                 id=self._view_all_id,
-                classes="console-inspector-section-view-all",
+                classes=(
+                    "console-inspector-section-view-all "
+                    "console-rail-focus-carrier"  # see the toggle above
+                ),
                 compact=True,
             )
             # TASK-31665 AC#5: name the SCOPE. A bare "Refresh" in a rail of
