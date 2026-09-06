@@ -744,3 +744,35 @@ warnings (`/private/tmp/tldw-outbox-guard-final.xml`). Full-file lint, changed-t
 formatting and diff checks pass; unrelated whole-file format drift is retained.
 Independent review found no actionable issues. The conversation-delete property
 and broader failure families are not qualified by this targeted run.
+
+## Retention deletion and historical fixture reconciliation
+
+TASK-31811 resolves the two raw retention-delete failures and conversation-delete
+property recorded above. Current message deletion now exercises the existing
+semantic revision coordinator, with raw rejection and reopened message/log purge
+assertions. Raw conversation deletion verifies atomic preservation of parent,
+child and sync proof under the current guard. The original FK-cascade/body-purge
+test remains against genuine schema 46 and checks that a current-schema upgrade
+does not restore deleted data. Production code and mutation guards are unchanged.
+
+Baseline complete retention + properties: **3 failed / 50 passed**
+(`/private/tmp/tldw-retention-delete-baseline.xml`). The historical test initially
+used a current getter selecting a later column; version-compatible SQL corrected
+that setup. A negative control removing only its message-retention trigger then
+failed on the leaked body as intended
+(`/private/tmp/tldw-retention-cascade-mutation.xml`); the mutation was restored.
+
+The first expanded selection recorded **118 passed / 3 failed**
+(`/private/tmp/tldw-retention-delete-final.xml`), exposing historical v44 seed
+calls to today's semantic-graph-aware soft-delete. The scoped task was expanded
+before editing: version-checked historical SQL now seeds tombstones and edits
+under the real v44 triggers, retaining all original migration purge, rollback
+and FTS assertions. Both repair portions received clear independent review.
+
+Final six complete retention, DB properties, retention-migration, v57 guard,
+message-exchange and semantic-coordinator files: **121 passed in 51.94 seconds**,
+with two existing dependency warnings
+(`/private/tmp/tldw-retention-delete-verified.xml`). Full-file lint, changed-region
+formatting and diff checks pass. Broader behavioral/architecture failures and
+the two pending task-ID decisions remain open; no full-suite or merge-readiness
+claim is made.
