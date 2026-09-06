@@ -2284,6 +2284,9 @@ class ConsoleTraceService:
     ) -> tuple[SurfaceDeltaAdmission, object]:
         """Plan an append, no-op, or one-item bounded surface replacement.
 
+        A verified completed tool turn may instead replace its bounded suffix
+        with the saved assistant revision and append the next saved user.
+
         The comparison resolves prior references inside the caller transaction;
         no transcript-sized value is copied into the admission or call row.
 

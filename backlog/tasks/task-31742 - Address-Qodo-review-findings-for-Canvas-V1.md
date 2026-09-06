@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 21:37'
-updated_date: '2026-09-06 03:13'
+updated_date: '2026-09-06 03:38'
 labels:
   - canvas
   - review
@@ -52,6 +52,8 @@ Final integration is blocked, not Done: after a genuinely completed progressive 
 Completed the approved Task 2 recovery repair under backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md in c388c2bd7 and ed86d6a90: exact accepted-owner reservation reuse, verifier retirement with recoverable preparation faults, atomic bind outcome read-back, cancellation and uncertain-delivery handling, cold/new-invocation replay refusal, and operation-owned worker connection cleanup. Independent task review and scoped I1 re-review are clean. Root verification: 983 affected passes (one known custom-API exclusion, Requests and descriptor warnings), 207 focused passes with zero regular-file descriptor growth, then 169 fix-covering passes with only Requests warning. Same affected baseline has 885 passes and descriptor growth345 versus current204; this is not global resource-cleanliness evidence. Ordinary Ruff remains baseline-qualified with no new fix findings. Growth/latency/startup/browser release gates, current-dev rebase, Qodo, protected CI and merge remain pending; task stays In Progress.
 
 Task3 checkpoint ffb934ce9: compound-growth file7passed; corrected observed test-harness counter publication and completion ordering with deterministic RED before atomic publication. Final three Chromium files90passed2optionalbrowser skips1Requests warning184.52s; startup/Canvas110passed4warnings40.72s after an unchanged isolated/full rerun; census967/972 and import635/660 remain within budgets. All six derived preflight categories pass after source-private fixed-warning inventory review. Three changed test/fixture files pass Ruff and formatter checks. Numeric latency gate has18passes1failure solely at reference-hardware identity: actual M5 Max18CPU128GiB differs from pinned M4Pro14CPU48GiB; thresholds not applied and no waiver. Independent checkpoint review, actual-dev migration-number reconciliation/rebase, new Qodo/current-headCI and merge remain pending. No merge or V2; AC4 stays unchecked.
+
+Broad repair review found fresh AGENT_FIRST actor/chain identities could replay the same unresolved saved turn. Two real gateway regressions confirmed this before product correction. Real agent-enabled Retry anyway positive established its existing Capture Off behavior and unchanged old trace ledger, so the fix reuses the current owner/turn unresolved-call query for AGENT_FIRST as well as FRESH without a new recovery authority. Post-format preservation selection172passed1Requests warning73.73s; all six preflight guards pass. Scoped final rereview pending. Reference-machine latency and latest-dev migration/task collision/rebase plus fresh Qodo/CI remain open; no merge or V2.
 <!-- SECTION:NOTES:END -->
 
 ### Approved integration expansion, 2026-09-05
@@ -66,13 +68,15 @@ existing atomic dispatch boundary, without changing schema or granting authority
 from response links. Written-spec review precedes detailed implementation planning
 and product changes; no capture bypass or V2 work is authorized by this expansion.
 
-Requested design-review corrections are now incorporated in the linked contract:
+Historical design-review state (before implementation): requested corrections
+were incorporated in the linked contract:
 reuse the exact owned pre-dispatch reservation through the controller/gateway
 recovery handoff; reconcile write outcomes by exact call and surface/header
 identity before Retry/Cancel/adapter entry; include ordinary FRESH next sends as
 well as AGENT_FIRST. Add real recovery, post-commit error and route-transition
-tests to the subsequent implementation plan. These are design requirements,
-not implemented or passing behavior; AC4 through AC8 remain unchecked.
+tests to the subsequent implementation plan. At that checkpoint these were design
+requirements, not implemented or passing behavior; AC4 through AC8 were unchecked.
+The current checklist and appended implementation notes above supersede that state.
 
 The user approved continuation after those corrections. Execute
 [the repair implementation plan](../../Docs/superpowers/plans/2026-09-05-console-tool-turn-surface-transition.md)

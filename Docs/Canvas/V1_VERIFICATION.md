@@ -7,7 +7,21 @@ Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-im
 ## Current checkpoint — reviewed trace repair, integration gates pending
 
 The approved completed-tool transition repair is implemented through `ed86d6a90`
-and independently reviewed. It composes exactly one verified replacement then
+and its task checkpoints are independently reviewed. The broader review of
+`c2d5aac3a..f55ab2cbe` identified one additional replay gap: a cold
+`AGENT_FIRST` invocation with new actor/chain IDs bypassed unresolved-turn
+refusal. Two real gateway regressions confirmed unwanted entry for RESERVED and
+unreadable committed states. The real agent-enabled Retry anyway positive passes
+on unchanged product: it uses the existing explicit Capture Off path, preserving
+the old trace ledger. The fix therefore extends the existing allocation guard to
+AGENT_FIRST without adding recovery authority or changing capture policy. The
+post-format preservation selection passes **172 tests, 1 Requests warning,
+73.73s**. The full post-fix Chromium run passes **90 tests, 2 optional-browser
+skips, 1 Requests warning, 180.07s**, and all six derived preflight checks pass.
+Changed-range formatting and fatal static checks pass; ordinary Ruff remains
+unchanged from the fix baseline (41 existing findings across the four files).
+Scoped rereview remains pending. The implemented repair composes exactly one
+verified replacement then
 one saved-user append; exact owned Retry and three-way commit reconciliation
 preserve at-most-once adapter entry. Operation-owned SQLite cleanup preserves
 borrowed connections. Governance is the amended

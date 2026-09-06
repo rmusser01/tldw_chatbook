@@ -345,7 +345,11 @@ class ConsoleTraceBoundaryFactory:
                 )
                 if (
                     owner is not None
-                    and route_record.route is ConsoleRequestRoute.FRESH
+                    and route_record.route
+                    in {
+                        ConsoleRequestRoute.FRESH,
+                        ConsoleRequestRoute.AGENT_FIRST,
+                    }
                     and self.repository.has_unresolved_call_for_turn(
                         cursor, owner_id=owner.owner_id, turn_id=turn_id
                     )

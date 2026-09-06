@@ -151,9 +151,17 @@ Reason: the compound surface and recovery handoff extend cross-module contracts.
 
 **Interfaces:** Consume the public gateway and native-reader behavior from Tasks 1/2; produce evidence and reviewed PR updates, not a new runtime API.
 
-- [ ] **Step 1: Strengthen measured growth coverage.** Extend the existing real-gateway fixture with repeated completed-tool/next-send transitions; assert hand-counted new surface nodes/events per transition and unchanged earlier reconstruction. Keep ADR-097 growth and latency gates unchanged. Root executes relevant existing tests; no full suite.
+- [x] **Step 1: Strengthen measured growth coverage.** Extend the existing real-gateway fixture with repeated completed-tool/next-send transitions; assert hand-counted new surface nodes/events per transition and unchanged earlier reconstruction. Keep ADR-097 growth and latency gates unchanged. Root executes relevant existing tests; no full suite.
 - [ ] **Step 2: Run affected trace, gateway/controller, Canvas and startup checks.** Preserve existing warning/baseline qualifications rather than raising budgets. Run all three mandatory Chromium Canvas browser files after runtime integration is stable; optional browser absences remain explicit skips, not claims of coverage.
 - [ ] **Step 3: Broad review of this repair range and its integration with Canvas.** Reviewer gets the approved spec, complete diff since `c2d5aac3a`, reports and parked findings. Resolve load-bearing issues before merge readiness.
+
+  Final-review I1 requires real cold/new-gateway tests for the same unresolved
+  saved turn with freshly minted AGENT_FIRST actor/chain identities, plus a real
+  agent-enabled controller Retry anyway positive. Preserve exact owned
+  pre-dispatch Retry, direct RETRY and distinct new saved turns. Reproduce before
+  correction; use existing accepted recovery authority, never a generic bypass
+  or content-based non-delivery assumption. Review a new authority contract
+  before implementing one if existing seams cannot express this distinction.
 - [ ] **Step 4: Update ADR/task/evidence, run derived preflight, commit and publish.** Recheck actual dev, rebase if needed with exact force-with-lease and recovery ref retained; inspect overlapping changes and reverify affected behavior. Read Qodo feedback on the new published head and address every finding. Wait for protected current-head CI. Do not merge a known failing integration case even if CI passes.
 - [ ] **Step 5: Merge PR2432 normally into dev and verify merge SHA.** No admin bypass or deletion of worktrees/recovery refs. Only after verified merge begin V2 brainstorming; V2 implementation is not part of this plan.
 

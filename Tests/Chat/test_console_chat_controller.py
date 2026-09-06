@@ -7725,7 +7725,10 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
                     raise RuntimeError("synthetic owned bind failure")
                 return result
 
-            if recovery_scenario == "unknown-postcommit":
+            if recovery_scenario in {
+                "unknown-postcommit",
+                "unknown-postcommit-retry-anyway",
+            }:
                 from contextlib import contextmanager
 
                 checkpoint_attempts = []
@@ -7762,7 +7765,10 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
             "Observe the sky.", session_id=session.id
         )
         assert second.accepted
-        if recovery_scenario == "unknown-postcommit":
+        if recovery_scenario in {
+            "unknown-postcommit",
+            "unknown-postcommit-retry-anyway",
+        }:
             assert second.terminal_status is ConsoleRunStatus.BLOCKED
             assert second.visible_copy == "Accepted turn is retained for recovery."
             preparation_id = second.preparation_id
@@ -7802,6 +7808,63 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
                     "(SELECT COUNT(*) FROM console_trace_request_headers)"
                 ).fetchone()) == counts
             assert reader.read_calls(first_user_id) == first_trace
+            if recovery_scenario == "unknown-postcommit-retry-anyway":
+                # Exercise the real claimed recovery action and enabled agent
+                # bridge. It must not be confused with implicit cold re-entry.
+                assert controller._agent_runtime_enabled
+                unknown_database = None
+                retry_dispatches = []
+                original_stream = gateway.stream_chat
+
+                async def record_retry_stream(*args, **kwargs):
+                    retry_dispatches.append((kwargs["route"], kwargs["capture_mode"]))
+                    async for item in original_stream(*args, **kwargs):
+                        yield item
+
+                monkeypatch.setattr(gateway, "stream_chat", record_retry_stream)
+                retried = await controller.retry_dispatch_recovery(session.id)
+                assert retried.accepted
+                assert (
+                    controller.run_state_for(session.id).status
+                    is ConsoleRunStatus.COMPLETED
+                )
+                assert (
+                    store.get_message(recovery.assistant_message_id).status
+                    == "complete"
+                )
+                assert retried.visible_copy == "Observations recorded."
+                assert adapter_entries == 4
+                assert len(calculator_results) == 2
+                assert "42" in calculator_results[-1]
+                assert "ERROR" not in calculator_results[-1]
+                assert retry_dispatches == [
+                    (
+                        ConsoleRequestRoute.AGENT_FIRST,
+                        ConsoleTraceCaptureMode.CAPTURE_OFF,
+                    ),
+                    (
+                        ConsoleRequestRoute.TOOL_LOOP,
+                        ConsoleTraceCaptureMode.CAPTURE_OFF,
+                    ),
+                ]
+                assert store.dispatch_recovery_for_session(session.id) is None
+                with chat_db.transaction() as cursor:
+                    assert (
+                        factory.repository.get_call(cursor, committed.call_id)
+                        == committed
+                    )
+                    assert (
+                        tuple(
+                            cursor.execute(
+                                "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                                "(SELECT COUNT(*) FROM console_trace_events), "
+                                "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                                "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                            ).fetchone()
+                        )
+                        == counts
+                    )
+                assert reader.read_calls(first_user_id) == first_trace
             return
         if recovery_scenario is not None:
             from tldw_chatbook.Chat.console_trace_service import (
@@ -8096,9 +8159,28 @@ async def test_controller_unknown_postcommit_outcome_refuses_trace_retry_and_can
 
 
 @pytest.mark.asyncio
+async def test_agent_controller_retry_anyway_preserves_explicit_recovery(
+    tmp_path,
+    monkeypatch,
+):
+    """An explicit uncertain-delivery retry still completes through the real agent."""
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path,
+        monkeypatch,
+        False,
+        True,
+        False,
+        False,
+        recovery_scenario="unknown-postcommit-retry-anyway",
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
 async def test_controller_retry_retains_reservation_after_repreparation_failure(
-    tmp_path, monkeypatch, next_fresh,
+    tmp_path,
+    monkeypatch,
+    next_fresh,
 ):
     await test_two_saved_turns_keep_history_references_through_production_trace(
         tmp_path, monkeypatch, False, True, next_fresh, False,

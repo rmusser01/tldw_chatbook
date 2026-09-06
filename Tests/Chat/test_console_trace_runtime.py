@@ -579,10 +579,18 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
                     self.faulted = True
                     raise asyncio.CancelledError()
                 if not self.faulted and scenario in {
-                    "postcommit_commit", "postcommit_read_failure", "postcommit_inconsistent", "postcommit_fresh",
+                    "postcommit_commit",
+                    "postcommit_read_failure",
+                    "postcommit_inconsistent",
+                    "postcommit_fresh",
+                    "postcommit_agent_new_run",
                 }:
                     self.faulted = True
-                    self.deny_reads = scenario in {"postcommit_read_failure", "postcommit_fresh"}
+                    self.deny_reads = scenario in {
+                        "postcommit_read_failure",
+                        "postcommit_fresh",
+                        "postcommit_agent_new_run",
+                    }
                     self.inconsistent_reads = scenario == "postcommit_inconsistent"
                     raise RuntimeError("synthetic actual bind postcommit failure")
 
@@ -649,7 +657,12 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
 
             monkeypatch.setattr(gateway, "_enter_provider_adapter", fail_after_entry)
 
-        if scenario in {"postcommit_read_failure", "postcommit_inconsistent", "postcommit_fresh"}:
+        if scenario in {
+            "postcommit_read_failure",
+            "postcommit_inconsistent",
+            "postcommit_fresh",
+            "postcommit_agent_new_run",
+        }:
             with pytest.raises(TraceCallPersistenceError) as failure:
                 await dispatch(prepared, route)
             assert failure.value.boundary is boundaries[-1]
@@ -721,7 +734,27 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
         assert TraceCallState.NOT_DISPATCHED not in cancellation_transitions
         if scenario == "postcommit_after_entry":
             monkeypatch.setattr(gateway, "_enter_provider_adapter", original_entry)
-        monkeypatch.setattr(gateway, "_trace_call_boundary_factory", ConsoleTraceBoundaryFactory(database))
+        if scenario == "postcommit_agent_new_run":
+            # Same saved request, genuinely new gateway/factory and new valid
+            # agent provenance: none of these establish accepted recovery.
+            assert committed.state is TraceCallState.DISPATCH_STARTED
+            assert committed.run_id == f"{actor}:{chain}"
+            gateway = make_gateway(
+                chat_api_call_fn=adapter,
+                trace_call_boundary_factory=ConsoleTraceBoundaryFactory(database),
+            )
+            original_admission = gateway._trace_dispatch_admission
+            monkeypatch.setattr(gateway, "_trace_dispatch_admission", record_admission)
+            actor, chain = new_opaque_id(), new_opaque_id()
+            assert committed.run_id != f"{actor}:{chain}"
+            accepted_trace_owner = None
+            prepared = prepare(incoming, descriptors, route, next_policy)
+        else:
+            monkeypatch.setattr(
+                gateway,
+                "_trace_call_boundary_factory",
+                ConsoleTraceBoundaryFactory(database),
+            )
         with pytest.raises(TraceCallPersistenceError):
             await dispatch(prepared, route)
         assert len(adapter_entries) == entries_before_reentry
@@ -829,6 +862,155 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
                 )
                 == before_nodes
             )
+
+
+@pytest.mark.asyncio
+async def test_cold_agent_postcommit_replay_with_new_run_requires_owned_recovery(
+    tmp_path,
+    make_database,
+    make_gateway,
+    monkeypatch,
+):
+    """New agent IDs cannot authorize a replay of an unreadable committed send."""
+    await test_completed_tool_turn_compound_admission_checks_durable_proof(
+        tmp_path,
+        make_database,
+        make_gateway,
+        monkeypatch,
+        scenario="postcommit_agent_new_run",
+    )
+
+
+@pytest.mark.asyncio
+async def test_cold_agent_reserved_replay_with_new_run_requires_owned_recovery(
+    tmp_path,
+    make_database,
+    make_gateway,
+    monkeypatch,
+):
+    """A new run cannot allocate over the same saved turn's owned reservation."""
+    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+    database = make_database(tmp_path / "reserved-agent-replay.sqlite", "agent-owner")
+    conversation = database.add_conversation({"title": "reserved agent"})
+    turn_id, revision = _saved_message(database, conversation, "same saved request")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    factory = ConsoleTraceBoundaryFactory(database)
+    entries, grants = [], []
+
+    def adapter(**kwargs):
+        entries.append(kwargs["messages_payload"])
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    resolution = ConsoleProviderResolution(
+        ready=True,
+        provider="openai",
+        model="gpt-test",
+        execution_key="openai",
+        base_url="https://api.openai.com/v1",
+        streaming=False,
+    )
+    gateway = make_gateway(
+        chat_api_call_fn=adapter, trace_call_boundary_factory=factory
+    )
+    actor, chain = new_opaque_id(), new_opaque_id()
+
+    def prepare(selected_gateway):
+        return selected_gateway.prepare_chat_request(
+            resolution,
+            _semantic_request(
+                [{"role": "user", "content": "same saved request"}],
+                [revision],
+                policy,
+                route=ConsoleRequestRoute.AGENT_FIRST,
+                actor_id=actor,
+                chain_id=chain,
+            ),
+            route=ConsoleRequestRoute.AGENT_FIRST,
+            route_actor_id=actor,
+            route_chain_id=chain,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+
+    boundary = factory(prepare(gateway), resolution, ConsoleRequestRoute.AGENT_FIRST)
+    reserved = boundary.reserve()
+    assert reserved.state is TraceCallState.RESERVED
+    assert reserved.turn_id == turn_id
+    assert reserved.run_id == f"{actor}:{chain}"
+    with database.transaction() as cursor:
+        before_events = tuple(
+            tuple(row) for row in cursor.execute("SELECT * FROM console_trace_events")
+        )
+        assert (
+            cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0]
+            == 1
+        )
+        assert (
+            cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_surface_nodes"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_request_headers"
+            ).fetchone()[0]
+            == 0
+        )
+
+    cold_gateway = make_gateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=ConsoleTraceBoundaryFactory(database),
+    )
+    original_admission = cold_gateway._trace_dispatch_admission
+
+    def record_admission(*args, **kwargs):
+        admission = original_admission(*args, **kwargs)
+        grants.append(admission)
+        return admission
+
+    monkeypatch.setattr(cold_gateway, "_trace_dispatch_admission", record_admission)
+    actor, chain = new_opaque_id(), new_opaque_id()
+    assert reserved.run_id != f"{actor}:{chain}"
+    with pytest.raises(TraceCallPersistenceError):
+        _ = [
+            item
+            async for item in cold_gateway.stream_chat(
+                resolution,
+                prepare(cold_gateway),
+                route=ConsoleRequestRoute.AGENT_FIRST,
+                route_actor_id=actor,
+                route_chain_id=chain,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+    assert entries == []
+    assert grants == []
+    with database.transaction() as cursor:
+        assert factory.repository.get_call(cursor, reserved.call_id) == reserved
+        assert (
+            cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0]
+            == 1
+        )
+        assert (
+            tuple(
+                tuple(row)
+                for row in cursor.execute("SELECT * FROM console_trace_events")
+            )
+            == before_events
+        )
+        assert (
+            cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_surface_nodes"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_request_headers"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 @pytest.mark.asyncio
