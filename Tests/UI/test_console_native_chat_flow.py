@@ -137,6 +137,10 @@ from Tests.console_provider_doubles import provider_resolution, with_destination
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 _ASYNC_SETTLE_TIMEOUT = 10.0
+#: Shared polling budget for spin-wait loops (Qodo #2449 review): one place
+#: defines how long a wait may spin and how often it samples.
+_POLL_ATTEMPTS = 200
+_POLL_INTERVAL_SECONDS = 0.05
 
 
 
@@ -1517,12 +1521,12 @@ async def test_warm_console_resume_consumes_staged_chat_handoff():
     app = _build_production_app(configured_default="chat")
     async with app.run_test(size=(100, 30)) as pilot:
         console = None
-        for _ in range(200):
+        for _ in range(_POLL_ATTEMPTS):
             content = app._navigation_outgoing_screen()
             if isinstance(content, ChatScreen):
                 console = content
                 break
-            await pilot.pause(0.05)
+            await pilot.pause(_POLL_INTERVAL_SECONDS)
         assert console is not None
         await _wait_for_selector(
             console,
@@ -1534,10 +1538,10 @@ async def test_warm_console_resume_consumes_staged_chat_handoff():
         # Leave Chat so the return below is a warm revisit (resume only,
         # no second on_mount) of the same reused instance.
         await app.handle_screen_navigation(NavigateToScreen("settings"))
-        for _ in range(200):
+        for _ in range(_POLL_ATTEMPTS):
             if isinstance(app.screen, SettingsScreen):
                 break
-            await pilot.pause(0.05)
+            await pilot.pause(_POLL_INTERVAL_SECONDS)
         assert isinstance(app.screen, SettingsScreen)
 
         payload = ChatHandoffPayload(
@@ -1549,8 +1553,8 @@ async def test_warm_console_resume_consumes_staged_chat_handoff():
         app.open_chat_with_handoff(payload, action_label="Use in Console")
         assert app.pending_handoffs.has_pending(HandoffChannel.CHAT)
 
-        for _ in range(200):
-            await pilot.pause(0.05)
+        for _ in range(_POLL_ATTEMPTS):
+            await pilot.pause(_POLL_INTERVAL_SECONDS)
             if isinstance(
                 app.screen, ChatScreen
             ) and not app.pending_handoffs.has_pending(HandoffChannel.CHAT):

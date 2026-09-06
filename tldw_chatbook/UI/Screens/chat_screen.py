@@ -1672,6 +1672,14 @@ class ChatScreen(BaseAppScreen):
     input text, and UI preferences when navigating away and returning.
     """
 
+    #: Settle hedge for the post-mount / post-resume consumer timers: the
+    #: native composer is not guaranteed to exist in the DOM at the exact
+    #: lifecycle-hook moment, so every pending-handoff/intent consumer is
+    #: scheduled this far out. on_mount and on_screen_resume must use the
+    #: same value — a warm revisit is promised the same settle window as a
+    #: cold mount (task-31808 / Qodo #2449 review).
+    CONSUMER_SETTLE_HEDGE_SECONDS = 0.15
+
     #: TASK-25812: the Console-owned rules split out of
     #: ``components/_agentic_terminal.tcss``. Unlike the library/settings
     #: sheets, this one ALSO rides ``TldwCli.CSS_PATH`` -- the Console is
@@ -15232,26 +15240,25 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
         if ordered_resume_pending:
-            self.set_timer(0.15, self._start_resume_navigation_startup)
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._start_resume_navigation_startup)
         else:
-            self.set_timer(0.15, self._consume_pending_chat_handoff)
-            self.set_timer(0.15, self._consume_pending_console_roleplay_repair)
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff)
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_roleplay_repair)
             # Mirrors the handoff timer above: the native composer is not
             # guaranteed to exist in the DOM yet at this exact point (it can
             # still be settling in immediately after mount, same reason every
             # composer-touching test here awaits `_wait_for_selector` first) --
             # a failed early attempt releases its claim for this screen's
             # existing resume/user-triggered retry paths.
-            self.set_timer(0.15, self._consume_pending_console_prompt_insert)
-            self.set_timer(0.15, self.consume_pending_console_provider_intent)
-            self.set_timer(0.15, self._consume_pending_conversation_settings_return)
-            self.set_timer(0.15, self.consume_pending_vllm_console_intent)
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_prompt_insert)
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_console_provider_intent)
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_conversation_settings_return)
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_vllm_console_intent)
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
             # settled conversation's session. Same 0.15s settle hedge as the
             # surrounding handoff timers.
-            self.set_timer(
-                0.15,
+            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS,
                 self._fleet.consume_pending_console_fleet_completion,
             )
         if self._pending_character_return_focus_id is not None:
@@ -21497,18 +21504,16 @@ class ChatScreen(BaseAppScreen):
                 # `open_chat_with_handoff` payloads and vLLM "Use in
                 # Console" targets staged against a warm Chat screen were
                 # never applied. Same 0.15s settle hedge as on_mount.
-                self.set_timer(0.15, self._consume_pending_chat_handoff),
-                self.set_timer(0.15, self._consume_pending_console_prompt_insert),
-                self.set_timer(0.15, self.consume_pending_console_provider_intent),
-                self.set_timer(
-                    0.15, self._consume_pending_conversation_settings_return
+                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff),
+                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_prompt_insert),
+                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_console_provider_intent),
+                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_conversation_settings_return
                 ),
-                self.set_timer(0.15, self.consume_pending_vllm_console_intent),
+                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_vllm_console_intent),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on
                 # resume too.
-                self.set_timer(
-                    0.15,
+                self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS,
                     self._fleet.consume_pending_console_fleet_completion,
                 ),
             ]
