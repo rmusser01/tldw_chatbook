@@ -17219,7 +17219,6 @@ class ConsoleChatStore:
                 self.on_scope_flushed(identity.conversation_id, held_scope)
             except Exception:
                 logger.exception("on_scope_flushed callback failed after promotion.")
-        self._persist_project_instruction_state(session)
         self._flush_context_policy_on_first_persist(session)
         return identity.conversation_id
 

@@ -466,14 +466,24 @@ def test_promotion_writes_project_context_inside_ordinary_durable_promotion(
         session.id, role=ConsoleMessageRole.USER, content="hello", persist=True
     )
 
-    conversation_id = store.promote_ephemeral_session(session.id)
+    try:
+        conversation_id = store.promote_ephemeral_session(session.id)
 
-    assert conversation_id is not None
-    assert transaction_states == [True]
-    assert db.get_conversation_console_project_context(conversation_id) == (
-        encode_project_context_json(ENABLED_STATE)
-    )
-    db.close_connection()
+        assert conversation_id is not None
+        assert transaction_states == [True]
+        assert db.get_conversation_console_project_context(conversation_id) == (
+            encode_project_context_json(ENABLED_STATE)
+        )
+    finally:
+        db.close_connection()
+
+    reopened = CharactersRAGDB(tmp_path / "promotion.db", client_id="reopened")
+    try:
+        assert reopened.get_conversation_console_project_context(conversation_id) == (
+            encode_project_context_json(ENABLED_STATE)
+        )
+    finally:
+        reopened.close_connection()
 
 
 def test_promotion_state_write_failure_rolls_back_the_complete_bundle(
