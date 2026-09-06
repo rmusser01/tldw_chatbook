@@ -10,6 +10,7 @@ import json
 import re
 import threading
 import time
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -241,18 +242,65 @@ def update_meeting_json(folder: Path, **fields: Any) -> dict:
 MAX_SPEAKER_NAME_CHARS = 64
 _WIDGET_SAFE_CLUSTER_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
+#: Markdown-significant ASCII punctuation, backslash-escaped before a name is
+#: interpolated into `render_markdown`'s `**{name}:**` (Qodo Q1). CommonMark
+#: renders `\x` as a literal `x` for any ASCII punctuation, so escaping is
+#: lossless: the reader sees exactly what was typed.
+_MARKDOWN_ESCAPES = str.maketrans({char: "\\" + char for char in "\\`*_[]()#<>|~"})
+
+
+def escape_markdown_name(name: str) -> str:
+    """Escape a user-typed name for interpolation into Markdown (Qodo Q1).
+
+    Names reach `render_markdown`'s emphasis syntax, and the Library renders
+    that document through Textual's Markdown widget -- so an unescaped
+    ``[x](http://e)`` or ``` `code` ``` became live markup in the persisted
+    transcript. The plain "[hh:mm:ss] Name: text" render is NOT escaped: it
+    is plain text, and a backslash there would be shown verbatim.
+
+    Args:
+        name: The already-normalized display name (or composed label).
+
+    Returns:
+        The same text with Markdown-significant ASCII punctuation escaped.
+    """
+    return (name or "").translate(_MARKDOWN_ESCAPES)
+
 
 def normalize_speaker_name(value: str) -> str:
     """Clean one user-typed speaker name for storage and display.
+
+    The ONE boundary all three rename paths share (the live Meetings screen,
+    the Library canvas legend, the Library reader legend), so control
+    characters are stripped here rather than at each caller: a name reaches
+    `meeting.json`, the transcript render, `Media.content` and FTS, and a
+    newline or an ANSI escape in it would break the line-oriented transcript
+    render and the terminal alike (Qodo Q1). "Control character" is the same
+    set `Chat/console_roleplay_identity.normalize_chat_display_name` rejects
+    for chat display names -- stripped here instead of raised, because this
+    runs deep inside the rename write path where the only reporting channel
+    is a failed rename.
 
     Args:
         value: The raw submitted name.
 
     Returns:
-        The name stripped of surrounding whitespace and truncated to
-        `MAX_SPEAKER_NAME_CHARS`; `""` means "remove this speaker's name".
+        The name with control characters removed, stripped of surrounding
+        whitespace and truncated to `MAX_SPEAKER_NAME_CHARS`; `""` means
+        "remove this speaker's name".
     """
-    return (value or "").strip()[:MAX_SPEAKER_NAME_CHARS]
+    cleaned = "".join(
+        char
+        for char in (value or "")
+        if not (
+            unicodedata.category(char) in {"Cc", "Cs"}
+            or char in {"\u2028", "\u2029"}
+            # ZWJ/ZWNJ are load-bearing inside emoji sequences; every other
+            # format character (bidi overrides included) goes.
+            or (unicodedata.category(char) == "Cf" and char not in {"\u200c", "\u200d"})
+        )
+    )
+    return cleaned.strip()[:MAX_SPEAKER_NAME_CHARS]
 
 
 def is_widget_safe_cluster_id(cluster_id: str) -> bool:
@@ -722,6 +770,12 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
     Used when post-meeting re-transcription is off: the Markdown, not the
     audio, is what goes to the Library.
 
+    Speaker names are user-typed and land here inside emphasis syntax, so
+    they go through `escape_markdown_name` first (Qodo Q1): the Library
+    renders this document through Textual's Markdown widget, where an
+    unescaped ``[x](http://e)`` or ``` `code` ``` in a name became live
+    markup in the persisted transcript.
+
     Args:
         result: The finished meeting.
         segments: Its segments, in order.
@@ -749,7 +803,9 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
         who = render_label(segment, speaker_names, meta.user_display_name, diarize_mic=meta.diarize_mic_channel)
-        lines.append(f"{stamp} **{who}:** {segment.text}" if who else f"{stamp} {segment.text}")
+        lines.append(
+            f"{stamp} **{escape_markdown_name(who)}:** {segment.text}" if who else f"{stamp} {segment.text}"
+        )
     return "\n".join(lines) + "\n"
 
 
