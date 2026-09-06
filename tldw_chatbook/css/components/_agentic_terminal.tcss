@@ -3741,6 +3741,36 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: bold;
 }
 
+/* TASK-31745 / final review I3: the "Rename speakers" legend is one label +
+   one Input per speaker, `max_speakers` ships at 8, and Textual's default
+   Input is 3 rows plus a border -- so an 8-speaker meeting squeezed the
+   transcript body beside it down to about 3 rows. Bound the section and
+   flatten its rows to one line each. ID/class-keyed only (no ancestor-scoped
+   bare type), so ADR-097's fast-path ratchet is untouched. */
+#library-media-speaker-legend {
+    max-height: 12;
+    overflow-y: auto;
+}
+
+Input.library-media-speaker-input {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+/* Borderless rows still need a visible focus state (the reader's other
+   Inputs get theirs from a border-colour change, which is gone here). */
+Input.library-media-speaker-input:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
 #library-media-highlight-add-collapsible {
     height: auto;
     margin: 0 0 1 0;

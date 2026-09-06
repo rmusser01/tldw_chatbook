@@ -31,7 +31,7 @@ def _viewer_app(tmp_media_db, media_id, *, rows=(("S1", "Speaker 1"),)):
     """
     from textual import on
 
-    from Tests.UI.consolidated_css import ConsolidatedCSSApp
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
     from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 
     detail = dict(tmp_media_db.get_media_by_id(media_id))
@@ -43,7 +43,12 @@ def _viewer_app(tmp_media_db, media_id, *, rows=(("S1", "Speaker 1"),)):
 
     class _App(ConsolidatedCSSApp):
         def __init__(self):
-            super().__init__()
+            # The reader's own rules live in the app tier (the boot bundle
+            # plus the lazily-loaded Library split sheet), not in a widget
+            # `BUNDLED_CSS` -- so a harness on the screen sheets alone mounts
+            # this viewer unstyled and every geometry assertion measures
+            # Textual's defaults instead of what ships.
+            super().__init__(css_path=[str(path) for path in APP_STYLESHEETS])
             self.renamed_ids: list[int] = []
 
         def compose(self):
@@ -162,6 +167,31 @@ async def test_legend_container_is_height_auto_not_a_half_pane_vertical(
         assert legend.styles.height.is_auto
         body = app.query_one("#library-media-viewer-content")
         assert legend.size.height < body.size.height
+
+
+@pytest.mark.asyncio
+async def test_a_full_legend_is_bounded_and_leaves_the_transcript_readable(
+    tmp_media_db, meeting_folder_media_item
+):
+    """Final review I3: ``height: auto`` alone is unbounded. At the shipped
+    ``max_speakers = 8`` the legend is 8 labels plus 8 Inputs, and Textual's
+    default Input is 3 rows plus a border -- ~35 rows of legend, which left
+    the transcript body about 3 rows tall in a 40-row terminal."""
+    media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hi")])
+    rows = tuple((f"S{n}", f"Speaker {n}") for n in range(1, 9))
+
+    app = _viewer_app(tmp_media_db, media_id, rows=rows)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        legend = app.query_one("#library-media-speaker-legend")
+        body = app.query_one("#library-media-viewer-content")
+
+        assert len(app.query(".library-media-speaker-input")) == 8
+        assert legend.size.height <= 12, "the legend must stay bounded"
+        # ... and the transcript keeps a readable pane rather than the ~3
+        # rows an unbounded legend left it in this same 40-row terminal.
+        assert body.size.height >= 15, "the transcript must stay readable"
+        assert body.size.height > legend.size.height
 
 
 @pytest.mark.asyncio
