@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-05 19:15'
-updated_date: '2026-09-06 14:57'
+updated_date: '2026-09-06 15:23'
 labels:
   - bug
   - ux
@@ -38,7 +38,7 @@ Found in the 2026-09-05 pre-release live UAT sweep (fresh scratch profile, dev t
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Both readiness surfaces now derive from the SAME send-path credential check (get_provider_readiness via build_console_settings_readiness), matching what an actual send does.
+Both readiness surfaces now derive from the SAME send-path check (get_provider_readiness via build_console_settings_readiness), matching what an actual send does.
 
 Root cause (two weak checks):
 - Home 'Model: Ready' badge, next-best action, and system summaries all key off HomeDashboardInput.model_ready, which the active-work adapter can only set to bool(providers_models) -- non-empty on any fresh profile whether or not a credential resolves.
@@ -46,15 +46,19 @@ Root cause (two weak checks):
 
 Fix:
 - home_screen.py: HomeScreen._build_dashboard_input overrides model_ready from _home_console_provider_ready() (build_console_settings_readiness -> get_provider_readiness). Added allow_fresh_load param so the compose path computes readiness synchronously from in-memory config (honest, flicker-free first paint, no per-compose load_settings disk hit); the async content snapshot keeps the badge in lockstep with the fresh console_ready.
-- settings_screen.py: new _provider_overview_readiness_status() (Ready / 'Not ready: <reason>' / 'needs provider and model') wired into the Overview 'configuration' line. Left _provider_readiness_label() (the per-provider inspector identity rows) untouched to avoid churning exact-match tests; the credential-status row there was already honest.
+- settings_screen.py: new _provider_overview_readiness_status() wired into the Overview 'configuration' line. Left _provider_readiness_label() (the per-provider inspector identity rows) untouched.
 
-Scope: strictly the no-credential-at-all overstatement for common keyed providers (openai/anthropic/...). Did NOT touch the known google env-only gap (readiness ready but nothing reaches chat_with_google); no regression to it.
+Qodo review of PR #2461 (follow-up commit 78bb63cc99):
+- FINDING 2 (real, fixed): _provider_overview_readiness_status() validated only the credential, so a resolvable key + no model still read 'Ready' while the identity showed 'not selected' and the send gateway blocks with 'Select a model before sending.' Now, after the credential check passes, a blank model (normalize_console_model_value(...) is None -- the send path's own predicate) reports 'Not ready: Select a model', in the send path's credential-then-model order. New arm test_settings_overview_status_reports_not_ready_without_model (RED pre-fix: 'OpenAI / not selected; Status: Ready').
+- FINDING 1 (setup-flow test crash): FALSE POSITIVE. The 8 failing wizard/navigation tests fail with the IDENTICAL node-id set on clean origin/dev with both changed files reverted to base -- pre-existing and unrelated to this change.
+
+Scope: strictly the no-credential-at-all / no-model overstatement for common keyed providers; the known google env-only gap is not touched.
 
 Tests (paired RED/GREEN arms):
-- Tests/UI/test_home_screen.py: test_home_model_badge_reports_blocked_without_credential (RED pre-fix showed 'Model: Ready') + _ready_with_credential.
-- Tests/UI/test_settings_configuration_hub.py: test_settings_overview_status_reports_not_ready_without_credential (RED pre-fix showed 'Status: OpenAI / gpt-4.1') + _ready_with_credential.
+- Tests/UI/test_home_screen.py: blocked-without-credential + ready-with-credential.
+- Tests/UI/test_settings_configuration_hub.py: not-ready-without-credential + ready-with-credential + not-ready-without-model.
 
-Live tmux (no-key scratch profile): Home header 'Home | Blocked . Local' + 'Set up Console model'; Settings Overview 'Configuration: OpenAI / gpt-5.6-terra; Status: Not ready: Missing API key'. With a valid key both report ready.
+Live tmux (no-key profile): Home 'Home | Blocked . Local' + 'Set up Console model'; Overview 'Status: Not ready: Missing API key'.
 
 Files: tldw_chatbook/UI/Screens/home_screen.py, tldw_chatbook/UI/Screens/settings_screen.py, Tests/UI/test_home_screen.py, Tests/UI/test_settings_configuration_hub.py.
 <!-- SECTION:NOTES:END -->
