@@ -128,6 +128,81 @@ def empty_notes_slice(
     )
 
 
+def retitle_note_placements(
+    items: tuple[NotesSliceItem, ...],
+    *,
+    note_id: str,
+    title: str,
+    modified_at: str | None = None,
+) -> tuple[tuple[NotesSliceItem, ...], bool]:
+    """Return ``items`` with any placement of ``note_id`` retitled.
+
+    Pure helper shared by the branch-slice and filter-window title patches
+    (task-31796). A placement's note mapping is immutable, so a matching
+    :class:`NotePlacementRecord` is rebuilt with a fresh title (and
+    ``last_modified`` when provided); folders and non-matching placements
+    pass through unchanged.
+
+    Args:
+        items: The slice/window items to scan (folders and placements).
+        note_id: The saved note's stable id.
+        title: The title to write onto the matching placement's note.
+        modified_at: When set, also refresh the note's ``last_modified``.
+
+    Returns:
+        The (possibly rebuilt) items tuple and whether anything changed;
+        the original tuple identity is returned when nothing matched, so
+        callers can skip a needless rebuild.
+    """
+    target = str(note_id)
+    if not target:
+        return items, False
+    changed = False
+    out: list[NotesSliceItem] = []
+    for item in items:
+        if isinstance(item, NotePlacementRecord) and (
+            str(item.note.get("id", item.note.get("note_id", "")) or "") == target
+        ):
+            patched_note = dict(item.note)
+            patched_note["title"] = title
+            if modified_at is not None:
+                patched_note["last_modified"] = modified_at
+            out.append(replace(item, note=patched_note))
+            changed = True
+        else:
+            out.append(item)
+    return (tuple(out), True) if changed else (items, False)
+
+
+def patch_notes_tree_branches_title(
+    branches: Mapping[NotesBranchKey, NotesBranchSliceState],
+    *,
+    note_id: str,
+    title: str,
+    modified_at: str | None = None,
+) -> dict[NotesBranchKey, NotesBranchSliceState]:
+    """Return ``branches`` with every cached placement of ``note_id`` retitled.
+
+    The Database Notes tree renders placement rows from these cached branch
+    slices, not from the flat list records, so the save-time flat-record
+    patch (``patch_note_records_after_save``) left the tree row showing the
+    pre-rename title until a filter re-query rebuilt the slices
+    (task-31796). This rewrites only the matching placement's note mapping
+    inside each ``placements`` slice, preserving every other slice, item,
+    id, and field; unchanged slices keep their original identity.
+    """
+    patched: dict[NotesBranchKey, NotesBranchSliceState] = {}
+    for key, state in branches.items():
+        if key.slice_kind != "placements":
+            patched[key] = state
+            continue
+        items, changed = retitle_note_placements(
+            state.items, note_id=note_id, title=title, modified_at=modified_at
+        )
+        patched[key] = replace(state, items=items) if changed else state
+    return patched
+
+
 def begin_notes_slice_load(
     state: NotesBranchSliceState,
     *,

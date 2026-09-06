@@ -19,6 +19,7 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
     NotesBranchSliceState,
     NotesLoadDirection,
     NotesSliceKind,
+    retitle_note_placements,
 )
 
 LibraryNotesTreeRowKind = Literal["folder", "note", "unfiled", "pager"]
@@ -1018,6 +1019,28 @@ def build_paged_library_notes_tree(
         rows.extend(placement_pagers)
 
     return LibraryNotesTreeProjection(rows=tuple(rows))
+
+
+def patch_notes_filter_state_title(
+    state: LibraryNotesFilterState,
+    *,
+    note_id: str,
+    title: str,
+    modified_at: str | None = None,
+) -> LibraryNotesFilterState:
+    """Return ``state`` with any filter-window placement of ``note_id`` retitled.
+
+    While a filter is active the tree renders from this independent window
+    rather than the browse branches, so the save-time title patch must
+    reach here too (task-31796). Returns the original state unchanged when
+    nothing matched.
+    """
+    placements, changed = retitle_note_placements(
+        state.placements, note_id=note_id, title=title, modified_at=modified_at
+    )
+    if not changed:
+        return state
+    return replace(state, placements=placements)
 
 
 def build_filtered_library_notes_tree(

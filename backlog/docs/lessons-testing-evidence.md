@@ -11933,3 +11933,35 @@ condition must cover the deepest thing they touch (the row count itself, not
 the Retry that used to imply it). And a PR's rerun set is the census of every
 file that references the ids it moves (`grep -l '<id>' Tests/UI/*.py`), run
 whole-file in separate processes -- not the files the diff touched.
+### TASK-31796: a list can render from more than one cache — patch every source
+
+The Library Notes list kept a renamed note's stale "Untitled" title until a
+filter re-query, even though the DB row and the editor were both correct.
+There was already a save-time list patch (`patch_note_records_after_save`
+inside `_patch_library_note_list_from_session`) that looked complete and
+carried a confident "one helper owns the substitution rule" comment — but it
+only patched the FLAT source records (`_local_source_records["notes"]` /
+`_library_notes_filter_records`). The Notes tree actually renders its
+placement rows from a DIFFERENT cache: the paged branch slices
+(`_library_notes_tree_branches`), and while a filter is active from the filter
+window (`_library_notes_tree_filter_state`). The save patch never touched
+those, so the visible row stayed stale; typing in the filter box was the only
+"fix" because that path re-queried the DB and rebuilt the slices from scratch.
+**What to do.** When a save-time patch updates a list "in place", first find
+EVERY cache the visible widget can render from — grep the widget's compose for
+each branch (this one had `if tree_projection is not None: ...` selecting the
+branch cache over the flat list-state) — and patch all of them, or the one you
+missed is exactly the one on screen. A comment claiming a single helper "owns"
+the update is describing intent, not coverage; verify it against the render
+paths. The durable regression test asserts the projected ROW LABEL after the
+patch (build the projection from the patched cache), not just that the flat
+record changed — the flat-record assertion was green the whole time the bug
+shipped.
+
+Verification note for this area: the Library Notes UI-mount suites carry a
+pre-existing red baseline on dev — `Tests/UI/test_library_notes_reader.py`
+(13 red) and `Tests/Widgets/Library/test_library_notes_canvas.py` (2 red),
+15 total, unchanged by this fix. Confirmed by paired arms: an origin/dev
+worktree run produced the identical 15 failures / 59 passes. Run the fast pure
+tree tests (`Tests/Library/test_library_notes_tree_*.py`) and a focused
+non-mounting wiring test instead of trusting these mounting suites' green/red.

@@ -233,6 +233,7 @@ from ...Library.library_notes_tree_paging import (
     begin_notes_slice_load,
     empty_notes_slice,
     fail_notes_slice_load,
+    patch_notes_tree_branches_title,
 )
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
 from ...Library.library_notes_session import (
@@ -260,6 +261,7 @@ from ...Library.library_notes_tree_state import (
     reconcile_library_notes_filter_commit,
     build_filtered_library_notes_tree,
     build_paged_library_notes_tree,
+    patch_notes_filter_state_title,
 )
 from ...Library.library_prompts_state import (
     PromptBrowseResult,
@@ -20593,6 +20595,27 @@ class LibraryScreen(BaseAppScreen):
                     modified_at=baseline.modified_at,
                 )
             )
+        # task-31796: the Database Notes tree renders placement rows from the
+        # cached branch slices (and, while filtering, the filter window) --
+        # NOT the flat records patched above. Without patching those caches a
+        # rename stayed stale in the primary nav surface until a filter
+        # re-query rebuilt them. Retitle the matching placement in place so the
+        # next canvas sync (on save, and on Esc back to the list) shows the
+        # real title without a full DB re-query.
+        self._library_notes_tree_branches = patch_notes_tree_branches_title(
+            self._library_notes_tree_branches,
+            note_id=baseline.note_id,
+            title=persisted_title,
+            modified_at=baseline.modified_at,
+        )
+        filter_state = self._library_notes_tree_filter_state
+        if filter_state is not None:
+            self._library_notes_tree_filter_state = patch_notes_filter_state_title(
+                filter_state,
+                note_id=baseline.note_id,
+                title=persisted_title,
+                modified_at=baseline.modified_at,
+            )
 
     def _focus_library_note_validation_field(self, field: str) -> None:
         """Restore keyboard focus to the field named by a validation veto."""
@@ -36712,6 +36735,20 @@ class LibraryScreen(BaseAppScreen):
             )
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
+            # task-31797: the ingest "Open in Library" deep-link (and the
+            # sibling Search/RAG evidence + landing-hub "Open" routes) jump
+            # straight to the media viewer but -- unlike the rail-row path in
+            # _select_library_rail_row_after_source_admission -- never asked
+            # the browse controller to load a page, leaving the middle Items
+            # pane stuck on "0 of 0 · type: None / No page loaded". Mirror the
+            # rail's browse+facets request so the list lands populated
+            # alongside the opened item. focus_identity=None keeps focus on the
+            # just-opened viewer rather than yanking it to the first list row.
+            self._request_library_media_browse(
+                self._library_media_browse_controller.mutation_refresh_scope,
+                focus_identity=None,
+            )
+            self._request_library_media_facets()
             await self._apply_library_media_active_surface()
             return None
 
