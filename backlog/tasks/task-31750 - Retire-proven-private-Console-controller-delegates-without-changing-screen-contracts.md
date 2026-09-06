@@ -41,6 +41,19 @@ ADR required: no. ADR path: N/A. Follow root-approved Docs/superpowers/plans/202
 10. Complete lifecycle verification exposed two constructor-bypass fixtures that patch a nonexistent prompt owner before invoking startup. Initialize only that owner with their existing async spy, retain release/error assertions unchanged, rerun the complete lifecycle selection and independently review. ADR required: no; test-only fixture repair preserves existing controller ownership.
 <!-- SECTION:PLAN:END -->
 
+11. Remaining exact-node inventory follow-up (2026-09-06): the first 68-file
+selection reached 1,091 cases (1,071 passed / 20 failed). Run complete files
+containing the 607 unreached cases without another failure-count cutoff. For
+reproduced removed-delegate or constructor-bypass fixture failures, wire the
+existing real owner or retarget the same spy to that owner, preserving callback
+phase, fault injection and every behavioral assertion. Diagnose provider,
+per-session stop and dictation failures independently before any correction;
+do not infer fixture drift from an exception alone. Preserve and separately
+report architecture/size failures unless the exact current ownership contract
+can be proved. Run each modified complete file, scoped checks and independent
+review. ADR required: no for test-only owner/precondition corrections; assess
+separately and obtain design approval for any new runtime behavior change.
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
@@ -126,3 +139,16 @@ trap. The prior approval hold is resolved by the user's explicit approval.
 
 Final complete five-file lifecycle selection: 147 passed in 243.84s, six existing warning occurrences (/private/tmp/tldw-warm-handoff-lifecycle-final.xml). Includes all 69 live-work handoff tests, Console/generic reuse, ordered-resume navigation and saved active-path coverage. Full changed-file Ruff, changed-region formatting and diff checks pass; independent review found no actionable issues. AC5/AC6/AC7 are qualified; AC3 and overall status remain In Progress for the broader census and unchanged architecture failures.
 <!-- SECTION:NOTES:END -->
+
+Remaining inventory follow-up: six complete repaired files pass together,
+127 passed in 71.00s with three dependency warnings
+(`/private/tmp/tldw-inventory-six-owner-files-final.xml`). Inspector cost-data,
+citation activity/banner setters, permission command output/clear, provider memo
+spies and composer visible-session/prompts fixtures now follow current owners.
+The impersonate completion double accepts and asserts the exact production route.
+Production navigation retains real Settings leave/return and all draft/video/store
+assertions while requiring the intended same installed Console instance; prompt
+handoff settlement calls the current owner. No behavioral assertions removed,
+no production change, no new ADR. Full lint, changed-region format, diff checks
+and independent review pass. First inventory pass was 1,071 passed / 20 failed;
+607 unreached cases continue in 31 complete files. AC3 and task remain open.
