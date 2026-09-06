@@ -5,8 +5,13 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Agents.agent_service import _count_model_messages
 from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.canvas_tool_provider import (
+    CANVAS_RUNTIME_GUIDANCE,
+    CanvasToolProvider,
+)
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 from tldw_chatbook.Agents.tool_catalog import (
     LIBRARY_RESERVED_TOOL_NAMES,
@@ -27,6 +32,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
@@ -64,6 +70,8 @@ def _plan(
     turn_bundle_block="",
     library_provider=None,
     library_authority=None,
+    canvas_provider=None,
+    canvas_authority=None,
 ):
     kwargs = dict(
         shared_registry=ToolCatalogRegistry(),
@@ -75,6 +83,8 @@ def _plan(
         local_provider=None,
         library_provider=library_provider,
         library_authority=library_authority,
+        canvas_provider=canvas_provider,
+        canvas_authority=canvas_authority,
         workspace_id=workspace_id,
         ephemeral=False,
         diff_sink=None,
@@ -135,6 +145,49 @@ def test_first_request_profile_budget_reserves_disclosed_tool_protocol() -> None
     )
 
     assert builder.requests[0].available_input_tokens < naive_available
+
+
+def test_first_request_profile_budget_reserves_canvas_runtime_guidance(
+    monkeypatch,
+) -> None:
+    class Coordinator:
+        def is_scope_current(self, _scope):
+            return True
+
+        def list_canvases(self, _scope):
+            return ()
+
+        def read_canvas(self, _scope, _canvas_id):
+            raise AssertionError("not invoked")
+
+        def create_canvas(self, _scope, **_kwargs):
+            raise AssertionError("not invoked")
+
+        def update_canvas(self, _scope, **_kwargs):
+            raise AssertionError("not invoked")
+
+    provider = CanvasToolProvider(
+        Coordinator(),
+        scope=CanvasScope("session", "conversation", (), None, None, "run"),
+        enabled_reader=lambda: True,
+    )
+    authority = provider.issue_registration_authority()
+    captured_system_prompts: list[str] = []
+    original_count = bridge_module._count_model_messages
+
+    def capture(messages, model, provider_name):
+        captured_system_prompts.append(str(messages[0].get("content", "")))
+        return original_count(messages, model, provider_name)
+
+    monkeypatch.setattr(bridge_module, "_count_model_messages", capture)
+
+    _plan(
+        _ProfileContextBuilder(),
+        canvas_provider=provider,
+        canvas_authority=authority,
+    )
+
+    assert any(CANVAS_RUNTIME_GUIDANCE in prompt for prompt in captured_system_prompts)
 
 
 def test_first_request_profile_budget_reserves_the_injected_skill_bundle() -> None:

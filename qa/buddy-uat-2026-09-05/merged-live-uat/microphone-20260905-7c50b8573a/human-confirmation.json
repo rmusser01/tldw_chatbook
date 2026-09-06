@@ -1,0 +1,5 @@
+{
+  "question": "Did you hear the spoken reply from Kokoro after this test?",
+  "answer": "Yes, clearly",
+  "authorization": "User explicitly approved up to20s microphone capture, local transcription, recognized test text sent to DeepSeek and Kokoro playback."
+}

@@ -22,16 +22,14 @@ see the extraction report's delegation table).
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.widgets import Button
 
-from Tests.UI.test_destination_shells import _build_test_app
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
-)
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
     _build_console_send_test_app,
@@ -40,7 +38,14 @@ from Tests.UI.test_console_native_chat_flow import (
     _wait_for_selector,
     _wait_for_text,
 )
-
+from Tests.UI.test_destination_shells import _build_test_app
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.Canvas.compiler import CanvasCompileError
+from tldw_chatbook.Canvas.gateway import CanvasGatewayScope
+from tldw_chatbook.Canvas.models import CanvasCompatibilityIssue
+from tldw_chatbook.Canvas.native_authority import CanvasBridgeTarget
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -302,6 +307,424 @@ async def test_roleplay_character_greeting_actions_use_live_presentation():
     chatbook_payload = app.local_chatbook_service.create_chatbook.await_args.kwargs
     assert chatbook_payload["metadata"]["content"] == "Hello Captain Rowan."
     assert chatbook_payload["metadata"]["message_role"] == "Alraune"
+
+
+@pytest.mark.asyncio
+async def test_production_message_controller_resolves_canvas_source_only_at_open_callback():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Canvas")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="```html\n<!doctype html><title>Native</title><p>secret</p>\n```",
+    )
+    screen._message._open_canvas_block_fn = AsyncMock()
+    event = SimpleNamespace(
+        button=SimpleNamespace(
+            id="canvas-open",
+            console_action_id="canvas-open-0",
+            console_message_id=message.id,
+        ),
+        stop=Mock(),
+    )
+
+    assert await screen.handle_console_message_action(event) is True
+
+    reference, source = screen._message._open_canvas_block_fn.await_args.args
+    assert reference.message_id == message.id
+    assert reference.block_index == 0
+    assert reference.create_new is False
+    assert source == "<!doctype html><title>Native</title><p>secret</p>\n"
+    result = screen._message._last_console_action
+    assert result.target_content is None
+    assert "secret" not in repr(result)
+
+
+def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    runtime = screen._console_runtime()
+    runtime._canvas_gateway = SimpleNamespace(
+        has_browser_session_for=lambda session_id: session_id == "session-a"
+    )
+    screen.app_instance = SimpleNamespace(call_from_thread=lambda callback: callback())
+    screen._open_console_canvas_selection = Mock(
+        side_effect=lambda **_kwargs: _closed_coroutine()
+    )
+    workers: list[object] = []
+
+    def capture_worker(coroutine, **_kwargs):
+        workers.append(coroutine)
+        coroutine.close()
+
+    screen.run_worker = capture_worker
+    info = SimpleNamespace(canvas_id="canvas-a", revision_id="revision-a")
+
+    screen._schedule_console_canvas_tool_open("session-a", info)
+    screen._schedule_console_canvas_tool_open("session-b", info)
+
+    screen._open_console_canvas_selection.assert_called_once_with(
+        session_id="session-b",
+        canvas_id="canvas-a",
+        revision_id="revision-a",
+        follow_latest=True,
+    )
+    assert len(workers) == 1
+
+
+def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    first = store.create_session(ephemeral=True)
+    store.append_message(
+        first.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="root",
+    )
+    left = store.append_message(
+        first.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="left",
+    )
+    publication = SimpleNamespace(
+        scope=SimpleNamespace(
+            session_id=first.id,
+            conversation_id=first.id,
+        ),
+        revisions=(SimpleNamespace(origin=SimpleNamespace(message_id=left.id)),),
+    )
+
+    assert screen._console_canvas_publication_is_current(publication) is True
+
+    store.create_sibling(
+        left.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="right",
+    )
+    assert screen._console_canvas_publication_is_current(publication) is False
+
+    store.create_session(ephemeral=True)
+    assert screen._console_canvas_publication_is_current(publication) is False
+
+
+def test_canvas_composer_sink_validates_exact_session_and_branch_target():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(ephemeral=True)
+    root = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="root",
+    )
+    left = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="left",
+    )
+    target = CanvasBridgeTarget(
+        browser_session_id="browser-exact",
+        session_id=session.id,
+        conversation_id=session.id,
+        active_message_ids=(root.id, left.id),
+        canvas_id="canvas-exact",
+        revision_id="revision-exact",
+    )
+    composer = Mock()
+    screen._console_composer_or_none = Mock(return_value=composer)
+
+    screen._prefill_console_canvas_repair(target, "exact draft")
+
+    composer.load_draft.assert_called_once_with("exact draft")
+    assert store.session_draft(session.id) == "exact draft"
+
+    store.create_sibling(
+        left.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="right",
+    )
+    with pytest.raises(RuntimeError, match="unavailable"):
+        screen._prefill_console_canvas_repair(target, "stale branch draft")
+    assert store.session_draft(session.id) == "exact draft"
+
+    store.create_session(ephemeral=True)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        screen._prefill_console_canvas_repair(target, "stale session draft")
+    assert store.session_draft(session.id) == "exact draft"
+
+
+def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.create_session(ephemeral=True)
+    root = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="root",
+    )
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+    )
+    target = CanvasBridgeTarget(
+        browser_session_id="browser-confirm",
+        session_id=session.id,
+        conversation_id=session.id,
+        active_message_ids=(root.id, assistant.id),
+        canvas_id="canvas-confirm",
+        revision_id="revision-confirm",
+    )
+    composer = Mock()
+    unchanged = object()
+    composer.capture_draft_snapshot.side_effect = [unchanged, unchanged]
+    screen._console_composer_or_none = Mock(return_value=composer)
+
+    apply = screen._prepare_console_canvas_submit(target)
+    apply("exact unsent draft")
+
+    composer.load_draft.assert_called_once_with("exact unsent draft")
+    composer.focus.assert_called_once_with()
+    assert store.session_draft(session.id) == "exact unsent draft"
+
+    composer.load_draft.reset_mock()
+    composer.capture_draft_snapshot.side_effect = [unchanged, object()]
+    stale_apply = screen._prepare_console_canvas_submit(target)
+    with pytest.raises(RuntimeError, match="changed"):
+        stale_apply("must not replace")
+    composer.load_draft.assert_not_called()
+    assert store.session_draft(session.id) == "exact unsent draft"
+
+
+async def _closed_coroutine() -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_production_message_controller_prefills_canvas_repair_without_source_state():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Canvas repair")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="```html\n<script src='https://example.test/private.js'></script>\n```",
+    )
+    screen._message._open_canvas_block_fn = AsyncMock(
+        side_effect=CanvasCompileError(
+            (
+                CanvasCompatibilityIssue(
+                    code="external-resource",
+                    message="External resources are unavailable.",
+                ),
+            )
+        )
+    )
+    screen._message._prefill_canvas_repair_fn = Mock()
+    event = SimpleNamespace(
+        button=SimpleNamespace(
+            id="canvas-repair",
+            console_action_id="canvas-open-0",
+            console_message_id=message.id,
+        ),
+        stop=Mock(),
+    )
+
+    assert await screen.handle_console_message_action(event) is True
+
+    screen._message._open_canvas_block_fn.assert_awaited_once()
+    repair = screen._message._prefill_canvas_repair_fn.call_args.args[0]
+    assert "self-contained Canvas V1" in repair
+    assert "example.test" not in repair
+    assert screen._message._last_console_action.target_content is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalidate", ["disable", "session-owner", "source"])
+async def test_late_canvas_compile_refusal_cannot_replace_stale_draft(
+    monkeypatch, invalidate
+):
+    """A refused import may repair only the exact authority/source it captured."""
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def paused_refusal(_source):
+        started.set()
+        if not release.wait(2):
+            raise AssertionError("paused compiler was not released")
+        raise CanvasCompileError(
+            (
+                CanvasCompatibilityIssue(
+                    code="external-resource",
+                    message="External resources are unavailable.",
+                ),
+            )
+        )
+
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    screen._is_mounted = True
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Canvas stale repair")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="```html\n<p>captured</p>\n```",
+    )
+    store.set_session_draft(session.id, "unchanged draft")
+    composer = Mock()
+    screen._console_composer_or_none = Mock(return_value=composer)
+    runtime = screen._console_runtime()
+    runtime._canvas_enabled_reader = lambda: True
+    runtime._canvas_disabled_latched = False
+    runtime.canvas_controller.activate_session(session.id)
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_canvas_controller.compile_canvas_document",
+        paused_refusal,
+    )
+    event = SimpleNamespace(
+        button=SimpleNamespace(
+            id="canvas-stale-repair",
+            console_action_id="canvas-open-0",
+            console_message_id=message.id,
+        ),
+        stop=Mock(),
+    )
+
+    action = asyncio.create_task(screen.handle_console_message_action(event))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        if invalidate == "disable":
+            runtime._canvas_enabled_reader = lambda: False
+            assert runtime.canvas_enabled() is False
+            runtime._canvas_enabled_reader = lambda: True
+            assert runtime.canvas_enabled() is False
+        elif invalidate == "session-owner":
+            runtime.canvas_controller.activate_session(session.id)
+        else:
+            store.update_message_content(message.id, "```html\n<p>replacement</p>\n```")
+    finally:
+        release.set()
+    result = (await asyncio.gather(action, return_exceptions=True))[0]
+
+    assert isinstance(result, RuntimeError)
+    assert store.session_draft(session.id) == "unchanged draft"
+    composer.load_draft.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh_open():
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Canvas card")
+    open_selection = AsyncMock()
+    screen._open_console_canvas_selection = open_selection
+
+    exact = SimpleNamespace(
+        session_id=session.id,
+        canvas_id="canvas-a",
+        revision_id="revision-2",
+        follow_latest=False,
+        stop=Mock(),
+    )
+    await screen.handle_console_canvas_card_open(exact)
+    open_selection.assert_awaited_once_with(
+        session_id=session.id,
+        canvas_id="canvas-a",
+        revision_id="revision-2",
+        follow_latest=False,
+    )
+
+    open_selection.reset_mock()
+    screen._canvas_last_open_request = (
+        session.id,
+        "canvas-a",
+        "revision-2",
+        False,
+    )
+    retry = SimpleNamespace(stop=Mock())
+    await screen.handle_console_canvas_open_retry(retry)
+    open_selection.assert_awaited_once_with(
+        session_id=session.id,
+        canvas_id="canvas-a",
+        revision_id="revision-2",
+        follow_latest=False,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_session_id",
+    ["stale-session", None],
+    ids=["stale", "missing"],
+)
+async def test_production_canvas_card_handler_rejects_unowned_session_events(
+    event_session_id: str | None,
+) -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    store.create_session(session_id="current-session", title="Current Canvas card")
+    screen._open_console_canvas_selection = AsyncMock()
+    attributes = {
+        "canvas_id": "canvas-a",
+        "revision_id": "revision-2",
+        "follow_latest": False,
+        "stop": Mock(),
+    }
+    if event_session_id is not None:
+        attributes["session_id"] = event_session_id
+
+    event = SimpleNamespace(**attributes)
+    await screen.handle_console_canvas_card_open(event)
+
+    event.stop.assert_called_once_with()
+    screen._open_console_canvas_selection.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_served_canvas_selection_binds_child_without_opening_native_browser():
+    app = _build_test_app()
+    app.served_canvas_control = SimpleNamespace(child_id="app-service-child-a")
+    app.served_canvas_handler = Mock()
+    screen = ChatScreen(app)
+    scope = CanvasGatewayScope(
+        browser_session_id="app-service-child-a",
+        conversation_session_id="session-a",
+        canvas_id="canvas-a",
+        revision_id="revision-a",
+    )
+    authority = Mock()
+    authority.gateway_scope.return_value = scope
+    screen._console_canvas_authority = Mock(return_value=authority)
+    screen._console_runtime = Mock(
+        side_effect=AssertionError("served Canvas must not open a native gateway")
+    )
+
+    launch = await screen._open_console_canvas_selection(
+        session_id="session-a",
+        canvas_id="canvas-a",
+        revision_id="revision-a",
+        follow_latest=True,
+    )
+
+    authority.gateway_scope.assert_called_once_with(
+        session_id="session-a",
+        browser_session_id="app-service-child-a",
+        canvas_id="canvas-a",
+        revision_id="revision-a",
+        follow_latest=True,
+    )
+    app.served_canvas_handler.bind.assert_called_once_with(authority, scope)
+    assert launch.clean_url == launch.browser_url == "/canvas/"
+    assert launch.opened is True
 
 
 @pytest.mark.asyncio

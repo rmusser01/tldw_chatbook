@@ -261,15 +261,11 @@ class ControllerDispatchGateway(SummaryGateway):
             thinking_stream_disposition=(
                 "displayable" if self.provider == "llama_cpp" else "ignored"
             ),
-            thinking_round_trip_version=(
-                1 if self.provider == "llama_cpp" else None
-            ),
+            thinking_round_trip_version=(1 if self.provider == "llama_cpp" else None),
         )
 
     def prepare_chat_request(self, resolution, messages, **kwargs):
-        self.prepare_thinking_sidecars.append(
-            tuple(kwargs.get("thinking_sidecar", ()))
-        )
+        self.prepare_thinking_sidecars.append(tuple(kwargs.get("thinking_sidecar", ())))
         return self._exact.prepare_chat_request(resolution, messages, **kwargs)
 
     def capture_dispatch(
@@ -534,8 +530,14 @@ def test_project_effective_memory_applies_exact_prefix_or_inclusive_range(
 @pytest.mark.parametrize(
     ("case", "mutate"),
     [
-        ("missing-start", lambda rows: [row for row in rows if row.get(_PERSISTED_ID) != "u2"]),
-        ("missing-end", lambda rows: [row for row in rows if row.get(_PERSISTED_ID) != "a2"]),
+        (
+            "missing-start",
+            lambda rows: [row for row in rows if row.get(_PERSISTED_ID) != "u2"],
+        ),
+        (
+            "missing-end",
+            lambda rows: [row for row in rows if row.get(_PERSISTED_ID) != "a2"],
+        ),
         (
             "reversed",
             lambda rows: [rows[0], rows[1], rows[2], rows[4], rows[3], *rows[5:]],
@@ -543,16 +545,22 @@ def test_project_effective_memory_applies_exact_prefix_or_inclusive_range(
         (
             "cross-conversation",
             lambda rows: [
-                ({**row, _PERSISTED_CONVERSATION: "conversation-2"}
-                 if row.get(_PERSISTED_ID) == "a2" else row)
+                (
+                    {**row, _PERSISTED_CONVERSATION: "conversation-2"}
+                    if row.get(_PERSISTED_ID) == "a2"
+                    else row
+                )
                 for row in rows
             ],
         ),
         (
             "off-lineage",
             lambda rows: [
-                ({**row, _PERSISTED_ID: "sibling-a2"}
-                 if row.get(_PERSISTED_ID) == "a2" else row)
+                (
+                    {**row, _PERSISTED_ID: "sibling-a2"}
+                    if row.get(_PERSISTED_ID) == "a2"
+                    else row
+                )
                 for row in rows
             ],
         ),
@@ -818,9 +826,7 @@ async def test_controller_dispatch_projects_repository_memory_without_leaks(
     assert prepared.accounting.memory_tokens > 0
     final_sidecars = gateway.prepare_thinking_sidecars[-1]
     if provider == "llama_cpp":
-        assert [sidecar.owner_message_id for sidecar in final_sidecars] == [
-            rows[1].id
-        ]
+        assert [sidecar.owner_message_id for sidecar in final_sidecars] == [rows[1].id]
         assert "RETAINED-THINKING" in wire
     else:
         assert final_sidecars == ()
@@ -829,10 +835,13 @@ async def test_controller_dispatch_projects_repository_memory_without_leaks(
         assert [
             sidecar.owner_message_id for sidecar in bridge.received_thinking_sidecar
         ] == expected_sidecar_owners
-        assert sum(
-            "RANGE-MEMORY" in str(row.get("content"))
-            for row in bridge.received_messages
-        ) == 1
+        assert (
+            sum(
+                "RANGE-MEMORY" in str(row.get("content"))
+                for row in bridge.received_messages
+            )
+            == 1
+        )
 
 
 @pytest.mark.asyncio
@@ -878,13 +887,14 @@ async def test_range_projection_is_shared_by_preflight_and_next_send_preview(
         assistant_message_id=active.id,
         agent_tools_enabled=False,
     )
-    snapshot = await controller.build_context_snapshot("q4 preview", session_id=session.id)
+    snapshot = await controller.build_context_snapshot(
+        "q4 preview", session_id=session.id
+    )
 
     assert blocked is None
     preflight_text = "\n".join(str(row.get("content", "")) for row in preflight)
     preview_text = "\n".join(
-        str(row.get("content", ""))
-        for row in snapshot.next_send_payload["messages"]
+        str(row.get("content", "")) for row in snapshot.next_send_payload["messages"]
     )
     for projected_text in (preflight_text, preview_text):
         assert "RANGE-MEMORY" in projected_text
@@ -1243,9 +1253,7 @@ async def test_manual_summary_position_zero_attachment_label_does_not_false_stal
         (ConsoleMessageRole.USER, "q2 " + "detail " * 20),
         (ConsoleMessageRole.ASSISTANT, "a2 " + "detail " * 20),
     ):
-        store.append_message(
-            session.id, role=role, content=content, persist=True
-        )
+        store.append_message(session.id, role=role, content=content, persist=True)
 
     result = await controller.summarize_from(u1.id)
 
@@ -1253,7 +1261,9 @@ async def test_manual_summary_position_zero_attachment_label_does_not_false_stal
     assert gateway.calls == 1
     conversation_id = session.persisted_conversation_id
     assert conversation_id is not None
-    assert len(controller._context_repository.list_active_memories(conversation_id)) == 1
+    assert (
+        len(controller._context_repository.list_active_memories(conversation_id)) == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -1288,15 +1298,11 @@ async def test_manual_summary_sends_exact_visual_through_auxiliary_and_accountin
         else await controller.summarize_up_to(anchor.id)
     )
 
-    expected_data_url = (
-        "data:image/png;base64,VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ=="
-    )
+    expected_data_url = "data:image/png;base64,VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ=="
     assert result.accepted is True
     assert gateway.calls == 1
     assert gateway.captured_auxiliary is not None
-    auxiliary_content = thaw_json(
-        gateway.captured_auxiliary.messages[1]["content"]
-    )
+    auxiliary_content = thaw_json(gateway.captured_auxiliary.messages[1]["content"])
     assert {
         "type": "image_url",
         "image_url": {"url": expected_data_url},
@@ -1308,9 +1314,7 @@ async def test_manual_summary_sends_exact_visual_through_auxiliary_and_accountin
         if _prepared_contains_visual(prepared, expected_data_url)
     ]
     canonical_before = next(
-        prepared
-        for prepared in prepared_with_visual
-        if prepared.semantic.compactable
+        prepared for prepared in prepared_with_visual if prepared.semantic.compactable
     )
     auxiliary_projection = next(
         prepared
@@ -1339,9 +1343,7 @@ async def test_manual_summary_sends_exact_visual_through_auxiliary_and_accountin
     assert conversation_id is not None
     memory = controller._context_repository.list_active_memories(conversation_id)[0]
     attempts = controller._context_repository.list_auxiliary_attempts(conversation_id)
-    durable_snapshot_repr = repr(
-        controller._durable_context_snapshots(session.id)
-    )
+    durable_snapshot_repr = repr(controller._durable_context_snapshots(session.id))
     assert "UNIQUE_IMAGE_FACT_7429" not in memory.selected_units_json
     assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in memory.selected_units_json
     assert len(attempts) == 1
@@ -1350,9 +1352,7 @@ async def test_manual_summary_sends_exact_visual_through_auxiliary_and_accountin
     assert "UNIQUE_IMAGE_FACT_7429" not in durable_snapshot_repr
     assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in durable_snapshot_repr
     assert "UNIQUE_IMAGE_FACT_7429" not in repr(gateway.captured_auxiliary)
-    assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in repr(
-        gateway.captured_auxiliary
-    )
+    assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in repr(gateway.captured_auxiliary)
 
 
 @pytest.mark.asyncio
@@ -1883,10 +1883,17 @@ async def test_old_effective_memory_remains_selected_while_manual_call_awaits(tm
         "legacy memory",
         rows[1].id,
     )
-    assert len(controller._context_repository.list_active_memories(conversation_id)) == 1
-    assert len(
-        controller._context_repository.list_active_memory_selections(conversation_id)
-    ) == 1
+    assert (
+        len(controller._context_repository.list_active_memories(conversation_id)) == 1
+    )
+    assert (
+        len(
+            controller._context_repository.list_active_memory_selections(
+                conversation_id
+            )
+        )
+        == 1
+    )
 
     gateway.release.set()
     result = await pending
@@ -2107,9 +2114,7 @@ async def test_summarize_up_to_never_folds_or_rewrites_legacy_memory(tmp_path):
     assert result.accepted is True
     payload = gateway.captured_auxiliary.messages[1]["content"]
     assert "S1" not in payload
-    assert all(
-        f'"content":"{text} ' in payload for text in ("q1", "a1", "q2", "a2")
-    )
+    assert all(f'"content":"{text} ' in payload for text in ("q1", "a1", "q2", "a2"))
     assert store.session_context_summary(session.id) == ("S1", rows[1].id)
 
 
@@ -2201,7 +2206,9 @@ def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
         for row in payload
     )
     original_index = next(
-        i for i, row in enumerate(payload) if "ORIGINAL-SYSTEM" in str(row.get("content"))
+        i
+        for i, row in enumerate(payload)
+        if "ORIGINAL-SYSTEM" in str(row.get("content"))
     )
     summary_index = next(
         i for i, row in enumerate(payload) if "COMPACTED" in str(row.get("content"))

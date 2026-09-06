@@ -59,6 +59,12 @@ LIBRARY_MODE_CONVERSATIONS = "conversations"
 CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = (
     "resume_local_conversation_id"
 )
+CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET = "character_conversation_target"
+
+# Trusted character-conversation navigation context keys.
+ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION = "character_conversation"
+LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR = "character_repair"
+CHARACTER_NAV_CONTEXT_RETURN_FOCUS = "return_focus"
 
 # Saved-conversation pagination shared by the Roleplay controller and inspector.
 PERSONAS_CONVERSATIONS_PAGE_SIZE = 20

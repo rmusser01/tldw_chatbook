@@ -2189,6 +2189,21 @@ class LibraryScreen(BaseAppScreen):
             LibraryLandingAttentionAction | None
         ) = None
         self._library_navigation_context_generation: int = 0
+        from ..Library_Modules.library_navigation_controller import (
+            LibraryNavigationController,
+        )
+
+        self._navigation_controller = LibraryNavigationController(
+            self,
+            invalidate_media_browse=lambda: (
+                self._library_media_browse_controller.invalidate()
+            ),
+            unmount_collections_capture=lambda: (
+                self._library_collections_capture_controller.unmount()
+                if self._library_collections_capture_controller is not None
+                else None
+            ),
+        )
         self._conversations_state = LibraryConversationsState()
         # Constructed early -- see LibraryCollectionsState's docstring.
         self._collections_state = LibraryCollectionsState()
@@ -9564,6 +9579,7 @@ class LibraryScreen(BaseAppScreen):
         work already running on its thread).
         """
         self._library_screen_suspended = False
+        self.call_after_refresh(self._navigation_controller.present_pending_repair)
         self.call_after_refresh(self.refresh_notes_sync_runtime)
         self._refresh_library_visit_surfaces()
 
@@ -9704,6 +9720,7 @@ class LibraryScreen(BaseAppScreen):
         self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
         self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
         self.call_after_refresh(self._present_library_skills_import_choice_if_needed)
+        self.call_after_refresh(self._navigation_controller.present_pending_repair)
         if (
             self._library_new_profile_admission
             and not self._library_lifecycle_was_stored
@@ -11181,63 +11198,8 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
-        """Apply route context supplied by shell navigation.
-
-        Args:
-            context: Navigation payload from ``NavigateToScreen``. A valid
-                Library mode switches the active mode. A ``conversation_id``
-                selects that conversation when the local source snapshot
-                arrives, defaulting the mode to Conversations when no valid
-                mode is supplied. A ``notes_create`` flag lands on the
-                in-canvas Create > New note view (the retired Notes tab's
-                "new note" deep link). A ``note_id`` opens that note's
-                in-canvas editor directly (the retired Notes tab's
-                chat-sidebar deep link); ``mode="notes"`` alone (no
-                ``note_id``) lands on the Notes list instead. An
-                ``ingest_media`` flag lands on the in-canvas Ingest >
-                Import media view (Home's ingest-jobs "Open details"
-                control, L3b Task 6). A supported ``open_source_type`` and
-                exact ``open_source_id`` pair delegates to Library's existing
-                item opener.
-        """
-        if self._library_prompts_mutation_in_flight:
-            return
-        if not isinstance(context, Mapping):
-            return
-        target_row_id = self._library_navigation_context_target_row(context)
-        if target_row_id is None:
-            return
-        self._library_navigation_context_generation += 1
-        if target_row_id != LIBRARY_ROW_BROWSE_MEDIA:
-            self._library_media_browse_controller.invalidate()
-        if (
-            target_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
-            and self._library_collections_capture_controller is not None
-        ):
-            self._library_collections_capture_controller.unmount()
-        generation = self._library_navigation_context_generation
-        if (
-            self.is_mounted
-            and target_row_id == LIBRARY_ROW_BROWSE_PROMPTS
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
-        ):
-            return
-        if self.is_mounted:
-            # A cached mounted screen must admit the route through the same
-            # awaited save/leave guards as a rail switch. Applying it
-            # synchronously could discard a dirty editor or an active Prompt
-            # selection before the transition is actually admitted.
-            self.run_worker(
-                self._apply_navigation_context_after_flush(
-                    dict(context),
-                    target_row_id,
-                    generation,
-                ),
-                exclusive=True,
-                group="library_nav_context",
-            )
-            return
-        self._apply_navigation_context_state(context)
+        """Admit route context through the Library-owned navigation controller."""
+        self._navigation_controller.apply_navigation_context(context)
 
     def _library_navigation_context_target_row(
         self,
@@ -11286,6 +11248,7 @@ class LibraryScreen(BaseAppScreen):
                     "prompt": LIBRARY_ROW_BROWSE_PROMPTS,
                 }[source_type]
         return target_row_id
+
 
     async def _apply_navigation_context_after_flush(
         self,

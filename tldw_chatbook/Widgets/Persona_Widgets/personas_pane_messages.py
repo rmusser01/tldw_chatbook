@@ -83,6 +83,18 @@ class OlderConversationsRequested(Message):
     """Request the next or failed page of saved conversations."""
 
 
+class ConversationsRequested(Message):
+    """Request that the selected character's conversation browser be revealed."""
+
+
+class ConversationSearchChanged(Message):
+    """Request a fresh selected-character Keyword result generation."""
+
+    def __init__(self, query: str) -> None:
+        self.query = query
+        super().__init__()
+
+
 class EditCharacterRequested(Message):
     """User requested to edit the character.
 

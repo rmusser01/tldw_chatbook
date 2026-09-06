@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-from typing import TYPE_CHECKING, TypeAlias
 import unicodedata
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypeAlias
 
 from ...Chat.provider_endpoint_contract import resolve_provider_endpoint
 
@@ -75,8 +75,19 @@ class VllmConsoleIntent:
         _validate_intent_fields(self.api_url, self.model_id, self.generation)
 
     @classmethod
-    def from_target(cls, target: VllmConnectionTarget) -> "VllmConsoleIntent":
-        """Detach only the non-secret fields Console is allowed to consume."""
+    def from_target(cls, target: VllmConnectionTarget) -> VllmConsoleIntent:
+        """Detach only the non-secret fields Console is allowed to consume.
+
+        Args:
+            target: Exact connection target returned by the readiness owner.
+
+        Returns:
+            Immutable Console intent for the target's generation.
+
+        Raises:
+            TypeError: The target is not an exact connection-target instance.
+            ValueError: The target contains invalid provider or intent fields.
+        """
 
         return cls(*_intent_fields_from_target(target))
 
@@ -93,8 +104,19 @@ class VllmDefaultIntent:
         _validate_intent_fields(self.api_url, self.model_id, self.generation)
 
     @classmethod
-    def from_target(cls, target: VllmConnectionTarget) -> "VllmDefaultIntent":
-        """Detach only the non-secret fields Settings is allowed to stage."""
+    def from_target(cls, target: VllmConnectionTarget) -> VllmDefaultIntent:
+        """Detach only the non-secret fields Settings is allowed to stage.
+
+        Args:
+            target: Exact connection target returned by the readiness owner.
+
+        Returns:
+            Immutable Settings intent for the target's generation.
+
+        Raises:
+            TypeError: The target is not an exact connection-target instance.
+            ValueError: The target contains invalid provider or intent fields.
+        """
 
         return cls(*_intent_fields_from_target(target))
 
@@ -106,15 +128,26 @@ def owner_has_current_intent(
     owner: object,
     intent: VllmHandoffIntent,
 ) -> bool:
-    """Return whether ``intent`` still names the owner's exact ready target."""
+    """Return whether ``intent`` still names the owner's exact ready target.
 
-    from ..LLM_Management.vllm_setup import VllmConnectionTarget, VllmReadinessState
+    Args:
+        owner: Readiness owner exposing the current snapshot.
+        intent: Detached handoff to compare with the owner's current target.
+
+    Returns:
+        Whether exact types, readiness, generation, model and endpoint match.
+    """
 
     snapshot_method = getattr(owner, "snapshot", None)
     if not callable(snapshot_method):
         return False
     if type(intent) not in {VllmConsoleIntent, VllmDefaultIntent}:
         return False
+    from ..LLM_Management.vllm_setup import (
+        VllmConnectionTarget,
+        VllmReadinessState,
+    )
+
     snapshot = snapshot_method()
     target = snapshot.target
     token = snapshot.current_token

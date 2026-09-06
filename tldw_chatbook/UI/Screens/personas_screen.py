@@ -14,6 +14,7 @@ import sqlite3
 import threading
 import weakref
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import UUID
@@ -95,7 +96,11 @@ from ...Actor_Packs.publication import (
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Utils.fts5_match_forms import quote_fts5_prefix
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
-from ...Constants import TAB_STTS
+from ...Constants import (
+    CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
+    ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION,
+    TAB_STTS,
+)
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
 from ...Media_Creation.generation_templates import GenerationTemplate, get_template
@@ -256,6 +261,8 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterSaveRequested,
     CharacterTTSActionRequested,
     ConversationRowSelected,
+    ConversationSearchChanged,
+    ConversationsRequested,
     EditCharacterRequested,
     EditorContentChanged,
     EditPersonaProfileRequested,
@@ -361,6 +368,10 @@ if TYPE_CHECKING:
     from ...Character_Chat.expression_set_io import ExpressionSetApplyResult
     from ...Chat.console_image_view import ConsoleImageRenderCache
     from ...Image_Generation.capabilities import ResolvedReferenceImage
+    from ..Navigation.character_conversation_navigation import (
+        RoleplayCharacterConversationLink,
+        RoleplayDraftSnapshot,
+    )
 
 
 def get_image_generation_config(*args: Any, **kwargs: Any) -> Any:
@@ -475,6 +486,15 @@ _CHARACTER_TTS_WORKER_GROUP = "personas-character-tts"
 _CHARACTER_TTS_LOADING_COPY = "Loading voice profiles…"
 _CHARACTER_TTS_DISABLED_COPY = "Save/reopen before assigning."
 _CHARACTER_TTS_CHANGED_COPY = "Voice profiles changed; reselect to retry."
+
+
+class CharacterConversationLinkOutcome(str, Enum):
+    """Disposition of a pending Roleplay deep link."""
+
+    ABSENT = "absent"
+    APPLIED = "applied"
+    REJECTED = "rejected"
+    DEFERRED = "deferred"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -611,6 +631,7 @@ def _character_row_meta(record: dict) -> str | None:
 
 
 #: Center-area widgets toggled by ``_show_center``.
+_CHARACTER_DEEP_LINK_RECOVERY_ID = "#personas-character-link-recovery"
 _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#personas-dictionary-detail",
     "#personas-lore-detail",
@@ -619,6 +640,7 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#ccp-persona-card-view",
     "#ccp-persona-editor-view",
     _CONVERSATION_VIEW_ID,
+    _CHARACTER_DEEP_LINK_RECOVERY_ID,
     "#personas-mode-placeholder",
     "#personas-characters-empty",
 )
@@ -1239,12 +1261,15 @@ class PersonasScreen(BaseAppScreen):
         self._persona_visual_publication_inflight = False
         self._profile_save_inflight: bool = False
         self._profile_save_operation_inflight: bool = False
+        self._profile_save_completion: asyncio.Future[None] | None = None
         self._persona_buddy_session_generation: int = 0
         self._persona_buddy_action_lock = asyncio.Lock()
         # Mirrors _profile_save_inflight for the character editor: guards
         # against a re-entrant Save (double-click/Ctrl+S) while an earlier
         # save for this session is still persisting.
         self._character_save_inflight: bool = False
+        self._character_save_worker_handle: Any | None = None
+        self._actor_pack_save_worker_handle: Any | None = None
         # ``_characters`` now holds only the CURRENT page of the library, not
         # the whole (capped) list; ``_character_total`` is the full-library
         # count for the active (search, tag) filter, cached under
@@ -1280,6 +1305,8 @@ class PersonasScreen(BaseAppScreen):
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
         self._workbench_compact: bool | None = None
+        self._workbench_narrow: bool | None = None
+        self._compact_active_pane = "work"
         self._library_rail_collapsed: bool = False
         self._inspector_rail_collapsed: bool = False
         # Set by restore_state when the mount carries saved navigation state:
@@ -1294,11 +1321,42 @@ class PersonasScreen(BaseAppScreen):
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
         self.conversations = PersonasConversationsController(self)
+        self._pending_character_conversation_link: (
+            RoleplayCharacterConversationLink | None
+        ) = None
+        self._character_conversation_return_target = None
+        self._pending_character_return_focus_id: str | None = None
         self.preview = PersonasPreviewController(self)
         setup_ccp_enhancements(self)
 
     def apply_navigation_context(self, context: Mapping[str, object]) -> None:
         """Accept one bounded Voice Profile suggestion without assigning it."""
+
+        from ..Navigation.character_conversation_navigation import (
+            deserialize_roleplay_character_conversation_link,
+        )
+
+        if isinstance(context, Mapping) and set(context) == {
+            ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION
+        }:
+            payload = context.get(ROLEPLAY_NAV_CONTEXT_CHARACTER_CONVERSATION)
+            if isinstance(payload, Mapping):
+                try:
+                    self._pending_character_conversation_link = (
+                        deserialize_roleplay_character_conversation_link(payload)
+                    )
+                except (TypeError, ValueError):
+                    logger.warning("Rejected invalid Roleplay conversation deep link")
+            return
+        if isinstance(context, Mapping) and set(context) == {
+            CHARACTER_NAV_CONTEXT_RETURN_FOCUS
+        }:
+            focus_id = context.get(CHARACTER_NAV_CONTEXT_RETURN_FOCUS)
+            if isinstance(focus_id, str) and re.fullmatch(
+                r"[A-Za-z][A-Za-z0-9_-]{0,127}", focus_id
+            ):
+                self._pending_character_return_focus_id = focus_id
+            return
 
         if not isinstance(context, Mapping) or set(context) != {
             "view",
@@ -1458,14 +1516,14 @@ class PersonasScreen(BaseAppScreen):
                                 id="personas-conversation-navigation-actions"
                             ):
                                 yield Button(
-                                    "Back to card",
+                                    "Back to conversations",
                                     id="personas-conversation-back",
-                                    classes="console-action-subdued",
+                                    classes="console-action-subdued personas-conversation-navigation-action",
                                 )
                                 yield Button(
                                     "Open in Library",
                                     id="personas-conversation-open-library",
-                                    classes="console-action-subdued",
+                                    classes="console-action-subdued personas-conversation-navigation-action",
                                 )
                         dictionary_detail_slot = Vertical(
                             id="personas-dictionary-detail-slot"
@@ -1487,6 +1545,17 @@ class PersonasScreen(BaseAppScreen):
                             id="personas-characters-empty",
                             markup=True,
                         )
+                        recovery = Vertical(id="personas-character-link-recovery")
+                        recovery.display = False
+                        with recovery:
+                            yield Static(
+                                "The requested character conversation is unavailable.",
+                                id="personas-character-link-recovery-copy",
+                            )
+                            yield Button(
+                                "Retry / Refresh",
+                                id="personas-character-link-retry",
+                            )
                     tryit = PersonasDictionaryTryItWidget(id="personas-dict-tryit")
                     tryit.display = False
                     yield tryit
@@ -1844,8 +1913,11 @@ class PersonasScreen(BaseAppScreen):
             else:
                 await self.character_handler.refresh_character_list()
             self._sync_title_and_console_actions()
-            await self._apply_pending_restore()
-            await self._auto_select_first_library_row()
+            deep_link_outcome = await self._apply_pending_character_conversation_link()
+            if deep_link_outcome is CharacterConversationLinkOutcome.ABSENT:
+                await self._apply_pending_restore()
+                await self._auto_select_first_library_row()
+            self.call_after_refresh(self._restore_character_return_focus)
         except Exception as exc:
             logger.opt(exception=True).error(
                 "Personas initial load failed "
@@ -1858,6 +1930,154 @@ class PersonasScreen(BaseAppScreen):
                 self.notify("Couldn't load the character library.", severity="error")
             except Exception:
                 pass
+
+    async def _apply_pending_character_conversation_link(
+        self, *, refresh_revision: bool = False,
+    ) -> CharacterConversationLinkOutcome:
+        """Consume one validated deep link only after exact authority revalidation."""
+
+        link = self._pending_character_conversation_link
+        if link is None:
+            return CharacterConversationLinkOutcome.ABSENT
+        prior_state = dataclasses.replace(self.state)
+        prior_return_target = self._character_conversation_return_target
+        prior_query = self.conversations._conversation_query
+        prior_requested = self.conversations._requested_conversation_id
+        prior_compact_pane = self._compact_active_pane
+        prior_browse = {
+            "_list_character_id": self.conversations._list_character_id,
+            "_conversation_rows": dict(self.conversations._conversation_rows),
+            "_conversation_activation_requests": dict(
+                self.conversations._conversation_activation_requests
+            ),
+            "_loaded_conversation_ids": set(
+                self.conversations._loaded_conversation_ids
+            ),
+            "_next_conversation_cursor": self.conversations._next_conversation_cursor,
+            "_has_more_conversations": self.conversations._has_more_conversations,
+            "_conversation_list_phase": self.conversations._conversation_list_phase,
+            "_conversation_list_attempt": self.conversations._conversation_list_attempt,
+            "_conversation_page_revision": self.conversations._conversation_page_revision,
+            "_conversation_attempt_boundaries": list(
+                self.conversations._conversation_attempt_boundaries
+            ),
+        }
+        try:
+            db = self._character_db()
+            if db.get_local_authority_id() != link.character.data_authority_id:
+                self._notify("The active Data Profile changed.", "warning")
+                self._show_character_link_recovery("The active Data Profile changed.")
+                return CharacterConversationLinkOutcome.REJECTED
+            card = db.get_character_card_by_id(link.character.character_id)
+            if not card:
+                self._notify("The saved character is unavailable.", "warning")
+                self._show_character_link_recovery(
+                    "The saved character is unavailable."
+                )
+                return CharacterConversationLinkOutcome.REJECTED
+            if link.conversation_id is not None:
+                if refresh_revision:
+                    link = dataclasses.replace(
+                        link,
+                        data_revision=await asyncio.to_thread(
+                            db.get_character_conversation_search_revision
+                        ),
+                    )
+                    self._pending_character_conversation_link = link
+                problem = await asyncio.to_thread(self.conversations.exact_link_problem, link)
+                if problem is not None:
+                    self._show_character_link_recovery(problem)
+                    return CharacterConversationLinkOutcome.REJECTED
+            self.state.runtime_source = "local"
+            self.state.active_mode = "characters"
+            self.conversations._conversation_query = str(link.query or "").strip()
+            if link.conversation_id is not None:
+                self.conversations.request_conversation_focus(link.conversation_id)
+            await self._select_character(
+                str(link.character.character_id),
+                str(card.get("name") or "Unnamed"),
+            )
+            self._character_conversation_return_target = link.return_target
+            self.conversations.synchronize_deep_link_query(link.query)
+            if link.return_target is not None:
+                navigation = self.query_one(
+                    "#personas-conversation-navigation-actions", Horizontal
+                )
+                if not self.query("#personas-conversation-back-source"):
+                    await navigation.mount(
+                        Button(
+                            "Back to Console",
+                            id="personas-conversation-back-source",
+                            classes="console-action-subdued personas-conversation-navigation-action",
+                        )
+                    )
+            for button in self.query("#personas-conversation-back-source"):
+                button.display = link.return_target is not None
+            self._sync_responsive_workbench()
+            if (
+                link.conversation_id is not None
+                and self.size.width <= 60
+                and not self.query_one(_CHARACTER_DEEP_LINK_RECOVERY_ID).display
+            ):
+                self._compact_active_pane = "inspector"
+                self._sync_personas_rails()
+                self.call_after_refresh(self.conversations.reveal_deep_link_row, link)
+            if link.conversation_id is None:
+                self._pending_character_conversation_link = None
+            return CharacterConversationLinkOutcome.APPLIED
+        except Exception:  # noqa: BLE001 - restore browse state after any destination callback failure
+            self.state = prior_state
+            self._character_conversation_return_target = prior_return_target
+            self.conversations.synchronize_deep_link_query(prior_query)
+            self.conversations._requested_conversation_id = prior_requested
+            self._compact_active_pane = prior_compact_pane
+            for attribute, value in prior_browse.items():
+                setattr(self.conversations, attribute, value)
+            self._show_character_link_recovery(
+                "The requested conversation could not be loaded."
+            )
+            logger.opt(exception=True).warning(
+                "Could not apply Roleplay conversation deep link"
+            )
+            return CharacterConversationLinkOutcome.DEFERRED
+
+    def _show_character_link_recovery(self, copy: str) -> None:
+        """Render a stable retry state while retaining the immutable link."""
+
+        self.conversations._requested_conversation_id = None
+        try:
+            self.query_one(
+                "#personas-character-link-recovery-copy", Static
+            ).update(copy)
+            self._show_center(_CHARACTER_DEEP_LINK_RECOVERY_ID)
+            if self.size.width <= 60:
+                self._compact_active_pane = "work"
+                self._sync_personas_rails()
+            self.query_one("#personas-character-link-retry", Button).focus()
+        except QueryError:
+            pass
+
+    @on(Button.Pressed, "#personas-character-link-retry")
+    async def _retry_character_conversation_link(self, event: Button.Pressed) -> None:
+        """Retry one retained link against freshly-read authority/card state."""
+
+        event.stop()
+        event.button.disabled = True
+        try:
+            await self._apply_pending_character_conversation_link(refresh_revision=True)
+        finally:
+            if self.is_mounted and self._pending_character_conversation_link is not None:
+                event.button.disabled = False
+
+    def _restore_character_return_focus(self) -> None:
+        focus_id = self._pending_character_return_focus_id
+        if focus_id is None:
+            return
+        try:
+            self.query_one(f"#{focus_id}").focus()
+        except QueryError:
+            return
+        self._pending_character_return_focus_id = None
 
     def _set_persona_editor_runtime_source(self, runtime_source: str) -> None:
         """Synchronize the screen state and mounted Persona editor source."""
@@ -1933,14 +2153,40 @@ class PersonasScreen(BaseAppScreen):
 
     def _sync_responsive_workbench(self) -> None:
         compact = self.size.width <= PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH
-        if self._workbench_compact == compact:
+        narrow = self.size.width <= 60
+        # At 52 columns each action gets one full-width terminal row.
+        try:
+            actions = self.query_one("#personas-conversation-actions")
+            navigation = self.query_one("#personas-conversation-navigation-actions")
+            navigation_rows = sum(button.display for button in navigation.query(Button))
+            actions.styles.height = 2 + navigation_rows if narrow else 9
+            actions.styles.min_height = 2 + navigation_rows if narrow else 9
+            for selector in (
+                "#personas-conversation-resume",
+                "#personas-conversation-continue-console",
+                "#personas-conversation-navigation-actions",
+            ):
+                row = self.query_one(selector)
+                row.styles.height = 1 if narrow else 3
+                row.styles.min_height = 1 if narrow else 3
+            navigation.styles.height = navigation_rows if narrow else 3
+            navigation.styles.min_height = navigation_rows if narrow else 3
+            for button in actions.query(Button):
+                button.styles.height = 1 if narrow else 3
+                button.styles.min_height = 1 if narrow else 3
+            self.query_one(PersonasConversationTranscriptWidget).set_compact(narrow)
+        except QueryError:
+            pass
+        if self._workbench_compact == compact and self._workbench_narrow == narrow:
             return
         try:
             workbench = self.query_one("#personas-workbench")
         except QueryError:
             return
         self._workbench_compact = compact
+        self._workbench_narrow = narrow
         workbench.set_class(compact, "personas-workbench-compact")
+        workbench.set_class(narrow, "personas-workbench-narrow")
         for pane_id in (
             "#personas-library-pane",
             "#personas-work-area",
@@ -1952,14 +2198,48 @@ class PersonasScreen(BaseAppScreen):
                 )
             except QueryError:
                 continue
+        for pane_id in (
+            "#personas-library-pane",
+            "#personas-work-area",
+            "#personas-inspector-pane",
+        ):
+            pane = self.query_one(pane_id)
+            pane.styles.width = "1fr" if narrow else None
+            pane.styles.min_width = 0 if narrow else None
+        for handle_id in (
+            "#personas-library-rail-handle",
+            "#personas-inspector-rail-handle",
+        ):
+            handle = self.query_one(handle_id)
+            handle.styles.width = 3 if narrow else None
+            handle.styles.min_width = 3 if narrow else None
+            handle.styles.max_width = 3 if narrow else None
+        self._sync_personas_rails()
 
     def _sync_personas_rails(self) -> None:
         """Mirror Console/Notes collapsible rails for Library and Inspector."""
         if not self.is_mounted:
             return
         try:
+            if self.size.width <= 60:
+                library_active = self._compact_active_pane == "library"
+                inspector_active = self._compact_active_pane == "inspector"
+                preview_active = self.query_one(_CONVERSATION_VIEW_ID).display
+                self.query_one("#personas-library-pane").display = library_active
+                self.query_one("#personas-work-area").display = (
+                    self._compact_active_pane == "work"
+                )
+                self.query_one("#personas-inspector-pane").display = inspector_active
+                self.query_one("#personas-library-rail-handle").display = not (
+                    library_active or preview_active
+                )
+                self.query_one("#personas-inspector-rail-handle").display = not (
+                    inspector_active or preview_active
+                )
+                return
             library_open = not self._library_rail_collapsed
             inspector_open = not self._inspector_rail_collapsed
+            self.query_one("#personas-work-area").display = True
             self.query_one("#personas-library-pane").display = library_open
             self.query_one("#personas-library-rail-handle").display = not library_open
             self.query_one("#personas-inspector-pane").display = inspector_open
@@ -3972,24 +4252,32 @@ class PersonasScreen(BaseAppScreen):
     def _handle_library_rail_collapse(self, event: Button.Pressed) -> None:
         event.stop()
         self._library_rail_collapsed = True
+        if self.size.width <= 60:
+            self._compact_active_pane = "work"
         self._sync_personas_rails()
 
     @on(Button.Pressed, "#personas-library-rail-open")
     def _handle_library_rail_open(self, event: Button.Pressed) -> None:
         event.stop()
         self._library_rail_collapsed = False
+        if self.size.width <= 60:
+            self._compact_active_pane = "library"
         self._sync_personas_rails()
 
     @on(Button.Pressed, "#personas-inspector-rail-collapse")
     def _handle_inspector_rail_collapse(self, event: Button.Pressed) -> None:
         event.stop()
         self._inspector_rail_collapsed = True
+        if self.size.width <= 60:
+            self._compact_active_pane = "work"
         self._sync_personas_rails()
 
     @on(Button.Pressed, "#personas-inspector-rail-open")
     def _handle_inspector_rail_open(self, event: Button.Pressed) -> None:
         event.stop()
         self._inspector_rail_collapsed = False
+        if self.size.width <= 60:
+            self._compact_active_pane = "inspector"
         self._sync_personas_rails()
 
     async def _apply_mode(self, mode: str) -> None:
@@ -4773,6 +5061,9 @@ class PersonasScreen(BaseAppScreen):
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
     ) -> None:
         self.conversations.close_conversation_preview()
+        if self.size.width <= 60:
+            self._compact_active_pane = "work"
+            self._sync_personas_rails()
         session_generation = self._advance_persona_buddy_session()
         server_record: dict | None = None
         if self.state.runtime_source == "server":
@@ -6508,6 +6799,9 @@ class PersonasScreen(BaseAppScreen):
         ):
             return
         conversation_id = str(message.conversation_id)
+        if self.size.width <= 60:
+            self._compact_active_pane = "work"
+            self._sync_personas_rails()
         await self._run_guarded(
             lambda: self.conversations.open_conversation(conversation_id)
         )
@@ -6526,13 +6820,60 @@ class PersonasScreen(BaseAppScreen):
             return
         await self.conversations.request_older_conversations()
 
+    @on(ConversationsRequested)
+    def _handle_conversations_requested(self, message: ConversationsRequested) -> None:
+        message.stop()
+        self._return_to_conversations()
+
+    @on(ConversationSearchChanged)
+    async def _handle_conversation_search_changed(
+        self, message: ConversationSearchChanged
+    ) -> None:
+        message.stop()
+        if (
+            self.state.active_mode == "characters"
+            and self.state.runtime_source == "local"
+            and self.state.selected_entity_kind == "character"
+        ):
+            await self.conversations.search_conversations(message.query)
+
     @on(Button.Pressed, "#personas-conversation-back")
     def _handle_conversation_back(self, event: Button.Pressed) -> None:
         event.stop()
+        self._return_to_conversations()
+
+    def _return_to_conversations(self) -> None:
+        """Reveal and focus the conversation list from card or preview."""
+
         self.conversations.close_conversation_preview()
         self._show_center("#ccp-character-card-view")
         self._sync_title_and_console_actions()
-        self._focus_conversations_list()
+        if self.size.width <= 60:
+            # Reveal the destination before hiding the currently focused work
+            # pane.  Otherwise Textual repairs focus to the first control in
+            # the inspector (the search field) as the Back button disappears.
+            self.query_one("#personas-inspector-pane").display = True
+            self._focus_conversations_list(force=True)
+            self._compact_active_pane = "inspector"
+            self._sync_personas_rails()
+            self.set_timer(
+                0.01, lambda: self._focus_conversations_list(force=True)
+            )
+            return
+        self._focus_conversations_list(force=True)
+
+    @on(Button.Pressed, "#personas-conversation-back-source")
+    def _handle_conversation_back_source(self, event: Button.Pressed) -> None:
+        event.stop()
+        target = self._character_conversation_return_target
+        if target is None:
+            return
+        self.post_message(
+            NavigateToScreen(
+                target.screen_id,
+                {CHARACTER_NAV_CONTEXT_RETURN_FOCUS: target.focus_id},
+            )
+        )
 
     @on(Button.Pressed, "#personas-conversation-open-library")
     def _handle_conversation_open_library(self, event: Button.Pressed) -> None:
@@ -14490,7 +14831,7 @@ class PersonasScreen(BaseAppScreen):
             editor = self._editor_or_none()
             portrait = editor.current_avatar_bytes() if editor is not None else None
             self._character_save_inflight = True
-            self._create_actor_pack_worker(
+            self._actor_pack_save_worker_handle = self._create_actor_pack_worker(
                 data,
                 session,
                 portrait=bytes(portrait) if type(portrait) is bytes else None,
@@ -14525,7 +14866,7 @@ class PersonasScreen(BaseAppScreen):
         self._character_save_inflight = True
         # Snapshot UI-thread state here; the background persistence call must
         # not read mutable screen state.
-        self._save_character_worker(
+        self._character_save_worker_handle = self._save_character_worker(
             data, self.state.selected_entity_id, self._edit_mode
         )
 
@@ -14848,7 +15189,9 @@ class PersonasScreen(BaseAppScreen):
                 return
             self._profile_save_inflight = True
             self._profile_save_operation_inflight = True
-            self._create_actor_pack_worker(dict(message.data or {}), session)
+            self._actor_pack_save_worker_handle = self._create_actor_pack_worker(
+                dict(message.data or {}), session
+            )
             return
         if self._persona_visual_has_unsaved_authoring():
             self._notify(
@@ -14879,6 +15222,8 @@ class PersonasScreen(BaseAppScreen):
             return
         self._profile_save_inflight = True
         self._profile_save_operation_inflight = True
+        profile_save_completion = asyncio.get_running_loop().create_future()
+        self._profile_save_completion = profile_save_completion
         self._advance_persona_buddy_session()
         # mode/persona_id are read INSIDE the try (rather than before it) so
         # a raise from either (e.g. current_mode()) is caught below, which
@@ -14940,6 +15285,8 @@ class PersonasScreen(BaseAppScreen):
             # fresh edit) may claim this flag again.
             self._profile_save_inflight = False
             self._profile_save_operation_inflight = False
+            if not profile_save_completion.done():
+                profile_save_completion.set_result(None)
             return
         if hasattr(result, "model_dump"):
             result = result.model_dump(mode="json")
@@ -14952,6 +15299,8 @@ class PersonasScreen(BaseAppScreen):
             await self._after_profile_save(saved, source=mode)
         finally:
             self._profile_save_operation_inflight = False
+            if not profile_save_completion.done():
+                profile_save_completion.set_result(None)
 
     async def _after_profile_save(
         self, saved: dict, *, source: str | None = None
@@ -15208,6 +15557,212 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             return
         actions.display = visible_id == _CONVERSATION_VIEW_ID
+        self.query_one("#personas-workbench").set_class(
+            actions.display, "personas-transcript-active"
+        )
+        # Preview display changes after row navigation revealed the work pane;
+        # re-evaluate its rails using the newly committed center view.
+        self._sync_personas_rails()
+
+    def _aggregate_roleplay_draft_snapshot(self) -> RoleplayDraftSnapshot:
+        """Capture every Roleplay draft and save owner in one stable snapshot."""
+
+        from ..Navigation.character_conversation_navigation import (
+            RoleplayDraftSnapshot,
+        )
+
+        inflight: list[str] = []
+        if self._character_save_inflight:
+            inflight.append("character form")
+        # ``_profile_save_inflight`` also remains true after a successful
+        # save to deduplicate that editor baseline. Only the operation flag
+        # denotes work that navigation must await.
+        if self._profile_save_operation_inflight:
+            inflight.append("Persona form")
+        if self._visual_identity_publication_inflight or (
+            self._visual_identity_operation_task is not None
+            and not self._visual_identity_operation_task.done()
+        ):
+            inflight.append("character visuals")
+        if self._persona_shared_visual_identity_publication_inflight or (
+            self._persona_shared_visual_identity_operation_task is not None
+            and not self._persona_shared_visual_identity_operation_task.done()
+        ):
+            inflight.append("Persona visuals")
+        if self._persona_visual_publication_inflight or (
+            self._persona_visual_operation_task is not None
+            and not self._persona_visual_operation_task.done()
+        ):
+            inflight.append("Persona visuals")
+        attachments_dirty = False
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+            attachments_dirty = editor.has_unsaved_attachment()
+        except (AttributeError, QueryError):
+            pass
+        return RoleplayDraftSnapshot(
+            form_dirty=bool(self.state.has_unsaved_changes),
+            character_visual_dirty=self._visual_identity_authoring is not None,
+            persona_visual_dirty=bool(
+                self._persona_shared_visual_identity_authoring is not None
+                or (
+                    self._persona_visual_authoring is not None
+                    and self._persona_visual_authoring.dirty
+                )
+            ),
+            attachments_dirty=attachments_dirty,
+            inflight_save_domains=tuple(dict.fromkeys(inflight)),
+        )
+
+    async def _save_aggregate_roleplay_drafts(
+        self, snapshot: RoleplayDraftSnapshot
+    ) -> tuple[str, ...]:
+        """Save each incumbent owner and return exact domains still failing."""
+
+        failures: list[str] = []
+        form_domain = (
+            "Persona form" if self.state.active_mode == "personas" else "character form"
+        )
+        character_visual = self._visual_identity_authoring
+        if snapshot.character_visual_dirty and character_visual is not None:
+            try:
+                await self._save_visual_identity_pack(
+                    character_visual.authoritative_pack
+                )
+            except Exception:  # noqa: BLE001 - name every failed domain
+                failures.append("character visuals")
+        if snapshot.persona_visual_dirty:
+            if self._persona_shared_visual_identity_authoring is not None:
+                try:
+                    await self._save_persona_shared_visual_identity_pack()
+                except Exception:  # noqa: BLE001
+                    failures.append("Persona visuals")
+            persona_visual = self._persona_visual_authoring
+            if persona_visual is not None and persona_visual.dirty:
+                try:
+                    await self._save_persona_visual_pack()
+                except Exception:  # noqa: BLE001
+                    if "Persona visuals" not in failures:
+                        failures.append("Persona visuals")
+        if snapshot.form_dirty:
+            try:
+                prior_owners = (
+                    self._character_save_worker_handle,
+                    self._actor_pack_save_worker_handle,
+                    self._profile_save_completion,
+                )
+                self.action_personas_save()
+                # The editor's button posts its save request on the next loop
+                # turn. Join only the exact owner it creates: Resume is a
+                # worker in the same manager and must never wait on itself.
+                for _ in range(20):
+                    await asyncio.sleep(0)
+                    current_owners = (
+                        self._character_save_worker_handle,
+                        self._actor_pack_save_worker_handle,
+                        self._profile_save_completion,
+                    )
+                    if current_owners != prior_owners or not self.state.has_unsaved_changes:
+                        break
+                await self._await_roleplay_save_owners()
+            except Exception:  # noqa: BLE001
+                failures.append(form_domain)
+            if self.state.has_unsaved_changes and form_domain not in failures:
+                failures.append(form_domain)
+        residual = self._aggregate_roleplay_dirty_domains(
+            self._aggregate_roleplay_draft_snapshot()
+        )
+        failures.extend(domain for domain in residual if domain not in failures)
+        return tuple(failures)
+
+    async def _await_roleplay_save_owners(self) -> None:
+        """Join only incumbent save owners, never the navigation worker."""
+
+        waits: list[Awaitable[Any]] = []
+        for worker in (
+            self._character_save_worker_handle,
+            self._actor_pack_save_worker_handle,
+        ):
+            if worker is not None:
+                waits.append(worker.wait())
+        completion = self._profile_save_completion
+        if completion is not None and not completion.done():
+            waits.append(asyncio.shield(completion))
+        current_task = asyncio.current_task()
+        for task in (
+            self._visual_identity_operation_task,
+            self._persona_shared_visual_identity_operation_task,
+            self._persona_visual_operation_task,
+        ):
+            if task is not None and task is not current_task and not task.done():
+                waits.append(task)
+        if waits:
+            await asyncio.gather(*waits, return_exceptions=True)
+
+    def _aggregate_roleplay_dirty_domains(
+        self, snapshot: RoleplayDraftSnapshot
+    ) -> tuple[str, ...]:
+        """Name the mounted form owner while preserving stable visual labels."""
+
+        domains = list(snapshot.dirty_domains)
+        if self.state.active_mode == "personas" and "character form" in domains:
+            domains[domains.index("character form")] = "Persona form"
+        return tuple(domains)
+
+    async def confirm_navigation(self) -> bool:
+        """App-invoked aggregate Save/Discard/Stay veto for leaving Roleplay."""
+
+        from ..Navigation.character_conversation_navigation import (
+            RoleplayDraftNavigationDialog,
+            RoleplayDraftRecoveryDialog,
+        )
+
+        snapshot = self._aggregate_roleplay_draft_snapshot()
+        if snapshot.inflight_save_domains:
+            await self._await_roleplay_save_owners()
+            snapshot = self._aggregate_roleplay_draft_snapshot()
+        if snapshot.is_clean:
+            return True
+        domains = tuple(
+            dict.fromkeys(
+                self._aggregate_roleplay_dirty_domains(snapshot)
+                + snapshot.inflight_save_domains
+            )
+        )
+        try:
+            choice = await self.app.push_screen_wait(
+                RoleplayDraftNavigationDialog(domains)
+            )
+        except Exception:  # noqa: BLE001 - broken presentation fails closed
+            logger.opt(exception=True).warning(
+                "Could not present aggregate Roleplay navigation guard"
+            )
+            return False
+        if choice == "save":
+            while True:
+                failures = await self._save_aggregate_roleplay_drafts(snapshot)
+                if not failures and self._aggregate_roleplay_draft_snapshot().is_clean:
+                    return True
+                retry = await self.app.push_screen_wait(
+                    RoleplayDraftRecoveryDialog(failures)
+                )
+                if retry != "retry":
+                    return False
+                snapshot = self._aggregate_roleplay_draft_snapshot()
+        if choice == "discard":
+            await self._drain_visual_identity_authoring()
+            await self._drain_persona_shared_visual_identity_authoring()
+            await self._discard_persona_visual_authoring_async()
+            await self._drain_actor_pack_creation()
+            for editor in (
+                *self.query(PersonasCharacterEditorWidget),
+                *self.query(PersonaProfileEditorWidget),
+            ):
+                editor.discard_unsaved_form()
+            self.state.has_unsaved_changes = False
+            self._set_active_row_unsaved(False)
+            return self._aggregate_roleplay_draft_snapshot().is_clean
+        return False
 
     async def _run_guarded(self, continuation: Callable[[], Awaitable[None]]) -> None:
         """Run ``continuation``, confirming first when an edit would be discarded.
@@ -15356,6 +15911,8 @@ class PersonasScreen(BaseAppScreen):
         Transcript open -> back to the card, focus the conversations list.
         Search focused -> move focus to the library list.
         """
+        if self.conversations.cancel_resume():
+            return
         if self._edit_mode in ("create", "edit"):
             for view_id, message in (
                 ("#ccp-character-editor-view", CharacterEditorCancelled),
@@ -15375,10 +15932,7 @@ class PersonasScreen(BaseAppScreen):
             transcript = None
         if transcript is not None and transcript.display:
             # Same path as the "Back to card" button.
-            self.conversations.close_conversation_preview()
-            self._show_center("#ccp-character-card-view")
-            self._sync_title_and_console_actions()
-            self._focus_conversations_list()
+            self._return_to_conversations()
             return
         focused = self.app.focused
         if focused is not None and focused.id == "personas-library-search":
@@ -15464,9 +16018,9 @@ class PersonasScreen(BaseAppScreen):
             direction=-1,
         )
 
-    def _focus_conversations_list(self) -> None:
+    def _focus_conversations_list(self, *, force: bool = False) -> None:
         """Focus the inspector's conversations list (transcript Back path)."""
-        if self._focus_steal_blocked():
+        if not force and self._focus_steal_blocked():
             return
         try:
             self.query_one("#personas-conversations-list", ListView).focus()

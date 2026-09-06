@@ -12,6 +12,11 @@
 # measurements in its docstring where a textbook index was simply never
 # chosen because no media DB has ever run ANALYZE.
 
+character_conversation_search_dirty_authority_revision	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
+character_conversation_search_documents_character	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
+character_conversation_search_documents_revision	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
+character_conversation_search_generations_authority_status	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
+character_conversation_search_one_ready_generation	plan-pinned	Tests/DB/test_character_conversation_search_migration.py
 idx_ab_test_runs_test	pre-convention	plan never captured without stats
 idx_ab_tests_models	pre-convention	plan never captured without stats
 idx_ab_tests_status	pre-convention	plan never captured without stats
@@ -24,6 +29,10 @@ idx_briefing_audio_script	pre-convention	plan never captured without stats
 idx_briefing_items_item	pre-convention	plan never captured without stats
 idx_briefing_scripts_briefing	pre-convention	plan never captured without stats
 idx_briefings_watchlist_status	pre-convention	plan never captured without stats
+idx_canvas_documents_conversation	plan-pinned	Tests/Canvas/test_repository.py
+idx_canvas_revisions_canvas_sequence	plan-pinned	Tests/Canvas/test_repository.py
+idx_canvas_revisions_origin_message	plan-pinned	Tests/Canvas/test_repository.py
+idx_canvas_revisions_parent	plan-pinned	Tests/Canvas/test_repository.py
 idx_change_notes_pending	pre-convention	plan never captured without stats
 idx_change_snapshots_run	pre-convention	plan never captured without stats
 idx_char_expr_images_char	pre-convention	plan never captured without stats
@@ -277,6 +286,8 @@ uq_console_trace_semantic_revisions_live_message	plan-pinned	Tests/DB/test_chach
 uq_keyword_collections_sync_id	plan-pinned	Tests/DB/test_chachanotes_notes_organization_migration.py
 uq_keywords_sync_id	plan-pinned	Tests/DB/test_chachanotes_notes_organization_migration.py
 uq_local_watchlist_runs_active_source	pre-convention	branch index predates TASK-21593; partial UNIQUE claim invariant, not a read optimization
+uq_canvas_documents_id_conversation	pre-convention	composite UNIQUE foreign-key target for conversation-owned hints; correctness enforcer, not a read optimization (ADR-121)
+uq_canvas_revisions_id_canvas	pre-convention	composite UNIQUE foreign-key target for same-canvas parent ownership; correctness enforcer, not a read optimization (ADR-121)
 uq_note_folder_memberships_active_owner	pre-convention	plan never captured without stats
 uq_note_folders_active_normalized_path	pre-convention	plan never captured without stats
 uq_note_folders_sync_id	plan-pinned	Tests/DB/test_chachanotes_notes_organization_migration.py

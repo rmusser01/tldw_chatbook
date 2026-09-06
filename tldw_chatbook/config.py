@@ -54,10 +54,12 @@ from pydantic import (
 #
 # Local Imports
 from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
+from tldw_chatbook.Canvas.limits import CanvasLimits
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 if TYPE_CHECKING:
+    from tldw_chatbook.Canvas.web_auth import WebAuthPolicy
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
@@ -98,6 +100,302 @@ if TYPE_CHECKING:
 logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
 # --- Constants ---
 # Client ID used by the Server API itself when writing to sync logs
+
+
+CanvasRemoteAccessStatus = Literal[
+    "loopback",
+    "authenticated_tls",
+    "refused",
+    "misconfigured",
+    "insecure_development",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class CanvasConfigPolicy:
+    """Effective Canvas execution and delivery policy without credentials."""
+
+    enabled: bool
+    auto_open_on_create: bool
+    limits: CanvasLimits
+    remote_access_status: CanvasRemoteAccessStatus
+    remote_access_summary: str
+    diagnostics: tuple[str, ...] = ()
+
+
+_CANVAS_CONFIG_KEYS = frozenset({"enabled", "auto_open_on_create"})
+_CANVAS_ENABLED_ENV = "TLDW_CANVAS_ENABLED"
+_CANVAS_AUTO_OPEN_ENV = "TLDW_CANVAS_AUTO_OPEN_ON_CREATE"
+
+
+def _strict_canvas_bool(
+    section: Mapping[str, Any],
+    key: str,
+    *,
+    default: bool,
+    invalid_diagnostic: str,
+    diagnostics: list[str],
+) -> bool:
+    """Read one exact Canvas boolean, failing closed on malformed values."""
+
+    if key not in section:
+        return default
+    value = section.get(key)
+    if type(value) is bool:
+        return value
+    diagnostics.append(invalid_diagnostic)
+    return False
+
+
+def _resolve_canvas_bool(
+    section: Mapping[str, Any],
+    key: str,
+    *,
+    environment_name: str,
+    environ: Mapping[str, str],
+    default: bool,
+    invalid_config_diagnostic: str,
+    invalid_environment_diagnostic: str,
+    diagnostics: list[str],
+) -> bool:
+    """Resolve one strict environment-over-config Canvas preference."""
+
+    raw_environment = environ.get(environment_name)
+    if raw_environment is not None:
+        if type(raw_environment) is not str:
+            diagnostics.append(invalid_environment_diagnostic)
+            return False
+        normalized = raw_environment.strip().lower()
+        if normalized:
+            if normalized == "true":
+                return True
+            if normalized == "false":
+                return False
+            diagnostics.append(invalid_environment_diagnostic)
+            return False
+    return _strict_canvas_bool(
+        section,
+        key,
+        default=default,
+        invalid_diagnostic=invalid_config_diagnostic,
+        diagnostics=diagnostics,
+    )
+
+
+def _normalize_canvas_execution(
+    config: Mapping[str, Any] | None,
+    *,
+    environ: Mapping[str, str],
+    diagnostics: list[str],
+) -> tuple[Mapping[str, Any], bool, bool]:
+    """Return the Canvas section, strict execution gate, and table validity."""
+
+    values = config if isinstance(config, Mapping) else {}
+    raw_canvas = values.get("canvas")
+    if raw_canvas is None:
+        canvas: Mapping[str, Any] = {}
+        valid_table = True
+    elif isinstance(raw_canvas, Mapping):
+        canvas = raw_canvas
+        valid_table = True
+    else:
+        canvas = {}
+        valid_table = False
+        diagnostics.append("canvas must be a table; Canvas is disabled")
+
+    if not valid_table:
+        return canvas, False, False
+    enabled = _resolve_canvas_bool(
+        canvas,
+        "enabled",
+        environment_name=_CANVAS_ENABLED_ENV,
+        environ=environ,
+        default=True,
+        invalid_config_diagnostic=(
+            "canvas.enabled must be a boolean; Canvas is disabled"
+        ),
+        invalid_environment_diagnostic=(
+            "TLDW_CANVAS_ENABLED must be true or false; Canvas is disabled"
+        ),
+        diagnostics=diagnostics,
+    )
+    return canvas, enabled, True
+
+
+def _summarize_canvas_web_auth_policy(
+    policy: "WebAuthPolicy",
+) -> tuple[CanvasRemoteAccessStatus, str]:
+    """Return credential-free copy for one already-validated web policy."""
+
+    if policy.automatic_local_login:
+        return (
+            "loopback",
+            "Loopback only — browsers on this Chatbook host enter locally.",
+        )
+    if policy.insecure_remote_http:
+        return (
+            "insecure_development",
+            "Insecure development mode — authenticated remote HTTP can be observed on the network.",
+        )
+    return (
+        "authenticated_tls",
+        "Authenticated TLS/proxy — dedicated browser admission is configured.",
+    )
+
+
+def _canvas_remote_access_status(
+    web: Mapping[str, Any],
+    *,
+    environ: Mapping[str, str],
+    keyring_get: Callable[[str, str], str | None] | None,
+    web_auth_policy: "WebAuthPolicy | None",
+) -> tuple[CanvasRemoteAccessStatus, str]:
+    """Validate configured or effective served auth and return redacted copy."""
+
+    from tldw_chatbook.Canvas.web_auth import (
+        BindPolicyError,
+        ResolvedCredential,
+        build_web_auth_policy,
+        is_loopback_host,
+        resolve_web_access_token,
+    )
+
+    if web_auth_policy is not None:
+        return _summarize_canvas_web_auth_policy(web_auth_policy)
+
+    host = str(web.get("host") or "localhost").strip()
+    public_url = str(web.get("public_url") or "").strip() or None
+    port = web.get("port", 8000)
+    if type(port) is not int or not 0 <= port <= 65535:
+        return (
+            "misconfigured",
+            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
+        )
+    certificate = web.get("tls_certificate")
+    private_key = web.get("tls_private_key")
+    if bool(certificate) != bool(private_key):
+        return (
+            "misconfigured",
+            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
+        )
+
+    remote_candidate = not is_loopback_host(host) or public_url is not None
+    credential = (
+        resolve_web_access_token(
+            web.get("access_token"),
+            environ=environ,
+            keyring_get=keyring_get,
+        )
+        if remote_candidate
+        else ResolvedCredential(None, "not_required")
+    )
+    proxies = web.get("trusted_proxy_addresses", ())
+    if not isinstance(proxies, (list, tuple)):
+        proxies = ("invalid-proxy-configuration",)
+    try:
+        policy = build_web_auth_policy(
+            host=host,
+            port=port,
+            access_token=credential,
+            public_url=public_url,
+            allow_insecure_remote_http=(
+                web.get("allow_insecure_remote_http") is True
+            ),
+            trusted_proxy_addresses=tuple(str(value) for value in proxies),
+            direct_tls=bool(certificate and private_key),
+        )
+    except BindPolicyError as exc:
+        if credential.reveal() is None and "token" in str(exc).lower():
+            return (
+                "refused",
+                "Remote access refused — configure the dedicated Chatbook web access token.",
+            )
+        return (
+            "misconfigured",
+            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
+        )
+    return _summarize_canvas_web_auth_policy(policy)
+
+
+def build_canvas_config_policy(
+    config: Mapping[str, Any] | None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    keyring_get: Callable[[str, str], str | None] | None = None,
+    web_auth_policy: "WebAuthPolicy | None" = None,
+) -> CanvasConfigPolicy:
+    """Build the sole normalized Canvas policy from untrusted configuration."""
+
+    values = config if isinstance(config, Mapping) else {}
+    diagnostics: list[str] = []
+    effective_environment = os.environ if environ is None else environ
+    canvas, enabled, valid_canvas_table = _normalize_canvas_execution(
+        values,
+        environ=effective_environment,
+        diagnostics=diagnostics,
+    )
+    auto_open = (
+        _resolve_canvas_bool(
+            canvas,
+            "auto_open_on_create",
+            environment_name=_CANVAS_AUTO_OPEN_ENV,
+            environ=effective_environment,
+            default=True,
+            invalid_config_diagnostic=(
+                "canvas.auto_open_on_create must be a boolean; auto-open is disabled"
+            ),
+            invalid_environment_diagnostic=(
+                "TLDW_CANVAS_AUTO_OPEN_ON_CREATE must be true or false; auto-open is disabled"
+            ),
+            diagnostics=diagnostics,
+        )
+        if valid_canvas_table
+        else False
+    )
+    if any(key not in _CANVAS_CONFIG_KEYS for key in canvas):
+        diagnostics.append(
+            "Canvas quota overrides are unsupported; hard limits remain fixed"
+        )
+
+    raw_web = values.get("web_server")
+    web = raw_web if isinstance(raw_web, Mapping) else {}
+    remote_status, remote_summary = _canvas_remote_access_status(
+        web,
+        environ=effective_environment,
+        keyring_get=keyring_get,
+        web_auth_policy=web_auth_policy,
+    )
+    return CanvasConfigPolicy(
+        enabled=enabled,
+        auto_open_on_create=auto_open,
+        limits=CanvasLimits(),
+        remote_access_status=remote_status,
+        remote_access_summary=remote_summary,
+        diagnostics=tuple(diagnostics),
+    )
+
+
+def get_canvas_config_policy(
+    *, web_auth_policy: "WebAuthPolicy | None" = None
+) -> CanvasConfigPolicy:
+    """Return the current effective Canvas policy from the shared config cache."""
+
+    return build_canvas_config_policy(
+        load_cli_config_and_ensure_existence(),
+        web_auth_policy=web_auth_policy,
+    )
+
+
+def get_canvas_execution_enabled() -> bool:
+    """Read only the global execution gate without resolving web credentials."""
+
+    config = load_cli_config_and_ensure_existence()
+    _canvas, enabled, _valid_table = _normalize_canvas_execution(
+        config,
+        environ=os.environ,
+        diagnostics=[],
+    )
+    return enabled
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 CLI_APP_CLIENT_ID = "tldw_cli_local_instance_v1"
@@ -5208,6 +5506,18 @@ profiles_directory = "~/.config/tldw_cli/github_profiles"  # Where to store sele
 bind = "127.0.0.1"  # Loopback only. Widen only if you understand the exposure -- there is no authentication.
 port = 0  # 0 = pick any free port each time; set a fixed port to reuse the same URL
 
+[canvas]
+# Effective preference order is a non-empty environment override, then this
+# saved TOML value, then the default. TLDW_CANVAS_ENABLED and
+# TLDW_CANVAS_AUTO_OPEN_ON_CREATE accept only true or false (case-insensitive);
+# malformed non-empty values fail closed. Hard quotas have no env overrides.
+# One global execution/delivery/tool-advertisement kill switch. Turning this
+# off preserves stored Canvas revisions and Chatbook export/import data.
+enabled = true
+# Successful assistant canvas_create operations open the preview automatically.
+# Updates hot-reload an already-open preview but never force a new browser open.
+auto_open_on_create = true
+
 [web_server]
 # Web server configuration for running tldw_chatbook in a browser
 enabled = true  # Enable web server functionality
@@ -5216,6 +5526,24 @@ port = 8000  # Port to bind to
 title = "tldw chatbook"  # Title for the web page
 font_size = 12  # Browser terminal font size; 12 keeps Textual Web close to native terminal density
 debug = false  # Enable debug mode for development
+# Remote access is denied unless a dedicated credential resolves in this order:
+# TLDW_CHATBOOK_WEB_ACCESS_TOKEN, this access_token field, then the OS keyring
+# service "tldw_chatbook_web" / account "access_token". Do not reuse an LLM,
+# MCP, or tldw_api credential. Prefer environment or keyring over plaintext TOML.
+access_token = ""
+# Wildcard binds require the exact browser-facing origin. Use https:// here for
+# either direct TLS or an explicitly trusted TLS-terminating reverse proxy.
+public_url = ""
+# Direct TLS: set both files or neither. The private key remains host-local.
+tls_certificate = ""
+tls_private_key = ""
+# Reverse-proxy headers are ignored unless the immediate peer is one of these
+# literal IP addresses. The proxy must terminate HTTPS and overwrite forwarded
+# host, scheme, and client headers rather than appending untrusted values.
+trusted_proxy_addresses = []
+# Emergency development escape hatch only. This exposes terminal/chat/Canvas
+# content and credentials to network observers and emits a prominent warning.
+allow_insecure_remote_http = false
 """
 
 # Resolve the `[transcription] default_provider` placeholder to this platform's
@@ -8772,6 +9100,14 @@ def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
         ensure_builtin_samira(db)
     except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
         logger.warning("builtin_profile_seed_failed category={}", type(exc).__name__)
+    try:
+        from tldw_chatbook.Character_Chat.builtin_pixel_migu import (
+            ensure_builtin_pixel_migu,
+        )
+
+        ensure_builtin_pixel_migu(db)
+    except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
+        logger.warning("pixel_migu_profile_seed_failed category={}", type(exc).__name__)
     return db
 
 

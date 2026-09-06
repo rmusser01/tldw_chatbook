@@ -127,6 +127,26 @@ switched workspaces. Edge ownership, section ceilings, workspace/conversation
 data ownership, responsive width authority, and session-local scroll-offset
 rules remain unchanged.
 
+## Amendment (2026-09-03, TASK-31241 — Context Character conversation section)
+
+[ADR-120](120-character-conversation-navigation-and-local-semantic-search.md)
+makes Character an always-composed conversation-navigation section directly
+after Conversations and before Model. Its presence, identity, disclosure,
+groups, search, empty/recovery copy, and actions do not depend on the existing
+`show character avatar` preference; that preference controls only optional
+supporting art. Character retains this ADR's 35-row body ceiling and the Context
+outer scroll owner.
+
+The bounded browse surface mounts at most four character/unavailable headers,
+expands at most one group, and shows at most five conversations in that group.
+The current resolved character is force-included; ordinary groups link their
+exact Data Profile-local total to complete per-character browse in Roleplay.
+Character search is global Keyword search over the active Data Profile's local
+eligible character conversations rather than a filter of the mounted groups.
+Responsive forced collapse remains a rendering override and does not write the
+saved disclosure preference. This amendment is owned by
+[TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md).
+
 ## Context
 
 The current Console visually nests both rails inside a framed workspace, so

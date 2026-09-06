@@ -518,7 +518,7 @@ class _TodoWiring(TypedDict, total=False):
 
 
 #: task-1337 (plan Task 8): raw built-in tool names the Console-composed
-#: ``MCPToolProvider`` must exclude -- the 18 ``library_*`` descriptor tools
+#: ``MCPToolProvider`` must exclude -- the current ``library_*`` descriptor tools
 #: (served to Console agents by the run's own direct/RAG Library provider, in
 #: either retrieval mode) plus the five legacy RAG/chat readers whose Console
 #: coverage those providers replace. The legacy names live HERE, not in the
@@ -3049,6 +3049,7 @@ class ConsoleChatController:
         activity_receipts: Any | None = None,
         staged_evidence_provider: Callable[[str], bool] | None = None,
         cancel_raw_cli_session: Callable[[str], object] | None = None,
+        canvas_enabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
     ) -> None:
         self.store = store
@@ -3085,6 +3086,11 @@ class ConsoleChatController:
         self._rag_capture_provider = rag_capture_provider
         self._staged_evidence_provider = staged_evidence_provider
         self._cancel_raw_cli_session = cancel_raw_cli_session
+        if canvas_enabled_reader is None:
+            from tldw_chatbook.config import get_canvas_execution_enabled
+
+            canvas_enabled_reader = get_canvas_execution_enabled
+        self._canvas_enabled_reader = canvas_enabled_reader
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
         )
@@ -6317,6 +6323,12 @@ class ConsoleChatController:
                 }
             ):
                 return self._prepared_action_refusal(current)
+            if (
+                current.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+                and trace_call_admission.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                and preparation_id not in self._trace_call_boundaries_by_preparation
+            ):
+                return self._prepared_action_refusal(current)
             if current.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE:
                 current = self.store.compare_and_set_preparation(
                     current.session_id,
@@ -8558,6 +8570,16 @@ class ConsoleChatController:
         db = getattr(self.store.persistence, "db", None)
         return not bool(getattr(db, "is_memory_db", False))
 
+    def _run_owned_chat_db_operation(
+        self, call: Callable[..., Any], /, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Close a worker invocation's chat handle after all its work unwinds."""
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        database = getattr(self.store.persistence, "db", None)
+        with operation_owned_connection(database):
+            return call(*args, **kwargs)
+
     async def _run_durable_db_call(
         self, call: Callable[..., Any], /, *args: Any
     ) -> Any:
@@ -8579,7 +8601,7 @@ class ConsoleChatController:
         """
 
         if self._durable_db_call_offloadable():
-            return await asyncio.to_thread(call, *args)
+            return await asyncio.to_thread(self._run_owned_chat_db_operation, call, *args)
         return call(*args)
 
     async def _drain_dispatch_transition(self, assistant_id: str) -> bool:
@@ -8623,8 +8645,18 @@ class ConsoleChatController:
             raise TraceProvenancePersistenceError()
 
         def provider_row(row: Mapping[str, Any]) -> dict[str, Any]:
+            # History annotations identify saved owners, but are not provider
+            # values. Match and freeze the same visible shape that serialization
+            # sends; otherwise the agent bridge cannot reuse its saved descriptor.
             return {
-                key: value for key, value in row.items() if key != NATIVE_MESSAGE_ID_KEY
+                key: value
+                for key, value in row.items()
+                if key
+                not in {
+                    NATIVE_MESSAGE_ID_KEY,
+                    PERSISTED_MESSAGE_ID_KEY,
+                    PERSISTED_CONVERSATION_ID_KEY,
+                }
             }
 
         source_by_owner = {
@@ -9168,25 +9200,44 @@ class ConsoleChatController:
             and "checkpoint_transition" in existing_effects.completed
             and "provider_entry" not in existing_effects.completed
         ):
-            self.store.mark_dispatch_recovery_needed(
-                session_id,
-                commit.assistant_message_id,
-            )
-            self._hydrate_dispatch_recovery_queue(session_id, force=True)
-            return ConsoleSubmitResult(
-                True,
-                True,
-                "Delivery status is unknown. Use Retry anyway or Discard.",
-                session_id=session_id,
-                user_message_id=commit.user_message_id,
-                assistant_message_id=commit.assistant_message_id,
-                terminal_status=self.run_state_for(session_id).status,
-                origin=continuation.origin,
-                queue_entry_id=continuation.queue_entry_id,
-                committed_context_epoch=continuation.committed_context_epoch,
-                preparation_id=preparation_id,
-                provider_started=True,
-            )
+            try:
+                verify_recovery = getattr(
+                    self.provider_gateway, "_verify_trace_preparation_recovery", None,
+                )
+                if (
+                    continuation.trace_capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON
+                    or not callable(verify_recovery)
+                ):
+                    raise TraceCallPersistenceError()
+                await self._run_durable_db_call(
+                    verify_recovery, continuation,
+                    self._trace_call_boundaries_by_preparation.get(preparation_id),
+                )
+                # This only proves the missing provider effect may be retried.
+                # Keep the completed checkpoint CAS and its attempt unchanged;
+                # gateway recovery independently checks the newly prepared bytes.
+                # An explicit Capture-Off action uses this same ownership proof,
+                # but never re-admits or changes the abandoned trace reservation.
+            except TraceCallPersistenceError:
+                self.store.mark_dispatch_recovery_needed(
+                    session_id,
+                    commit.assistant_message_id,
+                )
+                self._hydrate_dispatch_recovery_queue(session_id, force=True)
+                return ConsoleSubmitResult(
+                    True,
+                    True,
+                    "Delivery status is unknown. Use Retry anyway or Discard.",
+                    session_id=session_id,
+                    user_message_id=commit.user_message_id,
+                    assistant_message_id=commit.assistant_message_id,
+                    terminal_status=self.run_state_for(session_id).status,
+                    origin=continuation.origin,
+                    queue_entry_id=continuation.queue_entry_id,
+                    committed_context_epoch=continuation.committed_context_epoch,
+                    preparation_id=preparation_id,
+                    provider_started=True,
+                )
         assistant_holder: dict[str, ConsoleChatMessage] = {}
 
         def publish_owners() -> None:
@@ -9456,6 +9507,13 @@ class ConsoleChatController:
                     preparation_id=preparation_id,
                     provider_started=False,
                 )
+            bind_trace_owner = getattr(self.provider_gateway, "_bind_trace_preparation", None)
+            if callable(bind_trace_owner):
+                bind_trace_owner(
+                    continuation.stream_signals, continuation,
+                    boundary=(self._trace_call_boundaries_by_preparation.get(preparation_id)
+                              if effective_capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON else None),
+                )
             stream_result = await self._run_durable_postcommit_effect(
                 preparation_id,
                 "provider_entry",
@@ -9535,7 +9593,23 @@ class ConsoleChatController:
             failed_call_started = any_provider_started
             if isinstance(exc, TraceCallPersistenceError):
                 boundary_started = getattr(exc.boundary, "dispatch_started", None)
-                if type(boundary_started) is bool:
+                if getattr(exc.boundary, "dispatch_outcome", None) == "unknown":
+                    # A cached unstarted reservation is not rollback evidence
+                    # when the exact dispatch read-back was unavailable.
+                    failed_call_started = True
+                    if getattr(exc.boundary, "_accepted_preparation", None) is continuation:
+                        self._trace_call_boundaries_by_preparation[preparation_id] = exc.boundary
+                        if not any_provider_started:
+                            try:
+                                # FRESH normalizes before this checkpoint;
+                                # AGENT already completed it. Persist the same
+                                # conservative uncertainty before cold recovery.
+                                await enter_provider_dispatch()
+                            except Exception:  # noqa: BLE001 - retain unknown ownership if its checkpoint also fails
+                                logger.warning("Uncertain trace dispatch checkpoint could not be saved.")
+                            else:
+                                any_provider_started = True
+                elif type(boundary_started) is bool:
                     failed_call_started = boundary_started
                 elif exc.reservation_status is not None:
                     # Boundary construction/reservation failed before this
@@ -22189,11 +22263,58 @@ class ConsoleChatController:
                 current_user_message=trusted_profile_user_message,
                 kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
             )
+        canvas_provider = None
+        canvas_authority = None
+        canvas_controller = getattr(self.store, "canvas_turn_controller", None)
+        try:
+            canvas_enabled = self._canvas_enabled_reader() is True
+        except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
+            canvas_enabled = False
+        if canvas_enabled and canvas_controller is not None and session is not None:
+            from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
+            from tldw_chatbook.Canvas.models import CanvasScope
+
+            native_path = self.store.active_path_message_ids(session_id)
+            active_path: list[str] = []
+            for native_id in native_path:
+                try:
+                    path_message = self.store.get_message(native_id)
+                except KeyError:
+                    active_path = []
+                    break
+                if (
+                    not session.ephemeral
+                    and path_message.persisted_message_id is None
+                    and path_message.role is ConsoleMessageRole.SYSTEM
+                ):
+                    continue
+                active_path.append(path_message.persisted_message_id or path_message.id)
+            canvas_run_id = str(uuid4())
+            canvas_scope = CanvasScope(
+                session_id=session_id,
+                conversation_id=conversation_id,
+                active_message_ids=tuple(active_path),
+                selected_canvas_id=None,
+                selected_revision_id=None,
+                run_id=canvas_run_id,
+            )
+            canvas_run = canvas_controller.register_run(
+                canvas_scope,
+                assistant_message_id=assistant_message_id,
+                temporary=session.ephemeral,
+            )
+            canvas_provider = CanvasToolProvider(
+                canvas_run,
+                scope=canvas_scope,
+                enabled_reader=self._canvas_enabled_reader,
+            )
+            canvas_authority = canvas_provider.issue_registration_authority()
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
             run_id, outcome = await asyncio.to_thread(
+                self._run_owned_chat_db_operation,
                 self._agent_bridge.run_reply,
                 conversation_id=conversation_id,
                 session_id=session_id,
@@ -22237,6 +22358,8 @@ class ConsoleChatController:
                 # per-run call caps.
                 persona_policy_rules=turn_context.persona_policy_rules,
                 profile_provider=profile_provider,
+                canvas_provider=canvas_provider,
+                canvas_authority=canvas_authority,
                 native_tools_enabled=bool(
                     turn_context.tool_configuration.get(
                         "native_tool_calls_enabled", True

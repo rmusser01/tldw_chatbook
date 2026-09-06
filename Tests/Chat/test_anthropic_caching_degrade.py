@@ -78,9 +78,7 @@ def test_degrade_is_visible_to_metrics(mock_post):
     bad = _bad_response('{"error": {"message": "cache_control is not supported"}}')
     mock_post.side_effect = [bad, _ok_response()]
 
-    with patch(
-        "tldw_chatbook.LLM_Calls.LLM_API_Calls.log_counter"
-    ) as mock_log_counter:
+    with patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.log_counter") as mock_log_counter:
         chat_api_call(
             "anthropic",
             messages_payload=[{"role": "user", "content": "hi"}],
@@ -154,12 +152,18 @@ def test_caching_enabled_defaults_true_and_warns_on_config_read_failure():
 
 def test_without_cache_control_strips_recursively():
     data = {
-        "system": [{"type": "text", "text": "s", "cache_control": {"type": "ephemeral"}}],
+        "system": [
+            {"type": "text", "text": "s", "cache_control": {"type": "ephemeral"}}
+        ],
         "messages": [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}
+                    {
+                        "type": "text",
+                        "text": "hi",
+                        "cache_control": {"type": "ephemeral"},
+                    }
                 ],
             }
         ],
