@@ -45,7 +45,7 @@ retains 31226/31741; the later wizard/Buddy tasks move to 31813/31812 and retain
 their Done states and inbound references. The task-ID guard passes 3347 paths.
 Post-rebase diagnostic review compared app statements with dev and the last pin:
 only the three fixed-code Canvas warnings were added to dev, with exception type
-names only; no statement changed after the last pin. The stale digest is being
+names only; no statement changed after the last pin. The stale digest was
 regenerated after that inspection. Final preflight passes all six categories:
 583 diagnostic owners, 1347 TASK-492/30 TASK-31551/7646 TASK-494 calls,
 12 sink files, 3347 task paths, 113 declared tables and 281 index census rows.
@@ -64,8 +64,13 @@ The exact command was:
 env -u TLDW_TRACE_LATENCY_ALLOW_NON_REFERENCE ../../.venv/bin/python -m pytest -q --tb=short --show-capture=no --basetemp=/private/tmp/chatbook-trace-integration-v5.n1I0qu/latency Tests/Benchmarks/test_console_trace_call_latency.py
 ```
 
-Independent I3 review, final growth/runtime preservation checks, publication,
-current-head Qodo/CI and normal merge remain pending. A fresh fetch found dev
+Final growth/runtime/recovery preservation selection passes **179 tests**,
+1 Requests warning, 232.11s, including both 200-turn append/replace growth gates,
+bounded compound growth, explicit recovery/refusal and production Canvas turns.
+Independent I3 review approved product/migrations and found one missed tracked
+Buddy task pointer; the pointer is corrected with historical provenance, with
+scoped follow-up verification pending. Publication, current-head Qodo/CI and
+normal merge remain pending. A fresh fetch found dev
 `cc22deb0a` adds only 14 lines in two CI workflow files beyond the tested base;
 it will be carried forward before publication, without claiming those workflows
 have already run on the unpublished integration head.
