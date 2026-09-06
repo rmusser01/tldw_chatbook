@@ -1,5 +1,7 @@
 """Console /research flag parsing (task-16793)."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from tldw_chatbook.UI.Console_Modules.research_command import (
@@ -88,6 +90,14 @@ class _RecordingScreen:
         self.app = app
         self.system_messages: list[str] = []
         self.worker_coroutines: list[object] = []
+        self._session = SimpleNamespace(
+            _current_console_conversation_id=self._current_console_conversation_id
+        )
+        self._message = SimpleNamespace(
+            _append_native_console_system_message=(
+                self._append_native_console_system_message
+            )
+        )
 
     async def _append_native_console_system_message(self, text: str) -> None:
         self.system_messages.append(text)
@@ -109,8 +119,6 @@ class _StubApp:
 
 
 async def test_research_worker_survives_a_corrupt_research_store(tmp_path):
-    from types import SimpleNamespace
-
     from loguru import logger as loguru_logger
 
     from tldw_chatbook.Research_Interop.local_research_service import (

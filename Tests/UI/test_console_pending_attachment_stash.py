@@ -20,6 +20,10 @@ import pytest
 from PIL import Image as PILImage
 from textual.widgets import Button
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.console_controller_stubs import stub_image_controller
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -562,7 +566,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
             "/generate-image :comfyui change it"
         )
         caller = asyncio.create_task(
-            old._console_command_generate_image(
+            old._image._console_command_generate_image(
                 CommandParse(
                     kind="command", name="generate-image", args=":comfyui change it"
                 )
@@ -585,7 +589,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
         assert stop.styles.display != "none"
         assert not stop.disabled
 
-        await fresh._console_command_generate_image(
+        await fresh._image._console_command_generate_image(
             CommandParse(
                 kind="command", name="generate-image", args=":comfyui change it"
             )
@@ -708,7 +712,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             old_store.set_session_draft(session.id, "settlement draft")
             old.query_one("#console-native-composer").load_draft("settlement draft")
             caller = asyncio.create_task(
-                old._console_command_generate_image(
+                old._image._console_command_generate_image(
                     CommandParse(
                         kind="command",
                         name="generate-image",
@@ -953,7 +957,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
             )
         old.query_one("#console-native-composer").load_draft("captured failure draft")
         caller = asyncio.create_task(
-            old._console_command_generate_image(
+            old._image._console_command_generate_image(
                 CommandParse(
                     kind="command", name="generate-image", args=":comfyui change it"
                 )
@@ -1048,7 +1052,7 @@ async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore
                 "preserved failure draft"
             )
             caller = asyncio.create_task(
-                old._console_command_generate_image(
+                old._image._console_command_generate_image(
                     CommandParse(
                         kind="command",
                         name="generate-image",

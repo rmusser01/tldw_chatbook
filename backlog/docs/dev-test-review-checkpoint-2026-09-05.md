@@ -1136,3 +1136,59 @@ root's full prior importer set plus launch-wake passes **576 in 236.96s**, three
 dependency warnings, zero retained SQLite lines and no FD-growth warning
 (`/private/tmp/tldw-31818-all-importers-final.xml`). Independent root review and
 scoped static checks pass. TASK-31818 is Done; no new ADR or production change.
+
+### Final remaining-inventory checkpoint (2026-09-06)
+
+Of the **53 distinct failures** from the 1,698-case remaining Console selection,
+**48 now have accepted passing replacement or unchanged-identity evidence**.
+This includes six prompt-facade guards replaced by exact approved owner/caller
+AST checks, the retired skill command covered by the exact late-bound callback
+guard, and the renamed ADR-097 soft-delete contract. It does not count the
+rejected forced-scroll Stop candidate as a repair. The original Stop test remains
+unchanged and red. No full-repository sweep or all-Console-green claim is made.
+
+Additional completed verification:
+
+- Five current-owner UI files: **74 passed in 29.55s**, no retained SQLite lines
+  (`/private/tmp/tldw-inventory-five-ui-owner-final.xml`). Provider origin timing,
+  raw CLI interception/payload rules, research error handling, real durable skill
+  submission and transcript repaint counts retain their original assertions.
+- Thinking/regeneration: **25 passed in 18.28s**, no retained SQLite lines
+  (`/private/tmp/tldw-inventory-thinking-regenerate-resource-final.xml`). Transport
+  doubles truthfully declare they bypass deferred dispatch. Soft-delete preserves
+  the local semantic envelope under ADR-097 while active APIs/provider context
+  exclude it and the exact sync tombstone remains content-free; edit/replacement
+  clearing remains checked. Failed regeneration retains the source followed by
+  the exact notified SYSTEM failure row, rather than incorrectly requiring the
+  source itself to be the final leaf.
+- Final newly cleaned inventory cohort: **93 passed / 1 failed in 100.36s**,
+  three dependency warnings, no retained SQLite lines or FD-growth warning
+  (`/private/tmp/tldw-31821-resource-final.xml`, matching `.log`). The sole failure
+  is the preserved Stop regression. TASK-31821 remains In Progress because its
+  full-file passing criterion depends on that separately tracked production fix.
+
+The final current failure ledger is concrete:
+
+| Scope | Confirmed cause / next bounded change | Tracking |
+| --- | --- | --- |
+| Two Parakeet retry tests | Owned confirmation suspends Console, discards retry audio, and leaves stale mic projection; preserve only the owned-dialog lifetime. | TASK-31817 |
+| Stop click | Production action row reserves 37 cells for 47 cells of controls; account for Redirect without forced scrolling. Synthetic Send setup must also establish ordinary composer focus. | TASK-31822 |
+| Character first-run UAT | Cached Console resume omits CHAT from its tracked handoff timers; add the existing claimant under the ordinary-resume guard. | TASK-31823 |
+| Navigation-storm teardown race | Queued ContentsRebuilt reads self.screen after stack teardown; guard the handler before dereference. Isolated navigation can pass, but the exact empty-stack call fails deterministically. | TASK-31824 |
+| Downstream UAT failure, exposed only by scratch resume probe | Synthesized leading system row gets ACTIVE_REQUEST instead of RENDERED_SYSTEM provenance; preserve saved ownership and classify only the leading system slice. Scratch correction makes the whole UAT pass. | TASK-31825 |
+| Separate existing size ratchet | Console is 16,900 lines / 508 methods against 16,818 / 505; fresh guard file is 4 passed / 1 failed. No limits changed. | TASK-31750 |
+
+The brainstorming skill requires approval before the proposed production
+lifecycle/layout/provenance changes. They are recorded as To Do, not implemented.
+The user has also not yet opted into a fresh repository-wide sweep; historical
+non-UI identities remain explicitly unqualified, not assumed passing. Resource
+verification used the Darwin F_GETPATH observer validated against a known open
+file; an invalid readlink-based zero result was rejected and documented in the
+testing-evidence lessons.
+
+Independent final review caught the trusted-raw forbidden spy still attached
+to a retired dispatch route. It now guards the actual prompt queue and explicitly
+checks that no dispatch was recorded. The complete raw-CLI file passes **20 in
+2.68s**, two dependency warnings (`/private/tmp/tldw-raw-cli-guard-review-final.xml`).
+All final changed-file lint/diff checks and changed-region formatting pass;
+unrelated pre-existing formatting drift was not rewritten.
