@@ -59,7 +59,7 @@ Concrete findings:
 <!-- AC:BEGIN -->
 - [x] #1 The reminder/definition Notifications row's editability (or permanent read-only-ness) is either made consistent between the two primitives, or the difference is explained in the row itself (a tooltip/helper line) rather than silently inconsistent
 - [x] #2 The recurring-question ("Create automation") form defaults `Schedule Kind` to `Recurring`, not `One Time`
-- [x] #3 Either the spec §5 kebab (or an equivalent Duplicate/View-runs/View-results affordance) is available from a detail pane, or the deferral is formally re-scoped as its own follow-up rather than left implicit (re-scoped to TASK-31816, per controller ruling)
+- [x] #3 Either the spec §5 kebab (or an equivalent Duplicate/View-runs/View-results affordance) is available from a detail pane, or the deferral is formally re-scoped as its own follow-up rather than left implicit (re-scoped to TASK-31823, per controller ruling)
 - [x] #4 A `DetailGroup`'s body no longer wastes multiple blank rows of padding when expanded at ordinary terminal heights
 - [x] #5 "Recent runs:"/"Run history" labels do not wrap across two lines at the detail pane's normal column width, and any pseudo-link value text either becomes a real affordance or reads as plain text
 - [x] #6 The Inspector pane's empty state is visually distinguishable from "no task selected" vs. "task selected, nothing to report"
@@ -81,7 +81,7 @@ One-Time fallback for an unrecognized schedule shape unchanged (a pinned
 test already required this). Updated `_fill_minimal_valid_form` and two
 tests that implicitly relied on the old default. Kebab (#3): re-scoped as
 its own follow-up per controller ruling rather than building speculative
-UI -- filed TASK-31816 (Duplicate/View-runs/View-results affordance).
+UI -- filed TASK-31823 (Duplicate/View-runs/View-results affordance).
 DetailGroup padding (#4): Textual's Collapsible/Contents body chrome
 (widget-tier padding-bottom, app-wide margin-bottom + a `border: tall`
 that leaked through because `border-top` alone never clears the other 3
