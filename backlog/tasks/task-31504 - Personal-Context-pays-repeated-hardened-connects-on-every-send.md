@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-04 19:30'
-updated_date: '2026-09-06 00:04'
+updated_date: '2026-09-06 00:18'
 labels:
   - performance
   - personal-context
@@ -34,6 +34,12 @@ ADR required: yes (amend existing decision). ADR path: backlog/decisions/102-per
 Independent spec review and code-quality review approved with no findings. Primary independently reran the nine-file targeted set: 169 passed, 2 dependency warnings (6.56s); quality reviewer separately ran 17 new regressions, all passed. Primary Ruff checks for repository/service/new tests, new-test formatting and diff check passed. Pytest emitted cleanup warnings for protected pre-existing garbage directories after exit 0; those unrelated directories were not modified. Implementation plan: Docs/superpowers/plans/2026-09-05-personal-context-send-performance.md. No schema or dependency changes, no full sweep, no PR or merge. Both authorized views remain intentionally per the documented owner note. Legacy unnumbered acceptance criteria were checked in the task source after CLI reported their indexes unavailable; Done status set through CLI.
 
 Publication: opened https://github.com/rmusser01/tldw_chatbook/pull/2439 against dev from reviewed source 0e3bcd1366. Fresh send-performance regression run: 17 passed, exit 0, two existing dependency warnings and pre-existing protected pytest garbage cleanup warnings; diff check passed. No rebase or merge. Current dev has advanced including Console changes; latest-base integration remains a pre-merge step.
+
+PR review round: rebase onto current dev, document public metadata/context-manager return contracts and name the storage identity slice boundary. Verify Qodo path/transaction recommendations against approved ADR-102 before changing authorization semantics. Run targeted Personal Context/Console tests and source checks, review the diff, then publish. Existing ADR-102 governs unchanged behavior; no new ADR required.
+
+Review evidence: rebased onto Chatbook dev 2b4973971e. Added public return contracts and named the identity-field count without changing checks. Retained operation-scoped autocommit per ADR-102: spanning live fences with a read transaction could hide revocation. Retained trusted lexical descriptor walk per private_paths.verify_trusted_directory security contract; path normalization before that walk would follow aliases before authority checks and reject supported root-owned macOS links. Fresh seven-file repository/service/context/export/inventory/Console selection: 151 passed, 2 dependency warnings, exit 0; protected pre-existing pytest cleanup warnings left unchanged. Ruff and changed-range formatting/diff checks passed; whole-file formatter has existing unrelated drift, not bulk-rewritten. Independent scoped review and derived preflight pending.
+
+Independent scoped spec and quality review approved the fixes and path/transaction rationale with no actionable findings. Full derived-artifact preflight passed (stylesheets, path census, diagnostic inventory, task IDs, table allowlist, index pins). All four Qodo items have a fix or evidence-backed disposition; publishing this reviewed round, not merging.
 <!-- SECTION:NOTES:END -->
 
 ## Description (the why)

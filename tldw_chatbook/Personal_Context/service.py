@@ -174,7 +174,12 @@ class PersonalContextService:
 
     @contextmanager
     def read_operation(self) -> Iterator[None]:
-        """Bound synchronous read reuse without caching live agent authority."""
+        """Bound synchronous read reuse without caching live agent authority.
+
+        Returns:
+            A context manager yielding None within the repository read lifetime,
+            or a no-op context when this service is unavailable or locked.
+        """
 
         if self._repository is None or self._locked_reason is not None:
             yield

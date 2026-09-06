@@ -56,6 +56,8 @@ _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
 MAX_UNRESOLVED_PROPOSALS = 200
 _COLLECTION_PAGE_SIZE = 128
+# Device, inode, owner, mode and link count; size/timestamps track content only.
+_STORAGE_IDENTITY_FIELD_COUNT = 5
 _REBASELINE_TABLES = ("local_runtime_policy", "local_scope_bindings")
 _PROFILE_CONTENT_TABLES = (
     "encrypted_outbox",
@@ -447,6 +449,10 @@ class PersonalContextRepository:
 
         This can invalidate an absent-state cache; it never grants profile access.
         SQLite sidecars may be created or retired by another connection.
+
+        Returns:
+            Parent identity followed by DB, WAL, SHM and journal metadata tuples.
+            Missing or content-neutral sidecars are represented by None.
         """
 
         verify_trusted_directory(self.db_path.parent, allow_shared_sticky=False)
@@ -500,6 +506,10 @@ class PersonalContextRepository:
 
         Nested operations borrow the outer lifetime. Mutations retain their own
         transactions; no read snapshot spans the live authorization fences.
+
+        Returns:
+            A context manager yielding None and closing its owned read connection
+            when the outermost operation exits, including on errors.
         """
 
         if getattr(self._read_operation, "state", None) is not None:
@@ -523,12 +533,12 @@ class PersonalContextRepository:
             return
         signature = self.storage_signature()
         # Content/WAL changes are expected: final fences must observe them live.
-        identity = signature[0], signature[1][:5]
+        identity = signature[0], signature[1][:_STORAGE_IDENTITY_FIELD_COUNT]
         if state["connection"] is None:
             state["connection"] = self._connect()
             state["identity"] = identity
             signature = self.storage_signature()
-            identity = signature[0], signature[1][:5]
+            identity = signature[0], signature[1][:_STORAGE_IDENTITY_FIELD_COUNT]
         if identity != state["identity"]:
             raise ProfileIntegrityError("Personal Context storage identity changed.")
         yield state["connection"]
