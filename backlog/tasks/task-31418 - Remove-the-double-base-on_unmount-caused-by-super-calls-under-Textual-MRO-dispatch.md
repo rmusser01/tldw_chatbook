@@ -3,9 +3,10 @@ id: TASK-31418
 title: >-
   Remove the double base on_unmount caused by super calls under Textual MRO
   dispatch
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-04 22:41'
+updated_date: '2026-09-06 08:08'
 labels:
   - textual
   - cleanup
@@ -39,6 +40,7 @@ This is a convention fix, not a bug fix: pick one discipline and make it uniform
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 **Approach:** Applied the repo's existing lifecycle convention (already in force
 for `on_mount` from prior work) to `on_unmount`: a subclass handler for an
 MRO-dispatched lifecycle event does NOT call `super().on_*()`, because Textual's
@@ -92,3 +94,4 @@ throwaway worktree).
 `UI/Screens/scheduling/schedules_workbench.py`,
 `Widgets/Console/{console_workspace_files_modal,console_session_switcher_modal}.py`,
 `backlog/docs/lessons-textual.md`, `Tests/UI/test_on_unmount_mro_convention.py` (new).
+<!-- SECTION:NOTES:END -->
