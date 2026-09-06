@@ -1112,3 +1112,14 @@ the real session's availability check, masking the lost audio. Proposed repair
 preserves only the owned retry-dialog suspension and restores the canonical mic
 projection; ordinary navigation/unmount still abandon. The brainstorming skill's
 design approval is pending, so no production dictation change has been made.
+
+### Further mounted-UI inventory qualification
+
+The rail hint failure was physical clipping below the real Inspector fold at
+160x45, not missing content. The test now reveals the hint through the existing
+outer scroll owner before demanding full containment and compositor ownership.
+Both viewport sizes, exact 20/21-row caps, local/outer hint rendering and inner
+scroll assertions remain intact. Complete file: **51 passed in 101.93s**, three
+dependency warnings (`/private/tmp/tldw-inventory-rail-final.xml`). Independent
+review found no issues in this change or the 26-test system-prompt repair above.
+No runtime/CSS, geometry, timeout or assertion budget was changed.
