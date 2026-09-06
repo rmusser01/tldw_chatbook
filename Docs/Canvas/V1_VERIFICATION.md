@@ -6,6 +6,51 @@ Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-im
 
 ## Current checkpoint — reviewed trace repair, integration gates pending
 
+### Current-dev migration integration (2026-09-05)
+
+Rebased onto dev `c7f1ca0f65c6a508209d8db3dccb1af315c4a1d8`, ending at
+`10ac841e6` before the integration follow-up. The retained recovery ref
+`codex/canvas-v1-before-dev-integration-20260905` preserves `941a43a90`.
+The complete range review found 127 equivalent and 13 adjusted replay commits,
+with no added or dropped replay commits. Canonical character-search `65→66`
+remains intact; Canvas creation and runtime profiles now use `66→67→68`.
+
+Synthetic regressions exposed silent acceptance of the old unmerged Canvas-only
+v67 schema. The new predecessor check refuses known incompatible pre-release
+v66/v67 shapes before Canvas migration writes; tests verify retained schema,
+version and Canvas content. This is not automatic conversion of private branch
+databases. Such databases need an explicit conversion contract; no user database
+was touched. ADR-121 records this limitation and canonical ownership.
+
+Root-owned targeted evidence on the integrated tree:
+
+- Migration guard RED: 2 failed, 9 passed, 1 Requests warning, 5.12s. Legacy v67
+  did not raise; legacy v66 already failed DDL but lacked the bounded refusal.
+- Both migration files after the guard: **16 passed**, 1 Requests warning, 6.41s.
+- Eight-file migration/projection/compaction/index/repository/archive selection:
+  **183 passed, 2 failed**, 1 Requests warning, 65.02s. The only failures were
+  five unpinned canonical character-search indexes, confirmed against dev SQL.
+  After exact census additions, the full census file has **8 passed**, 1 Requests
+  warning, 1.62s. No index or schema definition changed to satisfy the census.
+- Seven-file startup/import/Canvas-controller selection: **110 passed**,
+  4 warnings, 50.85s. Budgets unchanged: 969/972 UI-ready modules, 635/660 import
+  modules. Warnings include Requests, both census drift/headroom reports, and
+  joblib's serial fallback reporting resource exhaustion. A read-only disk check
+  showed 279 GiB available; this run does not establish the fallback's cause.
+- Mandatory Chromium native/served/zero-egress files: **90 passed, 2 skipped**,
+  1 Requests warning, 182.36s. Firefox and WebKit are not installed.
+
+Later colliding task IDs were reconciled with source-history provenance: Canvas
+retains 31226/31741; the later wizard/Buddy tasks move to 31813/31812 and retain
+their Done states and inbound references. The task-ID guard passes 3347 paths.
+Post-rebase diagnostic review compared app statements with dev and the last pin:
+only the three fixed-code Canvas warnings were added to dev, with exception type
+names only; no statement changed after the last pin. The stale digest is being
+regenerated after that inspection. Final preflight, numerical gates, independent
+I3 review, publication, current-head Qodo/CI and normal merge remain pending.
+
+### Earlier trace-repair checkpoint
+
 The approved completed-tool transition repair is implemented through `ed86d6a90`
 and its task checkpoints are independently reviewed. The broader review of
 `c2d5aac3a..f55ab2cbe` identified one additional replay gap: a cold

@@ -2047,7 +2047,7 @@ class SetupWizardProvider(Provider):
 
                 self.app.push_screen(
                     FirstRunSetupWizard(self.app, rerun=True),
-                    # TASK-31226: a re-run's cancellation must return to
+                    # TASK-31813: a re-run's cancellation must return to
                     # Settings, not route to the Console.
                     lambda result: self.app._handle_first_run_wizard_result(
                         result, cancel_to_console=False
@@ -15838,7 +15838,7 @@ class TldwCli(
         """Optionally chain personalization before the existing continuation.
 
         ``cancel_to_console`` is forwarded for cancellation routing
-        (TASK-31226); dict results are unaffected by it.
+        (TASK-31813); dict results are unaffected by it.
         """
 
         if type(result) is dict and result.get("offer_profile_interview") is True:
@@ -15898,7 +15898,7 @@ class TldwCli(
     ) -> None:
         """Preserve the pre-interview first-run result handling byte-for-byte.
 
-        TASK-31226: the cancel branch changed. Esc-exiting the boot-offered
+        TASK-31813: the cancel branch changed. Esc-exiting the boot-offered
         wizard used to strand the user on Home (the screen the wizard was
         pushed over, per the first-run startup route); cancelling now lands
         on the Console workbench. Settings/command-palette RE-RUNS opt out

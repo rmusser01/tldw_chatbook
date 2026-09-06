@@ -172,6 +172,16 @@ without claiming equivalence to the former hardware or closing other PR gates.
   or content-based non-delivery assumption. Review a new authority contract
   before implementing one if existing seams cannot express this distinction.
 - [ ] **Step 4: Update ADR/task/evidence, run derived preflight, commit and publish.** Recheck actual dev, rebase if needed with exact force-with-lease and recovery ref retained; inspect overlapping changes and reverify affected behavior. Read Qodo feedback on the new published head and address every finding. Wait for protected current-head CI. Do not merge a known failing integration case even if CI passes.
+
+  I3 integration on dev c7f1ca0f6: preserve canonical character-search65→66;
+  allocate Canvas66→67/67→68 under the original Canvas plan. ADR required: yes,
+  amend `backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md`
+  to record numbering and fail-closed refusal of incompatible pre-release-only
+  predecessor databases. No trace schema extension or automatic data conversion.
+  Prove genuine dev66 upgrade/fresh parity, Canvas67 row/profile preservation,
+  migration rollback/retry and unchanged character-search state. Fix current-head
+  test pins without weakening historical fixtures. Move the later Buddy TASK31741
+  claimant to a freshly swept free ID, preserving all shipped references.
 - [ ] **Step 5: Merge PR2432 normally into dev and verify merge SHA.** No admin bypass or deletion of worktrees/recovery refs. Only after verified merge begin V2 brainstorming; V2 implementation is not part of this plan.
 
 ## Plan self-review

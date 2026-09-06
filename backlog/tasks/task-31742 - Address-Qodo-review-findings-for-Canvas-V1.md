@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 21:37'
-updated_date: '2026-09-06 03:58'
+updated_date: '2026-09-06 04:21'
 labels:
   - canvas
   - review
@@ -33,6 +33,7 @@ Resolve every finding posted on PR 2432 with verified corrections or evidence-ba
 - [x] #9 Short-lived trace worker operations release only their owned database handles on completion, failure and cancellation; repeated real agent and settlement operations do not accumulate exited-thread handles, and caller-owned or same-file observer connections remain usable.
 - [x] #10 After a proven pre-dispatch trace failure, explicit Send without capture and Cancel work for ordinary and agent sends without reviving terminal trace calls, weakening uncertain-delivery guards, or dispatching automatically.
 - [x] #11 The explicitly owner-approved M5 Max reference fixture is versioned and documented in ADR-097; workload and numerical limits are unchanged, and a retained benchmark artifact proves environment matching and threshold enforcement.
+- [ ] #12 Latest-dev integration preserves canonical character-search and Canvas migration histories, verifies genuine upgrades and rollback, refuses incompatible pre-release predecessor databases without mutation, and resolves task-ID collisions with provenance-aware reference updates.
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -7879,10 +7879,62 @@ UPDATE db_schema_version
                 f"Migration from V65 to V66 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _require_canvas_migration_predecessor_schema(
+        self,
+        conn: sqlite3.Connection,
+        expected_version: int,
+    ) -> None:
+        """Refuse ambiguous pre-integration Canvas schema version ownership."""
+
+        character_search_objects = {
+            "character_conversation_search_documents",
+            "character_conversation_fts",
+            "character_conversation_search_generations",
+            "character_conversation_search_dirty",
+            "character_conversation_search_revision",
+            "character_conversation_search_state",
+        }
+        canvas_objects = {
+            "canvas_conversation_hints",
+            "canvas_documents",
+            "canvas_revisions",
+            "idx_canvas_documents_conversation",
+            "idx_canvas_revisions_canvas_sequence",
+            "idx_canvas_revisions_origin_message",
+            "idx_canvas_revisions_parent",
+            "uq_canvas_documents_id_conversation",
+            "uq_canvas_revisions_id_canvas",
+            "canvas_documents_ownership_immutable",
+            "canvas_origin_message_owner_guard",
+            "canvas_revisions_no_delete",
+            "canvas_revisions_no_update",
+            "canvas_revisions_origin_owner_guard",
+            "canvas_revisions_parent_guard",
+        }
+        if expected_version == 66:
+            required_objects = character_search_objects
+            forbidden_objects = canvas_objects
+        elif expected_version == 67:
+            required_objects = character_search_objects | canvas_objects
+            forbidden_objects = set()
+        else:
+            raise SchemaError("incompatible Canvas migration predecessor schema")
+
+        inspected_objects = required_objects | forbidden_objects
+        placeholders = ", ".join("?" for _ in inspected_objects)
+        rows = conn.execute(
+            f"SELECT name FROM sqlite_master WHERE name IN ({placeholders})",
+            tuple(sorted(inspected_objects)),
+        ).fetchall()
+        found_objects = {str(row[0]) for row in rows}
+        if not required_objects <= found_objects or forbidden_objects & found_objects:
+            raise SchemaError("incompatible Canvas migration predecessor schema")
+
     def _migrate_from_v66_to_v67(self, conn: sqlite3.Connection) -> None:
         """Add conversation-owned immutable Canvas revision graphs."""
 
         self._require_migration_entry_version(conn, 66, "V66→V67")
+        self._require_canvas_migration_predecessor_schema(conn, 66)
         migration_path = (
             Path(__file__).parent
             / "migrations"
@@ -7922,6 +7974,7 @@ UPDATE db_schema_version
         """Widen Canvas storage to bounded, inert runtime profile identifiers."""
 
         self._require_migration_entry_version(conn, 67, "V67→V68")
+        self._require_canvas_migration_predecessor_schema(conn, 67)
         migration_path = (
             Path(__file__).parent
             / "migrations"

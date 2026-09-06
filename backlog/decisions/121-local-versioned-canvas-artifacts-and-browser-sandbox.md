@@ -8,6 +8,23 @@ the original number; this is the same Canvas decision, with no policy change.
 Related Tasks: TASK-31226, TASK-31227, TASK-31228, TASK-31229, TASK-31230, TASK-31003
 Related: TASK-31003, ADR-069, ADR-032
 
+### Current-dev schema integration (2026-09-05, TASK-31742)
+
+Dev now owns schema65→66 for character-conversation search. Preserve that
+canonical migration and allocate Canvas revision creation at66→67 and inert
+runtime-profile storage at67→68, as the original implementation plan requires.
+Historical execution notes below describe the former unmerged66/67 numbering;
+the canonical current schema is68. No table, runtime-profile, quota or ownership
+semantics change through renumbering.
+
+Pre-release Canvas-only databases stamped66/67 do not identify these canonical
+predecessor schemas. Refuse an incompatible predecessor before Canvas migration
+writes, preserving its rows and version; do not guess, relabel or automatically
+convert it. Supporting conversion of those private branch databases requires an
+explicit migration path. Verify genuine dev66 upgrades, intermediate Canvas67
+row preservation, fresh parity, rollback/retry, retained character-search state,
+and fail-closed legacy refusal with synthetic databases only.
+
 ## Decision
 
 Chatbook will add **Canvas** as a conversation-owned, local-first artifact
@@ -386,8 +403,9 @@ enabled by relaxing the V1 sandbox.
 
 ### Durable revision implementation record
 
-TASK-31227 implements the durable portion of this decision in schema migration
-65 to 66. The migration adds `canvas_documents`, `canvas_revisions`, and the
+TASK-31227 implements the durable portion of this decision in integrated schema
+migration 66 to 67 (the original pre-integration delivery used 65 to 66). The
+migration adds `canvas_documents`, `canvas_revisions`, and the
 local-only `canvas_conversation_hints` table. Documents have immutable
 conversation ownership. Revisions have immutable identity and payload, a
 same-Canvas parent, a unique per-Canvas sequence, revisioned title/runtime
@@ -415,8 +433,9 @@ graph, allowing a deterministic retry. Close, restore, same-ID recreation, and
 runtime teardown cannot race an active promotion; ending an unsaved session
 retires its owner and destroys its staged source.
 
-The active-path queries were reviewed with SQLite `EXPLAIN QUERY PLAN` on a
-fresh schema-66 database. Conversation and message scope checks use their
+The historical pre-integration active-path query evidence was reviewed with
+SQLite `EXPLAIN QUERY PLAN` on a fresh schema-66 database. Conversation and
+message scope checks use their
 primary-key indexes; Canvas listing uses
 `idx_canvas_documents_conversation` and
 `idx_canvas_revisions_canvas_sequence`; exact revision reads use the revision
@@ -459,12 +478,12 @@ idempotent, while any content, order, ownership, or lineage conflict aborts
 without overwrite. Historical origin messages may be soft-deleted but must
 still exist in the owning conversation.
 
-Schema 67 replaces the original schema-66 `runtime_profile = 'canvas-v1'`
+Integrated schema 68 replaces the schema-67 `runtime_profile = 'canvas-v1'`
 storage check with a bounded safe-identifier check. This permits a well-formed
 future profile to round-trip as inert local data, while the compiler and
 renderer still execute only explicitly supported profiles and never guess or
-downgrade one. The v66→v67 migration rebuilds the immutable revision table,
-preserves all constraints/triggers/indexes, and has genuine-v66 rollback and
+downgrade one. The v67→v68 migration rebuilds the immutable revision table,
+preserves all constraints/triggers/indexes, and has genuine-v67 rollback and
 fresh-schema parity coverage. Canvas rows remain excluded from synchronization
 logs and services.
 

@@ -455,7 +455,7 @@ The implementation may place tests beside an existing narrower suite when that b
 - Modify: `tldw_chatbook/Canvas/archive.py`
 - Modify: `tldw_chatbook/Canvas/repository.py`
 - Modify: `tldw_chatbook/DB/ChaChaNotes_DB.py`
-- Create: `tldw_chatbook/DB/migrations/chachanotes_v66_to_v67_canvas_runtime_profiles.sql`
+- Create: `tldw_chatbook/DB/migrations/chachanotes_v67_to_v68_canvas_runtime_profiles.sql`
 - Create/modify: focused Chatbook creator/importer tests
 
 - [x] Add a whole-graph round-trip fixture with multiple Canvases, title changes, sibling branches, historical origins, deletions, and reopen hints. Assert exact source/digest/ancestry equality.
@@ -465,7 +465,7 @@ The implementation may place tests beside an existing narrower suite when that b
 - [x] Implement import-as-new by precomputing maps for conversation, messages, Canvas, revisions, parents, origins, and hints, validating the remapped graph, then committing all records in one transaction.
 - [x] Inject failures at validation, file streaming, message import, Canvas import, and final commit; assert no partial imported graph remains.
 - [x] Keep unsupported profiles inert and labeled; never compile them using the current profile.
-- [x] Migrate schema 66 to 67 so well-formed bounded unknown runtime-profile identifiers can be stored inert, while execution remains restricted to explicitly supported profiles; prove genuine-v66 migration, rollback, and fresh-schema parity.
+- [x] Migrate integrated schema 67 to 68 so well-formed bounded unknown runtime-profile identifiers can be stored inert, while execution remains restricted to explicitly supported profiles; prove genuine-v67 migration, rollback, and fresh-schema parity. The original pre-integration delivery and its historical evidence used 66 to 67.
 - [x] Verify V1/V2 golden archives still behave identically and no Canvas data enters synchronization services.
 - [x] Run focused Chatbook, repository, decompression-bomb, property, and transaction tests.
 - [x] Commit: `feat(chatbooks): round-trip Canvas histories`
@@ -566,7 +566,7 @@ quotas alone do not remove the scheduling requirement.
 - Create as needed: focused live-harness helpers/fixtures under `Tests/Canvas/browser/`
 - Modify as needed: `tldw_chatbook/Canvas/gateway.py`, `tldw_chatbook/Canvas/static/canvas_shell.js`, `tldw_chatbook/Web_Server/serve.py`, and focused gateway/served-state/browser tests to repair the reproduced served exact-card selection delivery gap and redundant parent synchronization. Preserve exact-selection capability revocation, historical pinning, shell ownership and stale-response fences; do not reload a consumed bootstrap or weaken authentication. Passive synchronization of an already-applied scope must remain distinct from explicit same-revision selection intent. ADR-121 already governs this behavior; no new architecture is authorized.
 - Modify as needed: `Tests/Chatbooks/test_chatbook_canvas_round_trip.py`
-- Modify: `Tests/DB/test_chachanotes_v65_trace_compaction_migration.py` (remove the stale current-schema literal after the reviewed Canvas schema 67 migration; preserve the genuine v64 upgrade fixture and compaction assertions)
+- Modify: `Tests/DB/test_chachanotes_v65_trace_compaction_migration.py` (remove the stale current-schema literal after the integrated Canvas schema 68 migrations; preserve the genuine v64 upgrade fixture and compaction assertions)
 - Modify: `Tests/Chat/test_console_semantic_mutation_inventory.py` and `Docs/Development/console-semantic-mutation-inventory.md` (synchronize exact census totals and owner documentation for the two already-classified Canvas routes; retain the bidirectional structural checks)
 - Modify: TASK-31232 with final evidence and notes
 - Modify: `tldw_chatbook/Canvas/control_protocol.py`, `tldw_chatbook/Canvas/capabilities.py`, the already scoped gateway/served-parent/shell, and focused protocol/capability/gateway/browser tests to fence a queued navigation against its original selection intent before child mutation. Preserve a child-owned opaque generation through scope/capability/bootstrap round trips and validate the browser's issued selection epoch; explicit same-revision pin changes intent, passive snapshots do not. Missing served expectations fail closed. See ADR-121's selection-intent amendment; do not add a legacy served bypass.

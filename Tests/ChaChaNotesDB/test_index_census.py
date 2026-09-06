@@ -30,11 +30,13 @@ divergence the parity sweep normalizes away is also caught.
 
 UNIQUE-ness decisions (AC #2): the UNIQUE flag is pinned for ALL indexes via
 ``IndexPin.unique`` — losing UNIQUE silently legalizes duplicate rows that
-application code assumes cannot exist, so every one of the twenty-four is treated
+application code assumes cannot exist, so every one of the twenty-five is treated
 as integrity-bearing:
 
 * ``idx_canvas_revisions_canvas_sequence`` — one monotonic sequence position
   per Canvas, including sibling branches.
+* ``character_conversation_search_one_ready_generation`` — at most one ready
+  character-search projection generation per data authority (partial).
 * ``uq_canvas_documents_id_conversation`` — supports the same-owner composite
   foreign key used by local reopen hints.
 * ``uq_canvas_revisions_id_canvas`` — supports the same-Canvas composite parent
@@ -82,12 +84,12 @@ from typing import NamedTuple
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.ChaChaNotesDB.historical_bootstrap import (
     MINIMUM_BOOTSTRAP_VERSION,
     chachanotes_db_at_version,
     open_current_chachanotes_from_legacy,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 _THIS_FILE = "Tests/ChaChaNotesDB/test_index_census.py"
 
@@ -121,7 +123,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         ("data_authority_id", "source_revision"),
     ),
     "character_conversation_search_generations_authority_status": IndexPin(
-        "character_conversation_search_generations", False, ("data_authority_id", "status")
+        "character_conversation_search_generations",
+        False,
+        ("data_authority_id", "status"),
     ),
     "character_conversation_search_one_ready_generation": IndexPin(
         "character_conversation_search_generations", True, ("data_authority_id",)
