@@ -1,11 +1,11 @@
 ---
 id: TASK-31934
 title: Define Canvas runtime profile snapshots and admission
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:09'
-updated_date: '2026-09-06 22:41'
+updated_date: '2026-09-06 23:05'
 labels:
   - canvas
   - v2
