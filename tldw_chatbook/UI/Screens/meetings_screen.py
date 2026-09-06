@@ -29,6 +29,14 @@ from ...Constants import LIBRARY_NAV_CONTEXT_INGEST, TAB_LIBRARY
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
+# Absolute import (not this file's usual relative style): the diagnostic
+# inventory checker's safe-path-transform recognizer
+# (`scripts/check_persistent_diagnostic_inventory.py`) only matches
+# `redact_user_paths` imported as `tldw_chatbook.Utils.log_sanitizer`, not a
+# relative `from ...Utils.log_sanitizer import ...` -- matches
+# `meeting_session.py`/`library_media_canvas.py`'s own import of it.
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
+
 LABELS = {"you": "You", "others": "Others", "both": "You + Others"}
 STOP_REASON_COPY = {
     "mic_lost": "Microphone stopped delivering audio; the meeting was ended.",
@@ -482,7 +490,11 @@ class MeetingsScreen(BaseAppScreen):
         try:
             update_meeting_json(session.meta.folder, speaker_names=dict(session.meta.speaker_names))
         except Exception as exc:  # noqa: BLE001 - a rename must not crash the screen
-            logger.debug("meetings rename persist failed: {}", exc)
+            # `update_meeting_json` failures are usually filesystem errors,
+            # whose `str()` embeds the meeting folder path (task-9 diagnostic
+            # inventory review) -- same treatment as `meeting_session.py`'s
+            # other file-write failure logs.
+            logger.debug("meetings rename persist failed: {}", redact_user_paths(str(exc)))
         self._rerender_transcript()
         if not self.is_mounted:
             return

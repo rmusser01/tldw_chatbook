@@ -48,6 +48,7 @@ from tldw_chatbook.Library.library_shell_state import (
     library_choice_tooltip,
     library_disabled_action_label,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
@@ -536,7 +537,11 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         try:
             rename_meeting_speaker(self.media_db, self.speaker_rename_media_id, cluster_id, name)
         except Exception as exc:  # noqa: BLE001 - a rename must not crash the canvas
-            logger.warning("Library media speaker rename failed: {}", exc)
+            # `rename_meeting_speaker` reads/writes `meeting.json`; a
+            # filesystem failure's `str()` embeds the meeting folder path
+            # (task-9 diagnostic inventory review) -- redact it, mirroring
+            # `meetings_screen.py`'s own rename-persist failure log.
+            logger.warning("Library media speaker rename failed: {}", redact_user_paths(str(exc)))
             return
         if not self.is_mounted:
             return
