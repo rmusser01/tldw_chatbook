@@ -274,7 +274,6 @@ async def test_regenerate_persists_new_sibling_when_store_has_persistence():
     # would make it silently vanish from the DB.
     assert new_message.persisted_message_id is not None
     assert any(
-        entry["id"] == new_message.persisted_message_id
-        and entry["content"] == "hello"
+        entry["id"] == new_message.persisted_message_id and entry["content"] == "hello"
         for entry in persistence.created_messages
     )

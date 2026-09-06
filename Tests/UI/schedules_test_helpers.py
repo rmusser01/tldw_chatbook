@@ -339,6 +339,39 @@ def painted_at_own_center(host, widget) -> bool:
     return target is widget or widget in list(target.ancestors)
 
 
+def painted_glyphs_at(host, widget) -> str:
+    """Every glyph the compositor paints across ``widget``'s own rows,
+    restricted to its own x-range, row-joined.
+
+    The oracle the schedules-UAT-remediation root-causes doc used to
+    catch the ``Input``/``Select`` editor-clipping display blocker: a
+    focused compact editor's ONE content row IS its value, and the
+    `*:focus` outline (or an un-compacted 3-row border) can overwrite
+    that row while every structural attribute (``editor.value``,
+    ``row.query_one(...) is editor``) stays perfectly correct --
+    `test_detail_value_row.py`'s own module contract: "rendered output
+    only, never a stored attribute the widget might ignore." Restricting
+    to ``widget``'s own x-range (not just its y-rows) keeps a same-row
+    sibling -- e.g. a ``DetailValueRow``'s label -- from making a clipped
+    editor look painted when it is not.
+    """
+    region = widget.region
+    strips = host.screen._compositor.render_strips()
+    lines: list[str] = []
+    for y in range(region.y, region.bottom):
+        if not 0 <= y < len(strips):
+            continue
+        cursor = 0
+        chars: list[str] = []
+        for segment in strips[y]:
+            next_cursor = cursor + segment.cell_length
+            if cursor < region.right and next_cursor > region.x:
+                chars.append(segment.text)
+            cursor = next_cursor
+        lines.append("".join(chars))
+    return "\n".join(lines)
+
+
 def rendered_row_cells(table, row_index: int = 0) -> list[str]:
     """The cell text a `DataTable` will actually PAINT for one row.
 

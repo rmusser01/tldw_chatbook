@@ -1,5 +1,84 @@
 # Chunking Lab verification record
 
+## PR #2421 startup-budget correction (2026-09-05)
+
+User authorized repairing the inherited startup breach before merge. Rebased
+onto dev `22006e84d8877813c3dc79cdd9ea2f72f68e102f`. Under existing ADR-097,
+Environment gatherers/scanner now load on admitted refresh, vLLM setup types on
+target validation, subscription support on Anthropic use, and the custom-PII
+worker only for runnable custom rules. Existing ownership, scheduler timing,
+credential opt-in/failure and masking policies remain unchanged. No budget was
+raised and no guard was skipped. Independent read-only reviews found no issues.
+
+The initial census reproduced dev/PR CI at976 against972. The first four-module
+deferral passed125 related tests but the census observed973, then974 after rebase:
+the immediate scheduler legitimately adds emergency-stop/heartbeat modules.
+Two further first-use deferrals removed that pressure; final census970/972.
+New isolated regressions failed on eager imports before correction. An initial
+vLLM regression fixture used a noncanonical URL; it was corrected before the
+valid RED run. The broad combined run stalled and was stopped; it is **not**
+acceptance evidence. Bounded independent selections on the integrated tree:
+
+| Selection | Result | Local JUnit artifact |
+|---|---|---|
+| Lab screen/recovery/results | 66 passed,72.41s | `pr-startup-lab-final.xml` |
+| Environment controller/wiring/state/gatherers, handoff store, vLLM setup | 322 passed,48.84s | `pr-startup-environment-final.xml` |
+| Import regressions, census, subscription/readiness, custom-PII/config/worker/masks | 274 passed,20.00s | `pr-startup-extra-green.xml` |
+| Exact Perf Guard selections | 27 passed,50.12s | `pr-startup-perf-final.xml` |
+| Gateway custom-PII batching consumer | 1 passed,426 deselected | Console output |
+| vLLM workflow handoff/intent selection | 12 passed,1 failed,93 deselected | `pr-startup-vllm-final.xml` |
+
+Artifacts are in the existing ignored `.superpowers/chunking-lab-uat-CdhW74/`.
+The vLLM failure is `test_navigation_to_fresh_models_screen_preserves_exact_ready_handoff`:
+the pending Console handoff remains unconsumed at line2551. A clean archive of
+the exact dev base reproduces the identical assertion (`pr-startup-vllm-base.xml`);
+this unrelated route-reuse failure remains unfixed, not counted as a pass.
+
+All six preflight checks pass. Scoped Ruff/format and whitespace checks pass.
+The older API/readiness/subscription/gateway/masking files retain baseline static
+debt; differential lint introduced no findings (including the API module's same
+360 baseline findings). No broad API formatting rewrite was performed. Warnings
+remain unsuppressed: Requests compatibility, vendored datetime deprecation,
+invalid escape, and a joblib semaphore-space warning with serial fallback.
+The latter does not mean disk capacity or parallel execution was qualified.
+No full-suite, new live-UAT, or cross-platform claim.
+
+### Remote code acceptance and final bookkeeping
+
+Published code head `a88a6c292e66c4a9f56bd40c0c24f19ff5f64440` incorporates
+latest dev `2c9c144181b942af2d29d16b9eb2681d7f5a7212`; the final base update
+from22006 adds a backlog task only. A fresh fetch confirms this base.
+[Qodo's explicit review](https://github.com/rmusser01/tldw_chatbook/pull/2421#issuecomment-5553936113)
+reported no major issues or security concerns, and its persistent review marks
+the sole original docstring finding resolved. All inline threads are resolved.
+[Required CI33984407143](https://github.com/rmusser01/tldw_chatbook/actions/runs/33984407143)
+passed both Fast Lane and Derived Artifacts;
+[Perf Guard33984407162](https://github.com/rmusser01/tldw_chatbook/actions/runs/33984407162),
+CSS and Backlog guards also passed. CodeRabbit skipped review on dev; its green
+status is not approval. Platform-evidence skips do not qualify other platforms.
+
+Fresh local preflight passes all six checks (3304 task files), with whitespace
+checks clean. TASK-31645 AC19 is accepted on the reviewed code and CI evidence,
+with the unrelated baseline vLLM failure still explicitly qualified above.
+Final bookkeeping changes documentation/task records only; the resulting exact
+head must pass remote review and checks before merge. No merge is claimed here.
+
+## Post-merge live UAT correction (2026-09-05)
+
+Normal Library entry could remain in loading because the lazy worker ran before
+Textual finished mounting and exited through its teardown guard. The local
+follow-up defers dispatch until after refresh, retaining the existing guard and
+coordinator boundary (ADR-118). A yielding-Mount regression failed before the
+correction; final targeted UI/results/recovery tests passed66, scoped static
+checks passed, and independent review found no issues. Real A/B authoring,
+advanced configuration preservation, local template saving, reopening and
+forced-process-exit recovery passed the bounded acceptance run. Two non-blocking
+presentation findings and unexercised cases remain explicit in the
+[UAT report](Chunking_Lab_UAT_2026-09-05.md). The user subsequently authorized a
+separate follow-up PR against dev; earlier merge/CI evidence below does not cover
+this new change. Publication verification is recorded in the follow-up plan.
+
+
 Branch: `codex/chunking-lab`, originally based on `origin/dev` commit
 `1a82db60ce47890c6d2df9f918f80309c8608ea6`, rebased onto
 `93388ba69b7499c2bc3180fc26c82d7f341871a7` on 2026-09-05. Architecture:

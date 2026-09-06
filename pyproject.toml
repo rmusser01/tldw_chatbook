@@ -491,12 +491,19 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
-# Bundle only the reviewed Samira and tiktoken runtime inventories.
+# Bundle only the reviewed character, Buddy and tiktoken runtime inventories.
 "tldw_chatbook" = [
     "assets/characters/samira/*.json",
     "assets/characters/samira/*.png",
     "assets/characters/samira/*.md",
     "assets/characters/samira/expressions/*.webp",
+    "assets/characters/pixel_migu/*.json",
+    "assets/characters/pixel_migu/*.png",
+    "assets/characters/pixel_migu/*.md",
+    "assets/characters/pixel_migu/expressions/*.png",
+    "assets/persona_visual/pixel_migu/*.json",
+    "assets/persona_visual/pixel_migu/*.png",
+    "assets/persona_visual/pixel_migu/*.md",
     "assets/tiktoken_cache/0ea1e91bbb3a60f729a8dc8f777fd2fc07cd8df4",
     "assets/tiktoken_cache/6c7ea1a7e38e3a7f062df639a5b80947f075ffe6",
     "assets/tiktoken_cache/6d1cbeee0f20b3d9449abfede4726ed8212e3aee",
@@ -567,6 +574,9 @@ exclude = [
 "tldw_chatbook.css.core" = ["*.tcss"]
 "tldw_chatbook.css.features" = ["*.tcss"]
 "tldw_chatbook.css.layout" = ["*.tcss"]
+# Ship the macOS system-audio helper's Swift source: `ensure_helper()` compiles
+# it with swiftc on first use when no prebuilt binary is bundled.
+"tldw_chatbook.Audio.audiotap" = ["*.swift"]
 # If you have other assets inside your tldw_chatbook package (e.g., tldw_chatbook/assets/), add them here:
 # "tldw_chatbook.assets" = ["*"]
 
@@ -614,7 +624,7 @@ markers = [
     "notes: Notes feature tests",
     "requires_display: tests that require a display (may fail in CI)",
     "requires_cleanup: tests that need a gc pass immediately after running",
-    "real_audio_device: opts out of the autouse _no_real_audio_device guard (Tests/conftest.py) to exercise a real sounddevice OutputStream",
+    "real_audio_device: opts out of the autouse _no_real_audio_device guard (Tests/conftest.py) to exercise a real sounddevice OutputStream, or a mocked input recorder loop",
     "allow_network: opts out of the autouse _no_network_io guard (Tests/conftest.py) to open a real socket; justify it in the test's docstring",
     "loopback_network: permits only numeric IPv4 127.0.0.0/8 and IPv6 ::1 sockets under the autouse _no_network_io guard (Tests/conftest.py)",
     "local_server_probe: opts out of the autouse _no_local_server_probes guard (Tests/conftest.py) to exercise the real /v1/models probe against an injected httpx.MockTransport client",

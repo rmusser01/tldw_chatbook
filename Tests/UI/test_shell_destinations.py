@@ -17,6 +17,7 @@ def test_master_shell_destination_order_matches_spec():
         "Watchlists",
         "Schedules",
         "Workflows",
+        "Meetings",
         "MCP",
         "ACP",
         "Lab",

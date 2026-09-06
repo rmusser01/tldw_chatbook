@@ -5,6 +5,7 @@ Persistence foundation for the turn-file-card annotate/feedback loop
 §1). Tests run against a real FILE-BACKED ``AgentRunsDB`` — never
 ``:memory:`` (thread-affinity trap, V1 lesson carried into this spec).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -118,12 +119,22 @@ def test_add_change_note_file_note_round_trips_sentinels(db):
 def test_notes_for_run_oldest_first(db):
     run_id = _make_run(db)
     first = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="first",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="first",
     )
     second = db.add_change_note(
-        run_id=run_id, root="/r", path="b.py", hunk_index=1,
-        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="second",
+        run_id=run_id,
+        root="/r",
+        path="b.py",
+        hunk_index=1,
+        hunk_header="@@ -2,1 +2,1 @@",
+        hunk_excerpt="y",
+        note="second",
     )
     ids = [row["id"] for row in db.notes_for_run(run_id)]
     assert ids == [first, second]
@@ -135,16 +146,31 @@ def test_pending_notes_for_conversation_joins_both_runs_oldest_first(db):
     other_conv_run = _make_run(db, conversation_id="conv2")
 
     note_a = db.add_change_note(
-        run_id=run_a, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="note-a",
+        run_id=run_a,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="note-a",
     )
     note_b = db.add_change_note(
-        run_id=run_b, root="/r", path="b.py", hunk_index=0,
-        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="note-b",
+        run_id=run_b,
+        root="/r",
+        path="b.py",
+        hunk_index=0,
+        hunk_header="@@ -2,1 +2,1 @@",
+        hunk_excerpt="y",
+        note="note-b",
     )
     db.add_change_note(
-        run_id=other_conv_run, root="/r", path="c.py", hunk_index=0,
-        hunk_header="@@ -3,1 +3,1 @@", hunk_excerpt="z", note="note-other-conv",
+        run_id=other_conv_run,
+        root="/r",
+        path="c.py",
+        hunk_index=0,
+        hunk_header="@@ -3,1 +3,1 @@",
+        hunk_excerpt="z",
+        note="note-other-conv",
     )
 
     pending = db.pending_notes_for_conversation("conv1")
@@ -155,8 +181,13 @@ def test_pending_notes_for_conversation_joins_both_runs_oldest_first(db):
 def test_pending_notes_for_conversation_excludes_delivered(db):
     run_id = _make_run(db)
     note_id = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="note",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="note",
     )
     db.mark_notes_delivered([note_id])
     assert db.pending_notes_for_conversation("conv1") == []
@@ -165,12 +196,22 @@ def test_pending_notes_for_conversation_excludes_delivered(db):
 def test_mark_notes_delivered_stamps_only_given_ids_and_sets_timestamp(db):
     run_id = _make_run(db)
     note_1 = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="one",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="one",
     )
     note_2 = db.add_change_note(
-        run_id=run_id, root="/r", path="b.py", hunk_index=1,
-        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="two",
+        run_id=run_id,
+        root="/r",
+        path="b.py",
+        hunk_index=1,
+        hunk_header="@@ -2,1 +2,1 @@",
+        hunk_excerpt="y",
+        note="two",
     )
 
     stamped = db.mark_notes_delivered([note_1])
@@ -190,12 +231,22 @@ def test_mark_notes_delivered_returns_only_actually_stamped_ids(db):
     """
     run_id = _make_run(db)
     note_1 = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="one",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="one",
     )
     note_2 = db.add_change_note(
-        run_id=run_id, root="/r", path="b.py", hunk_index=1,
-        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="two",
+        run_id=run_id,
+        root="/r",
+        path="b.py",
+        hunk_index=1,
+        hunk_header="@@ -2,1 +2,1 @@",
+        hunk_excerpt="y",
+        note="two",
     )
 
     # Simulate a lost race: note_2 gets delivered by someone else first.
@@ -223,8 +274,13 @@ def test_mark_notes_delivered_stamps_delivered_by_run_id_when_given(db):
     run_a = _make_run(db, conversation_id="conv1")
     run_b = _make_run(db, conversation_id="conv1")
     note_id = db.add_change_note(
-        run_id=run_a, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="anchored-to-a",
+        run_id=run_a,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="anchored-to-a",
     )
 
     db.mark_notes_delivered([note_id], delivered_by_run_id=run_b)
@@ -241,8 +297,13 @@ def test_mark_notes_delivered_leaves_delivered_by_run_id_null_when_omitted(db):
     column NULL, exactly like a pre-migration stamp would read."""
     run_id = _make_run(db)
     note_id = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="no-deliverer",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="no-deliverer",
     )
     db.mark_notes_delivered([note_id])
     row = db.notes_for_run(run_id)[0]
@@ -258,18 +319,35 @@ def test_delivered_notes_for_conversation_joins_both_runs_oldest_first(db):
     other_conv_run = _make_run(db, conversation_id="conv2")
 
     note_a = db.add_change_note(
-        run_id=run_a, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="note-a",
+        run_id=run_a,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="note-a",
     )
     note_b = db.add_change_note(
-        run_id=run_b, root="/r", path="b.py", hunk_index=0,
-        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="note-b",
+        run_id=run_b,
+        root="/r",
+        path="b.py",
+        hunk_index=0,
+        hunk_header="@@ -2,1 +2,1 @@",
+        hunk_excerpt="y",
+        note="note-b",
     )
     other_conv_note = db.add_change_note(
-        run_id=other_conv_run, root="/r", path="c.py", hunk_index=0,
-        hunk_header="@@ -3,1 +3,1 @@", hunk_excerpt="z", note="note-other-conv",
+        run_id=other_conv_run,
+        root="/r",
+        path="c.py",
+        hunk_index=0,
+        hunk_header="@@ -3,1 +3,1 @@",
+        hunk_excerpt="z",
+        note="note-other-conv",
     )
-    db.mark_notes_delivered([note_a, note_b, other_conv_note], delivered_by_run_id=run_b)
+    db.mark_notes_delivered(
+        [note_a, note_b, other_conv_note], delivered_by_run_id=run_b
+    )
 
     delivered = db.delivered_notes_for_conversation("conv1")
     assert [row["id"] for row in delivered] == [note_a, note_b]
@@ -280,8 +358,13 @@ def test_delivered_notes_for_conversation_joins_both_runs_oldest_first(db):
 def test_delivered_notes_for_conversation_excludes_pending(db):
     run_id = _make_run(db)
     db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="still-pending",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="still-pending",
     )
     assert db.delivered_notes_for_conversation("conv1") == []
 
@@ -295,8 +378,13 @@ def test_mark_notes_delivered_mid_run_race_leaves_later_note_pending(db):
     """
     run_id = _make_run(db)
     note_1 = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="captured-before-run",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="captured-before-run",
     )
 
     # Attach seam captures the pending id list at this instant.
@@ -305,8 +393,13 @@ def test_mark_notes_delivered_mid_run_race_leaves_later_note_pending(db):
 
     # A note lands on an older turn's card while the run is in flight.
     note_2 = db.add_change_note(
-        run_id=run_id, root="/r", path="b.py", hunk_index=1,
-        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="mid-run-race",
+        run_id=run_id,
+        root="/r",
+        path="b.py",
+        hunk_index=1,
+        hunk_header="@@ -2,1 +2,1 @@",
+        hunk_excerpt="y",
+        note="mid-run-race",
     )
 
     # Completion stamps exactly the captured list, not "all pending now".
@@ -323,8 +416,13 @@ def test_mark_notes_delivered_mid_run_race_leaves_later_note_pending(db):
 def test_delete_change_note_deletes_pending_note(db):
     run_id = _make_run(db)
     note_id = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="deleteme",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="deleteme",
     )
     assert db.delete_change_note(note_id) is True
     assert db.notes_for_run(run_id) == []
@@ -333,8 +431,13 @@ def test_delete_change_note_deletes_pending_note(db):
 def test_delete_change_note_returns_false_for_delivered(db):
     run_id = _make_run(db)
     note_id = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="delivered",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="delivered",
     )
     db.mark_notes_delivered([note_id])
     assert db.delete_change_note(note_id) is False
@@ -348,9 +451,14 @@ def test_delete_change_note_returns_false_for_missing(db):
 
 def test_mark_notes_delivered_empty_list_is_noop(db):
     run_id = _make_run(db)
-    note_id = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="untouched",
+    db.add_change_note(
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="untouched",
     )
     stamped = db.mark_notes_delivered([])
     assert stamped == []
@@ -369,24 +477,49 @@ def test_change_note_counts_for_conversation_groups_by_root_path_across_runs(db)
     other_conv_run = _make_run(db, conversation_id="conv2")
 
     note_1 = db.add_change_note(
-        run_id=run_a, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="one",
+        run_id=run_a,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="one",
     )
     db.add_change_note(
-        run_id=run_a, root="/r", path="a.py", hunk_index=1,
-        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="two",
+        run_id=run_a,
+        root="/r",
+        path="a.py",
+        hunk_index=1,
+        hunk_header="@@ -2,1 +2,1 @@",
+        hunk_excerpt="y",
+        note="two",
     )
     db.add_change_note(
-        run_id=run_b, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -3,1 +3,1 @@", hunk_excerpt="z", note="three",
+        run_id=run_b,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -3,1 +3,1 @@",
+        hunk_excerpt="z",
+        note="three",
     )
     db.add_change_note(
-        run_id=run_b, root="/r", path="b.py", hunk_index=0,
-        hunk_header="@@ -4,1 +4,1 @@", hunk_excerpt="w", note="four",
+        run_id=run_b,
+        root="/r",
+        path="b.py",
+        hunk_index=0,
+        hunk_header="@@ -4,1 +4,1 @@",
+        hunk_excerpt="w",
+        note="four",
     )
     db.add_change_note(
-        run_id=other_conv_run, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -5,1 +5,1 @@", hunk_excerpt="v", note="other-conv",
+        run_id=other_conv_run,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -5,1 +5,1 @@",
+        hunk_excerpt="v",
+        note="other-conv",
     )
     # Delivered notes still count -- "ALL the conversation's notes".
     db.mark_notes_delivered([note_1])
@@ -434,7 +567,8 @@ def test_migration_creates_table_and_appends_audit_version_8(tmp_path):
         }
         assert "change_notes" not in tables
         versions = {
-            row[0] for row in raw.execute("SELECT version FROM schema_version").fetchall()
+            row[0]
+            for row in raw.execute("SELECT version FROM schema_version").fetchall()
         }
         assert 8 not in versions
     finally:
@@ -463,8 +597,13 @@ def test_migration_creates_table_and_appends_audit_version_8(tmp_path):
         # freshly-recreated table.
         run_id = reopened.create_run(conversation_id="c", agent_kind="primary")
         note_id = reopened.add_change_note(
-            run_id=run_id, root="/r", path="a.py", hunk_index=0,
-            hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="post-migration",
+            run_id=run_id,
+            root="/r",
+            path="a.py",
+            hunk_index=0,
+            hunk_header="@@ -1,1 +1,1 @@",
+            hunk_excerpt="x",
+            note="post-migration",
         )
         assert reopened.notes_for_run(run_id)[0]["id"] == note_id
     finally:
@@ -487,8 +626,13 @@ def test_migration_adds_delivered_by_run_id_column_and_appends_audit_version_9(
     first = AgentRunsDB(db_path, client_id="t")
     run_id = first.create_run(conversation_id="c", agent_kind="primary")
     pre_migration_note_id = first.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="pre-existing",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="pre-existing",
     )
     first.close()
 
@@ -545,9 +689,7 @@ def test_migration_adds_delivered_by_run_id_column_and_appends_audit_version_9(
     try:
         raw = sqlite3.connect(str(db_path))
         try:
-            columns = {
-                row[1] for row in raw.execute("PRAGMA table_info(change_notes)")
-            }
+            columns = {row[1] for row in raw.execute("PRAGMA table_info(change_notes)")}
             assert "delivered_by_run_id" in columns
             versions = {
                 row[0] for row in raw.execute("SELECT version FROM schema_version")
@@ -563,8 +705,13 @@ def test_migration_adds_delivered_by_run_id_column_and_appends_audit_version_9(
         assert pre_row["delivered_by_run_id"] is None
 
         post_note_id = reopened.add_change_note(
-            run_id=run_id, root="/r", path="b.py", hunk_index=1,
-            hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="post-migration",
+            run_id=run_id,
+            root="/r",
+            path="b.py",
+            hunk_index=1,
+            hunk_header="@@ -2,1 +2,1 @@",
+            hunk_excerpt="y",
+            note="post-migration",
         )
         reopened.mark_notes_delivered([post_note_id], delivered_by_run_id=run_id)
         post_row = {r["id"]: r for r in reopened.notes_for_run(run_id)}[post_note_id]
@@ -585,8 +732,13 @@ def test_migration_adds_snapshot_id_column_and_appends_audit_version_10(tmp_path
     first = AgentRunsDB(db_path, client_id="t")
     run_id = first.create_run(conversation_id="c", agent_kind="primary")
     pre_migration_note_id = first.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="pre-existing",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="pre-existing",
     )
     first.close()
 
@@ -645,9 +797,7 @@ def test_migration_adds_snapshot_id_column_and_appends_audit_version_10(tmp_path
     try:
         raw = sqlite3.connect(str(db_path))
         try:
-            columns = {
-                row[1] for row in raw.execute("PRAGMA table_info(change_notes)")
-            }
+            columns = {row[1] for row in raw.execute("PRAGMA table_info(change_notes)")}
             assert "snapshot_id" in columns
             versions = {
                 row[0] for row in raw.execute("SELECT version FROM schema_version")
@@ -663,8 +813,13 @@ def test_migration_adds_snapshot_id_column_and_appends_audit_version_10(tmp_path
         assert pre_row["snapshot_id"] is None
 
         post_note_id = reopened.add_change_note(
-            run_id=run_id, root="/r", path="b.py", hunk_index=1,
-            hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="post-migration",
+            run_id=run_id,
+            root="/r",
+            path="b.py",
+            hunk_index=1,
+            hunk_header="@@ -2,1 +2,1 @@",
+            hunk_excerpt="y",
+            note="post-migration",
             snapshot_id=42,
         )
         post_row = {r["id"]: r for r in reopened.notes_for_run(run_id)}[post_note_id]
@@ -689,8 +844,13 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
     first = AgentRunsDB(db_path, client_id="t")
     run_id = first.create_run(conversation_id="c", agent_kind="primary")
     pre_migration_note_id = first.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="pre-existing",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="pre-existing",
     )
     first.close()
 
@@ -753,9 +913,7 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
     try:
         raw = sqlite3.connect(str(db_path))
         try:
-            columns = {
-                row[1] for row in raw.execute("PRAGMA table_info(change_notes)")
-            }
+            columns = {row[1] for row in raw.execute("PRAGMA table_info(change_notes)")}
             assert "anchor_kind" in columns
             assert "diff_line_index" in columns
             assert "diff_line_text" in columns
@@ -777,9 +935,16 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
         assert pre_row["diff_line_text"] is None
 
         post_note_id = reopened.add_change_note(
-            run_id=run_id, root="/r", path="b.py", hunk_index=1,
-            hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="post-migration",
-            anchor_kind="diff_line", diff_line_index=3, diff_line_text="+z",
+            run_id=run_id,
+            root="/r",
+            path="b.py",
+            hunk_index=1,
+            hunk_header="@@ -2,1 +2,1 @@",
+            hunk_excerpt="y",
+            note="post-migration",
+            anchor_kind="diff_line",
+            diff_line_index=3,
+            diff_line_text="+z",
         )
         post_row = {r["id"]: r for r in reopened.notes_for_run(run_id)}[post_note_id]
         assert post_row["anchor_kind"] == "diff_line"
@@ -808,8 +973,13 @@ def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_vers
 def test_add_change_note_snapshot_id_defaults_to_none(db):
     run_id = _make_run(db)
     note_id = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="no snapshot id",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="no snapshot id",
     )
     assert db.notes_for_run(run_id)[0]["id"] == note_id
     assert db.notes_for_run(run_id)[0]["snapshot_id"] is None
@@ -818,8 +988,13 @@ def test_add_change_note_snapshot_id_defaults_to_none(db):
 def test_add_change_note_round_trips_snapshot_id(db):
     run_id = _make_run(db)
     note_id = db.add_change_note(
-        run_id=run_id, root="/r", path="a.py", hunk_index=0,
-        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="with snapshot id",
+        run_id=run_id,
+        root="/r",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@",
+        hunk_excerpt="x",
+        note="with snapshot id",
         snapshot_id=7,
     )
     assert db.notes_for_run(run_id)[0]["id"] == note_id
@@ -858,8 +1033,13 @@ def test_migration_reopening_twice_is_idempotent(tmp_path):
         # And the API still works normally on the third open.
         run_id = second.create_run(conversation_id="c", agent_kind="primary")
         note_id = second.add_change_note(
-            run_id=run_id, root="/r", path="a.py", hunk_index=0,
-            hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="third-open",
+            run_id=run_id,
+            root="/r",
+            path="a.py",
+            hunk_index=0,
+            hunk_header="@@ -1,1 +1,1 @@",
+            hunk_excerpt="x",
+            note="third-open",
         )
         assert note_id
     finally:

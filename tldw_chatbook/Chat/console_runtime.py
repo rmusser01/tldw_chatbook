@@ -726,6 +726,11 @@ class ConsoleRuntime:
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
+        # One app-wide mutation lane for exact persisted-conversation opens.
+        # Individual ChatScreen workspaces are disposable views over this
+        # runtime, so a per-screen lock would allow their hydration/rollback
+        # sequences to interleave.
+        self.character_conversation_activation_lock = asyncio.Lock()
         self.trace_compatibility_metrics = _LazyTraceCompatibilityMetrics()
         self._scratch_spaces = ConsoleScratchSpaceManager()
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}

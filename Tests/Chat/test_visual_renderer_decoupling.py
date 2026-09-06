@@ -72,12 +72,7 @@ def test_a_full_width_line_fits_inside_the_canvas():
     draw.text((MARGIN_X, 8), "W" * MAX_LINE_CHARACTERS, fill=0, font=font)
     pixels = image.load()
     rightmost = max(
-        (
-            x
-            for x in range(LOGICAL_WIDTH)
-            for y in range(64)
-            if pixels[x, y] < 128
-        ),
+        (x for x in range(LOGICAL_WIDTH) for y in range(64) if pixels[x, y] < 128),
         default=0,
     )
     assert rightmost <= LOGICAL_WIDTH - MARGIN_X, (
@@ -140,9 +135,7 @@ def test_identity_hash_is_pixel_based_not_png_based():
 def test_pages_expose_both_digests_with_distinct_meanings():
     """Identity (pixels) and wire integrity (bytes) are different questions;
     conflating them is what put the encoder into the identity."""
-    artifact = render_visual_transcript(
-        _units(1), summarized_prefix_digest="d" * 64
-    )
+    artifact = render_visual_transcript(_units(1), summarized_prefix_digest="d" * 64)
     page = artifact.pages[0]
     assert page.pixel_sha256 != page.png_sha256
     from hashlib import sha256

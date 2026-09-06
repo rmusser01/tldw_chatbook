@@ -653,6 +653,32 @@ def validate_ip_address(ip: str) -> bool:
         return False
 
 
+def validate_bounded_integer(value: object, *, minimum: int, maximum: int) -> int:
+    """Normalize an integer form value within inclusive bounds.
+
+    Args:
+        value: Integer or integer text, allowing signs and surrounding whitespace.
+        minimum: Inclusive lower bound.
+        maximum: Inclusive upper bound.
+
+    Returns:
+        The validated integer value.
+
+    Raises:
+        ValueError: If the value is not integer text or an integer, is a boolean,
+            or falls outside the bounds.
+    """
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError("Value must be an integer")  # noqa: TRY004 - form validation uses ValueError
+    try:
+        number = int(value)
+    except ValueError:
+        raise ValueError("Value must be an integer") from None
+    if not minimum <= number <= maximum:
+        raise ValueError(f"Value must be between {minimum} and {maximum}")
+    return number
+
+
 def validate_port(port: Union[str, int]) -> bool:
     """Validate port number."""
     log_counter("input_validation_port_attempt")
