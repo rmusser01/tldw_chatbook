@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
-from ...Widgets.Console.console_composer_bar import ConsoleDraftStash
-import asyncio
+
 from loguru import logger
 from textual.css.query import QueryError
-from .prompt_queue import ConsolePromptDispatchStatus
-from .retrieval import source_mentions_rag as _source_mentions_rag
-from ..Console_Modules import raw_cli as raw_cli_ui
+
+from ...Chat.console_chat_models import ConsoleRunStatus
 from ...Chat.console_command_grammar import (
     KIND_COMMAND,
     KIND_NOT_COMMAND,
@@ -18,8 +17,11 @@ from ...Chat.console_command_grammar import (
     REWIND_COMMAND_NAME,
     CommandParse,
 )
-from ...Chat.console_chat_models import ConsoleRunStatus
 from ...Chat.console_display_state import build_console_evidence_display_state
+from ...Widgets.Console.console_composer_bar import ConsoleDraftStash
+from ..Console_Modules import raw_cli as raw_cli_ui
+from .prompt_queue import ConsolePromptDispatchStatus
+from .retrieval import source_mentions_rag as _source_mentions_rag
 
 
 logger = logger.bind(module="ChatScreen")

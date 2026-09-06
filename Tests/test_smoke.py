@@ -9,6 +9,15 @@ import tempfile
 import os
 from unittest.mock import patch
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+from Tests.UI.test_screen_reuse import (
+    _build_test_app,
+    close_owned_real_app_notifications as close_owned_real_app_notifications,
+)
+
 # Test markers for organization
 pytestmark = pytest.mark.smoke
 
@@ -158,17 +167,20 @@ class TestUIComponents:
     """Smoke tests for UI components."""
 
     @pytest.mark.asyncio
-    async def test_app_initialization(self):
+    async def test_app_initialization(self, close_owned_console_resources):
         """Test that the main app can be initialized."""
-        from tldw_chatbook.app import TldwCli
-
         # Create app instance
-        app = TldwCli()
+        app = _build_test_app()
+        # This unmounted real app also owns the profile's current-thread DBs.
+        for database in (app.prompts_db, app.media_db):
+            if database is not None:
+                close_owned_console_resources.callback(database.close)
         assert app is not None
 
         # Check title (using TITLE constant)
         assert app.TITLE is not None
         assert "tldw chatbook" in app.TITLE
+
 
 class TestConfiguration:
     """Smoke tests for configuration."""
