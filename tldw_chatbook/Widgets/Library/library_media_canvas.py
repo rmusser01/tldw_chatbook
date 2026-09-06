@@ -485,11 +485,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         width: 100%;
         height: auto;
     }
-    .library-media-speaker-row Static {
+    /* Class-keyed (not `.row Static`): ancestor-scoped bare-type subjects
+     * are ratcheted by test_textual_css_fastpath (ADR-097). */
+    Static.library-media-speaker-label {
         width: auto;
         min-width: 0;
     }
-    .library-media-speaker-row Input {
+    Input.library-media-speaker-input {
         width: 1fr;
     }
     """
@@ -1742,10 +1744,12 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                                         label,
                                         id=f"library-media-speaker-label-{cluster_id}",
                                         markup=False,
+                                        classes="library-media-speaker-label",
                                     ),
                                     Input(
                                         placeholder="Rename…",
                                         id=f"library-media-speaker-input-{cluster_id}",
+                                        classes="library-media-speaker-input",
                                     ),
                                     classes="library-media-speaker-row",
                                 )

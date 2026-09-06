@@ -2575,6 +2575,8 @@
      * width 100%, which inside a row Horizontal would blow the label off
      * to the side. */
 
+    /* Class-keyed (not `.row Static`): ancestor-scoped bare-type subjects
+     * are ratcheted by test_textual_css_fastpath (ADR-097). */
 
 
 
