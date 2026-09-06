@@ -505,6 +505,10 @@ def test_render_markdown_uses_the_meeting_configured_display_name(tmp_path):
     md = render_markdown(result, [segment])
     assert "[00:00:00] **Alice:** hello" in md
 
+    both_segment = MeetingSegment(1, 2.0, 3.0, 2.0, 3.0, "both", "overlap")
+    md = render_markdown(result, [segment, both_segment])
+    assert "**Alice + Others:** overlap" in md
+
 
 def test_old_meeting_json_backfills_the_user_display_name(tmp_path):
     """A recording from before task 31746 has no `user_display_name` key at

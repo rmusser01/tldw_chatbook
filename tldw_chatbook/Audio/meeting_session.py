@@ -694,7 +694,7 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
     ]
     # task 31746: the mic channel's name comes from `meta` (stamped by the
     # owner at start, or back-filled by `read_meeting_json`), not a literal.
-    names = {"you": meta.user_display_name, "others": "Others", "both": "You + Others"}
+    names = {"you": meta.user_display_name, "others": "Others", "both": f"{meta.user_display_name} + Others"}
     speaker_names = getattr(meta, "speaker_names", {}) or {}
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"

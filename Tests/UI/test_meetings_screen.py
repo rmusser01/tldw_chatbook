@@ -597,6 +597,29 @@ def test_transcript_honours_the_configured_display_name(meetings_screen_with_ses
 
 
 @pytest.mark.asyncio
+async def test_partial_preview_honours_the_configured_display_name(tmp_path, monkeypatch):
+    """task 31746: the in-flight "you" partial preview must not disagree with
+    the finalized transcript line -- both now come from the same helper, so
+    "You: hel..." never settles into a differently-named "Alice: hello"."""
+    import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
+
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        owner.session.emit("partial", ("hel", "you"))
+        await pilot.pause(0.1)
+        assert "You:" in _text(screen.query_one("#meetings-partial", Static))
+
+        monkeypatch.setattr(meetings_screen_module, "meeting_user_display_name", lambda **kw: "Alice")
+        owner.session.emit("partial", ("hel", "you"))
+        await pilot.pause(0.1)
+        assert "Alice:" in _text(screen.query_one("#meetings-partial", Static))
+
+
+@pytest.mark.asyncio
 async def test_legend_row_mounts_and_rename_input_updates_ui(tmp_path):
     """End-to-end through the real widget tree: a segment with a
     `speaker_id` mounts one legend row; submitting its rename Input updates

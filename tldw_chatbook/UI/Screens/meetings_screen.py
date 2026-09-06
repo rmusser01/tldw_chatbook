@@ -463,7 +463,7 @@ class MeetingsScreen(BaseAppScreen):
             self.query_one("#meetings-partial", Static).update("")
         elif kind == "partial":
             text, label = payload
-            prefix = f"{LABELS.get(label, label)}: " if label else ""
+            prefix = f"{self._coarse_label(label)}: " if label else ""
             self.query_one("#meetings-partial", Static).update(f"{prefix}{text}…")
         elif kind == "transcribing":
             self._transcribing = bool(payload)
@@ -528,6 +528,20 @@ class MeetingsScreen(BaseAppScreen):
         transcript and the Library view agree with what was shown live.
         """
         return meeting_user_display_name()
+
+    def _coarse_label(self, label: str) -> str:
+        """Coarse "you"/"others"/"both" label text for the partial preview.
+
+        The finalized transcript/legend get the configured mic name through
+        `render_label` (via `_user_display_name()`); this is the same
+        channel-name decision for the still-streaming partial line, so "You:
+        hel..." and the finalized "Alice: hello" never disagree (task 31746).
+        """
+        if label == "you":
+            return self._user_display_name()
+        if label == "both":
+            return f"{self._user_display_name()} + Others"
+        return LABELS.get(label, label)
 
     def _line_for_segment(self, segment: MeetingSegment) -> str:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
