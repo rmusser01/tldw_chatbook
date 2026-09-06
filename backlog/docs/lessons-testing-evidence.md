@@ -11783,7 +11783,7 @@ interpreting an OS resource message. Retain environmental qualifications; do not
 delete unrelated files, weaken gates or infer resource ownership from errno alone.
 ## A "dead key" report can be an invisible open-then-undo toggle
 
-**task-31741 release UAT, 2026-09-05.** A live walkthrough reported Escape
+**task-31820 release UAT, 2026-09-05.** A live walkthrough reported Escape
 completely dead on the wizard's Provider step after a failed model discovery
 — two presses, "nothing happens", while the footer Exit button worked. Four
 live tmux reproductions of the exact key sequence (splash on/off, idle and

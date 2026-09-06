@@ -1,6 +1,6 @@
 # First-Run Setup
 
-> Verified against: first-run wizard implementation, 2026-09 (task-31741: honest skip/continue copy — a keyed provider without a credential refuses Next until a key is supplied or you go Back; Escape remains the universal out).
+> Verified against: first-run wizard implementation, 2026-09 (task-31820: honest skip/continue copy — a keyed provider without a credential refuses Next until a key is supplied or you go Back; Escape remains the universal out).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
 most steps can be skipped (Next moves on without configuring it; the one

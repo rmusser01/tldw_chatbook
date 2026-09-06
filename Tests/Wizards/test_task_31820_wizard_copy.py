@@ -1,4 +1,4 @@
-"""task-31741 copy contract: the wizard must not promise a blocked continue.
+"""task-31820 copy contract: the wizard must not promise a blocked continue.
 
 Release UAT found the Provider step showing "Couldn't discover models for
 OpenAI. You can continue anyway." while Next was simultaneously hard-blocked

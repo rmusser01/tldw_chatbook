@@ -1,5 +1,5 @@
 ---
-id: TASK-31741
+id: TASK-31820
 title: >-
   First-run wizard: Esc dead after provider discovery + contradictory
   key-required copy
@@ -59,7 +59,7 @@ Fix B (copy only): ProviderStep._discovery_failure_status renders "You can conti
 
 Paired test arms:
 - test_escape_cannot_dismiss_an_exit_dialog_that_never_painted: FAILED pre-fix (1 failed, run recorded 2026-09-05), passes post-fix.
-- Tests/Wizards/test_task_31741_wizard_copy.py (3 tests): all FAILED pre-fix, pass post-fix.
+- Tests/Wizards/test_task_31820_wizard_copy.py (3 tests): all FAILED pre-fix, pass post-fix.
 - test_provider_discovery_failure_keeps_escape_exit_alive: sequence pin (passes both sides for Escape; blocked-copy assert fails pre-Bug-B-fix).
 - Tests/Wizards/ full: 815 passed post-fix.
 

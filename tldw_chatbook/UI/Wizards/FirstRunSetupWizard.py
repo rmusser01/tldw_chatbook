@@ -2494,7 +2494,7 @@ class ProviderStep(SetupStep):
     def _discovery_failure_status(self, display: str) -> str:
         """Failure copy that never promises what Next will refuse.
 
-        task-31741 (release UAT): with a keyed cloud provider and no
+        task-31820 (release UAT): with a keyed cloud provider and no
         credential, this status said "You can continue anyway." while
         commit() was simultaneously hard-blocking Next with "API key
         required." -- both on screen at once. Promise continuation only
@@ -6903,7 +6903,7 @@ class WelcomeStep(SetupStep):
                 "with your own documents — all in your terminal.",
                 classes="setup-subtitle",
             )
-            # task-31741: don't promise "every step can be skipped with
+            # task-31820: don't promise "every step can be skipped with
             # Next" -- the Provider step refuses Next for a keyed provider
             # until a key is supplied. Name the out that always works.
             yield Static(
@@ -10012,7 +10012,7 @@ class _SettlingGuardedConfirmationDialog(ConfirmationDialog):
     preserve is untouched: this only guards a SECOND press arriving too
     soon after the dialog itself appeared).
 
-    task-31741 extended the guard's clock: it now starts at the dialog's
+    task-31820 extended the guard's clock: it now starts at the dialog's
     first delivered frame (``call_after_refresh`` in ``on_mount``), not at
     mount. On a machine choked by a concurrent pytest sweep the paint
     lagged whole seconds behind the push, so a second Escape sent well
@@ -10042,7 +10042,7 @@ class _SettlingGuardedConfirmationDialog(ConfirmationDialog):
         self._opened_at: Optional[float] = None
 
     def on_mount(self) -> None:
-        # task-31741: anchor the settle clock to the first delivered FRAME,
+        # task-31820: anchor the settle clock to the first delivered FRAME,
         # not to mount. Live release-UAT walkthrough on a loaded machine
         # (full pytest sweep running): Escape on the Provider step opened
         # this dialog, but the paint lagged for seconds — a second
