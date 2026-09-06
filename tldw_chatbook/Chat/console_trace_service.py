@@ -2567,7 +2567,9 @@ class ConsoleTraceService:
                 ORDER BY n.sequence LIMIT 257""",
             (segment_id, plan.start_sequence, plan.end_sequence),
         ).fetchall()
-        if len(rows) != len(suffix) or any(
+        if tuple(row[0] for row in rows) != tuple(
+            sequence for sequence, _ in suffix
+        ) or any(
             tuple(row[1:7])
             != (
                 owner_id,
