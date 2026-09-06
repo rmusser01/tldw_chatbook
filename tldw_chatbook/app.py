@@ -9272,6 +9272,23 @@ class TldwCli(
                     "actor_pack_recovery_blocked"
                 )
 
+        if self.actor_pack_recovery_error is None:
+            service = getattr(self, "local_character_persona_service", None)
+            if service is not None:
+                try:
+                    from .Persona_Visual.builtin_pixel_migu import (
+                        ensure_builtin_pixel_migu_buddy,
+                    )
+
+                    ensure_builtin_pixel_migu_buddy(
+                        service, coordinator, profile_root=get_user_data_dir()
+                    )
+                except Exception:
+                    self.loguru_logger.warning(
+                        "Built-in pixel-migu Buddy installation failed; "
+                        "will retry on next Personas read"
+                    )
+
     def ensure_actor_pack_staging_sweep(self) -> None:
         """Run the Actor Pack staging crash-sweep once per session (task-22216).
 

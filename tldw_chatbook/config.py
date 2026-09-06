@@ -8757,6 +8757,14 @@ def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
         ensure_builtin_samira(db)
     except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
         logger.warning("builtin_profile_seed_failed category={}", type(exc).__name__)
+    try:
+        from tldw_chatbook.Character_Chat.builtin_pixel_migu import (
+            ensure_builtin_pixel_migu,
+        )
+
+        ensure_builtin_pixel_migu(db)
+    except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
+        logger.warning("pixel_migu_profile_seed_failed category={}", type(exc).__name__)
     return db
 
 

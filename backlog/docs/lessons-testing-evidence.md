@@ -3244,6 +3244,15 @@ or Textual will reject the duplicate even when the route signature matches.
 
 ## Adding a resource of a GUARDED KIND obliges you to run that kind's inventory suite, not just your feature's tests
 
+**Follow-up incident (TASK-31758 / PR #2437, 2026-09-05).** Forty-five
+pixel-migu seed, resource, and installed-distribution checks passed after a
+rebase, but the required generated-artifact job still failed: two new startup
+diagnostics in `app.py` and `config.py` were absent from the production
+diagnostic inventory. The missing local inventory check cost another complete
+CI cycle. Inspect added logger statements with the checker's `--statements`
+mode, regenerate the reviewed inventory, and run the derived-artifact checks
+before pushing; passing feature and packaging tests does not cover that pin.
+
 **Hybrid-fusion cluster (TASK-3996) Task 5, 2026-08-09.** The new notes/conversations
 keyword sub-legs opened SQLite directly:
 `sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)`. The choice was deliberate and
@@ -11541,3 +11550,16 @@ call ownership. A failing same-surface/new-run test led to an atomic ordered
 call-boundary event and latest-call check. Use durable call order for supersession,
 not surface identity or timestamps, and exercise deferred settlement in the real
 agent path rather than forcing it synchronous in the test.
+
+
+## Built-in asset cleanup must distinguish failed return from failed commit (pixel-migu, 2026-09-05)
+
+During pixel-migu first-install review, a coordinator wrapper that committed the
+Persona and SQLite graph and then raised `RuntimeError` exposed a cleanup bug:
+the caller deleted the graph's newly published PNGs even though restart treated
+the Persona as already installed. The focused regression also exercises
+`KeyboardInterrupt` and `SystemExit`. Cleanup now checks durable graph ownership
+and retains assets when that ownership cannot be determined. A separate
+interleaved-service regression found that a losing caller needed to refresh its
+Persona JSON cache before the winning installation became selectable. A green
+rollback-only test did not cover either postcommit behavior.
