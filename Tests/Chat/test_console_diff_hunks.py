@@ -31,7 +31,9 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 
 GIT_AVAILABLE = shutil.which("git") is not None
-pytestmark = pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not available on this system")
+pytestmark = pytest.mark.skipif(
+    not GIT_AVAILABLE, reason="git is not available on this system"
+)
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -70,7 +72,9 @@ def diff_fixture(tmp_path: Path) -> dict:
     multi_lines = [f"line{i}\n" for i in range(40)]
     (repo / "multi.py").write_text("".join(multi_lines), encoding="utf-8")
     (repo / "single.py").write_text("a\nb\nc\nd\ne\n", encoding="utf-8")
-    (repo / "old_name.txt").write_text("unchanged content\nline two\n", encoding="utf-8")
+    (repo / "old_name.txt").write_text(
+        "unchanged content\nline two\n", encoding="utf-8"
+    )
     (repo / "image.bin").write_bytes(bytes(range(10)) * 5)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "commit1")
@@ -167,7 +171,9 @@ def test_binary_diff_yields_single_fallback_hunk(diff_fixture):
 
 
 def test_empty_text_yields_single_fallback_hunk_with_empty_body():
-    assert split_unified_diff("") == [DiffHunk(header="", body_lines=(), file_prelude="")]
+    assert split_unified_diff("") == [
+        DiffHunk(header="", body_lines=(), file_prelude="")
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -197,7 +203,11 @@ def test_hunk_excerpt_caps_body_and_adds_honest_tail(diff_fixture):
 
 
 def test_hunk_excerpt_default_cap_is_40():
-    hunk = DiffHunk(header="@@ -1,2 +1,2 @@", body_lines=tuple(f"l{i}" for i in range(50)), file_prelude="")
+    hunk = DiffHunk(
+        header="@@ -1,2 +1,2 @@",
+        body_lines=tuple(f"l{i}" for i in range(50)),
+        file_prelude="",
+    )
     excerpt = hunk_excerpt(hunk)
     lines = excerpt.splitlines()
     assert lines[1:41] == [f"l{i}" for i in range(40)]
@@ -238,7 +248,9 @@ def test_hunk_excerpt_default_byte_cap_is_4096():
 
 
 def test_hunk_excerpt_under_byte_cap_is_unaffected():
-    hunk = DiffHunk(header="@@ -1,1 +1,1 @@", body_lines=("short line",), file_prelude="")
+    hunk = DiffHunk(
+        header="@@ -1,1 +1,1 @@", body_lines=("short line",), file_prelude=""
+    )
     excerpt = hunk_excerpt(hunk)
     assert excerpt == "@@ -1,1 +1,1 @@\nshort line"
     assert "truncated" not in excerpt
@@ -508,7 +520,9 @@ def test_render_diff_feedback_block_excludes_all_notes_when_cap_too_small():
     notes = [_note(id=1, path="a.py", note="first note")]
     block, included_ids = render_diff_feedback_block(notes, cap_bytes=1)
     assert included_ids == []
-    assert block.startswith("## Diff feedback from the user (on your earlier file changes)")
+    assert block.startswith(
+        "## Diff feedback from the user (on your earlier file changes)"
+    )
     assert block.endswith("… 1 more notes held for the next message")
     assert "a.py" not in block
 
@@ -531,7 +545,9 @@ def test_render_diff_feedback_block_oversized_oldest_note_is_truncated_not_dropp
     truncated to fit, rather than being silently excluded forever.
     """
     huge_excerpt = "x" * 20_000  # single "line" -- the minified-file shape
-    oversized = _note(id=1, path="minified.js", hunk_excerpt=huge_excerpt, note="huge one")
+    oversized = _note(
+        id=1, path="minified.js", hunk_excerpt=huge_excerpt, note="huge one"
+    )
     normal = _note(id=2, path="b.py", note="normal one")
 
     block, included_ids = render_diff_feedback_block([oversized, normal])
@@ -553,7 +569,9 @@ def test_render_diff_feedback_block_oversized_oldest_note_leaves_later_notes_pen
     break-at-cap behavior -- held for the next send, not lost, not
     force-included alongside it."""
     huge_excerpt = "x" * 20_000
-    oversized = _note(id=1, path="minified.js", hunk_excerpt=huge_excerpt, note="huge one")
+    oversized = _note(
+        id=1, path="minified.js", hunk_excerpt=huge_excerpt, note="huge one"
+    )
     normal = _note(id=2, path="b.py", note="normal one")
 
     block, included_ids = render_diff_feedback_block([oversized, normal])
@@ -591,16 +609,27 @@ def test_render_diff_feedback_block_embeds_real_hunk_excerpt(diff_fixture):
     fenced block."""
     hunks = split_unified_diff(diff_fixture["single"])
     excerpt = hunk_excerpt(hunks[0])
-    note = _note(id=1, path="single.py", hunk_header=hunks[0].header, hunk_excerpt=excerpt, note="fix this")
+    note = _note(
+        id=1,
+        path="single.py",
+        hunk_header=hunks[0].header,
+        hunk_excerpt=excerpt,
+        note="fix this",
+    )
     block, included_ids = render_diff_feedback_block([note])
     assert included_ids == [1]
     assert f"````\n{excerpt}\n````" in block
 
 
 def test_format_diff_feedback_disclosure_exact_format_for_one_note():
-    note = _note(path="a.py", hunk_header="@@ -1,4 +1,6 @@", note="use the cached value here")
+    note = _note(
+        path="a.py", hunk_header="@@ -1,4 +1,6 @@", note="use the cached value here"
+    )
     text = format_diff_feedback_disclosure([note])
-    assert text == '\U0001F4DD Diff feedback attached — a.py @@ -1,4 +1,6 @@: "use the cached value here"'
+    assert (
+        text
+        == '\U0001f4dd Diff feedback attached — a.py @@ -1,4 +1,6 @@: "use the cached value here"'
+    )
 
 
 def test_format_diff_feedback_disclosure_one_line_per_note():
@@ -636,7 +665,9 @@ def _file_note(**over) -> dict:
     return note
 
 
-def _diff_line_note(*, diff_line_index: int = 6, diff_line_text: str = "+line6", **over) -> dict:
+def _diff_line_note(
+    *, diff_line_index: int = 6, diff_line_text: str = "+line6", **over
+) -> dict:
     """A `diff_line`-kind note row: hunk fields ALSO populated (spec §4 --
     the hunk the line falls in), plus the line-specific fields."""
     note = _note(**over)
@@ -693,10 +724,20 @@ def test_render_diff_feedback_block_exact_format_for_diff_line_note():
 
 
 def test_render_diff_feedback_block_mixed_kinds_all_render_correctly_in_one_block():
-    hunk_note = _note(id=1, path="a.py", hunk_header="@@ -1,2 +1,2 @@", hunk_excerpt="+x", note="hunk note")
+    hunk_note = _note(
+        id=1,
+        path="a.py",
+        hunk_header="@@ -1,2 +1,2 @@",
+        hunk_excerpt="+x",
+        note="hunk note",
+    )
     file_note = _file_note(id=2, path="c.py", note="file note")
     line_note = _diff_line_note(
-        id=3, path="b.py", hunk_header="@@ -5,3 +5,4 @@", hunk_excerpt="+line5\n+line6", note="line note"
+        id=3,
+        path="b.py",
+        hunk_header="@@ -5,3 +5,4 @@",
+        hunk_excerpt="+line5\n+line6",
+        note="line note",
     )
 
     block, included_ids = render_diff_feedback_block(
@@ -734,7 +775,9 @@ def test_render_diff_feedback_block_file_note_empty_excerpt_cap_never_produces_n
     note = _file_note(id=1, path="notes.md", note="please tidy this whole file")
     block, included_ids = render_diff_feedback_block([note], cap_bytes=1)
     assert included_ids == []
-    assert block.startswith("## Diff feedback from the user (on your earlier file changes)")
+    assert block.startswith(
+        "## Diff feedback from the user (on your earlier file changes)"
+    )
     assert block.endswith("… 1 more notes held for the next message")
     assert "notes.md" not in block
 
@@ -742,19 +785,31 @@ def test_render_diff_feedback_block_file_note_empty_excerpt_cap_never_produces_n
 def test_format_diff_feedback_disclosure_exact_format_for_file_note():
     note = _file_note(path="c.py", note="please clean this whole file")
     text = format_diff_feedback_disclosure([note])
-    assert text == '\U0001F4DD Diff feedback attached — c.py (whole file): "please clean this whole file"'
+    assert (
+        text
+        == '\U0001f4dd Diff feedback attached — c.py (whole file): "please clean this whole file"'
+    )
 
 
 def test_format_diff_feedback_disclosure_exact_format_for_diff_line_note():
-    note = _diff_line_note(path="b.py", hunk_header="@@ -5,3 +5,4 @@", note="fix line 6")
+    note = _diff_line_note(
+        path="b.py", hunk_header="@@ -5,3 +5,4 @@", note="fix line 6"
+    )
     text = format_diff_feedback_disclosure([note])
-    assert text == '\U0001F4DD Diff feedback attached — b.py @@ -5,3 +5,4 @@ line: "fix line 6"'
+    assert (
+        text
+        == '\U0001f4dd Diff feedback attached — b.py @@ -5,3 +5,4 @@ line: "fix line 6"'
+    )
 
 
 def test_format_diff_feedback_disclosure_mixed_kinds_one_line_each():
-    hunk_note = _note(id=1, path="a.py", hunk_header="@@ -1,2 +1,2 @@", note="hunk note")
+    hunk_note = _note(
+        id=1, path="a.py", hunk_header="@@ -1,2 +1,2 @@", note="hunk note"
+    )
     file_note = _file_note(id=2, path="c.py", note="file note")
-    line_note = _diff_line_note(id=3, path="b.py", hunk_header="@@ -5,3 +5,4 @@", note="line note")
+    line_note = _diff_line_note(
+        id=3, path="b.py", hunk_header="@@ -5,3 +5,4 @@", note="line note"
+    )
 
     text = format_diff_feedback_disclosure([hunk_note, file_note, line_note])
     lines = text.splitlines()
