@@ -20,7 +20,17 @@ shape as the six prior series' closing commits. Nothing was pushed;
 DECLINED with per-name evidence (§4.3), so `.git-blame-ignore-revs` carries
 exactly one new entry.
 
-**An erratum on the commits themselves, recorded rather than hidden.** The
+**Erratum on the commit message (recorded, not amended — the hash is
+recorded in `.git-blame-ignore-revs`).** `5dd2e71cf`'s message and the
+blame-ignore note both said the test retargets span "five roots". The CENSUS
+spans five `Tests/` roots; the 36 CHANGED files span **four** — `Tests/UI`
+32, `Tests/Architecture` 2, `Tests/Live` 1, `Tests/Media` 1, and **zero** in
+`Tests/Library`, whose single hit was prose that needed no change. The
+blame-ignore note's PROSE is corrected in the fix-round commit (a label is
+editable; the hash beneath it is not), as are both recipe spots; the commit
+message itself stands with the correction of record here.
+
+**A second erratum, on the commits themselves.** The
 first attempt at the cleanup commit was staged with `git add -A`, which swept
 in `progress.md` — a coordinator-owned ledger file this task is explicitly
 forbidden to touch, and which had gained a line (the coordinator's own
@@ -96,7 +106,8 @@ spelled. An `ast.JoinedStr` sweep over `tldw_chatbook/` + `Tests/`, keeping
 f-strings whose literal fragments could compose a media flat name, returned
 **exactly two hits**:
 
-1. **`tldw_chatbook/UI/Library_Modules/canvas_sync.py:209`** —
+1. **`tldw_chatbook/UI/Library_Modules/canvas_sync.py:219`** (as landed,
+   `5dd2e71cf`; the dotted media branch it selects against is at `:217`) —
    `f"_library_{kind}_row_selection"`, resolved with
    `operator.attrgetter`, inside the shared `_apply_library_row_toggle`
    dispatcher. `_library_media_row_selection` appears NOWHERE in that file,
@@ -142,6 +153,32 @@ passthrough check (the not-yet-extracted kinds still take the f-string
 path). Without the negative control the proof would be satisfiable by an
 attrgetter that resolves anything, which is the same false-negative trap
 recipe §3's unbound-attribute-escape entry warns about.
+
+**A construction proof is not a standing guard, and the fix round added the
+missing one.** The conversations precedent this branch copies ALREADY had a
+regression test and nobody looked for it:
+`Tests/UI/test_library_selection_updates.py::test_toggle_preserves_markup_
+escaped_titles` drives `_apply_library_row_toggle` against a `_Screen` double
+whose `refresh` raises `AssertionError("fallback recompose must not fire")`
+— exactly the silent-swallow mode. The media analogue now sits beside it:
+
+**`test_media_row_toggle_resolves_the_dotted_state_path`** — a double
+carrying `_media_state.row_selection`, driven with `kind="media"`, asserting
+the marker flipped in place and the media-only `_library_media_checked` flag
+was set, with the raising `refresh` catching any fall-through.
+
+**MUTATION-VERIFIED both ways**, which is what makes it worth its 15 lines:
+
+| Tree | New media guard | Conversations precedent |
+|---|---|---|
+| as landed | **passes** | passes |
+| media branch reverted in `canvas_sync.py` | **FAILS** — `AttributeError: '_Screen' object has no attribute '_library_media_row_selection'` → swallowed → `AssertionError: fallback recompose must not fire` | **still passes** |
+
+The second column is the point: the pre-existing test could never have caught
+this, so the guard is genuinely new coverage rather than a restatement.
+`canvas_sync.py` was restored byte-for-byte after the mutation (empty
+`git diff`). **Wave 8's notes extraction inherits this shape** — recipe §3 and
+§22 now say so.
 
 ### 1.4 Field-name prose sweep
 
@@ -350,7 +387,10 @@ The same transform (attribute rewrite + contiguous-kwarg nesting) applied to
 each changed file's `HEAD` AST in memory, `ast.dump`-compared against the
 current file:
 
-- **24 of 40 changed `.py` files MATCH exactly**, including
+- **25 of the 41 changed `.py` files MATCH exactly** (re-derived in the fix
+  round against the LANDED commit `5dd2e71cf` vs its parent `78186d159`,
+  which is the authoritative count; a pre-commit run over the dirty tree
+  said 24 of 40 and was one file short), including
   `test_library_shell.py` (146 retargets),
   `test_library_media_return_settlement.py` (204),
   `test_library_media_reader_flow.py` (105) and
@@ -419,10 +459,10 @@ plain attribute census marks PRUNE:
   **`settings_screen.py:28263`** (a different screen's module, quoted string).
 - `_cancel_library_media_selection_settlement` — only
   `getattr(self, "_cancel_library_media_selection_settlement", None)` inside
-  `library_screen.py:22203` (in `_toggle_library_media_select_mode`).
+  `library_screen.py:22161` (in `_toggle_library_media_select_mode`).
 - `_select_library_media_reader_row` — only
   `getattr(self, "_select_library_media_reader_row", None)` inside
-  `library_screen.py:22798` (in `_undo_library_media_bulk_delete`).
+  `library_screen.py:22755` (in `_undo_library_media_bulk_delete`).
 
 **A near-miss in the other direction:** `_open_library_external_media_detail`
 has a same-named `@property` in `library_ingest_controller.py:865` that calls
@@ -640,6 +680,9 @@ All runs `-p no:randomly`, `.venv/bin/python -m pytest`, in this worktree.
 | `test_library_media_trash.py` | **85 passed** |
 | **7-file media batch** (see §9) | **500 passed / 33 failed**, paired |
 | **FRESH post-interruption battery** — the 8 wiring suites + BOTH ratchets + `test_library_support_layer_surface.py` + `test_library_preimport_closure.py` + `test_ui_ready_module_census.py` + `test_library_recompose_ratchet.py` + `test_library_media_characterization.py` + `test_library_screen_reuse.py` + `test_library_multiselect_media.py` (the ADR-055 guard) + `test_review_set_walker.py`, in ONE process | **284 passed / 3 failed**, 91.8s — and the 3 are EXACTLY the documented standing reds (2 × `chat_screen.py`, 1 × `library_media_browse_controller.py`). `library_screen.py`'s own row is GREEN at 34669/1260 |
+| **fix round** — `test_library_selection_updates.py` (the new guard's home), paired | branch **1 failed / 6 passed** vs isolated parent **1 failed / 5 passed** — the delta is EXACTLY the new passing guard, and the one failure (`test_tier1_toggle_falls_back_to_recompose_on_query_one_failure`, a conversations select-mode assert) reproduces at the parent where the new test does not exist. Pre-existing, newly surfaced because no earlier batch included this file |
+| **fix round** — the 2 never-run changed test files (`test_product_maturity_gate16_library_search_rag.py`, `Tests/Live/test_library_media_trash_paging_closeout.py`), paired | **1 failed / 73 passed on BOTH trees**, same single name, zero unique |
+| **fix round** — mutation verification of the new guard | reverting the `canvas_sync.py` media branch REDS the new guard with the fallback assertion and leaves the conversations precedent GREEN; `canvas_sync.py` restored byte-for-byte |
 | `./scripts/preflight.sh` | **all derived-artifact checks passed** (re-run after the interruption: CSS bundle sync, profile-owned-path census, production diagnostic inventory, duplicate backlog ids, chachanotes table allowlist, index plan pins) |
 
 **The fresh battery is the authoritative one.** The rows above it were run
@@ -682,14 +725,31 @@ are siblings in the same file:
 - baseline-unique:
   `test_screen_navigation.py::test_search_route_lands_on_library_rag_canvas`
 
-**Both PASS in isolation on the branch** (`2 passed` in 20.3s, same
-interpreter, same flags) — ordinary run-to-run flakiness inside a
-533-test single-process batch, and the same family recipe §7 already records
-for this file across waves 3 and 5 (`test_search_route_round_trips_to_the_
-library_rag_row`, `test_library_screen_round_trip_returns_to_landing_with_
-rag_draft`, `test_generic_library_entry_lands_hub_on_first_visit`, … — several
-of which appear in the 32 SHARED set here). That a media-named test is the
-branch's unique one and a RAG-named test is the baseline's is exactly the
+**Disposition of the branch-unique name, re-measured in the fix round — and
+the original claim here did NOT reproduce.** This section first said "Both
+PASS in isolation on the branch (`2 passed` in 20.3s)". Re-run singly, that
+is false:
+
+| | runs | result |
+|---|---|---|
+| branch, `test_media_route_round_trips_to_the_library_media_row` alone | 5 | **5 failed**, `assert 'Screen' == 'LibraryScreen'` |
+| ISOLATED PARENT `78186d159`, same node alone | 3 | **2 failed** (same assert), 1 passed |
+
+**The not-a-regression conclusion survives, on better evidence than the
+original claim:** the node fails at the PARENT too, with a byte-identical
+route-landing assertion, so it is a pre-existing order/state-sensitive test,
+not something this diff introduced. What the original two-node run measured
+was a selection in which both happened to pass — a coincidence I wrote up as
+a disposition. **The lesson: a "passes in isolation" disposition must be
+repeated (n>1) and PAIRED against the parent; a single green run of a
+multi-node selection proves neither flakiness nor innocence.**
+
+It remains the same family recipe §7 already records for this file across
+waves 3 and 5 (`test_search_route_round_trips_to_the_library_rag_row`,
+`test_library_screen_round_trip_returns_to_landing_with_rag_draft`,
+`test_generic_library_entry_lands_hub_on_first_visit`, … — several of which
+appear in the 32 SHARED set here), and that a media-named test is the
+branch's unique one while a RAG-named test is the baseline's is still the
 bidirectional signature §7 calls "strong independent evidence of pure
 run-to-run flakiness, not a regression tied to either tree".
 
@@ -704,6 +764,26 @@ other 2 are the `test_library_media_return_settlement.py` geometry pair task
 **Zero real regressions.** Wall times differ by 5.6s (1.1%).
 
 ### 9.2 The 21 remaining touched test files, paired
+
+**The arithmetic, stated rather than implied** (a fix-round finding: "the 21
+remaining" did not reconcile against 36 − 7 − 1 = 28). Of the **36** changed
+`Tests/` files: **7** in §9.1, **1** in §9.3, **21** here = **29** paired in
+batches. The **7** not in any batch, and how each is covered instead:
+
+| File | Coverage |
+|---|---|
+| `Tests/Architecture/test_library_media_wiring.py` | run alone, **12 passed**; and in the fresh battery (§8) |
+| `Tests/Architecture/test_screen_size_ratchet.py` | both ratchets in the fresh battery (§8) |
+| `Tests/UI/test_library_media_characterization.py` | fresh battery (§8) — task 1's 3 characterization pins |
+| `Tests/UI/test_library_screen_reuse.py` | fresh battery (§8) |
+| `Tests/UI/test_review_set_walker.py` | run alone, **59 passed**; and in the fresh battery (§8) |
+| `Tests/UI/test_product_maturity_gate16_library_search_rag.py` | **never run until the fix round** — now paired, below |
+| `Tests/Live/test_library_media_trash_paging_closeout.py` | **never run until the fix round** — now paired, below |
+
+**The last two were a real coverage hole** (2 and 27 retargets respectively),
+closed in the fix round with a paired run of both files together:
+**1 failed / 73 passed on BOTH trees**, the same single name
+(`test_live_real_database_media_trash_walkthrough`), zero unique either way.
 
 Every touched test file not already covered by §9.1, in one batch, identical
 command and order on both trees:
@@ -849,6 +929,22 @@ battery (§8 above).
   where state lives and deletes unreferenced delegators, and renders nothing
   differently. Considered and declined, consistent with all six prior cleanup
   PRs.
+- **HAND-OFF TO TASK 4's stale-doc sweep — three residual present-tense prose
+  items, deliberately NOT fixed here.** The §1.4 census's mechanical ±3-line
+  screen-attribution narrowing did not flag them, and widening the filter
+  by hand in a cleanup PR is how a prose sweep stops being reproducible.
+  Each names a deleted flat field as if it were still live, with no screen
+  attribution nearby:
+  `Tests/UI/test_library_shell.py:9138` ("Selecting a different media row
+  updates ``_selected_media_id``"),
+  `Tests/UI/test_library_multiselect_media.py:2153-2154`
+  (``_library_media_bulk_delete_in_flight`` / ``_library_media_delete_
+  receipt_ids`` named as the live flags in a section comment), and
+  `Tests/UI/test_library_media_render_fixes.py:1149`
+  ("set ``_library_media_view = "list"``"). Line numbers are against the
+  landed tree (`5dd2e71cf`). The wave-close sweep is the right home: it runs
+  over BOTH name sets and, per recipe §21, is where two of the prompts
+  series' six defects were found in files no task's ruled scope covered.
 - **Nothing was pushed. `progress.md` was not touched.**
 - The isolated baseline worktree (`w7t3base` @ `78186d159`, own `uv venv`,
   verified resolving its OWN tree) is removed at task close.

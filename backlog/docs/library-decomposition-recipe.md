@@ -575,7 +575,8 @@ spelling came back empty.
 is never spelled at all — a COMPUTED attribute name in a shared dispatcher.**
 The four spellings above all assume the flat name appears somewhere in the
 source, as an attribute, a bare quoted string, a kwarg, or a table row. This
-one does not. `canvas_sync.py:209` builds `f"_library_{kind}_row_selection"`
+one does not. `canvas_sync.py:219` (as landed, `5dd2e71cf`; the dotted
+media branch is at `:217`) builds `f"_library_{kind}_row_selection"`
 and resolves it with `operator.attrgetter`, so `_library_media_row_selection`
 occurs NOWHERE in that file and every spelling above scores it zero. The
 conversations series had already special-cased its own dotted path there
@@ -596,8 +597,30 @@ of the subsystem's flat names. Media's run returned exactly two hits — the
 production one above, and one in a test
 (`test_library_media_return_settlement.py:1745` builds
 `f"_library_media_{signature_kind}_signature"`, a METHOD name whose two
-possible values were both exclusions, so it needed nothing). Two hits is a
+possible values were both exclusions, so it needed nothing).
+
+**A guard was added for it** (fix round): `Tests/UI/test_library_selection_
+updates.py::test_media_row_toggle_resolves_the_dotted_state_path`, the
+~15-line media analogue of the conversations `refresh`-raises double that
+already sat in that file. Mutation-verified both ways — reverting the media
+branch reds it with `AssertionError: fallback recompose must not fire`, and
+the conversations precedent stays green under the same mutation. Notes
+inherits this shape. Two hits is a
 tractable read; zero hits is a real answer only if the sweep was run.
+
+**And the fix needs a GUARD, not just a census — the conversations precedent
+already had one and nobody looked.** `Tests/UI/test_library_selection_
+updates.py::test_toggle_preserves_markup_escaped_titles` builds a ~35-line
+`_Screen` double whose `refresh` raises
+`AssertionError("fallback recompose must not fire")`, which is precisely what
+turns this shape's SILENT degradation into a red test. The media analogue
+(`test_media_row_toggle_resolves_the_dotted_state_path`, same file) is
+~15 lines and was mutation-verified both ways: reverting the media branch
+makes it fail with that exact fallback assertion, while the conversations
+precedent stays GREEN under the same mutation — i.e. the existing test could
+never have caught it. **Every future subsystem that takes the dotted form
+here should add its own three-line sibling**; without one, the census is a
+one-time check rather than a standing invariant.
 
 **A cleanup-PR census this section did NOT previously require: the deleted
 FIELD names' own prose sweep.** Every cleanup PR to date censused the
@@ -1358,7 +1381,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 3 | **skills** — **complete** (wave-4 Tasks 1–3) | 15 | 36 fields moved to `LibrarySkillsState` (a three-way prefix split: 26 `_library_skill_*` singular + 9 `_library_skills_*` plural + 1 bare `_selected_skill_name`, resolved by a single `skill_state_shim_attr()` function rather than two independent frozensets); 86 of 127 "skill"-named method candidates moved to ONE `LibrarySkillsController` (41 excluded: 6 merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1 instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-argument hazard — plus 1 CRITICAL unbound-attribute-escape (`getattr(self, "focused", None)` with no corresponding property) found by post-landing review rather than the pre-landing battery, fixed with a fail-without/pass-with covering test); 16 of 86 screen delegators pruned at cleanup. This series' own two battery-caught regressions (§3's sixth bypass shape) and the review-found seventh instance widened that bypass catalogue for every subsequent subsystem. See §19 for the series' actual, as-landed numbers |
 | 3 | **ingest** — **complete** (wave-5 Tasks 1–3) | 23 | 20 fields moved to `LibraryIngestState` (single `_library_ingest_` prefix, no plural variant); 56 of 78 "ingest"-named method candidates moved to ONE `LibraryIngestController` (22 excluded: 4 `@work` framework-decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-monkeypatch); 6 of 56 screen delegators pruned at cleanup. This series' own state PR found the "seventh bypass shape" (an `object.__new__`-bypassed fixture's flat-name seed breaking the instant the state shim installs, not deferrable to cleanup) — a review-found CRITICAL: 2 tests left RED at HEAD in `Tests/UI/test_parakeet_v2_install_ui.py`, the one file whose filename and test names contain neither "ingest" nor "library" and which the task's own `-k`-filtered sweep therefore could not see, a no-red-ships violation (the same task's separate 24-vs-27-site count error in its own report was a distinct Important finding, not this CRITICAL) — and its controller PR's post-landing review found a SECOND review-found CRITICAL, the "eighth" bypass shape (a moved body's bare module global patched at the OLD module path by a green-but-vacuous test, `_resolve_ingest_source`) — both widened the bypass catalogue for every subsequent subsystem. See §20 for the series' actual, as-landed numbers, and §20's own "Wave-5 close" subsection for the wave-level pin trajectory, verification battery, and lessons |
 | 4 | **prompts** — **complete** (wave-6 Tasks 1–3) | 41 | 43 fields moved to `LibraryPromptsState` (a three-way prefix split, the skills precedent: 31 `_library_prompt_*` singular + 11 `_library_prompts_*` plural + 1 bare `_selected_prompt_id`, resolved by a single `prompt_state_shim_attr()`; 3 further prompt-named `__init__` attributes are WIRING — live `LibraryPromptHistoryController`/`LibraryPromptBrowseController`/`LibraryPromptCollectionsController` instances — and stayed on the screen); 139 of 161 "prompt"-named method candidates moved to ONE `LibraryPromptsController`, the largest single move of this program (22 excluded: 14 unbound-fake-self, 3 instance-attribute-monkeypatch, 2 screen-identity, 2 module-globals-coupling, 1 merely-delegate-to-existing-controller property); 39 of 139 screen delegators pruned at cleanup (~28%). This series' cleanup found a genuinely NEW delegator-prune hazard the prior five did not: Textual's `on_<Message>` NAME-dispatched handlers (`MessagePump._get_dispatch_methods` resolves them off `Message.handler_name`, not off `@on`), which a reference-count census reports as zero-referenced and whose deletion would silently unhook the screen from six messages — folded into §4's transform whitelist as its THIRD member, since media and notes both almost certainly own name-dispatched handlers too. See §21 for the series' actual, as-landed numbers, and §21's own "Wave-6 close" subsection for the wave-level pin trajectory, verification battery, sweep evidence and lessons |
-| 4 | **media** — **complete** (wave-7 Tasks 1–3) | 55 | 82 of 85 media-named attributes moved to `LibraryMediaState` (TWO prefix families, not three: `_library_media_*` for 81 + the bare `_selected_media_id`; "media" is already singular and plural, so no plural constant exists. The other 3 are 2 WIRING — live `LibraryMediaBrowseController`/`LibraryMediaTrashBrowseController` instances — and 1 BLOCKED, `_library_pending_list_entry_media_return`, a member of a four-field shell family whose writers span Media/Notes/Prompts/Skills); 140 of 251 media-named method candidates moved to ONE `LibraryMediaController` (**111 exclusions**, the largest exclusion set of this program: 73 unbound-fake-self, 16 instance-attribute-monkeypatch, 8 `inspect.getsource` source-census, 4 module-globals-coupling, 3 screen-identity in a MEMBERSHIP form — `self in <widget>.ancestors`, which §3's own `is`/`is not` census cannot see — 2 class-monkeypatch, 2 bypassed-construction lifecycle, 1 callback-identity, 1 shared shell helper, 1 generic dispatcher); 22 of 140 screen delegators pruned at cleanup (15.71%). Media owns ZERO `on_<message>` name-dispatched handlers, so §4's third whitelist member is inert here. Its cleanup is the largest of the program — 1,214 boundary-matched test occurrences across 36 files in five roots — and added a FIFTH census spelling to §3: a COMPUTED attribute name (`ast.JoinedStr`) in a shared dispatcher, invisible to all four prior spellings and a silent production defect if missed. See §22 for the series' actual, as-landed numbers |
+| 4 | **media** — **complete** (wave-7 Tasks 1–3) | 55 | 82 of 85 media-named attributes moved to `LibraryMediaState` (TWO prefix families, not three: `_library_media_*` for 81 + the bare `_selected_media_id`; "media" is already singular and plural, so no plural constant exists. The other 3 are 2 WIRING — live `LibraryMediaBrowseController`/`LibraryMediaTrashBrowseController` instances — and 1 BLOCKED, `_library_pending_list_entry_media_return`, a member of a four-field shell family whose writers span Media/Notes/Prompts/Skills); 140 of 251 media-named method candidates moved to ONE `LibraryMediaController` (**111 exclusions**, the largest exclusion set of this program: 73 unbound-fake-self, 16 instance-attribute-monkeypatch, 8 `inspect.getsource` source-census, 4 module-globals-coupling, 3 screen-identity in a MEMBERSHIP form — `self in <widget>.ancestors`, which §3's own `is`/`is not` census cannot see — 2 class-monkeypatch, 2 bypassed-construction lifecycle, 1 callback-identity, 1 shared shell helper, 1 generic dispatcher); 22 of 140 screen delegators pruned at cleanup (15.71%). Media owns ZERO `on_<message>` name-dispatched handlers, so §4's third whitelist member is inert here. Its cleanup is the largest of the program — 1,214 boundary-matched test occurrences across 36 files (the CENSUS spans five `Tests/` roots; the 36 CHANGED files span four — UI 32, Architecture 2, Live 1, Media 1, and zero in `Tests/Library`, whose only hit was prose) — and added a FIFTH census spelling to §3: a COMPUTED attribute name (`ast.JoinedStr`) in a shared dispatcher, invisible to all four prior spellings and a silent production defect if missed. See §22 for the series' actual, as-landed numbers |
 | 4 | notes | 72 | most scarred; its sync controller (`canvas_sync.py`) already lives in `UI/Library_Modules/` from PR 0a |
 | 5 | final shell pass | — | residual focus/lifecycle plumbing, delegator table tidy, `compose_content` reduced to the region-yielding skeleton |
 
@@ -5268,7 +5291,9 @@ extracted the Media subsystem. At **251** media-named `FunctionDef`s and **85**
 media-named `__init__`/class-body attributes it is the biggest cluster the
 recipe has processed — prompts' 161/46 was the prior high — and its cleanup
 task retargeted **1,214** boundary-matched test occurrences across **36 files
-in five roots**, against prompts' 465 across 11.
+across four `Tests/` roots** (UI 32, Architecture 2, Live 1, Media 1 —
+the CENSUS spans a fifth, `Tests/Library`, whose single hit is prose and
+needed no change), against prompts' 465 across 11.
 
 ### Fields/methods moved, per task
 
@@ -5295,7 +5320,8 @@ bare-assignment/kwarg, patch-target table) and that was enough. Media needed a
 FIFTH: an `ast.JoinedStr` whose literal fragments compose a flat attribute
 name at runtime.
 
-`canvas_sync.py:209` builds `f"_library_{kind}_row_selection"` and resolves it
+`canvas_sync.py:219` (as landed, `5dd2e71cf`) builds
+`f"_library_{kind}_row_selection"` and resolves it
 with `operator.attrgetter`. **No spelling in §3's catalogue can see that
 string** — the name `_library_media_row_selection` appears nowhere in the
 file, as an attribute, a constant, a kwarg or a quoted literal. The

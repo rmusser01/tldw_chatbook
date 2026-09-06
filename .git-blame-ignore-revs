@@ -262,7 +262,8 @@ d0ec95b16f17668af9e32725eed788aeeed1d991
 # `self._library_media_<field>`/`self._selected_media_id` occurrences
 # retargeted to `self._media_state.<field>`, plus 9 `getattr` receiver fixes
 # and 6 dotted dynamic-dispatch string values; 1,182 test-side code retargets
-# across 32 files in five roots, including 37 SimpleNamespace fixtures whose
+# across 32 files in FOUR Tests/ roots (UI 32, Architecture 2, Live 1,
+# Media 1), including 37 SimpleNamespace fixtures whose
 # 136 flat kwargs became a nested `_media_state=SimpleNamespace(...)`; 22 of
 # the 140 screen delegators deleted on a zero-external-reference census; 10
 # dead imports removed; the shared `_apply_library_row_toggle` dispatcher's
