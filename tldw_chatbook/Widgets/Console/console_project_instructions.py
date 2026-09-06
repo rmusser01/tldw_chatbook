@@ -527,7 +527,9 @@ class ProjectInstructionSetupModal(
             yield Footer()
 
     def on_mount(self) -> None:
-        super().on_mount()
+        # No super().on_mount(): the dispatcher already invokes
+        # SafeModalDismissMixin.on_mount separately for this Mount event
+        # (TASK-31822).
         for button in self.query("Button.console-project-binding-option"):
             if not button.disabled:
                 button.focus()

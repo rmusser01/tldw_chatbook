@@ -4463,15 +4463,16 @@ class ChangeGitCommitModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
                 yield Button("Cancel", id="change-git-commit-no")
 
     def on_mount(self) -> None:
-        """Focus the required field, keeping the mixin's own mount work.
+        """Focus the required field; the mixin's own mount work runs separately.
 
-        ``super().on_mount()`` is mandatory, not politeness: Textual
-        resolves ``on_mount`` by ordinary attribute lookup, so defining one
-        here SHADOWS :class:`SafeModalDismissMixin`'s -- which is what
-        records the mount generation and the opener's focus for the
-        restore-on-dismiss contract.
+        No ``super().on_mount()``: Textual's dispatcher walks the MRO and
+        calls every distinct ``on_mount`` along it, so
+        :class:`SafeModalDismissMixin`'s handler (which records the mount
+        generation and the opener's focus for the restore-on-dismiss
+        contract) is already invoked separately for this Mount event -- an
+        explicit ``super()`` call here would run it a second time
+        (TASK-31822).
         """
-        super().on_mount()
         try:
             self.query_one("#change-git-commit-message", Input).focus()
         except Exception as exc:  # noqa: BLE001 -- focus is never load-bearing
@@ -4769,15 +4770,16 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
                 yield Button("Cancel", id="change-git-push-no")
 
     def on_mount(self) -> None:
-        """Focus the confirm button, keeping the mixin's own mount work.
+        """Focus the confirm button; the mixin's own mount work runs separately.
 
-        ``super().on_mount()`` is mandatory, not politeness: Textual
-        resolves ``on_mount`` by ordinary attribute lookup, so defining one
-        here SHADOWS :class:`SafeModalDismissMixin`'s -- which is what
-        records the mount generation and the opener's focus for the
-        restore-on-dismiss contract.
+        No ``super().on_mount()``: Textual's dispatcher walks the MRO and
+        calls every distinct ``on_mount`` along it, so
+        :class:`SafeModalDismissMixin`'s handler (which records the mount
+        generation and the opener's focus for the restore-on-dismiss
+        contract) is already invoked separately for this Mount event -- an
+        explicit ``super()`` call here would run it a second time
+        (TASK-31822).
         """
-        super().on_mount()
         try:
             self.query_one("#change-git-push-yes", Button).focus()
         except Exception as exc:  # noqa: BLE001 -- focus is never load-bearing

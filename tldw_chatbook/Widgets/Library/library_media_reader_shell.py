@@ -60,8 +60,12 @@ class LibraryMediaReaderShell(LibraryAdaptiveReaderShell):
         self.reader = reader
 
     def on_mount(self) -> None:
-        """Hide the redundant Media rail control after shared shell setup."""
-        super().on_mount()
+        """Hide the redundant Media rail control after shared shell setup.
+
+        No super().on_mount(): the dispatcher already invokes
+        LibraryAdaptiveReaderShell.on_mount separately for this Mount event
+        (TASK-31822).
+        """
         collapse = self.query("#library-rail-collapse")
         if collapse:
             collapse.first().display = False

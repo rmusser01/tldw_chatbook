@@ -547,8 +547,9 @@ class PersonalContextReviewModal(
                     disabled=self._receipt is not None,
                 )
 
-    def on_mount(self) -> None:
-        super().on_mount()
+    # No on_mount override: it did nothing but super().on_mount(), which the
+    # dispatcher already invokes on SafeModalDismissMixin separately for
+    # this Mount event (TASK-31822).
 
     @on(Checkbox.Changed)
     def handle_checkbox_changed(self, event: Checkbox.Changed) -> None:
