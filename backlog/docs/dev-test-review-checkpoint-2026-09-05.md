@@ -662,3 +662,34 @@ poisoning, direct live writes and newly mutating callees. The name delegation
 must require the exact store receiver/arguments, no direct mutation, and no
 additional mutating child. Broader failures and both pending task-ID decisions
 remain open; this is not a full-suite or merge-readiness claim.
+
+## Remaining fork-census classifications resolved
+
+TASK-31808 resolves the four remaining routes without runtime changes. The
+scanner recognizes only the plain pending-drain policy assignment after checking
+its exact lifecycle initializer and local drain bindings. The method is not
+exempted, so live writes and new mutating callees still reach the recursive census.
+The synchronous committed-name wrapper now has an explicit delegated entry,
+requiring the exact receiver/arguments, no direct fork writes and no additional
+mutating child; its underlying setter remains independently guarded.
+
+The initial regression run returned **8 failed / 36 passed**
+(`/private/tmp/tldw-census-classification-red.xml`): the detached false positive,
+six incorrectly accepted delegation mutations and the existing classification
+failure. The first correction passed all 44 tests. Independent review then found
+pattern-capture and alternative-alias gaps; four new regressions reproduced them
+before correction (**4 failed / 44 passed**,
+`/private/tmp/tldw-census-review-red.xml`). Annotated, walrus and chained aliases
+and protected pattern/exception bindings now fail closed.
+
+Final complete census, settings-publication, settings-apply, first-send, fork and
+display-name-lifetime files: **351 passed in 48.45 seconds**, with two existing
+dependency warnings (`/private/tmp/tldw-census-classification-final.xml`). The
+census itself is fully green at **48 passed**. Negative delegation tests use the
+same assertion helper as the inventory, avoiding repeated unrelated owner scans.
+Scoped Ruff/format/diff checks and independent re-review pass. Production code,
+diagnostic pins, direct-owner inventory and broad exemption sets are unchanged.
+
+The broader review, including architecture ceilings, other behavioral failure
+families and both pending task-ID decisions, remains open. No full-suite or
+merge-readiness claim is made.
