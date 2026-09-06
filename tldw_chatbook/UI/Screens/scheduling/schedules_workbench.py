@@ -337,9 +337,15 @@ def _duplicate_definition_payload(definition: dict[str, Any]) -> dict[str, Any]:
     fields verbatim (it is what a PRIOR `save_definition` call wrote).
     Only the AUTHORED fields travel; `save_definition`'s own create path
     (``definition_id=None``) gives everything else (a fresh id,
-    `lifecycle="configured"`, `health="execution_unavailable"`,
-    `version=1`) the same defaults every other new definition gets --
-    `create_automation_definition`'s own contract.
+    `health="execution_unavailable"`, `version=1`) the same defaults
+    every other new definition gets -- `create_automation_definition`'s
+    own contract. `lifecycle` is NOT one of those defaults this payload
+    controls: the create path always lands "configured" (active)
+    regardless of the source's own lifecycle (`_definition_db_fields_
+    from_preview` has no `lifecycle` key at all) -- the caller
+    (`_on_duplicate_definition_requested`) applies the source's real
+    state afterward with a follow-up `set_definition_lifecycle` call
+    when the source was not active (task-31823 review finding 1).
     """
     name = str(definition.get("name") or "Untitled automation")
     input_fields = definition.get("input")
@@ -2637,6 +2643,15 @@ class SchedulesWorkbench(BaseAppScreen):
         a server-owned definition never auto-queues a push -- the copy
         starts as a plain local draft the user can transfer like any
         other, same as a fresh create (ruling).
+
+        Lifecycle (review finding 1): a PAUSED (or archived/disabled)
+        source must not silently duplicate as active -- the due-run
+        selector gates strictly on `lifecycle = 'configured'`, so an
+        unpaused copy is immediately eligible to spend on its own
+        schedule with no further user action. Only an active source
+        duplicates active; every other state collapses to paused (see
+        `source_lifecycle` below and `_duplicate_definition_payload`'s
+        own docstring for why the create path itself can't carry this).
         """
         event.stop()
         definition = event.definition
@@ -2657,10 +2672,38 @@ class SchedulesWorkbench(BaseAppScreen):
             return
         name = str(definition.get("name") or "Untitled automation")
         payload = _duplicate_definition_payload(definition)
+        # task-31823 review finding 1: `save_definition`'s create path
+        # never carries `lifecycle` through at all (`_definition_db_
+        # fields_from_preview` has no such key) -- a fresh row always
+        # lands "configured" (active) there, matching a brand-new
+        # `n`-key create. Ruling: only an ACTIVE source duplicates
+        # active; every other lifecycle (paused/archived/disabled/an
+        # unrecognized future value) collapses to paused -- the one safe
+        # non-spending state to start a copy in, applied via one
+        # follow-up `set_definition_lifecycle` call below rather than
+        # verbatim-preserving "archived"/"disabled" on a brand new row
+        # (which would just be a useless, invisible-to-Resume copy).
+        source_lifecycle = str(definition.get("lifecycle") or "configured")
 
         async def _duplicate_and_refresh() -> None:
             try:
                 outcome = await service.save_definition(payload, owner_id="local")
+                if (
+                    outcome.status == "saved"
+                    and outcome.definition_id is not None
+                    and source_lifecycle != "configured"
+                ):
+                    pause_outcome = await service.set_definition_lifecycle(
+                        outcome.definition_id, "pause"
+                    )
+                    if pause_outcome.status != "saved":
+                        logger.warning(
+                            "Duplicate of automation definition {} created "
+                            "but could not be paused to match its paused "
+                            "source: {}",
+                            name,
+                            pause_outcome.errors,
+                        )
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "Failed to duplicate automation definition {}", name

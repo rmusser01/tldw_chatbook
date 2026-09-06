@@ -5173,10 +5173,13 @@ async def test_duplicate_button_creates_a_disambiguated_local_copy_of_a_definiti
     (through the existing `save_definition` create path), its name is
     disambiguated, its authored fields match the source, it shares no
     mutable state with the source, and it gets fresh-create defaults
-    (`lifecycle="configured"`, a new id, `version=1`) rather than
-    inheriting the source's paused lifecycle. Ownership ruling: a
-    server-owned SOURCE still duplicates onto the LOCAL owner -- a
-    duplicate is a plain new draft, never an implicit transfer."""
+    (a new id, `version=1`). Ownership ruling: a server-owned SOURCE
+    still duplicates onto the LOCAL owner -- a duplicate is a plain new
+    draft, never an implicit transfer. Lifecycle ruling (review finding
+    1): the PAUSED source's lifecycle carries forward to the copy --
+    see `test_duplicate_button_collapses_a_paused_source_to_a_paused_
+    copy_not_due_for_selection` below for the due-selection proof this
+    test doesn't repeat."""
     db, service = _real_scheduling_service(tmp_path)
     try:
         source_id = db.create_automation_definition(
@@ -5229,9 +5232,19 @@ async def test_duplicate_button_creates_a_disambiguated_local_copy_of_a_definiti
             assert source_row["owner_id"] == "server:example.com"  # unchanged
             assert copy["input"]["question"] == source_row["input"]["question"]
             assert copy["schedule"]["cron"] == source_row["schedule"]["cron"]
-            # Fresh-create defaults, not copied from the (paused) source.
-            assert copy["lifecycle"] == "configured"
-            assert copy["version"] == 1
+            # Fresh-create defaults (new id) -- but NOT lifecycle: the
+            # paused SOURCE's lifecycle carries forward to the copy
+            # (review finding 1 -- a silently-reactivated duplicate of a
+            # paused definition is a real-cost surprise). `version` is 2,
+            # not the plain create-path 1: the create lands "configured"
+            # (that path has no `lifecycle` field to carry it, see
+            # `_duplicate_definition_payload`'s docstring), then ONE
+            # follow-up `set_definition_lifecycle` call collapses it to
+            # paused -- a real second write, so version bumps like any
+            # other edit (`update_automation_definition`'s own
+            # optimistic-locking contract).
+            assert copy["lifecycle"] == "paused"
+            assert copy["version"] == 2
 
             # No shared mutable state: editing the copy's schedule leaves
             # the source's own schedule untouched. `family` must travel
@@ -5261,6 +5274,119 @@ async def test_duplicate_button_creates_a_disambiguated_local_copy_of_a_definiti
             assert (
                 db.get_automation_definition(source_id)["schedule"]["cron"]
                 == "0 9 * * 1"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_collapses_a_paused_source_to_a_paused_copy_not_due_for_selection(
+    tmp_path,
+):
+    """task-31823 review finding 1 (MAJOR): duplicating a PAUSED
+    recurring-question definition must not silently reactivate it -- the
+    due-run selector (`list_armable_automation_definitions`, gated
+    strictly on `lifecycle = 'configured'`) must never select the copy.
+    Revert-check: against the pre-fix code (no follow-up `set_definition_
+    lifecycle` call after create), the copy keeps `create_automation_
+    definition`'s own default ("configured") and the `lifecycle`/
+    `armable_ids` assertions below both fail."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        source_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Morning brief",
+            lifecycle="paused",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            source = db.get_automation_definition(source_id)
+            detail.set_definition(source)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-duplicate", Button)
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            rows = db.list_automation_definitions(owner_id=None)
+            assert len(rows) == 2
+            copy = next(row for row in rows if row["id"] != source_id)
+            assert copy["lifecycle"] == "paused"
+
+            armable_ids = {
+                row["id"] for row in db.list_armable_automation_definitions("local")
+            }
+            assert copy["id"] not in armable_ids, (
+                "a duplicated paused definition must not be selected as due"
+            )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_button_keeps_an_active_source_active_and_due_for_selection(
+    tmp_path,
+):
+    """Symmetric control for the test above: an ACTIVE (`configured`)
+    source still duplicates as active and IS selected as due -- the
+    existing behavior this task always intended for the common case,
+    unchanged by the finding-1 fix (which only changes non-active
+    sources)."""
+    db, service = _real_scheduling_service(tmp_path)
+    try:
+        source_id = db.create_automation_definition(
+            "local",
+            "recurring_question",
+            "Morning brief",
+            lifecycle="configured",
+            schedule={"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            input={"question": "What changed?"},
+        )
+        app = WorkbenchTestApp()
+        app.scheduling_service = service
+        async with app.run_test(size=(220, 60)) as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+            workbench = pilot.app.screen
+            await settle_schedules_workbench(pilot, workbench)
+
+            detail = workbench.query_one(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            )
+            source = db.get_automation_definition(source_id)
+            detail.set_definition(source)
+            await pilot.pause()
+
+            button = detail.query_one("#scheduling-automation-duplicate", Button)
+            detail.on_button_pressed(Button.Pressed(button))
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            rows = db.list_automation_definitions(owner_id=None)
+            assert len(rows) == 2
+            copy = next(row for row in rows if row["id"] != source_id)
+            assert copy["lifecycle"] == "configured"
+
+            armable_ids = {
+                row["id"] for row in db.list_armable_automation_definitions("local")
+            }
+            assert copy["id"] in armable_ids, (
+                "an active definition's duplicate must remain selectable as due"
             )
     finally:
         db.close()

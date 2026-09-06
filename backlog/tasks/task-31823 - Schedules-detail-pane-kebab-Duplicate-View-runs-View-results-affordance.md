@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-06 05:56'
-updated_date: '2026-09-06 19:03'
+updated_date: '2026-09-06 19:22'
 labels:
   - scheduling
   - ux
@@ -65,4 +65,12 @@ CSS: new .detail-secondary-action-button class (plain class on each Button, neve
 Modified/added files: tldw_chatbook/Scheduling/events.py, tldw_chatbook/UI/Screens/scheduling/task_detail.py, tldw_chatbook/UI/Screens/scheduling/definition_detail.py, tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py, tldw_chatbook/css/features/_scheduling.tcss (+ regenerated tldw_cli_modular.tcss / screen_feature_scheduling.tcss), Docs/User_Guide/schedules.md, Tests/UI/test_schedules_transfer_actions.py, Tests/UI/test_schedules_workbench.py, Tests/UI/test_schedules_automations_tab.py.
 
 Verification: Tests/UI/test_schedules_workbench.py + test_schedules_automations_tab.py + test_schedules_transfer_actions.py + test_schedules_terminology.py + test_detail_value_row.py + test_schedules_results_tab.py all run foreground: 299 passed, 1 failed. The 1 failure (test_no_bare_reminder_noun_in_schedules_screen_copy, a PRE-EXISTING line-471 "Fixed: a reminder always notifies..." offender in task_detail.py) reproduces byte-for-byte identically against base b69bd85b7 in a throwaway worktree (removed after) -- confirmed pre-existing, out of this task's scope, not caused by this change.
+
+--- Review round 1 (REQUEST-CHANGES, addressed as a new commit) ---
+
+Finding 1 (MAJOR, fixed): _duplicate_definition_payload carried no lifecycle key, so a PAUSED/archived/disabled source's Duplicate always landed "configured" (active) via create_automation_definition's own create-path default -- silently making it eligible for the due-run selector (list_armable_automation_definitions gates strictly on lifecycle='configured'), i.e. an LLM pipeline could start spending on schedule with zero further user action. Fixed with a ruling: lifecycle now carries forward for an ACTIVE source (unchanged, no code needed -- the create path's own default already does this); a PAUSED/ARCHIVED/DISABLED/unrecognized source collapses to PAUSED via one follow-up SchedulingService.set_definition_lifecycle(new_id, "pause") call after the create succeeds (save_definition's create path structurally cannot carry lifecycle through -- _definition_db_fields_from_preview builds its fields dict purely from the preview's normalized_config, which has no lifecycle key at all -- so a post-create follow-up write is the only way to apply it, not a payload field). Archived/disabled were deliberately NOT preserved verbatim: a duplicate starting in either state would be invisible to a plain Resume click, a worse outcome than paused. Side effect: the pause follow-up is a real second DB write, so a paused-source copy's version is 2, not 1 (update_automation_definition's own bump_version=True default) -- asserted explicitly in the updated test. Revert-checked in a throwaway worktree at the pre-fix commit (5baeec50a): both the fixed existing test and the new dedicated paused-collapse test fail there, the active-source control test still passes (removed after).
+
+Finding 2 (MINOR/docs, fixed): Duplicate always goes through save_definition's create path, so task-31414's normalize-on-create backfill concretizes a source's UNSET generation_mode/scope/finding_policy/retention_policy into concrete defaults (e.g. "Balanced findings") in the copy -- display/storage-only, runtime behavior is identical since the execution-time resolvers (automation_execution.py) already fall back to the exact same defaults for an absent key. Now stated explicitly here and in Docs/User_Guide/schedules.md's automation-pane paragraph + Verified-against stamp.
+
+New tests: test_duplicate_button_collapses_a_paused_source_to_a_paused_copy_not_due_for_selection (paused source -> paused copy, NOT in list_armable_automation_definitions) and test_duplicate_button_keeps_an_active_source_active_and_due_for_selection (active source -> active copy, control, unchanged behavior) in Tests/UI/test_schedules_workbench.py. Existing test_duplicate_button_creates_a_disambiguated_local_copy_of_a_definition's lifecycle/version assertions corrected to match (was silently asserting the bug as correct behavior).
 <!-- SECTION:NOTES:END -->
