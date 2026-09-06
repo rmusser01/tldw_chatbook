@@ -22274,26 +22274,13 @@ class ConsoleChatController:
             from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
             from tldw_chatbook.Canvas.models import CanvasScope
 
-            native_path = self.store.active_path_message_ids(session_id)
-            active_path: list[str] = []
-            for native_id in native_path:
-                try:
-                    path_message = self.store.get_message(native_id)
-                except KeyError:
-                    active_path = []
-                    break
-                if (
-                    not session.ephemeral
-                    and path_message.persisted_message_id is None
-                    and path_message.role is ConsoleMessageRole.SYSTEM
-                ):
-                    continue
-                active_path.append(path_message.persisted_message_id or path_message.id)
             canvas_run_id = str(uuid4())
             canvas_scope = CanvasScope(
                 session_id=session_id,
                 conversation_id=conversation_id,
-                active_message_ids=tuple(active_path),
+                active_message_ids=self.store.canvas_active_path_message_ids(
+                    session_id
+                ),
                 selected_canvas_id=None,
                 selected_revision_id=None,
                 run_id=canvas_run_id,

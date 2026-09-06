@@ -33,8 +33,8 @@
       "sha256": "de26e4be2a38ef2fad687bc33ab34416d805e61791433d8e3c1b614133c94878"
     },
     "canvas_runtime_worker.js": {
-      "bytes": 58977,
-      "sha256": "5df8c93ebb067aa567b9d27a02d406e0473457b32083e7610156bd4f7e9d8167"
+      "bytes": 59122,
+      "sha256": "42246dd79d68be0445a81de58d7dc77f6b08bd9b718e4fa617af1488dd88c2e6"
     },
     "quickjs-runtime.js": {
       "bytes": 737944,

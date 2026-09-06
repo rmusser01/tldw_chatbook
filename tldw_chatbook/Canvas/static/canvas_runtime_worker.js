@@ -663,7 +663,10 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
     get checked() { return this.__checked; }
     set checked(value) { this.__checked = Boolean(value); markPropertyOverride(this, "checked"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "checked", value: this.__checked}); }
     get disabled() { return this.__disabled; }
-    set disabled(value) { this.__disabled = Boolean(value); markPropertyOverride(this, "disabled"); emitForPresent(this, {op: "set-property", node_id: this.__id, name: "disabled", value: this.__disabled}); }
+    set disabled(value) {
+      if (Boolean(value)) this.setAttribute("disabled", "");
+      else this.removeAttribute("disabled");
+    }
     get selected() { return this.__selected; }
     set selected(value) {
       this.__selected = Boolean(value); markPropertyOverride(this, "selected");
@@ -690,16 +693,19 @@ const VIRTUAL_RUNTIME_SOURCE = String.raw`
       if (name === "style") throw new TypeError("Use the Canvas style facade");
       this.attributes.set(name, value);
       if (name === "value" && !listIncludes(this.__propertyOverrides, "value")) this.__value = value;
-      if (["checked", "disabled", "selected"].includes(name) && !listIncludes(this.__propertyOverrides, name)) this["__" + name] = true;
-      refreshFormAncestors(this, name === "selected" && this.__selected ? this : null);
+      if (name === "disabled") this.__disabled = true;
+      if (["checked", "selected"].includes(name) && !listIncludes(this.__propertyOverrides, name)) this["__" + name] = true;
+      // Availability reflection does not change an explicit empty selection.
+      if (name !== "disabled") refreshFormAncestors(this, name === "selected" && this.__selected ? this : null);
       emitForPresent(this, {op: "set-attribute", node_id: this.__id, name, value});
     }
     removeAttribute(name) {
       name = String(name); if (!allowedAttribute(this, name)) throw new TypeError("Attribute is outside Canvas V1");
       this.attributes.delete(name);
-      if (["checked", "disabled", "selected"].includes(name) && !listIncludes(this.__propertyOverrides, name)) this["__" + name] = false;
+      if (name === "disabled") this.__disabled = false;
+      if (["checked", "selected"].includes(name) && !listIncludes(this.__propertyOverrides, name)) this["__" + name] = false;
       if (name === "value" && !listIncludes(this.__propertyOverrides, "value")) this.__value = "";
-      refreshFormAncestors(this);
+      if (name !== "disabled") refreshFormAncestors(this);
       emitForPresent(this, {op: "remove-attribute", node_id: this.__id, name});
     }
     appendChild(child) {

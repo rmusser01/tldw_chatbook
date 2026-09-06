@@ -835,6 +835,75 @@ def test_benign_counter_form_timer_svg_and_typed_submit_work_with_zero_egress(
 
 
 @pytest.mark.loopback_network
+@pytest.mark.parametrize("tag", ["input", "textarea", "select"])
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("control.disabled = false; control.setAttribute('disabled', '');", True),
+        ("control.disabled = true; control.removeAttribute('disabled');", False),
+    ],
+)
+def test_disabled_property_and_attribute_reflection_survive_reconstruction(
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+    tag: str,
+    mutation: str,
+    expected: bool,
+) -> None:
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        closing_tag = "" if tag == "input" else f"</{tag}>"
+        options = (
+            '<option value="a">A</option><option value="b">B</option>'
+            if tag == "select"
+            else ""
+        )
+        select_empty = "control.value = '';" if tag == "select" else ""
+        source = f"""<!doctype html><html><body>
+<section id="controls"><{tag} id="control">{options}{closing_tag}</section>
+<button id="submit-state">submit</button><button id="detach">detach</button>
+<button id="restore">restore</button><script>
+const controls = document.getElementById("controls");
+const control = document.getElementById("control");
+{select_empty}
+{mutation}
+document.getElementById("submit-state").addEventListener("click", () => {{
+  canvas.submit({{disabled: control.disabled, attribute: control.hasAttribute("disabled"), value: control.value}});
+}});
+document.getElementById("detach").addEventListener("click", () => {{ controls.parentNode.removeChild(controls); }});
+document.getElementById("restore").addEventListener("click", () => {{ document.body.appendChild(controls); }});
+</script></body></html>"""
+        status = _load(page, _wire_plan(source), recorder)
+        assert status["state"] == "ready", status
+        frame = page.frame(name="canvas-renderer")
+        assert frame is not None
+        for index in (1, 2):
+            if index == 2:
+                frame.locator("#detach").click()
+                frame.locator("#controls").wait_for(state="detached")
+                frame.locator("#restore").click()
+                frame.locator("#controls").wait_for(state="visible")
+            assert frame.locator("#control").evaluate(
+                "node => [node.disabled, node.hasAttribute('disabled'), node.value]"
+            ) == [expected, expected, ""]
+            frame.locator("#submit-state").click()
+            page.wait_for_function(
+                "count => window.__canvasHarness.messages.filter(item => "
+                "item.type === 'canvas:bridge-request' && item.kind === 'submit').length === count",
+                arg=index,
+            )
+            actual = page.evaluate(
+                "window.__canvasHarness.messages.filter(item => "
+                "item.type === 'canvas:bridge-request' && item.kind === 'submit').at(-1).value"
+            )
+            _assert_zero_generated_egress(recorder, egress_server)
+            assert actual == {"disabled": expected, "attribute": expected, "value": ""}
+    finally:
+        context.close()
+
+
+@pytest.mark.loopback_network
 def test_textarea_and_select_submit_defaults_edits_and_reconstruction(
     chromium_browser: Any,
     asset_server: _OwnedServer,

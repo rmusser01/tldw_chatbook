@@ -13231,6 +13231,26 @@ class ConsoleChatStore:
         ids.reverse()
         return ids
 
+    def canvas_active_path_message_ids(self, session_id: str) -> tuple[str, ...]:
+        """Project the same branch authority for Canvas dispatch and native views.
+
+        Durable paths omit only transcript-only SYSTEM notices. Unpersisted
+        user/assistant IDs stay in the path so durable validation rejects them;
+        temporary paths retain every native message.
+        """
+        session = self._session_or_raise(session_id)
+        active_ids: list[str] = []
+        for native_id in self.active_path_message_ids(session_id):
+            message = self.get_message(native_id)
+            if (
+                not session.ephemeral
+                and message.persisted_message_id is None
+                and message.role is ConsoleMessageRole.SYSTEM
+            ):
+                continue
+            active_ids.append(message.persisted_message_id or message.id)
+        return tuple(active_ids)
+
     def siblings_at(self, message_id: str) -> tuple[list[ConsoleChatMessage], int, int]:
         """Return ``(ordered sibling snapshots, index of message_id, count)``.
 

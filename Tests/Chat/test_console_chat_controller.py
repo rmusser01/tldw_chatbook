@@ -5528,6 +5528,7 @@ async def test_deferred_canvas_provider_uses_the_runtime_restart_latch(tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("materialize_native_authority", [False, True])
 @pytest.mark.parametrize(
     ("ephemeral", "seed_role", "persist_seed", "expected_ok"),
     [
@@ -5544,6 +5545,7 @@ async def test_canvas_scope_projects_only_native_system_rows_by_durability(
     seed_role,
     persist_seed,
     expected_ok,
+    materialize_native_authority,
 ):
     from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
@@ -5601,10 +5603,25 @@ async def test_canvas_scope_projects_only_native_system_rows_by_durability(
             content="synthetic seed",
             persist=persist_seed,
         )
+        if materialize_native_authority:
+            from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+            screen_owner = SimpleNamespace(
+                _ensure_console_chat_store=lambda: store,
+                _session=SimpleNamespace(
+                    _active_native_console_session=lambda: session,
+                ),
+            )
+            runtime.ensure_canvas_native_authority(
+                scope_resolver=lambda session_id: ChatScreen._console_canvas_scope(
+                    screen_owner, session_id
+                ),
+            )
 
         submitted = await controller.submit_draft("project this path")
 
         assert submitted.accepted is True
+        assert "result" in seen, "Canvas scope capture prevented provider dispatch"
         assert seen["result"].ok is expected_ok
         if ephemeral:
             assert seen["scope_path"] == seen["native_path"]
