@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-09-06 17:39'
+updated_date: '2026-09-06 17:47'
 labels:
   - console
   - switcher
@@ -72,4 +72,6 @@ Final review fix wave against2184109b: corrected both confirmed findings in moda
 Qodo current-head triage: preserve incumbent Context search raw512 and explicit switcher-handoff raw200 boundary (Keyword storage does not call the raw200 unavailable-page validator). Correct ranked-page projection, rejected-edit ownership, and introduced public docs/types. Destination-only rollback for a transfer that never owns Library awaits a separate user scope decision; no global stack rollback or implicit qualification waiver.
 
 Qodo comments2-5 correction against16072cbf6: removed redundant Character projection recency sort so repository relevance/page order survives stable deduplication; rejected Character edits restore the prior accepted raw query before changing committed page/target or pending search ownership. Added concise introduced public API docs/types with TYPE_CHECKING-only Library references. Context512 and switcher/handoff200 remain unchanged; comment6 retained-Library contamination awaits separate scope approval, no lifecycle/rollback edits. Focused RED7failed; final GREEN7passed after bounded recovery-copy paint correction. One affected gate110passed4warnings69.82s; post-gate type-only import ordering correction verified by final static/no-new-diagnostics and two import tests2passed3warnings3.52s. Imports635/660; preimport499/500,365941/378740LOC,Library110202/123319. FD growth+412 and Requests mismatch remain unexplained/unwaived; no full sweep/native/remote/rebase/cap changes. Controller plan amendment and AC12 preserved, task stays In Progress/unchecked. Full commands and stopped-process receipt in packet task-5-delivery-report.md Qodo section and /tmp/task31245-qodo-*.log.
+
+Reviewed Qodo integration: preserved ae509bbf4 at codex/task-31245-reviewed-qodo-pre-rebase-ae509bbf4 and rebased all six reviewed Task5 commits from c4d45c092 onto fetched dev11b3202b6c5f41d1aedd7498e42a2877d8a89c6d without conflicts; rebased source head da0ca7d35a8d4ed5bb824b7c0a14a9062c5de966. All six range-diff patches equivalent and all26 Task5-owned files byte-identical before notes. Upstream worker/avatar/Schedules and newer Home/Settings readiness changes preserved with no Task5 overlap. One proportional post-rebase gate9passed3warnings9.86s (seven Qodo regressions plus two budgets); imports635/660, preimport499/500,366037/378740LOC,Library110202/123319. Full-range static against fetched dev has no added Ruff diagnostics; whitespace clean. Prior110pass covering remains historical, not repeated. Requests mismatch and all earlier resource/native/performance qualifications remain; comment6 destination contamination and user qualification decisions still open. No push/merge/native/cap/dependency changes; In Progress/unchecked preserved. Report: packet task-5-qodo-rebase-report.md; raw /tmp/task31245-qodo-rebase-*.log.
 <!-- SECTION:NOTES:END -->
