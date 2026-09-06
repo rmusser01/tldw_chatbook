@@ -41,8 +41,12 @@ WORKER_MODULE = "tldw_chatbook.Audio.diarizer_worker"
 #: A single assign must reply within this; a slower reply is treated as a
 #: read timeout (the window falls back to a coarse label).
 ASSIGN_BUDGET_S = 2.0
-#: The Stop-pass batch clusters the whole recording -- allow much longer.
-DIARIZE_BUDGET_S = 300.0
+#: The Stop-pass batch clusters the whole recording -- allow longer than an
+#: assign, but bound it: this runs on the stop worker thread, so a wedged
+#: worker delays meeting finalize/ingest by exactly this long. 60 s is ample
+#: for a meeting-sized recording (final whole-branch review M3); a genuinely
+#: hung worker is caught here instead of stalling the stop for 5 minutes.
+DIARIZE_BUDGET_S = 60.0
 #: First run downloads the ECAPA model; warm-up can take a while.
 READY_TIMEOUT_S = 120.0
 
