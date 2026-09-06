@@ -59,6 +59,7 @@ from tldw_chatbook.UI.focus_ownership import (
 
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+from ...Canvas.limits import CanvasLimits
 from ...Chat.console_chat_controller import CapturePolicyMutationStatus
 from ...Chat.console_exchange_capture import CaptureDetail
 from ...Chat.console_context_policy import (
@@ -160,10 +161,12 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     ProviderSettingsError,
+    CanvasConfigPolicy,
     RuntimeConfigSnapshot,
     _default_base_data_dir,
     apply_settings_mutation_to_cli_config,
     apply_console_capture_settings,
+    build_canvas_config_policy,
     coerce_bool_setting,
     coerce_float_setting,
     coerce_int_setting,
@@ -994,6 +997,8 @@ MODEL_CATALOG_FIELD_IDS = frozenset(
 )
 
 RAW_CLI_PERMITTED_DRAFT_KEY = "console.raw_cli_permitted"
+CANVAS_ENABLED_DRAFT_KEY = "canvas.enabled"
+CANVAS_AUTO_OPEN_DRAFT_KEY = "canvas.auto_open_on_create"
 RAW_CLI_CONFIG_RECONCILE_ATTEMPTS = 3
 RAW_CLI_DISCLOSURE_LINES = (
     "Commands run with the same OS permissions as Chatbook.",
@@ -1925,7 +1930,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
     SettingsCategoryId.PRIVACY_SECURITY: (
         (
             "Affected config",
-            "console.raw_cli_permitted only; privacy posture and secret status stay read-only",
+            "Canvas availability and auto-open plus the raw CLI host-access unlock",
         ),
         (
             "Credential source",
@@ -1933,7 +1938,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Recovery",
-            "save or revert the raw CLI unlock; use Check Privacy for posture verification",
+            "save or revert Canvas and host-access changes; use Check Privacy for posture verification",
         ),
         (
             "Boundary",
@@ -4986,17 +4991,25 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.PRIVACY_SECURITY,
-                owns_config_sections=("console.raw_cli_permitted",),
+                owns_config_sections=(
+                    "canvas.enabled",
+                    "canvas.auto_open_on_create",
+                    "console.raw_cli_permitted",
+                ),
                 reads_runtime_state_from=(
+                    "CanvasConfigPolicy and CanvasLimits",
                     "RawCliRuntime launch-local arm state",
                     "encryption and config redaction posture",
                     "api_settings environment credential status",
                 ),
                 writes_allowed=True,
-                runtime_owner="Settings unlock plus RawCliRuntime launch-local arm state",
+                runtime_owner=(
+                    "Canvas global execution gate plus Settings unlock and "
+                    "RawCliRuntime launch-local arm state"
+                ),
                 boundary_copy=(
-                    "Only console.raw_cli_permitted is editable here; privacy posture, "
-                    "encryption, and credential status remain read-only."
+                    "Canvas availability, create auto-open, and console.raw_cli_permitted "
+                    "are editable here; quotas and credential values remain read-only."
                 ),
                 recovery_copy=(
                     "Save or revert the unlock; Disarm acts immediately without changing "
@@ -5198,6 +5211,55 @@ class SettingsScreen(BaseAppScreen):
             return False
         console = app_config.get("console")
         return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
+
+    def _loaded_canvas_policy(self):
+        """Return the normalized, credential-free Canvas policy for this screen."""
+
+        app_config = getattr(self.app_instance, "app_config", None)
+        return build_canvas_config_policy(
+            app_config if isinstance(app_config, Mapping) else {}
+        )
+
+    def _canvas_draft_value(self, key: str) -> bool:
+        """Return one staged Canvas boolean, falling back to normalized config."""
+
+        draft = self._settings_drafts.get(SettingsCategoryId.PRIVACY_SECURITY)
+        if draft is not None and key in draft.values:
+            return draft.values[key] is True
+        policy = self._loaded_canvas_policy()
+        if key == CANVAS_ENABLED_DRAFT_KEY:
+            return policy.enabled
+        if key == CANVAS_AUTO_OPEN_DRAFT_KEY:
+            return policy.auto_open_on_create
+        raise KeyError(key)
+
+    def _stage_canvas_value(self, key: str, value: bool) -> None:
+        """Stage a Canvas preference in the canonical Privacy draft."""
+
+        category = SettingsCategoryId.PRIVACY_SECURITY
+        policy = self._loaded_canvas_policy()
+        original = (
+            policy.enabled
+            if key == CANVAS_ENABLED_DRAFT_KEY
+            else policy.auto_open_on_create
+        )
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category))
+        draft.set_value(key, original, bool(value))
+        self._update_draft_status_widgets(category)
+
+    def _sync_canvas_widgets(self) -> None:
+        """Synchronize mounted Canvas controls from the current draft/config."""
+
+        for selector, key in (
+            ("#settings-canvas-enabled", CANVAS_ENABLED_DRAFT_KEY),
+            ("#settings-canvas-auto-open", CANVAS_AUTO_OPEN_DRAFT_KEY),
+        ):
+            try:
+                checkbox = self.query_one(selector, Checkbox)
+            except QueryError:
+                continue
+            with checkbox.prevent(Checkbox.Changed):
+                checkbox.value = self._canvas_draft_value(key)
 
     def _raw_cli_runtime(self) -> Any | None:
         """Return the app-owned launch-local raw CLI runtime, when available."""
@@ -7563,8 +7625,8 @@ class SettingsScreen(BaseAppScreen):
             return "Guided edits: change a Storage default first."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             if self._category_has_unsaved_changes(category):
-                return "Guided edit: Save or Revert the raw CLI unlock."
-            return "Guided edit: raw CLI unlock only; posture remains read-only."
+                return "Guided edits: Save or Revert Canvas and host-access changes."
+            return "Guided edits: Canvas controls and host-access unlock; quotas stay read-only."
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             if self._category_has_unsaved_changes(category):
                 return "Guided edits: Save or Revert changes."
@@ -8256,8 +8318,8 @@ class SettingsScreen(BaseAppScreen):
             return "Changes apply on next launch; active handles stay unchanged."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             return (
-                "Only the raw CLI unlock is editable; privacy posture and secrets "
-                "remain read-only and redacted."
+                "Canvas availability and create auto-open are editable; hard quotas, "
+                "privacy posture, and secrets remain read-only and redacted."
             )
         if category is SettingsCategoryId.PERSONAL_CONTEXT:
             return "Encrypted local profile; record and authority actions apply immediately."
@@ -19615,6 +19677,78 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-privacy-check-result",
                     classes="settings-status-row",
                 )
+            canvas_policy = self._loaded_canvas_policy()
+            limits: CanvasLimits = canvas_policy.limits
+            with Vertical(
+                id="settings-canvas-card", classes="settings-focus-card"
+            ):
+                yield Static(
+                    "Canvas",
+                    classes="destination-section settings-column-title",
+                )
+                yield Static(
+                    "Strict zero-egress runtime: interactive HTML, CSS, and JavaScript "
+                    "cannot use the network, host filesystem, cookies, Chatbook APIs, "
+                    "or the parent-page DOM.",
+                    classes="settings-status-row",
+                )
+                yield Checkbox(
+                    "Enable Canvas tools, actions, and browser delivery",
+                    value=self._canvas_draft_value(CANVAS_ENABLED_DRAFT_KEY),
+                    id="settings-canvas-enabled",
+                    tooltip=(
+                        "Global kill switch. Turning it off preserves stored Canvas "
+                        "artifacts while revoking execution and browser delivery."
+                    ),
+                )
+                yield Checkbox(
+                    "Open Canvas automatically after a successful create",
+                    value=self._canvas_draft_value(CANVAS_AUTO_OPEN_DRAFT_KEY),
+                    id="settings-canvas-auto-open",
+                    tooltip=(
+                        "Affects successful creates only. Updates and explicit Open in "
+                        "Canvas actions are unchanged."
+                    ),
+                )
+                yield Static(
+                    "These controls show effective values. Environment variables "
+                    "override saved preferences when set, so saving TOML cannot "
+                    "override the environment.",
+                    classes="settings-status-row",
+                )
+                yield Static("Remote browser access", classes="destination-section")
+                yield self._detail_row(
+                    "Configured served posture", canvas_policy.remote_access_summary
+                )
+                yield Static(
+                    "Capability URLs remain short-lived and browser-scoped. Access "
+                    "tokens are never displayed here.",
+                    classes="settings-status-row",
+                )
+                yield Static(
+                    "Effective hard quotas — read-only",
+                    classes="destination-section",
+                )
+                yield self._detail_row(
+                    "HTML document", f"{limits.html_bytes // 1024} KiB"
+                )
+                yield self._detail_row(
+                    "Inline script", f"{limits.script_bytes // 1024} KiB"
+                )
+                yield self._detail_row(
+                    "Data assets", f"{limits.aggregate_asset_bytes // (1024 * 1024)} MiB aggregate"
+                )
+                yield self._detail_row("DOM nodes", f"{limits.dom_nodes:,}")
+                yield self._detail_row("CSS rules", f"{limits.css_rules:,}")
+                yield self._detail_row(
+                    "Runtime memory",
+                    f"{limits.runtime_memory_bytes // (1024 * 1024)} MiB",
+                )
+                yield Static(
+                    "Disabling takes effect immediately and is safe to repeat. "
+                    "Re-enabling Canvas requires restarting Chatbook.",
+                    classes="settings-status-row",
+                )
             armed_for_launch = self._host_access_is_armed()
             raw_cli_label, raw_cli_disabled = self._raw_cli_arm_button_state()
             terminal_label, terminal_disabled = self._terminal_arm_button_state()
@@ -25921,6 +26055,20 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._stage_raw_cli_permitted(bool(event.value))
 
+    @on(Checkbox.Changed, "#settings-canvas-enabled")
+    def handle_canvas_enabled_changed(self, event: Checkbox.Changed) -> None:
+        """Stage the authoritative Canvas execution/delivery kill switch."""
+
+        event.stop()
+        self._stage_canvas_value(CANVAS_ENABLED_DRAFT_KEY, bool(event.value))
+
+    @on(Checkbox.Changed, "#settings-canvas-auto-open")
+    def handle_canvas_auto_open_changed(self, event: Checkbox.Changed) -> None:
+        """Stage the create-only Canvas auto-open preference."""
+
+        event.stop()
+        self._stage_canvas_value(CANVAS_AUTO_OPEN_DRAFT_KEY, bool(event.value))
+
     @on(Button.Pressed, "#settings-raw-cli-arm")
     def handle_raw_cli_arm_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -26182,13 +26330,22 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _save_raw_cli_permitted_value(
         value: bool,
+        canvas_values: Mapping[str, bool] | None = None,
     ) -> tuple[bool, RuntimeConfigSnapshot | None]:
-        """Persist and reload the strict raw CLI unlock literal."""
+        """Persist and reload the Privacy category's strict booleans atomically."""
         adapter = SettingsConfigAdapter()
+        sections: dict[str, dict[str, bool]] = {
+            "console": {"raw_cli_permitted": bool(value)}
+        }
+        if canvas_values is not None:
+            sections["canvas"] = {
+                "enabled": canvas_values.get("enabled") is True,
+                "auto_open_on_create": (
+                    canvas_values.get("auto_open_on_create") is True
+                ),
+            }
         try:
-            saved = adapter.save_sections(
-                {"console": {"raw_cli_permitted": bool(value)}}
-            )
+            saved = adapter.save_sections(sections)
         except Exception:
             logger.exception("Failed to persist raw CLI unlock")
             return False, None
@@ -26204,6 +26361,30 @@ class SettingsScreen(BaseAppScreen):
         if not isinstance(snapshot, RuntimeConfigSnapshot):
             return True, None
         return True, snapshot
+
+    def _reconcile_privacy_draft_value(
+        self,
+        *,
+        key: str,
+        saved_value: bool,
+        submitted_value: bool,
+    ) -> None:
+        """Rebase one staged value without discarding edits made during a save."""
+
+        category = SettingsCategoryId.PRIVACY_SECURITY
+        draft = self._settings_drafts.get(category)
+        if draft is None:
+            return
+        current_value = (
+            draft.values.get(key) is True if key in draft.values else saved_value
+        )
+        if current_value == submitted_value:
+            draft.values.pop(key, None)
+            draft.originals.pop(key, None)
+        else:
+            draft.set_value(key, saved_value, current_value)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
 
     @staticmethod
     def _raw_cli_snapshot_authority(
@@ -26267,11 +26448,90 @@ class SettingsScreen(BaseAppScreen):
         self._console_settings()["raw_cli_permitted"] = False
         return False, False
 
+    @staticmethod
+    def _canvas_snapshot_policy(
+        snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[int, CanvasConfigPolicy] | None:
+        """Extract a normalized Canvas policy from one valid generation."""
+
+        if not isinstance(snapshot, RuntimeConfigSnapshot):
+            return None
+        if type(snapshot.generation) is not int or snapshot.generation < 0:
+            return None
+        if not isinstance(snapshot.values, Mapping):
+            return None
+        return snapshot.generation, build_canvas_config_policy(snapshot.values)
+
+    def _reconcile_canvas_runtime_policy(
+        self,
+        published_snapshot: RuntimeConfigSnapshot | None,
+    ) -> tuple[CanvasConfigPolicy, bool]:
+        """Publish only the newest stable Canvas preference generation."""
+
+        candidate = published_snapshot
+        for _attempt in range(RAW_CLI_CONFIG_RECONCILE_ATTEMPTS):
+            parsed = self._canvas_snapshot_policy(candidate)
+            if parsed is None:
+                try:
+                    candidate = get_runtime_config_snapshot()
+                except Exception:  # noqa: BLE001 - fail closed without logging config
+                    logger.error(
+                        "Failed to refresh Canvas runtime config snapshot "
+                        "(attempt %d of %d)",
+                        _attempt + 1,
+                        RAW_CLI_CONFIG_RECONCILE_ATTEMPTS,
+                    )
+                    break
+                parsed = self._canvas_snapshot_policy(candidate)
+                if parsed is None:
+                    candidate = None
+                    continue
+            generation, policy = parsed
+
+            def _publish_policy() -> bool:
+                app_config = self._app_config_section_target()
+                canvas_section = app_config.setdefault("canvas", {})
+                if not isinstance(canvas_section, dict):
+                    canvas_section = {}
+                    app_config["canvas"] = canvas_section
+                canvas_section.update(
+                    {
+                        "enabled": policy.enabled,
+                        "auto_open_on_create": policy.auto_open_on_create,
+                    }
+                )
+                return True
+
+            try:
+                if run_if_runtime_config_generation_current(
+                    generation, _publish_policy
+                ):
+                    return policy, True
+            except Exception:  # noqa: BLE001 - fail closed without logging config
+                logger.error(
+                    "Failed to guard Canvas config reconciliation (attempt %d of %d)",
+                    _attempt + 1,
+                    RAW_CLI_CONFIG_RECONCILE_ATTEMPTS,
+                )
+            candidate = None
+
+        logger.warning("Canvas runtime config generation did not stabilize; failing closed")
+        policy = build_canvas_config_policy(
+            {"canvas": {"enabled": False, "auto_open_on_create": False}},
+            environ={},
+        )
+        self._app_config_section_target()["canvas"] = {
+            "enabled": False,
+            "auto_open_on_create": False,
+        }
+        return policy, False
+
     def _apply_raw_cli_save_result(
         self,
         saved: bool,
         published_snapshot: RuntimeConfigSnapshot | None,
         value: bool,
+        canvas_values: Mapping[str, bool] | None = None,
     ) -> None:
         category = SettingsCategoryId.PRIVACY_SECURITY
         self._raw_cli_save_pending = False
@@ -26280,22 +26540,41 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_raw_cli_state()
             self.app.notify("Failed to save the raw CLI unlock.", severity="error")
             return
+        submitted_canvas_enabled = (
+            canvas_values is not None and canvas_values.get("enabled") is True
+        )
+        disable_accepted = canvas_values is not None and not submitted_canvas_enabled
+        canvas_runtime = getattr(self.app_instance, "console_runtime", None)
+        if disable_accepted:
+            latch_disabled = getattr(canvas_runtime, "latch_canvas_disabled", None)
+            if callable(latch_disabled):
+                latch_disabled()
         saved_value, stable = self._reconcile_raw_cli_runtime_authority(
             published_snapshot
         )
-        draft = self._settings_drafts.get(category)
-        current_value = (
-            draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
-            if draft is not None
-            else saved_value
+        self._reconcile_privacy_draft_value(
+            key=RAW_CLI_PERMITTED_DRAFT_KEY,
+            saved_value=saved_value,
+            submitted_value=value,
         )
-        if current_value == value:
-            self._settings_drafts.pop(category, None)
-        elif draft is not None:
-            draft.set_value(
-                RAW_CLI_PERMITTED_DRAFT_KEY,
-                saved_value,
-                current_value,
+        canvas_enabled: bool | None = None
+        if canvas_values is not None:
+            observed_policy, _canvas_stable = self._reconcile_canvas_runtime_policy(
+                published_snapshot
+            )
+            submitted_enabled = submitted_canvas_enabled
+            submitted_auto_open = canvas_values.get("auto_open_on_create") is True
+            canvas_enabled = observed_policy.enabled
+            canvas_auto_open = observed_policy.auto_open_on_create
+            self._reconcile_privacy_draft_value(
+                key=CANVAS_ENABLED_DRAFT_KEY,
+                saved_value=canvas_enabled,
+                submitted_value=submitted_enabled,
+            )
+            self._reconcile_privacy_draft_value(
+                key=CANVAS_AUTO_OPEN_DRAFT_KEY,
+                saved_value=canvas_auto_open,
+                submitted_value=submitted_auto_open,
             )
         terminal_cleanup_count: int | None = 0
         if not value or not saved_value:
@@ -26306,8 +26585,17 @@ class SettingsScreen(BaseAppScreen):
             if terminal_runtime is not None:
                 terminal_cleanup_count = self._terminal_live_session_count()
                 terminal_runtime.disarm()
+        self._sync_canvas_widgets()
         self._sync_raw_cli_widgets()
         self._update_draft_status_widgets(category)
+        if disable_accepted:
+            apply_policy = getattr(canvas_runtime, "apply_canvas_policy", None)
+            if callable(apply_policy):
+                self.run_worker(
+                    apply_policy(),
+                    group="settings-disable-canvas",
+                    exclusive=True,
+                )
         cleanup_suffix = ""
         if terminal_cleanup_count:
             cleanup_suffix = (
@@ -26319,7 +26607,17 @@ class SettingsScreen(BaseAppScreen):
                 " Terminal cleanup status could not be inspected; check Terminal "
                 "for pending or unproven cleanup."
             )
-        if stable and saved_value is value:
+        if canvas_values is not None:
+            self.app.notify(
+                (
+                    "Canvas disabled for this launch; tools and browser delivery "
+                    "were revoked and stored Canvas data was preserved."
+                    if disable_accepted
+                    else "Canvas settings saved. Restart Chatbook to re-enable Canvas delivery."
+                ),
+                severity="warning" if disable_accepted else "information",
+            )
+        elif stable and saved_value is value:
             self.app.notify(
                 (
                     "Raw CLI and Terminal unlock saved on."
@@ -26341,17 +26639,31 @@ class SettingsScreen(BaseAppScreen):
             )
 
     @work(exclusive=True, group="settings-save-raw-cli", thread=True)
-    def _settings_save_raw_cli_worker(self, value: bool) -> None:
-        saved, published_snapshot = self._save_raw_cli_permitted_value(value)
+    def _settings_save_raw_cli_worker(
+        self,
+        value: bool,
+        canvas_values: Mapping[str, bool] | None = None,
+    ) -> None:
+        if canvas_values is None:
+            saved, published_snapshot = self._save_raw_cli_permitted_value(value)
+        else:
+            saved, published_snapshot = self._save_raw_cli_permitted_value(
+                value, canvas_values
+            )
         self.app.call_from_thread(
             self._apply_raw_cli_save_result,
             saved,
             published_snapshot,
             value,
+            canvas_values,
         )
 
-    def _start_raw_cli_save(self, value: bool) -> bool:
-        """Start one serialized raw CLI unlock save."""
+    def _start_raw_cli_save(
+        self,
+        value: bool,
+        canvas_values: Mapping[str, bool] | None = None,
+    ) -> bool:
+        """Start one serialized Privacy-category save."""
         if getattr(self, "_raw_cli_save_pending", False):
             self.app.notify(
                 "Raw CLI unlock save is already in progress.", severity="warning"
@@ -26359,7 +26671,7 @@ class SettingsScreen(BaseAppScreen):
             return False
         self._raw_cli_save_pending = True
         try:
-            self._settings_save_raw_cli_worker(value)
+            self._settings_save_raw_cli_worker(value, canvas_values)
         except Exception:
             self._raw_cli_save_pending = False
             raise
@@ -26376,20 +26688,37 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         draft = self._settings_drafts.get(category)
-        if draft is None or RAW_CLI_PERMITTED_DRAFT_KEY not in draft.dirty_keys:
+        dirty_keys = set() if draft is None else draft.dirty_keys
+        canvas_dirty = bool(
+            dirty_keys
+            & {CANVAS_ENABLED_DRAFT_KEY, CANVAS_AUTO_OPEN_DRAFT_KEY}
+        )
+        raw_cli_dirty = RAW_CLI_PERMITTED_DRAFT_KEY in dirty_keys
+        if not raw_cli_dirty and not canvas_dirty:
             self._settings_drafts.pop(category, None)
+            self._sync_canvas_widgets()
             self._sync_raw_cli_widgets()
             self._update_draft_status_widgets(category)
             self.app.notify("No Settings changes to save.", severity="information")
             return
-        value = draft.values.get(RAW_CLI_PERMITTED_DRAFT_KEY) is True
-        if not value or self._loaded_raw_cli_permitted():
-            self._start_raw_cli_save(value)
+        value = self._raw_cli_draft_value()
+        canvas_values = (
+            {
+                "enabled": self._canvas_draft_value(CANVAS_ENABLED_DRAFT_KEY),
+                "auto_open_on_create": self._canvas_draft_value(
+                    CANVAS_AUTO_OPEN_DRAFT_KEY
+                ),
+            }
+            if canvas_dirty
+            else None
+        )
+        if not raw_cli_dirty or not value or self._loaded_raw_cli_permitted():
+            self._start_raw_cli_save(value, canvas_values)
             return
 
         async def _confirmed_unlock() -> None:
             self._raw_cli_unlock_confirmation_pending = False
-            self._start_raw_cli_save(True)
+            self._start_raw_cli_save(True, canvas_values)
 
         async def _cancelled_unlock() -> None:
             self._raw_cli_unlock_confirmation_pending = False
@@ -27423,6 +27752,7 @@ class SettingsScreen(BaseAppScreen):
             self._sync_storage_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
+            self._sync_canvas_widgets()
             self._sync_raw_cli_widgets()
             self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:

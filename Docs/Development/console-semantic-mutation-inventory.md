@@ -24,9 +24,9 @@ that coordinator.
   generation provenance, legacy exchange capture, or trajectory diagnostics.
   These values do not change the provider-neutral message envelope.
 
-The structural test records 39 live SQL sink identities and 64 boundary call
-identities: 66 model-visible, 11 visibility/ownership-only, and 26
-presentation-only identities in total. These are route-layer identities, not 103
+The structural test records 40 live SQL sink identities and 65 boundary call
+identities: 67 model-visible, 12 visibility/ownership-only, and 26
+presentation-only identities in total. These are route-layer identities, not 105
 distinct user actions; a public action appears once at its boundary and again at
 the SQL sink it reaches.
 
@@ -45,6 +45,7 @@ user-facing ownership chain and must be reviewed when a route changes.
 | Image/video generation settlement | model-visible | `ConsoleChatStore.append_generation_message`, `append_video_message`, `_persist_terminal_generation` | `ChatPersistenceService.create_message` or selected-generation replacement |
 | Attachment mutation and selected image variant | model-visible | `ConsoleChatStore.append_generation_variant`, `keep_generation_variant`; `ChatPersistenceService.append_message_attachment`, `keep_message_attachment` | attachment append or scalar/attachment swap; generation metadata re-key is presentation-only |
 | Console fork and temporary promotion | model-visible | `ConsoleSessionController._commit_durable_console_chat_fork`; `ConsoleChatStore.promote_ephemeral_session`; `ChatPersistenceService.fork_console_conversation_bundle`, `promote_console_conversation_bundle` | creates each canonical message and its attachments in the destination conversation |
+| Canvas conversation hard purge | visibility/ownership-only | `CanvasRepository.hard_purge_conversation` | materializes semantic revisions children-before-parents through `SemanticRevisionCoordinator`, then deletes the conversation owner and cascading message/Canvas rows in the same transaction |
 | Classic chat bulk save | model-visible plus visibility | `Chat_Functions.save_chat_history_to_db_wrapper`; `ChatPersistenceService.save_history` | create/update retained rows and soft-delete omitted rows |
 | Classic character create/post/edit | model-visible | `Character_Chat_Lib.create_conversation`, `start_new_chat_session`, `add_message_to_conversation`, `post_message_to_conversation`, `edit_message_content` | `add_message` or semantic `update_message` |
 | Character API create/update | model-visible | `LocalCharacterPersonaService.create_character_chat_message`, `update_character_chat_message` | `add_message` or semantic `update_message` |
@@ -89,16 +90,16 @@ inputs at the call boundary.
 
 ## Hard deletion
 
-There is currently no live public hard-delete route for a `messages` row or a
-`conversations` row. Message deletion APIs are soft deletes. The schema has
-`messages.conversation_id ... ON DELETE CASCADE`, so a future direct hard delete
-of a conversation is also a hard delete of every owned message and sidecar. The
-census therefore treats any live `DELETE FROM conversations` as an unclassified
+`CanvasRepository.hard_purge_conversation` is the live public hard-delete route
+for a conversation and its owned message/Canvas graph. It invokes
+`SemanticRevisionCoordinator` for every message in children-before-parents order,
+then deletes the conversation owner in the same transaction; the schema's
+`messages.conversation_id ... ON DELETE CASCADE` removes the owned messages and
+sidecars. Ordinary message deletion APIs remain soft deletes. The census treats
+every live `DELETE FROM conversations` as a
 `conversations(cascades-messages)` route, in addition to detecting direct
-`DELETE FROM messages`. Task 6 must install a fail-closed guard for both direct
-message deletion and cascade deletion before Task 7 can expose a hard-delete
-owner. ADR-097 requires materialization and canonical deletion to commit in the
-same coordinator transaction.
+`DELETE FROM messages`, so any additional hard-delete owner must be classified
+and preserve ADR-097's same-transaction materialization contract.
 
 ## Generated and dynamic SQL
 
@@ -227,6 +228,7 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/console_dispatch_repository.py::ConsoleDispatchRepository._normalize_provider_continuation_owner_uncoordinated::sql:update:messages` — model-visible
 - `tldw_chatbook/Chat/console_dispatch_repository.py::ConsoleDispatchRepository._settle_with_assistant_uncoordinated::sql:update:messages` — model-visible
 - `tldw_chatbook/Chat/console_semantic_revision.py::SemanticRevisionCoordinator._mutate_message::sql:delete:messages` — model-visible
+- `tldw_chatbook/Canvas/repository.py::CanvasRepository.hard_purge_conversation::sql:delete:conversations(cascades-messages)` — visibility/ownership-only
 - `tldw_chatbook/Chat/console_trace_maintenance.py::LegacyTraceMaintenance.run_batch::sql:delete:message_exchanges` — presentation-only
 - `tldw_chatbook/Chat/library_activity.py::LibraryActivityContribution.write::sql:insert:message_trajectory_metadata` — presentation-only
 - `tldw_chatbook/Chat/library_preparation.py::LibraryPreparationContribution.write::sql:insert:message_trajectory_metadata` — presentation-only
@@ -283,6 +285,7 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.keep_message_attachment::call:db:swap_message_attachment_with_scalar` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.promote_console_conversation_bundle::call:persistence:create_message` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.replace_assistant_generation_projection::call:db:replace_assistant_generation_projection` — model-visible
+- `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.replace_assistant_generation_projection_with_contributions::call:db:replace_assistant_generation_projection` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:db:soft_delete_message` — visibility/ownership-only
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:persistence:create_message` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:persistence:update_message_content` — model-visible

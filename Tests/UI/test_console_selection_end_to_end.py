@@ -218,7 +218,8 @@ class _FakeSideChatGateway:
         del selection
         return _FakeResolution()
 
-    async def stream_chat(self, resolution, messages):
+    async def stream_chat(self, resolution, messages, *, route=None):
+        assert route is None
         self.stream_calls += 1
         self.messages.append(messages)
         del resolution

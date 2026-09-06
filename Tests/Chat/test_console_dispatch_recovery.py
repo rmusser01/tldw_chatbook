@@ -10,14 +10,19 @@ from types import SimpleNamespace
 import pytest
 
 import tldw_chatbook.Chat.console_chat_models as recovery_models
+from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleRunStatus,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleDispatchSettlementError,
+)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleAssistantSettlement,
     ConsoleDispatchCheckpoint,
@@ -944,6 +949,263 @@ def test_terminal_settlement_preserves_local_metadata_and_usage_atomically(
     )
 
 
+def test_terminal_settlement_commits_canvas_revision_with_assistant_message(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "terminal-canvas.sqlite")
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+    canvas = ConsoleCanvasController()
+    scope = CanvasScope(
+        session_id="session-1",
+        conversation_id=conversation_id,
+        active_message_ids=("user-1",),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="run-1",
+    )
+    canvas.register_run(scope, assistant_message_id="assistant-1", temporary=False)
+    created = canvas.create_canvas(
+        scope, tool_call_id="call-1", title="Atomic", html="<p>atomic</p>"
+    )
+    staged = canvas.finish_run("run-1", "done")
+    assert staged is not None and staged.contribution is not None
+
+    result = repository.settle_with_assistant(
+        ConsoleAssistantSettlement(
+            assistant_message_id=started.assistant_message_id,
+            expected_checkpoint_state=started.state,
+            expected_checkpoint_revision=started.checkpoint_revision,
+            expected_user_message_version=started.user_message_version,
+            expected_assistant_message_version=started.assistant_message_version,
+            terminal_state="complete",
+            content="",
+            metadata_json=staged.metadata_json,
+            contributions=(staged.contribution,),
+        )
+    )
+
+    assert result.status.value == "committed"
+    message = db.get_message_by_id("assistant-1")
+    revision = db.get_connection().execute(
+        "SELECT origin_message_id, html FROM canvas_revisions WHERE id = ?",
+        (created.revision.revision_id,),
+    ).fetchone()
+    assert message["assistant_generation_state"] == "complete"
+    assert tuple(revision) == ("assistant-1", "<p>atomic</p>")
+
+
+def test_canvas_revision_failure_rolls_back_terminal_message(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "terminal-canvas-fail.sqlite")
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+    canvas = ConsoleCanvasController()
+    scope = CanvasScope(
+        session_id="session-1",
+        conversation_id=conversation_id,
+        active_message_ids=("user-1",),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="run-1",
+    )
+    canvas.register_run(scope, assistant_message_id="assistant-1", temporary=False)
+    canvas.create_canvas(
+        scope, tool_call_id="call-1", title="Atomic", html="<p>atomic</p>"
+    )
+    staged = canvas.finish_run("run-1", "done")
+    assert staged is not None and staged.contribution is not None
+    db.get_connection().execute(
+        "CREATE TRIGGER fail_canvas_revision BEFORE INSERT ON canvas_revisions "
+        "BEGIN SELECT RAISE(ABORT, 'injected revision failure'); END"
+    )
+
+    with pytest.raises(Exception, match="injected revision failure"):
+        repository.settle_with_assistant(
+            ConsoleAssistantSettlement(
+                assistant_message_id=started.assistant_message_id,
+                expected_checkpoint_state=started.state,
+                expected_checkpoint_revision=started.checkpoint_revision,
+                expected_user_message_version=started.user_message_version,
+                expected_assistant_message_version=started.assistant_message_version,
+                terminal_state="complete",
+                content="settled",
+                metadata_json=staged.metadata_json,
+                contributions=(staged.contribution,),
+            )
+        )
+
+    message = db.get_message_by_id("assistant-1")
+    assert message["content"] == ""
+    assert message["assistant_generation_state"] == "dispatch_started"
+    assert db.get_connection().execute(
+        "SELECT COUNT(*) FROM canvas_revisions"
+    ).fetchone()[0] == 0
+
+
+def test_terminal_message_failure_never_writes_canvas_revision(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "terminal-message-fail.sqlite")
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+    canvas = ConsoleCanvasController()
+    scope = CanvasScope(
+        session_id="session-1",
+        conversation_id=conversation_id,
+        active_message_ids=("user-1",),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="run-1",
+    )
+    canvas.register_run(scope, assistant_message_id="assistant-1", temporary=False)
+    canvas.create_canvas(
+        scope, tool_call_id="call-1", title="Atomic", html="<p>atomic</p>"
+    )
+    staged = canvas.finish_run("run-1", "done")
+    assert staged is not None and staged.contribution is not None
+    db.get_connection().execute(
+        "CREATE TRIGGER fail_terminal_message BEFORE UPDATE ON messages "
+        "WHEN OLD.id = 'assistant-1' "
+        "BEGIN SELECT RAISE(ABORT, 'injected message failure'); END"
+    )
+
+    with pytest.raises(Exception, match="injected message failure"):
+        repository.settle_with_assistant(
+            ConsoleAssistantSettlement(
+                assistant_message_id=started.assistant_message_id,
+                expected_checkpoint_state=started.state,
+                expected_checkpoint_revision=started.checkpoint_revision,
+                expected_user_message_version=started.user_message_version,
+                expected_assistant_message_version=started.assistant_message_version,
+                terminal_state="complete",
+                content="settled",
+                metadata_json=staged.metadata_json,
+                contributions=(staged.contribution,),
+            )
+        )
+
+    assert db.get_connection().execute(
+        "SELECT COUNT(*) FROM canvas_revisions"
+    ).fetchone()[0] == 0
+
+
+def test_store_confirms_canvas_stage_only_after_terminal_transaction(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "store-terminal-canvas.sqlite")
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+    store, session_id = _restored_store(db, conversation_id)
+    claimed = store.publish_durable_dispatch_checkpoint(session_id, started, in_flight=True)
+    assert claimed.in_flight
+    assistant = store._message_or_raise(started.assistant_message_id)
+    canvas = ConsoleCanvasController()
+    canvas_scope = CanvasScope(
+        session_id=session_id,
+        conversation_id=conversation_id,
+        active_message_ids=("user-1",),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="run-1",
+    )
+    canvas.register_run(
+        canvas_scope, assistant_message_id=assistant.id, temporary=False
+    )
+    created = canvas.create_canvas(
+        canvas_scope,
+        tool_call_id="call-1",
+        title="Store atomic",
+        html="<p>store atomic</p>",
+    )
+    canvas.finish_run("run-1", "done")
+    store.canvas_turn_controller = canvas
+    assistant.status = "streaming"
+    assistant.assistant_generation_state = "streaming"
+    completed = store.mark_message_complete(assistant.id)
+
+    assert completed.status == "complete"
+    assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
+    assert db.get_connection().execute(
+        "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
+        (created.revision.revision_id,),
+    ).fetchone()[0] == 1
+    metadata = json.loads(db.get_message_by_id("assistant-1")["metadata_json"])
+    assert metadata["canvas_cards"][0]["title"] == "Store atomic"
+
+
+def test_store_closes_successful_canvas_run_without_mutations(tmp_path: Path) -> None:
+    db, conversation_id, repository = _database(tmp_path / "store-empty-canvas.sqlite")
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+    store, session_id = _restored_store(db, conversation_id)
+    store.publish_durable_dispatch_checkpoint(session_id, started, in_flight=True)
+    assistant = store._message_or_raise(started.assistant_message_id)
+    canvas = ConsoleCanvasController()
+    canvas.register_run(
+        CanvasScope(
+            session_id=session_id,
+            conversation_id=conversation_id,
+            active_message_ids=("user-1",),
+            selected_canvas_id=None,
+            selected_revision_id=None,
+            run_id="run-1",
+        ),
+        assistant_message_id=assistant.id,
+        temporary=False,
+    )
+    canvas.finish_run("run-1", "done")
+    store.canvas_turn_controller = canvas
+    assistant.status = "streaming"
+    assistant.assistant_generation_state = "streaming"
+
+    completed = store.mark_message_complete(assistant.id)
+
+    assert completed.status == "complete"
+    assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
+
+
+def test_store_retains_canvas_stage_when_terminal_transaction_fails(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id, repository = _database(tmp_path / "store-terminal-canvas-fail.sqlite")
+    started = _start(repository, _insert(db, repository, _acceptance(conversation_id)))
+    store, session_id = _restored_store(db, conversation_id)
+    store.publish_durable_dispatch_checkpoint(session_id, started, in_flight=True)
+    assistant = store._message_or_raise(started.assistant_message_id)
+    canvas = ConsoleCanvasController()
+    canvas_scope = CanvasScope(
+        session_id=session_id,
+        conversation_id=conversation_id,
+        active_message_ids=("user-1",),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="run-1",
+    )
+    canvas.register_run(canvas_scope, assistant_message_id=assistant.id, temporary=False)
+    canvas.create_canvas(
+        canvas_scope, tool_call_id="call-1", title="Fail", html="<p>fail</p>"
+    )
+    canvas.finish_run("run-1", "done")
+    store.canvas_turn_controller = canvas
+    assistant.status = "streaming"
+    assistant.assistant_generation_state = "streaming"
+    db.get_connection().execute(
+        "CREATE TRIGGER fail_canvas_revision BEFORE INSERT ON canvas_revisions "
+        "BEGIN SELECT RAISE(ABORT, 'injected revision failure'); END"
+    )
+
+    with pytest.raises(ConsoleDispatchSettlementError):
+        store.mark_message_complete(assistant.id)
+
+    assert canvas.settlement_for_assistant(assistant.id).state.value == "ready"
+    assert db.get_message_by_id("assistant-1")["assistant_generation_state"] == (
+        "dispatch_started"
+    )
+
+    db.get_connection().execute("DROP TRIGGER fail_canvas_revision")
+    completed = store.mark_message_complete(assistant.id)
+
+    assert completed.status == "complete"
+    assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
+
+
 def test_post_commit_dispatch_owner_change_reconciles_terminal_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -966,6 +1228,26 @@ def test_post_commit_dispatch_owner_change_reconciles_terminal_message(
     assistant.content = "settled despite sidecar"
     assistant.status = "streaming"
     assistant.assistant_generation_state = "streaming"
+    canvas = ConsoleCanvasController()
+    canvas_scope = CanvasScope(
+        session_id=session_id,
+        conversation_id=conversation_id,
+        active_message_ids=("user-1",),
+        selected_canvas_id=None,
+        selected_revision_id=None,
+        run_id="postcommit-canvas-run",
+    )
+    canvas.register_run(
+        canvas_scope, assistant_message_id=assistant.id, temporary=False
+    )
+    created = canvas.create_canvas(
+        canvas_scope,
+        tool_call_id="postcommit-canvas-call",
+        title="Postcommit",
+        html="<p>postcommit private source</p>",
+    )
+    canvas.finish_run("postcommit-canvas-run", "done")
+    store.canvas_turn_controller = canvas
     persisted_repository = store.persistence.console_dispatch_repository
     original = persisted_repository.settle_with_assistant
 
@@ -986,6 +1268,11 @@ def test_post_commit_dispatch_owner_change_reconciles_terminal_message(
     current = store.get_message(assistant.id)
     assert row["content"] == current.content == "settled despite sidecar"
     assert row["assistant_generation_state"] == "complete"
+    assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
+    assert db.get_connection().execute(
+        "SELECT COUNT(*) FROM canvas_revisions WHERE id = ?",
+        (created.revision.revision_id,),
+    ).fetchone()[0] == 1
     assert current.status == current.assistant_generation_state == "complete"
     assert current.provider_continuation_message_version == row["version"] == 3
     assert store.dispatch_recovery_for_session(session_id) is None

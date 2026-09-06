@@ -1558,6 +1558,14 @@ def build_console_controllers(
                 screen._session, "request_console_chat_fork", lambda _message_id: None
             )(message_id)
         ),
+        open_canvas_block=(
+            lambda reference, source: screen._open_console_canvas_block(
+                reference, source
+            )
+        ),
+        prefill_canvas_repair=(
+            lambda repair: screen._prefill_console_canvas_repair(repair)
+        ),
     )
     screen._console_fork_eligibility = screen._message.console_fork_eligibility
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(

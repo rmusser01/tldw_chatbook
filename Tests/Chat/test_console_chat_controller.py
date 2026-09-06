@@ -2721,6 +2721,7 @@ def test_image_only_draft_is_sendable(monkeypatch):
     assert result.accepted
     user_payload = gateway.messages_seen[-1]
     assert [part["type"] for part in user_payload["content"]] == ["image_url"]
+    assert store.pending_attachment(session.id) is None
 
 
 def test_history_images_capped_to_most_recent(monkeypatch):
@@ -5416,6 +5417,435 @@ async def test_prefilled_send_bypasses_agent_loop():
     assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PRE"}
 
 
+@pytest.mark.asyncio
+async def test_real_agent_composition_advertises_and_invokes_shared_canvas_owner(
+    tmp_path,
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "production-canvas.sqlite", "production-canvas")
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    store = runtime.ensure_chat_store()
+    canvas = runtime.canvas_controller
+    assert canvas is not None
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=RecordingStreamingGateway(),
+        agent_runtime_enabled=True,
+    )
+    seen = {}
+
+    def run_reply(**kwargs):
+        provider = kwargs["canvas_provider"]
+        authority = kwargs["canvas_authority"]
+        coordinator, run_id = provider.lifecycle_binding(authority)
+        assert coordinator.controller is canvas
+        assert {entry.name for entry in provider.list_catalog()} == {
+            "canvas_list",
+            "canvas_read",
+            "canvas_create",
+            "canvas_update",
+        }
+        with use_run_id(run_id), use_tool_call_id("production-call"):
+            seen["result"] = provider.invoke(
+                "canvas:canvas_create",
+                {"title": "Runtime", "html": "<p>runtime source</p>"},
+            )
+        coordinator.finish_assistant_run(
+            kwargs["assistant_message_id"],
+            actual_run_id=run_id,
+            terminal_status=RUN_DONE,
+        )
+        return run_id, RunOutcome(status=RUN_DONE, steps=[], final_text="")
+
+    try:
+        controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+        session = _arm_session(store)
+
+        result = await controller.submit_draft("make a canvas")
+
+        assert result.accepted
+        assert seen["result"].ok is True
+        assistant = store.messages_for_session(session.id)[-1]
+        assert canvas.settlement_for_assistant(assistant.id).state.value == "committed"
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_deferred_canvas_provider_uses_the_runtime_restart_latch(tmp_path):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    enabled = [True]
+    db = CharactersRAGDB(tmp_path / "deferred-canvas.sqlite", "deferred-canvas")
+    runtime = ConsoleRuntime(
+        SimpleNamespace(chachanotes_db=db),
+        canvas_enabled_reader=lambda: enabled[0],
+    )
+    store = runtime.ensure_chat_store()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=RecordingStreamingGateway(),
+        agent_runtime_enabled=True,
+        canvas_enabled_reader=runtime.canvas_enabled,
+    )
+    seen = {}
+
+    def run_reply(**kwargs):
+        provider = kwargs["canvas_provider"]
+        enabled[0] = False
+        assert runtime.canvas_enabled() is False
+        enabled[0] = True
+        seen["catalog"] = provider.list_catalog()
+        coordinator, run_id = provider.lifecycle_binding(kwargs["canvas_authority"])
+        coordinator.finish_assistant_run(
+            kwargs["assistant_message_id"],
+            actual_run_id=run_id,
+            terminal_status=RUN_DONE,
+        )
+        return run_id, RunOutcome(status=RUN_DONE, steps=[], final_text="")
+
+    try:
+        controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+        _arm_session(store)
+        result = await controller.submit_draft("defer the canvas tool")
+
+        assert result.accepted is True
+        assert seen["catalog"] == []
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ephemeral", "seed_role", "persist_seed", "expected_ok"),
+    [
+        (False, ConsoleMessageRole.SYSTEM, False, True),
+        (False, ConsoleMessageRole.SYSTEM, True, True),
+        (False, ConsoleMessageRole.USER, False, False),
+        (False, ConsoleMessageRole.ASSISTANT, False, False),
+        (True, ConsoleMessageRole.SYSTEM, False, True),
+    ],
+)
+async def test_canvas_scope_projects_only_native_system_rows_by_durability(
+    tmp_path,
+    ephemeral,
+    seed_role,
+    persist_seed,
+    expected_ok,
+):
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(
+        tmp_path / f"canvas-path-{ephemeral}-{seed_role.value}-{persist_seed}.sqlite",
+        "canvas-path",
+    )
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    store = runtime.ensure_chat_store()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=RecordingStreamingGateway(),
+        agent_runtime_enabled=True,
+    )
+    seen = {}
+
+    def run_reply(**kwargs):
+        provider = kwargs["canvas_provider"]
+        coordinator, run_id = provider.lifecycle_binding(kwargs["canvas_authority"])
+        seen["scope_path"] = provider._scope.active_message_ids
+        seen["native_path"] = tuple(store.active_path_message_ids(kwargs["session_id"]))
+        with use_run_id(run_id), use_tool_call_id("path-projection-call"):
+            seen["result"] = provider.invoke(
+                "canvas:canvas_create",
+                {"title": "Path projection", "html": "<p>synthetic</p>"},
+            )
+        coordinator.finish_assistant_run(
+            kwargs["assistant_message_id"],
+            actual_run_id=run_id,
+            terminal_status=RUN_ERROR,
+        )
+        return run_id, RunOutcome(
+            status=RUN_ERROR,
+            steps=[],
+            final_text="",
+        )
+
+    try:
+        controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+        session = store.create_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=ConsoleSessionSettings(provider="llama_cpp"),
+            ephemeral=ephemeral,
+        )
+        session.project_instruction_state = (
+            ProjectInstructionControlState.legacy_disabled()
+        )
+        if not ephemeral:
+            assert store.persist_session_if_needed(session.id) is not None
+        seed = store.append_message(
+            session.id,
+            role=seed_role,
+            content="synthetic seed",
+            persist=persist_seed,
+        )
+
+        submitted = await controller.submit_draft("project this path")
+
+        assert submitted.accepted is True
+        assert seen["result"].ok is expected_ok
+        if ephemeral:
+            assert seen["scope_path"] == seen["native_path"]
+        elif persist_seed:
+            assert seed.persisted_message_id in seen["scope_path"]
+        elif seed_role is ConsoleMessageRole.SYSTEM:
+            assert seed.id not in seen["scope_path"]
+        else:
+            assert seed.id in seen["scope_path"]
+            assert json.loads(seen["result"].error)["code"] == "invalid_scope"
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "failed_run_uses_canvas",
+        "successful_retry_uses_canvas",
+        "preserve_unrelated_metadata",
+        "inject_generation_db_failure",
+    ),
+    [
+        (False, False, False, False),
+        (False, True, False, False),
+        (True, False, False, False),
+        (True, False, True, False),
+        (True, True, False, False),
+        (True, False, False, True),
+    ],
+)
+async def test_real_canvas_controller_allows_exact_failed_assistant_retry(
+    tmp_path,
+    monkeypatch,
+    failed_run_uses_canvas,
+    successful_retry_uses_canvas,
+    preserve_unrelated_metadata,
+    inject_generation_db_failure,
+):
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(
+        tmp_path
+        / f"canvas-retry-{failed_run_uses_canvas}-{successful_retry_uses_canvas}.sqlite",
+        "canvas-retry",
+    )
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    store = runtime.ensure_chat_store()
+    canvas = runtime.canvas_controller
+    assert canvas is not None
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=RecordingStreamingGateway(),
+        agent_runtime_enabled=True,
+    )
+    bound_runs = []
+    invoke_results = []
+
+    def run_reply(**kwargs):
+        provider = kwargs["canvas_provider"]
+        coordinator, run_id = provider.lifecycle_binding(kwargs["canvas_authority"])
+        bound_runs.append((coordinator, run_id))
+        attempt = len(bound_runs)
+        uses_canvas = (
+            failed_run_uses_canvas if attempt == 1 else successful_retry_uses_canvas
+        )
+        if uses_canvas:
+            with use_run_id(run_id), use_tool_call_id("retry-canvas-call"):
+                invoked = provider.invoke(
+                    "canvas:canvas_create",
+                    {"title": f"Attempt {attempt}", "html": f"<p>{attempt}</p>"},
+                )
+            invoke_results.append(invoked)
+            assert invoked.ok is True
+        status = RUN_ERROR if attempt == 1 else RUN_DONE
+        coordinator.finish_assistant_run(
+            kwargs["assistant_message_id"],
+            actual_run_id=run_id,
+            terminal_status=status,
+        )
+        return run_id, RunOutcome(
+            status=status,
+            steps=[],
+            final_text="retry recovered",
+        )
+
+    try:
+        controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+        session = _arm_session(store)
+        first = await controller.submit_draft("retry this Canvas turn")
+        assistant = next(
+            message
+            for message in reversed(store.messages_for_session(session.id))
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+
+        assert first.accepted is True
+        assert assistant.status == "failed"
+        first_metadata_json = db.get_message_by_id(assistant.persisted_message_id)[
+            "metadata_json"
+        ]
+        first_cards = (
+            json.loads(first_metadata_json).get("canvas_cards", [])
+            if first_metadata_json is not None
+            else []
+        )
+        assert [card["status"] for card in first_cards] == (
+            ["discarded"] if failed_run_uses_canvas else []
+        )
+        if preserve_unrelated_metadata:
+            assert assistant.metadata is not None
+            assistant = store.set_message_metadata(
+                assistant.id, replace(assistant.metadata, engine="pipeline")
+            )
+        if (
+            failed_run_uses_canvas
+            and not successful_retry_uses_canvas
+            and not inject_generation_db_failure
+        ):
+            monkeypatch.setattr(
+                store.persistence,
+                "update_message_metadata",
+                lambda **_kwargs: (_ for _ in ()).throw(
+                    RuntimeError("postcommit metadata sidecar unavailable")
+                ),
+            )
+        if inject_generation_db_failure:
+            generation_writer = db.replace_assistant_generation_projection
+            monkeypatch.setattr(
+                db,
+                "replace_assistant_generation_projection",
+                lambda **_kwargs: (_ for _ in ()).throw(
+                    RuntimeError("injected generation transaction failure")
+                ),
+            )
+            with pytest.raises(
+                RuntimeError, match="injected generation transaction failure"
+            ):
+                await controller.retry_message(assistant.id)
+            assert canvas.settlement_for_assistant(assistant.id).state.value == "ready"
+            uncommitted_row = db.get_message_by_id(assistant.persisted_message_id)
+            assert [
+                card["status"]
+                for card in json.loads(uncommitted_row["metadata_json"])["canvas_cards"]
+            ] == ["discarded"]
+            assert (
+                db.execute_query(
+                    "SELECT COUNT(*) AS count FROM canvas_revisions"
+                ).fetchone()["count"]
+                == 0
+            )
+            monkeypatch.setattr(
+                db, "replace_assistant_generation_projection", generation_writer
+            )
+            completed_after_retry = store.mark_message_complete(assistant.id)
+            assert completed_after_retry.status == "complete"
+        else:
+            retried = await controller.retry_message(assistant.id)
+            assert retried.accepted is True
+            assert store.get_message(assistant.id).status == "complete"
+
+        assert len(bound_runs) == 2
+        assert bound_runs[0][1] != bound_runs[1][1]
+        settlement = canvas.settlement_for_assistant(assistant.id)
+        assert settlement is not None
+        assert settlement.state.value == "committed"
+        durable_assistant = store.get_message(assistant.id)
+        if successful_retry_uses_canvas:
+            assert invoke_results[-1].ok is True
+        rows = db.execute_query(
+            "SELECT html, origin_message_id FROM canvas_revisions ORDER BY sequence"
+        ).fetchall()
+        if successful_retry_uses_canvas:
+            assert [row["html"] for row in rows] == ["<p>2</p>"]
+            assert rows[0]["origin_message_id"] == (
+                durable_assistant.persisted_message_id
+            )
+            metadata_json = db.get_message_by_id(
+                durable_assistant.persisted_message_id
+            )["metadata_json"]
+            assert "<p>1</p>" not in metadata_json
+            assert "<p>2</p>" not in metadata_json
+        else:
+            assert rows == []
+            assert not durable_assistant.metadata or not (
+                durable_assistant.metadata.canvas_cards
+            )
+        if preserve_unrelated_metadata:
+            assert durable_assistant.metadata.engine == "pipeline"
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+        from tldw_chatbook.Chat.console_conversation_hydration import (
+            console_messages_from_conversation_tree,
+        )
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+        from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+
+        conversation_id = session.persisted_conversation_id
+        assert conversation_id is not None
+        tree = ChatConversationService(db).get_conversation_tree(
+            conversation_id, root_limit=100, depth_cap=100
+        )
+        nodes = console_messages_from_conversation_tree(tree, db=db)
+        restarted_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        restarted = restarted_store.restore_persisted_session(
+            title="Restarted retry",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=nodes,
+            active_leaf_persisted_id=durable_assistant.persisted_message_id,
+        )
+        restarted_assistant = next(
+            message
+            for message in restarted_store.messages_for_session(restarted.id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+        restarted_cards = (
+            restarted_assistant.metadata.canvas_cards
+            if restarted_assistant.metadata is not None
+            else ()
+        )
+        assert bool(restarted_cards) is successful_retry_uses_canvas
+        if preserve_unrelated_metadata:
+            assert restarted_assistant.metadata.engine == "pipeline"
+        assert (
+            bound_runs[0][0].finish_assistant_run(
+                assistant.id,
+                actual_run_id=bound_runs[0][1],
+                terminal_status=RUN_ERROR,
+            )
+            is None
+        )
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+
 class _SpyAgentBridge:
     """Records calls and refuses to be used -- for asserting the agent
     bridge is never invoked on a character session's send (task-427)."""
@@ -7100,28 +7530,87 @@ async def test_durable_capture_on_composes_exact_trace_request_through_real_agen
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change_history", [False, True])
+@pytest.mark.parametrize(
+    ("change_history", "ordinary_tool_loop", "next_fresh", "recreate_factory"),
+    [
+        (False, False, False, False),
+        (True, False, False, False),
+        (False, True, False, False),
+        (False, True, True, False),
+        (False, True, False, True),
+        (False, True, True, True),
+    ],
+    ids=[
+        "unchanged-history",
+        "changed-history",
+        "ordinary-tool-loop",
+        "tool-loop-next-fresh",
+        "tool-loop-cold-agent",
+        "tool-loop-cold-fresh",
+    ],
+)
 async def test_two_saved_turns_keep_history_references_through_production_trace(
     tmp_path,
     monkeypatch,
     change_history,
+    ordinary_tool_loop,
+    next_fresh,
+    recreate_factory,
+    recovery_scenario=None,
 ):
     """Ordinary history must extend the real trace surface on the next send."""
+    from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
     from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
     from tldw_chatbook.Chat.console_trace_provenance import SavedRevisionTraceProvenance
     from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
     chat_db = CharactersRAGDB(tmp_path / "two-turn-trace.sqlite", "task31714")
+    trace_observer = CharactersRAGDB(tmp_path / "two-turn-trace.sqlite", "trace-observer")
+    observer_connection = trace_observer.get_connection()
     runs_db = AgentRunsDB(tmp_path / "two-turn-runs.sqlite", client_id="task31714")
     factory = ConsoleTraceBoundaryFactory(chat_db)
     requests = []
+    recovery_boundaries = []
+    adapter_entries = 0
+    boundary_failures = []
+    calculator_results = []
+    tool_requested = False
+    unknown_database = None
 
     def boundary(request, resolution, route):
-        result = factory(request, resolution, route)
+        try:
+            result = factory(request, resolution, route)
+        except ValueError as exc:
+            boundary_failures.append((route.value, str(exc)))
+            raise
         requests.append(request)
+        if unknown_database is not None:
+            result.database = unknown_database
+        recovery_boundaries.append(result)
         return result
 
     def adapter(**_kwargs):
+        nonlocal adapter_entries, tool_requested
+        adapter_entries += 1
+        if ordinary_tool_loop and tool_requested:
+            calculator_results.extend(
+                str(row.get("content", ""))
+                for row in _kwargs["messages_payload"]
+                if str(row.get("content", "")).startswith("Tool result for calculator:")
+            )
+        if (
+            ordinary_tool_loop
+            and controller._agent_runtime_enabled
+            and not tool_requested
+        ):
+            tool_requested = True
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps({"name": "calculator", "arguments": {"expression": "6*7"}})
+                + "\n```"
+            )
+            return {"choices": [{"message": {"content": content}}]}
         return {"choices": [{"message": {"content": "Observations recorded."}}]}
 
     gateway = ConsoleProviderGateway(
@@ -7170,7 +7659,23 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
     try:
         first = await controller.submit_draft("Observe the sky.", session_id=session.id)
         assert first.accepted
-        assert len(requests) == 1
+        first_call_count = 2 if ordinary_tool_loop else 1
+        assert len(requests) == first_call_count
+        assert adapter_entries == first_call_count
+        assert first.terminal_status is ConsoleRunStatus.COMPLETED
+        assert first.visible_copy == "Observations recorded."
+        first_assistant = next(
+            message
+            for message in reversed(store.messages_for_session(session.id))
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+        assert first_assistant.status == "complete"
+        assert store.preparation_for_session(session.id) is None
+        assert store.pending_provider_trace_settlement_count(first_assistant.id) == 0
+        if ordinary_tool_loop:
+            assert len(calculator_results) == 1, calculator_results
+            assert "42" in calculator_results[0], calculator_results
+            assert "ERROR" not in calculator_results[0], calculator_results
         with chat_db.transaction() as connection:
             first_call = tuple(
                 connection.execute("SELECT * FROM console_trace_calls").fetchone()
@@ -7178,7 +7683,7 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
         first_user_id = store.messages_for_session(session.id)[0].persisted_message_id
         reader = ConsoleTraceNativeReader(chat_db)
         first_trace = reader.read_calls(first_user_id)
-        assert len(first_trace) == 1
+        assert len(first_trace) == first_call_count
         assert first_trace[0].capture.request.get("omitted") is None
         if change_history:
             substitute = controller._apply_skill_substitution
@@ -7191,11 +7696,354 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
             monkeypatch.setattr(
                 controller, "_apply_skill_substitution", changed_history
             )
+        if recreate_factory:
+            factory = ConsoleTraceBoundaryFactory(chat_db)
+        if next_fresh:
+            controller.update_agent_runtime(enabled=False, bridge=bridge)
+        tool_requested = False
+        if recovery_scenario is not None:
+            from tldw_chatbook.Chat.console_trace_service import (
+                ConsoleTraceCallBoundary,
+            )
+
+            remaining_failures = 2 if recovery_scenario == "retry-twice" else 1
+            original_bind = factory.repository.bind_call
+            original_mark = ConsoleTraceCallBoundary.mark_dispatch_started
+            bind_inputs = {}
+
+            def record_mark(boundary, bundle, provenance):
+                bind_inputs[id(boundary)] = (bundle, provenance)
+                return original_mark(boundary, bundle, provenance)
+
+            monkeypatch.setattr(ConsoleTraceCallBoundary, "mark_dispatch_started", record_mark)
+
+            def fail_bind_once(*args, **kwargs):
+                nonlocal remaining_failures
+                result = original_bind(*args, **kwargs)
+                if remaining_failures:
+                    remaining_failures -= 1
+                    raise RuntimeError("synthetic owned bind failure")
+                return result
+
+            if recovery_scenario in {
+                "unknown-postcommit",
+                "unknown-postcommit-retry-anyway",
+            }:
+                from contextlib import contextmanager
+
+                checkpoint_attempts = []
+                dispatch_repository = store.persistence.console_dispatch_repository
+                original_cas = type(dispatch_repository).cas_state
+
+                def record_cas(instance, transition, *args, **kwargs):
+                    if instance is dispatch_repository:
+                        checkpoint_attempts.append(transition)
+                    return original_cas(instance, transition, *args, **kwargs)
+
+                monkeypatch.setattr(type(dispatch_repository), "cas_state", record_cas)
+
+                class UnreadableBindDatabase:
+                    committed = False
+
+                    def __getattr__(self, name):
+                        return getattr(chat_db, name)
+
+                    @contextmanager
+                    def transaction(self, *, immediate=False):
+                        if self.committed:
+                            raise RuntimeError("synthetic controller reconciliation unavailable")
+                        with chat_db.transaction(immediate=immediate) as cursor:
+                            yield cursor
+                        self.committed = True
+                        raise RuntimeError("synthetic controller bind postcommit failure")
+
+                unknown_database = UnreadableBindDatabase()
+            else:
+                monkeypatch.setattr(factory.repository, "bind_call", fail_bind_once)
         # Equal text is deliberate: different saved owners must remain distinct.
         second = await controller.submit_draft(
             "Observe the sky.", session_id=session.id
         )
         assert second.accepted
+        if recovery_scenario in {
+            "unknown-postcommit",
+            "unknown-postcommit-retry-anyway",
+        }:
+            assert second.terminal_status is ConsoleRunStatus.BLOCKED
+            assert second.visible_copy == "Accepted turn is retained for recovery."
+            preparation_id = second.preparation_id
+            failed = recovery_boundaries[-1]
+            assert failed.dispatch_outcome == "unknown"
+            assert controller.trace_call_recovery_preparation() is None
+            recovery = store.dispatch_recovery_for_presentation(session.id)
+            assert recovery is not None
+            assert recovery.kind.value == "dispatch_started"
+            assert "retry_anyway" in {action.action_id.value for action in recovery.actions}
+            restored = dispatch_repository.reconcile_for_session(recovery.conversation_id)
+            assert restored.kind.value == "dispatch_started"
+            assert restored.checkpoint == recovery.checkpoint
+            assert len(checkpoint_attempts) == 1
+            assert checkpoint_attempts[0].new_state.value == "dispatch_started"
+            with chat_db.transaction() as cursor:
+                committed = factory.repository.get_call(cursor, failed.reserve().call_id)
+                assert committed.state is TraceCallState.DISPATCH_STARTED
+                counts = tuple(cursor.execute(
+                    "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                    "(SELECT COUNT(*) FROM console_trace_events), "
+                    "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                    "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                ).fetchone())
+            retried = await controller.retry_library_preparation(preparation_id)
+            assert not retried.accepted
+            cancelled = controller.cancel_library_preparation(preparation_id)
+            assert not cancelled.accepted
+            assert adapter_entries == 2
+            assert preparation_id in controller._durable_postcommit_continuations
+            with chat_db.transaction() as cursor:
+                assert factory.repository.get_call(cursor, committed.call_id) == committed
+                assert tuple(cursor.execute(
+                    "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                    "(SELECT COUNT(*) FROM console_trace_events), "
+                    "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                    "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                ).fetchone()) == counts
+            assert reader.read_calls(first_user_id) == first_trace
+            if recovery_scenario == "unknown-postcommit-retry-anyway":
+                # Exercise the real claimed recovery action and enabled agent
+                # bridge. It must not be confused with implicit cold re-entry.
+                assert controller._agent_runtime_enabled
+                unknown_database = None
+                retry_dispatches = []
+                original_stream = gateway.stream_chat
+
+                async def record_retry_stream(*args, **kwargs):
+                    retry_dispatches.append((kwargs["route"], kwargs["capture_mode"]))
+                    async for item in original_stream(*args, **kwargs):
+                        yield item
+
+                monkeypatch.setattr(gateway, "stream_chat", record_retry_stream)
+                retried = await controller.retry_dispatch_recovery(session.id)
+                assert retried.accepted
+                assert (
+                    controller.run_state_for(session.id).status
+                    is ConsoleRunStatus.COMPLETED
+                )
+                assert (
+                    store.get_message(recovery.assistant_message_id).status
+                    == "complete"
+                )
+                assert retried.visible_copy == "Observations recorded."
+                assert adapter_entries == 4
+                assert len(calculator_results) == 2
+                assert "42" in calculator_results[-1]
+                assert "ERROR" not in calculator_results[-1]
+                assert retry_dispatches == [
+                    (
+                        ConsoleRequestRoute.AGENT_FIRST,
+                        ConsoleTraceCaptureMode.CAPTURE_OFF,
+                    ),
+                    (
+                        ConsoleRequestRoute.TOOL_LOOP,
+                        ConsoleTraceCaptureMode.CAPTURE_OFF,
+                    ),
+                ]
+                assert store.dispatch_recovery_for_session(session.id) is None
+                with chat_db.transaction() as cursor:
+                    assert (
+                        factory.repository.get_call(cursor, committed.call_id)
+                        == committed
+                    )
+                    assert (
+                        tuple(
+                            cursor.execute(
+                                "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                                "(SELECT COUNT(*) FROM console_trace_events), "
+                                "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                                "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                            ).fetchone()
+                        )
+                        == counts
+                    )
+                assert reader.read_calls(first_user_id) == first_trace
+            return
+        if recovery_scenario is not None:
+            from tldw_chatbook.Chat.console_trace_service import (
+                TraceCallPersistenceError,
+            )
+
+            assert second.terminal_status is ConsoleRunStatus.BLOCKED
+            preparation_id = second.preparation_id
+            failed_boundary = controller._trace_call_boundaries_by_preparation[preparation_id]
+            reserved = failed_boundary.reserve()
+            reserved_call_id = reserved.call_id
+            reserved_idempotency_key = reserved.idempotency_key
+            reserved_run_id = reserved.run_id
+            assert reserved.state is TraceCallState.RESERVED
+            assert adapter_entries == 2
+            with chat_db.transaction() as cursor:
+                assert factory.repository.get_surface_tail(
+                    cursor, reserved.segment_id,
+                ).node_id == failed_boundary.admission.predecessor_surface_head_id
+            if recovery_scenario in {"send-without-capture", "cancel"}:
+                with chat_db.transaction() as cursor:
+                    trace_counts = tuple(cursor.execute(
+                        "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                        "(SELECT COUNT(*) FROM console_trace_events), "
+                        "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                        "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                    ).fetchone())
+                if recovery_scenario == "cancel":
+                    action = controller.cancel_library_preparation(preparation_id)
+                    assert action.visible_copy == "Trace-captured send canceled."
+                    assert adapter_entries == 2
+                    expected_state = TraceCallState.NOT_DISPATCHED
+                else:
+                    action = await controller.send_without_capture(preparation_id)
+                    assert action.terminal_status is ConsoleRunStatus.COMPLETED
+                    assert adapter_entries == (3 if next_fresh else 4)
+                    expected_state = TraceCallState.RESERVED
+                assert store.preparation_for_session(session.id) is None
+                assert preparation_id not in controller._durable_postcommit_continuations
+                repeated = await controller.retry_library_preparation(preparation_id)
+                assert not repeated.accepted
+                with chat_db.transaction() as cursor:
+                    retained = factory.repository.get_call(cursor, reserved_call_id)
+                    assert retained.call_id == reserved_call_id
+                    assert retained.idempotency_key == reserved_idempotency_key
+                    assert retained.run_id == reserved_run_id
+                    assert retained.state is expected_state
+                    assert retained.surface_node_id is None
+                    assert retained.request_header_id is None
+                    assert tuple(cursor.execute(
+                        "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                        "(SELECT COUNT(*) FROM console_trace_events), "
+                        "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                        "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                    ).fetchone()) == trace_counts
+                assert reader.read_calls(first_user_id) == first_trace
+                store.end_app_runtime()
+                assert chat_db.registered_connection_count() == 2
+                assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
+                return
+            if recovery_scenario == "foreign":
+                controller._trace_call_boundaries_by_preparation[preparation_id] = recovery_boundaries[0]
+            elif recovery_scenario == "foreign-reserved":
+                other_owner = object()
+                failed_boundary._accepted_preparation = other_owner
+                assert not failed_boundary.dispatch_started
+                assert not failed_boundary._retired
+                with chat_db.transaction() as cursor:
+                    assert factory.repository.get_call(cursor, reserved_call_id).state is TraceCallState.RESERVED
+            elif recovery_scenario == "cold":
+                controller._trace_call_boundaries_by_preparation.pop(preparation_id)
+            elif recovery_scenario in {"request", "route", "destination"}:
+                continuation = controller._durable_postcommit_continuations[preparation_id]
+                if recovery_scenario == "request":
+                    changed_request = replace(
+                        continuation.trace_request,
+                        active_request=({"role": "user", "content": "changed request"},),
+                    )
+                    continuation = replace(continuation, trace_request=changed_request)
+                elif recovery_scenario == "route":
+                    continuation = replace(continuation, prefill="changed route")
+                else:
+                    continuation = replace(
+                        continuation,
+                        resolution=replace(continuation.resolution, base_url="https://other.invalid/v1"),
+                    )
+                controller._durable_postcommit_continuations[preparation_id] = continuation
+            elif recovery_scenario == "terminal":
+                failed_boundary.mark_not_dispatched()
+            elif recovery_scenario == "unrelated":
+                with chat_db.transaction() as cursor:
+                    unrelated = factory.repository.reserve_call(
+                        cursor, owner_id=reserved.owner_id, segment_id=reserved.segment_id,
+                        turn_id=reserved.turn_id, run_id=new_opaque_id(), call_sequence=0,
+                        idempotency_key=new_opaque_id(), policy_id=reserved.policy_id,
+                    )
+                    tail = factory.repository.get_event_tail(cursor, reserved.segment_id)
+                    factory.repository.append_event(
+                        cursor, segment_id=reserved.segment_id, sequence=tail.sequence + 1,
+                        event_type="call_boundary", call_id=unrelated.call_id,
+                    )
+            with chat_db.transaction() as cursor:
+                call_count_before_retry = cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0]
+                event_count_before_retry = cursor.execute("SELECT COUNT(*) FROM console_trace_events").fetchone()[0]
+            if recovery_scenario == "retry-prepare":
+                prepare_remaining = 1
+                original_prepare = type(factory.service).prepare_current_surface_delta
+
+                def fail_reprepare(instance, *args, **kwargs):
+                    nonlocal prepare_remaining
+                    result = original_prepare(instance, *args, **kwargs)
+                    if instance is factory.service and kwargs.get("reserved_call") is not None and prepare_remaining:
+                        prepare_remaining -= 1
+                        raise RuntimeError("synthetic owned re-preparation failure")
+                    return result
+
+                monkeypatch.setattr(type(factory.service), "prepare_current_surface_delta", fail_reprepare)
+            retried = await controller.retry_library_preparation(preparation_id)
+            if recovery_scenario in {"retry-twice", "retry-prepare"}:
+                assert retried.terminal_status is ConsoleRunStatus.BLOCKED
+                assert adapter_entries == 2
+                retained_boundary = controller._trace_call_boundaries_by_preparation[preparation_id]
+                assert isinstance(retained_boundary, ConsoleTraceCallBoundary)
+                retained = retained_boundary.reserve()
+                assert retained.call_id == reserved_call_id
+                assert retained.idempotency_key == reserved_idempotency_key
+                retried = await controller.retry_library_preparation(preparation_id)
+            if recovery_scenario not in {"retry-once", "retry-twice", "retry-prepare"}:
+                assert retried.terminal_status is not ConsoleRunStatus.COMPLETED
+                assert adapter_entries == 2
+                assert reader.read_calls(first_user_id) == first_trace
+                with chat_db.transaction() as cursor:
+                    still_reserved = factory.repository.get_call(cursor, reserved_call_id)
+                    assert still_reserved.call_id == reserved_call_id
+                    assert still_reserved.idempotency_key == reserved_idempotency_key
+                    assert still_reserved.run_id == reserved_run_id
+                    assert still_reserved.surface_node_id is None
+                    assert still_reserved.request_header_id is None
+                    assert cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0] == call_count_before_retry
+                    assert cursor.execute("SELECT COUNT(*) FROM console_trace_events").fetchone()[0] == event_count_before_retry
+                    assert cursor.execute(
+                        "SELECT COUNT(*) FROM console_trace_events WHERE event_type = 'call_boundary' AND call_id = ?",
+                        (reserved_call_id,),
+                    ).fetchone()[0] == 1
+                return
+            assert retried.terminal_status is ConsoleRunStatus.COMPLETED
+            with chat_db.transaction() as cursor:
+                final_call = factory.repository.get_call(cursor, reserved_call_id)
+                assert final_call.call_id == reserved_call_id
+                assert final_call.idempotency_key == reserved_idempotency_key
+                assert final_call.run_id == reserved_run_id
+                assert final_call.state is TraceCallState.COMPLETE
+                assert cursor.execute(
+                    "SELECT COUNT(*) FROM console_trace_events WHERE event_type = 'call_boundary' AND call_id = ?",
+                    (reserved_call_id,),
+                ).fetchone()[0] == 1
+                assert cursor.execute(
+                    "SELECT COUNT(*) FROM console_trace_calls WHERE turn_id = ? AND call_sequence = 0",
+                    (reserved.turn_id,),
+                ).fetchone()[0] == 1
+                counts_before_stale = tuple(cursor.execute(
+                    "SELECT (SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                    "(SELECT COUNT(*) FROM console_trace_events), "
+                    "(SELECT COUNT(*) FROM console_trace_request_headers), "
+                    "(SELECT COUNT(*) FROM console_trace_calls)"
+                ).fetchone())
+            # Try the actual obsolete verifier/bind, not only cancellation.
+            with pytest.raises(TraceCallPersistenceError):
+                failed_boundary.mark_dispatch_started(*bind_inputs[id(failed_boundary)])
+            with pytest.raises(TraceCallPersistenceError):
+                failed_boundary.mark_not_dispatched()
+            with chat_db.transaction() as cursor:
+                assert tuple(cursor.execute(
+                    "SELECT (SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                    "(SELECT COUNT(*) FROM console_trace_events), "
+                    "(SELECT COUNT(*) FROM console_trace_request_headers), "
+                    "(SELECT COUNT(*) FROM console_trace_calls)"
+                ).fetchone()) == counts_before_stale
+            assert adapter_entries == (3 if next_fresh else 4)
         with chat_db.transaction() as connection:
             assert first_call in [
                 tuple(row)
@@ -7203,28 +8051,613 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
             ]
         assert reader.read_calls(first_user_id) == first_trace
         if change_history:
-            assert len(requests) == 1
+            assert len(requests) == first_call_count
             assert (
                 controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
             )
             return
-        assert len(requests) == 2
+        second_call_count = 2 if ordinary_tool_loop and not next_fresh else 1
+        assert len(requests) == first_call_count + second_call_count, boundary_failures
+        assert adapter_entries == first_call_count + second_call_count
         assert controller.run_state_for(session.id).status is ConsoleRunStatus.COMPLETED
         first_user = requests[0].provenance.messages_payload[-1]
         assert isinstance(first_user, SavedRevisionTraceProvenance)
-        assert first_user in requests[1].provenance.messages_payload
-        second_user = requests[1].provenance.messages_payload[-1]
+        assert first_user in requests[-1].provenance.messages_payload
+        second_user = requests[first_call_count].provenance.messages_payload[-1]
         assert isinstance(second_user, SavedRevisionTraceProvenance)
         assert first_user != second_user
+        second_request = requests[first_call_count]
+        assert [row["role"] for row in second_request.messages_payload] == [
+            "user",
+            "assistant",
+            "user",
+        ]
+        second_saved_user = next(
+            message
+            for message in reversed(store.messages_for_session(session.id))
+            if message.role is ConsoleMessageRole.USER
+        )
+        second_trace = reader.read_calls(second_saved_user.persisted_message_id)
+        assert second_trace[0].capture.request["messages_payload"] == [
+            {"role": "user", "content": "Observe the sky."},
+            {"role": "assistant", "content": "Observations recorded."},
+            {"role": "user", "content": "Observe the sky."},
+        ]
+        if ordinary_tool_loop:
+            controller.update_agent_runtime(enabled=True, bridge=bridge)
+            tool_requested = False
+            if recreate_factory:
+                factory = ConsoleTraceBoundaryFactory(chat_db)
+            third = await controller.submit_draft(
+                "One more calculation.", session_id=session.id
+            )
+            assert third.terminal_status is ConsoleRunStatus.COMPLETED, (
+                boundary_failures
+            )
+            assert third.visible_copy == "Observations recorded."
+            assert adapter_entries == first_call_count + second_call_count + 2
+            third_saved_user = next(
+                message
+                for message in reversed(store.messages_for_session(session.id))
+                if message.role is ConsoleMessageRole.USER
+            )
+            third_trace = reader.read_calls(third_saved_user.persisted_message_id)
+            assert [
+                row["role"]
+                for row in third_trace[0].capture.request["messages_payload"]
+            ] == ["user", "assistant", "user", "assistant", "user"]
+            assert len(calculator_results) == (2 if next_fresh else 3)
+            assert all(
+                "42" in result and "ERROR" not in result
+                for result in calculator_results
+            )
+            assert reader.read_calls(first_user_id) == first_trace
+            assert (
+                reader.read_calls(second_saved_user.persisted_message_id)
+                == second_trace
+            )
         assert all(
             not any(key.startswith(("_native", "_tldw")) for key in row)
             for request in requests
             for row in request.messages_payload
         )
+        store.end_app_runtime()
+        assert chat_db.registered_connection_count() == 2
+        assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
     finally:
+        store.end_app_runtime()
         runs_db.close()
         await gateway.aclose()
         chat_db.close_connection()
+        trace_observer.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+@pytest.mark.parametrize("scenario", [
+    "retry-once", "retry-twice", "foreign", "cold", "request", "route",
+    "destination", "terminal", "unrelated",
+])
+async def test_controller_retry_reuses_exact_owned_compound_reservation(
+    tmp_path, monkeypatch, next_fresh, scenario,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario=scenario,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+async def test_controller_unknown_postcommit_outcome_refuses_trace_retry_and_cancel(
+    tmp_path, monkeypatch, next_fresh,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario="unknown-postcommit",
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_controller_retry_anyway_preserves_explicit_recovery(
+    tmp_path,
+    monkeypatch,
+):
+    """An explicit uncertain-delivery retry still completes through the real agent."""
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path,
+        monkeypatch,
+        False,
+        True,
+        False,
+        False,
+        recovery_scenario="unknown-postcommit-retry-anyway",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+async def test_controller_retry_retains_reservation_after_repreparation_failure(
+    tmp_path,
+    monkeypatch,
+    next_fresh,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario="retry-prepare",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+@pytest.mark.parametrize("action", ["send-without-capture", "cancel"])
+async def test_controller_compound_failure_preserves_explicit_recovery_actions(
+    tmp_path, monkeypatch, next_fresh, action,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario=action,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+async def test_controller_refuses_reserved_boundary_with_other_accepted_owner(
+    tmp_path, monkeypatch, next_fresh,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario="foreign-reserved",
+    )
+
+
+@pytest.mark.asyncio
+async def test_production_trace_factory_keeps_canvas_tool_loops_on_their_saved_turns(
+    tmp_path,
+    monkeypatch,
+):
+    """Each saved turn must own its trace chain and promoted Canvas revision."""
+    from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
+    from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
+    from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+
+    chat_db = CharactersRAGDB(tmp_path / "canvas-trace-chat.sqlite", "canvas-trace")
+    trace_observer = CharactersRAGDB(tmp_path / "canvas-trace-chat.sqlite", "trace-observer")
+    observer_connection = trace_observer.get_connection()
+    runs_db = AgentRunsDB(
+        tmp_path / "canvas-trace-runs.sqlite", client_id="canvas-trace"
+    )
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=chat_db))
+    store = runtime.ensure_chat_store()
+    canvas = runtime.canvas_controller
+    assert canvas is not None
+    repository = store.persistence.console_trace_repository
+    production_factory = ConsoleTraceBoundaryFactory(chat_db, repository=repository)
+    routes = []
+    boundary_failures = []
+
+    def boundary(request, resolution, route):
+        routes.append(route)
+        try:
+            return production_factory(request, resolution, route)
+        except Exception as exc:
+            boundary_failures.append((route, type(exc).__name__, str(exc)))
+            raise
+
+    canvas_identity = {}
+    adapter_calls = 0
+
+    def tool_result(messages, name):
+        prefix = f"{FENCE_TOOL_RESULT_PREFIX}{name}: "
+        content = next(
+            str(message.get("content", ""))
+            for message in reversed(messages)
+            if str(message.get("content", "")).startswith(prefix)
+        )
+        payload = json.loads(content.removeprefix(prefix))
+        assert payload["status"] == "staged"
+        return payload["canvas"]
+
+    def adapter(**kwargs):
+        nonlocal adapter_calls
+        adapter_calls += 1
+        if adapter_calls in {1, 5}:
+            assert "use find_tools, then load_tools" in kwargs["system_message"]
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps({"name": "find_tools", "arguments": {"query": "canvas"}})
+                + "\n```"
+            )
+        elif adapter_calls in {2, 6}:
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps(
+                    {
+                        "name": "load_tools",
+                        "arguments": {
+                            "ids": [
+                                "canvas:canvas_create",
+                                "canvas:canvas_update",
+                            ]
+                        },
+                    }
+                )
+                + "\n```"
+            )
+        elif adapter_calls == 3:
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps(
+                    {
+                        "name": "canvas_create",
+                        "arguments": {
+                            "title": "Two-turn trace",
+                            "html": "<p>first synthetic revision</p>",
+                        },
+                    }
+                )
+                + "\n```"
+            )
+        elif adapter_calls == 4:
+            created = tool_result(kwargs["messages_payload"], "canvas_create")
+            canvas_identity.update(
+                canvas_id=created["canvas_id"],
+                revision_id=created["revision_id"],
+            )
+            content = "Created the first revision."
+        elif adapter_calls == 7:
+            content = (
+                f"{FENCE_OPEN}\n"
+                + json.dumps(
+                    {
+                        "name": "canvas_update",
+                        "arguments": {
+                            "canvas_id": canvas_identity["canvas_id"],
+                            "expected_parent_revision_id": canvas_identity[
+                                "revision_id"
+                            ],
+                            "html": "<p>second synthetic revision</p>",
+                        },
+                    }
+                )
+                + "\n```"
+            )
+        else:
+            assert adapter_calls == 8
+            updated = tool_result(kwargs["messages_payload"], "canvas_update")
+            canvas_identity["updated_revision_id"] = updated["revision_id"]
+            content = "Updated the second revision."
+        return {"choices": [{"message": {"content": content}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=boundary,
+    )
+
+    async def resolve_for_send(_selection):
+        return ConsoleProviderResolution(
+            ready=True,
+            provider="openai",
+            model="test-model",
+            base_url="https://api.openai.com/v1",
+            execution_key="openai",
+            streaming=False,
+            resolved_destination=ConsoleResolvedDestination(
+                provider="openai",
+                model="test-model",
+                endpoint_identity="https://api.openai.com/v1",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
+        )
+
+    monkeypatch.setattr(gateway, "resolve_for_send", resolve_for_send)
+    original_preparation = controller_module.ConsoleTurnPreparation
+
+    def capture_on(**kwargs):
+        kwargs["capture_mode"] = ConsoleTraceCaptureMode.CAPTURE_ON
+        return original_preparation(**kwargs)
+
+    monkeypatch.setattr(controller_module, "ConsoleTurnPreparation", capture_on)
+    session = _arm_session(store)
+    session.settings = ConsoleSessionSettings(provider="openai", model="test-model")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=runs_db,
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="openai",
+        model="test-model",
+        agent_runtime_enabled=True,
+        agent_bridge=bridge,
+    )
+    try:
+        first = await controller.submit_draft(
+            "Create the synthetic Canvas.", session_id=session.id
+        )
+
+        # The production runtime submits trace settlement to its owned worker.
+        # A drained per-message handoff queue alone does not mean SQLite sealed
+        # the calls; include queued, running, and failed scheduler work.
+        async def wait_for_trace_settlement():
+            for _ in range(200):
+                if store.pending_provider_trace_settlement_work_count() == 0:
+                    break
+                await asyncio.sleep(0.01)
+            assert store.pending_provider_trace_settlement_work_count() == 0
+
+        await wait_for_trace_settlement()
+        first_messages = store.messages_for_session(session.id)
+        first_user = next(
+            message
+            for message in first_messages
+            if message.role is ConsoleMessageRole.USER
+        )
+        first_assistant = next(
+            message
+            for message in first_messages
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+        assert first.accepted is True
+        assert first.visible_copy == "Created the first revision."
+        assert first.terminal_status is ConsoleRunStatus.COMPLETED
+        assert adapter_calls == 4
+        assert first_assistant.status == "complete"
+        assert controller.run_state_for(session.id) == ConsoleRunState(
+            ConsoleRunStatus.COMPLETED, "Response complete."
+        )
+        assert store.preparation_for_session(session.id) is None
+        assert boundary_failures == []
+        assert store.pending_provider_trace_settlement_count(first_assistant.id) == 0
+        second = await controller.submit_draft(
+            "Update the synthetic Canvas.", session_id=session.id
+        )
+        await wait_for_trace_settlement()
+        second_messages = store.messages_for_session(session.id)
+        second_user = next(
+            message
+            for message in reversed(second_messages)
+            if message.role is ConsoleMessageRole.USER
+        )
+        second_assistant = next(
+            message
+            for message in reversed(second_messages)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        )
+
+        assert second.accepted is True
+        second_facts = {
+            "visible_copy": second.visible_copy,
+            "terminal_status": second.terminal_status,
+            "run_state": controller.run_state_for(session.id),
+            "adapter_calls": adapter_calls,
+            "routes": routes,
+            "boundary_failures": boundary_failures,
+        }
+        assert second.visible_copy == "Updated the second revision.", repr(second_facts)
+        assert second.terminal_status is ConsoleRunStatus.COMPLETED, second_facts
+        assert controller.run_state_for(session.id) == ConsoleRunState(
+            ConsoleRunStatus.COMPLETED, "Response complete."
+        ), second_facts
+        assert adapter_calls == 8, second_facts
+        assert routes == [
+            ConsoleRequestRoute.AGENT_FIRST,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.AGENT_FIRST,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.TOOL_LOOP,
+            ConsoleRequestRoute.TOOL_LOOP,
+        ]
+        assert first_user.persisted_message_id is not None
+        assert second_user.persisted_message_id is not None
+        assert first_assistant.persisted_message_id is not None
+        assert second_assistant.persisted_message_id is not None
+        assert second_assistant.status == "complete"
+        assert canvas.settlement_for_assistant(first_assistant.id).state.value == (
+            "committed"
+        )
+        assert canvas.settlement_for_assistant(second_assistant.id).state.value == (
+            "committed"
+        )
+
+        revisions = chat_db.execute_query(
+            "SELECT id, canvas_id, parent_revision_id, html, origin_message_id, "
+            "origin_turn_id FROM canvas_revisions ORDER BY sequence"
+        ).fetchall()
+        assert [row["id"] for row in revisions] == [
+            canvas_identity["revision_id"],
+            canvas_identity["updated_revision_id"],
+        ]
+        assert [row["canvas_id"] for row in revisions] == [
+            canvas_identity["canvas_id"],
+            canvas_identity["canvas_id"],
+        ]
+        assert revisions[0]["parent_revision_id"] is None
+        assert revisions[1]["parent_revision_id"] == revisions[0]["id"]
+        assert [row["html"] for row in revisions] == [
+            "<p>first synthetic revision</p>",
+            "<p>second synthetic revision</p>",
+        ]
+        assert [row["origin_message_id"] for row in revisions] == [
+            first_assistant.persisted_message_id,
+            second_assistant.persisted_message_id,
+        ]
+
+        assert session.persisted_conversation_id is not None
+        with chat_db.transaction() as cursor:
+            owner = repository.get_attached_owner_by_conversation(
+                cursor, session.persisted_conversation_id
+            )
+            assert owner is not None
+            calls = repository.read_calls(cursor, owner.owner_id)
+        assert len(calls) == 8
+        assert all(call.state is TraceCallState.COMPLETE for call in calls), [
+            (call.call_sequence, call.route_identity, call.state) for call in calls
+        ]
+        by_run = {}
+        for call in calls:
+            by_run.setdefault(call.run_id, []).append(call)
+        assert len(by_run) == 2
+        ordered_runs = sorted(by_run.values(), key=lambda run: run[0].turn_id)
+        assert {run[0].turn_id for run in ordered_runs} == {
+            first_user.persisted_message_id,
+            second_user.persisted_message_id,
+        }
+        for run in ordered_runs:
+            assert len({call.turn_id for call in run}) == 1
+            assert [call.call_sequence for call in run] == [0, 1, 2, 3]
+            assert [call.route_identity for call in run] == [
+                ConsoleRequestRoute.AGENT_FIRST.value,
+                ConsoleRequestRoute.TOOL_LOOP.value,
+                ConsoleRequestRoute.TOOL_LOOP.value,
+                ConsoleRequestRoute.TOOL_LOOP.value,
+            ]
+        assert [row["origin_turn_id"] for row in revisions] == [
+            canvas.settlement_for_assistant(first_assistant.id).run_id,
+            canvas.settlement_for_assistant(second_assistant.id).run_id,
+        ]
+        assert revisions[0]["origin_turn_id"] != revisions[1]["origin_turn_id"]
+        # Canvas owns its registration ID; trace runs own opaque actor/chain
+        # IDs. Their durable relationship is the saved user/assistant pair.
+        with chat_db.transaction() as cursor:
+            for saved_user, saved_assistant in (
+                (first_user, first_assistant),
+                (second_user, second_assistant),
+            ):
+                terminal = next(
+                    call
+                    for call in calls
+                    if call.turn_id == saved_user.persisted_message_id
+                    and call.call_sequence == 3
+                )
+                link = repository.get_response_link(cursor, terminal.call_id)
+                assert link.verification_outcome == "verified_equal"
+                revision = repository.get_semantic_revision(
+                    cursor, link.semantic_revision_id
+                )
+                assert (
+                    revision.source_message_id == saved_assistant.persisted_message_id
+                )
+        assert store.pending_provider_trace_settlement_count(second_assistant.id) == 0
+        await runtime.dispose()
+        assert chat_db.registered_connection_count() == 2
+        assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        runs_db.close()
+        await gateway.aclose()
+        await runtime.dispose()
+        chat_db.close_connection()
+        trace_observer.close_connection()
+
+
+@pytest.mark.parametrize("seam", ["durable", "canvas", "policy"])
+@pytest.mark.parametrize("outcome", ["complete", "error", "cancel"])
+@pytest.mark.parametrize("borrowed", [False, True], ids=["owned", "borrowed"])
+def test_console_worker_operations_preserve_connection_ownership(
+    tmp_path, seam, outcome, borrowed,
+):
+    """Worker completion/error/cancel releases only its own registered handle."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Canvas.models import CanvasScope
+    from tldw_chatbook.Canvas.service import CanvasService
+    from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+    from tldw_chatbook.Chat.console_library_policy_coordinator import (
+        ConsoleLibraryPolicyCoordinator,
+    )
+    from tldw_chatbook.Chat.console_library_policy_repository import (
+        ConsoleLibraryPolicyRepository,
+    )
+
+    database = CharactersRAGDB(tmp_path / "worker-ownership.sqlite", "worker-owner")
+    observer = CharactersRAGDB(tmp_path / "worker-ownership.sqlite", "worker-observer")
+    conversation_id = database.add_conversation({"title": "worker ownership"})
+    caller_connection = database.get_connection()
+    observer_connection = observer.get_connection()
+    store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+    controller = ConsoleChatController(store=store, provider_gateway=RecordingStreamingGateway())
+    scope = CanvasScope("session", conversation_id, (), None, None, "run")
+
+    def finish():
+        if outcome == "cancel":
+            raise asyncio.CancelledError()
+        if outcome == "error":
+            raise RuntimeError("synthetic worker fault")
+        return "complete"
+
+    class FaultingCanvasService(CanvasService):
+        def quota_usage(self, scope):
+            super().quota_usage(scope)
+            return finish()
+
+    canvas = ConsoleCanvasController(durable_service=FaultingCanvasService(database))
+    policy_repository = ConsoleLibraryPolicyRepository(database)
+    policy_coordinator = ConsoleLibraryPolicyCoordinator(policy_repository)
+
+    def policy_operation():
+        result = policy_repository.read(conversation_id)
+        assert result.durable_policy is None
+        assert result.snapshot.source == "missing"
+        return finish()
+
+    def durable_operation():
+        with database.transaction() as cursor:
+            assert cursor.execute("SELECT 1").fetchone()[0] == 1
+            return finish()
+
+    async def exercise():
+        # A dedicated single worker makes borrowed ownership deterministic.
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
+        borrowed_connection = None
+        if borrowed:
+            def begin():
+                connection = database.get_connection()
+                connection.execute("BEGIN")
+                return connection
+            borrowed_connection = await asyncio.to_thread(begin)
+        try:
+            try:
+                if seam == "durable":
+                    result = await controller._run_durable_db_call(durable_operation)
+                elif seam == "canvas":
+                    result = await asyncio.to_thread(canvas._service_call, "quota_usage", scope)
+                else:
+                    result = await policy_coordinator._run_repository_call(policy_operation)
+            except (RuntimeError, asyncio.CancelledError):
+                assert outcome != "complete"
+            else:
+                assert outcome == "complete"
+                assert result == "complete"
+            if borrowed:
+                def check_borrowed():
+                    assert database.get_connection() is borrowed_connection
+                    assert borrowed_connection.in_transaction
+                    assert borrowed_connection.execute("SELECT 1").fetchone()[0] == 1
+                await asyncio.to_thread(check_borrowed)
+            else:
+                assert database.registered_connection_count() == 2
+        finally:
+            if borrowed:
+                def release_borrowed():
+                    borrowed_connection.rollback()
+                    database.close_connection()
+                await asyncio.to_thread(release_borrowed)
+
+    try:
+        asyncio.run(exercise())
+        assert database.registered_connection_count() == 2
+        assert database.get_connection() is caller_connection
+        assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        store.end_app_runtime()
+        database.close_connection()
+        observer.close_connection()
 
 
 @pytest.mark.asyncio
@@ -7332,8 +8765,8 @@ async def test_library_provider_factory_failure_degrades_to_no_provider():
 
 @pytest.mark.asyncio
 async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
-    """The Console-composed MCP provider drops exactly the 29 shadowed raw
-    names (24 descriptor tools + 5 legacy readers) from the
+    """The Console-composed MCP provider drops the current descriptor tools
+    plus five legacy readers from the
     `builtin:tldw_chatbook` source -- the Console serves Library retrieval
     through its own direct/RAG provider (either mode), so the MCP copies
     would be an ungoverned duplicate. Same-named external/local profile
@@ -7361,7 +8794,6 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
             "export_conversation",
         }
     )
-    assert len(CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS) == 29
     assert "search_rag" not in LIBRARY_TOOL_DESCRIPTORS
 
     inventory = {

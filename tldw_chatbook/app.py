@@ -2047,7 +2047,7 @@ class SetupWizardProvider(Provider):
 
                 self.app.push_screen(
                     FirstRunSetupWizard(self.app, rerun=True),
-                    # TASK-31226: a re-run's cancellation must return to
+                    # TASK-31813: a re-run's cancellation must return to
                     # Settings, not route to the Console.
                     lambda result: self.app._handle_first_run_wizard_result(
                         result, cancel_to_console=False
@@ -7595,6 +7595,37 @@ class TldwCli(
         )
 
         super().__init__()
+
+        # A textual-serve child receives a one-use, per-AppService control
+        # capability through its spawn environment. Native terminal launches
+        # have no such variables and need not import the served transport.
+        canvas_control_keys = (
+            "CHATBOOK_CANVAS_CONTROL_HOST",
+            "CHATBOOK_CANVAS_CONTROL_PORT",
+            "CHATBOOK_CANVAS_CONTROL_CHILD_ID",
+            "CHATBOOK_CANVAS_CONTROL_SECRET",
+            "CHATBOOK_CANVAS_CONTROL_VERSION",
+        )
+        self.served_canvas_handler = None
+        self.served_canvas_control = None
+        if any(key in os.environ for key in canvas_control_keys):
+            from .Canvas.control_protocol import (
+                CanvasControlClient,
+                ControlProtocolError,
+            )
+            from .Canvas.gateway import ServedCanvasControlHandler
+
+            self.served_canvas_handler = ServedCanvasControlHandler()
+            try:
+                self.served_canvas_control = CanvasControlClient.from_environment(
+                    os.environ,
+                    handler=self.served_canvas_handler.handle,
+                )
+            except ControlProtocolError:
+                loguru_logger.warning(
+                    "Served Canvas control disabled code=invalid_spawn_environment"
+                )
+        self._served_canvas_control_start_task: asyncio.Task[None] | None = None
 
         # TASK-21115: a consolidated (BUNDLED_CSS) class adds no stylesheet
         # source at first mount, so a dynamic first mount can resolve against
@@ -14856,6 +14887,10 @@ class TldwCli(
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._start_persona_buddy_overlay()
+        runtime = self.console_runtime
+        if runtime is not None:
+            runtime.start_async_lifecycles()
+        self._start_served_canvas_control()
         self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
             local_service=self.local_watchlists_service,
             briefing_db=self.subscriptions_db,
@@ -15178,6 +15213,42 @@ class TldwCli(
         # nothing waits on and that resume from a frontier in their own
         # database, so they belong in the staggered tier -- see
         # `Utils/boot_worker_policy.py` and `_start_staggered_boot_workers`.
+
+    def _start_served_canvas_control(self) -> None:
+        """Attach this authoritative child to its parent transport."""
+
+        client = self.served_canvas_control
+        if client is None or self._served_canvas_control_start_task is not None:
+            return
+        task = asyncio.create_task(
+            client.start(), name="start_served_canvas_control"
+        )
+        self._served_canvas_control_start_task = task
+
+        def observe(completed: asyncio.Task[None]) -> None:
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as error:
+                self.loguru_logger.warning(
+                    "Served Canvas control unavailable type={} code=connection_failed",
+                    type(error).__name__,
+                )
+
+        task.add_done_callback(observe)
+
+    async def _stop_served_canvas_control(self) -> None:
+        """Close the private child channel without affecting terminal exit."""
+
+        task = self._served_canvas_control_start_task
+        self._served_canvas_control_start_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        client = self.served_canvas_control
+        if client is not None:
+            await client.aclose()
 
     def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
         """Build the disk-backed model catalog cache for startup (ADR-020).
@@ -15767,7 +15838,7 @@ class TldwCli(
         """Optionally chain personalization before the existing continuation.
 
         ``cancel_to_console`` is forwarded for cancellation routing
-        (TASK-31226); dict results are unaffected by it.
+        (TASK-31813); dict results are unaffected by it.
         """
 
         if type(result) is dict and result.get("offer_profile_interview") is True:
@@ -15827,7 +15898,7 @@ class TldwCli(
     ) -> None:
         """Preserve the pre-interview first-run result handling byte-for-byte.
 
-        TASK-31226: the cancel branch changed. Esc-exiting the boot-offered
+        TASK-31813: the cancel branch changed. Esc-exiting the boot-offered
         wizard used to strand the user on Home (the screen the wizard was
         pushed over, per the first-run startup route); cancelling now lands
         on the Console workbench. Settings/command-palette RE-RUNS opt out
@@ -17913,6 +17984,13 @@ class TldwCli(
         # monotonic: a signal-armed watchdog already holds a tighter
         # deadline and this call leaves it alone.
         arm_exit_watchdog(reason="app unmount")
+        try:
+            await self._stop_served_canvas_control()
+        except Exception as error:
+            self.loguru_logger.warning(
+                "Served Canvas control close failed type={} code=close_failed",
+                type(error).__name__,
+            )
         # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
         # line is app_started ended abruptly. Wrapped, and deliberately so:
         # this line sits ABOVE the entire shutdown sequence -- DB closes,

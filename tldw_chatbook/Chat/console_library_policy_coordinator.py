@@ -70,7 +70,14 @@ class ConsoleLibraryPolicyCoordinator:
         db = getattr(self.repository, "db", None)
         if getattr(db, "is_memory_db", None) is True:
             return callback(*args)
-        return await asyncio.to_thread(callback, *args)
+
+        def owned_call() -> T:
+            from tldw_chatbook.DB.base_db import operation_owned_connection
+
+            with operation_owned_connection(db):
+                return callback(*args)
+
+        return await asyncio.to_thread(owned_call)
 
     async def load(
         self, session_id: str, conversation_id: str

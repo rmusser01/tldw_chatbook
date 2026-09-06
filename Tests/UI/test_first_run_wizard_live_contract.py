@@ -344,7 +344,7 @@ async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # TASK-31226: Exit setup now LANDS THE USER ON THE CONSOLE
+            # TASK-31813: Exit setup now LANDS THE USER ON THE CONSOLE
             # workbench instead of stranding them on the Home screen the
             # wizard was pushed over. This is the integration pin: the
             # cancellation flows through the real mounted-wizard callback
@@ -2139,7 +2139,7 @@ async def test_palette_setup_wizard_action_wires_result_callback(
             provider.handle_setup_wizard_action("run_setup_wizard")
             await pilot.pause(0.2)
 
-            # TASK-31226: re-entry wires an adapter around the app-level
+            # TASK-31813: re-entry wires an adapter around the app-level
             # result callback (cancel returns to the caller's screen; the
             # boot wizard's cancel now routes to the Console). Identity is
             # pinned by BEHAVIOR: a None result reaches the handler with
