@@ -2310,6 +2310,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-muted;
 }
 
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #library-media-viewer {
     height: 100%;
     overflow-y: auto;
@@ -2320,8 +2321,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
        visible width so long lines wrap. */
     overflow-x: hidden;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 

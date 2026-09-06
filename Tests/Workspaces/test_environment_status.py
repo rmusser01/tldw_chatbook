@@ -324,13 +324,15 @@ def test_cache_reparses_only_the_file_whose_content_and_mtime_changed(backlog_ws
     scanner = BacklogTaskScanner()
     scanner.scan(backlog_ws, branch=None)
     seen: list[Path] = []
-    original = BacklogTaskScanner._parse_status
+    # TASK-31665 AC#2 renamed the cached parse to `_parse_head` -- it now
+    # returns (status, title) from the same bounded head-read.
+    original = BacklogTaskScanner._parse_head
 
     def counting(self, path):
         seen.append(path)
         return original(self, path)
 
-    monkeypatch.setattr(BacklogTaskScanner, "_parse_status", counting)
+    monkeypatch.setattr(BacklogTaskScanner, "_parse_head", counting)
 
     target = backlog_ws / "backlog" / "tasks" / "task-102 - Polish widget.md"
     target.write_text(target.read_text().replace("To Do", "In Progress"))
@@ -340,3 +342,81 @@ def test_cache_reparses_only_the_file_whose_content_and_mtime_changed(backlog_ws
     state = scanner.scan(backlog_ws, branch=None)
     assert seen == [target]
     assert state.in_progress == 3 and state.todo == 0
+
+
+# --- TASK-31665 AC#2: rail rows show the frontmatter title, not the slug ------
+
+
+def test_scan_prefers_the_frontmatter_title_over_the_filename_slug(tmp_path: Path):
+    """AC#2. The filename is a hyphen-joined transliteration of the title the
+    frontmatter already holds in prose, and it was what the rail painted."""
+    tasks_dir = tmp_path / "backlog" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    path = tasks_dir / "task-900 - Inspect-rail-critique-minor-batch.md"
+    path.write_text(
+        "---\n"
+        "id: task-900\n"
+        "title: Inspect rail critique: minor batch\n"
+        "status: To Do\n"
+        "---\n\nbody\n"
+    )
+
+    state = BacklogTaskScanner().scan(tmp_path, branch=None)
+
+    assert [e.title for e in state.entries] == ["Inspect rail critique: minor batch"]
+
+
+def test_scan_folds_a_wrapped_block_scalar_title_onto_one_line(tmp_path: Path):
+    """AC#2. backlog.md writes any title long enough to wrap as a `>-` block
+    scalar; a naive single-line read would return the introducer itself."""
+    tasks_dir = tmp_path / "backlog" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    path = tasks_dir / "task-901 - Inspect-rail-critique-minor-batch-and-banding.md"
+    path.write_text(
+        "---\n"
+        "id: task-901\n"
+        "title: >-\n"
+        "  Inspect rail critique 2026-09-05: minor batch + background\n"
+        "  banding investigation\n"
+        "status: In Progress\n"
+        "assignee:\n"
+        "  - @someone\n"
+        "---\n\nbody\n"
+    )
+
+    state = BacklogTaskScanner().scan(tmp_path, branch=None)
+
+    assert [e.title for e in state.entries] == [
+        "Inspect rail critique 2026-09-05: minor batch + background banding "
+        "investigation"
+    ]
+    # The `assignee:\n  - @someone` idiom must not have taken the whole block
+    # down with it -- that is the trap `_parse_status`'s fast path exists for.
+    assert [e.status for e in state.entries] == ["In Progress"]
+
+
+def test_scan_falls_back_to_the_slug_when_frontmatter_has_no_title(tmp_path: Path):
+    """AC#2: a file with no usable `title:` keeps exactly what it painted before."""
+    tasks_dir = tmp_path / "backlog" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    path = tasks_dir / "task-902 - Legacy-slug-only-task.md"
+    path.write_text("---\nid: task-902\nstatus: To Do\n---\n\nbody\n")
+
+    state = BacklogTaskScanner().scan(tmp_path, branch=None)
+
+    assert [e.title for e in state.entries] == ["Legacy-slug-only-task"]
+
+
+def test_branch_task_title_also_comes_from_the_frontmatter(tmp_path: Path):
+    """AC#2: the branch-task row is the most-read title in the section."""
+    tasks_dir = tmp_path / "backlog" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    (tasks_dir / "task-903 - Long-hyphenated-slug-nobody-reads.md").write_text(
+        "---\nid: task-903\ntitle: A readable title\nstatus: In Progress\n---\n\n"
+        "- [x] one\n- [ ] two\n"
+    )
+
+    state = BacklogTaskScanner().scan(tmp_path, branch="feat/task-903-slug")
+
+    assert state.branch_task is not None
+    assert state.branch_task.title == "A readable title"

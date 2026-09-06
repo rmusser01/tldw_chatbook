@@ -10069,6 +10069,21 @@ class _SettlingGuardedConfirmationDialog(ConfirmationDialog):
 class FirstRunSetupWizard(WizardScreen):
     """Full-screen first-run setup wizard. Dismisses dict | None."""
 
+    #: TASK-31807: this is a modal onboarding gate pushed over the initial
+    #: screen at startup. A stray navigation -- e.g. a shell-destination key
+    #: (F9/F10/ctrl+N ...) that leaks in during splash teardown, while the
+    #: app's global bindings are live on the just-mounted initial screen and
+    #: this wizard's own push is still a `call_after_refresh` behind it --
+    #: would otherwise reach `_dismiss_navigation_overlays` and `dismiss(None)`
+    #: the wizard, discarding onboarding with ZERO user input (and leaving
+    #: `setup_started` persisted from `on_mount`, so it never re-offers
+    #: cleanly). The wizard is only ever meant to be left through its own
+    #: controls (Next / Back / Skip / the Esc confirm dialog), which dismiss it
+    #: directly, so `TldwCli._handle_screen_navigation_locked` treats any
+    #: navigation arriving while this screen is on the stack as spurious and
+    #: ignores it rather than tearing the wizard down.
+    blocks_stray_navigation: bool = True
+
     def __init__(
         self,
         app_instance,

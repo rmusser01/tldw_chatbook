@@ -127,13 +127,13 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
             yield self._action_button(
                 CLEAR_LABEL,
                 CLEAR_BTN_ID,
-                f"console-retrieval-scope-action {CLEAR_BUTTON_CLASS}",
+                f"console-retrieval-scope-action console-rail-focus-carrier {CLEAR_BUTTON_CLASS}",
             )
         else:
             yield self._action_button(
                 NARROW_LABEL,
                 NARROW_BTN_ID,
-                f"console-retrieval-scope-action {OPEN_BUTTON_CLASS}",
+                f"console-retrieval-scope-action console-rail-focus-carrier {OPEN_BUTTON_CLASS}",
             )
 
     @staticmethod

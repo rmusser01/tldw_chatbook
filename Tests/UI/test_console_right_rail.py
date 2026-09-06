@@ -848,7 +848,7 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
             pilot.app.screen, pilot, "#console-inspector-rail-open"
         )
         open_button = pilot.app.screen.query_one("#console-inspector-rail-open", Button)
-        assert str(open_button.label) == "<-Inspect"
+        assert str(open_button.label) == "◂ Inspect"
         far_end = (
             open_button.region.width - 1,
             open_button.region.height // 2,

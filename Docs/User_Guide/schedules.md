@@ -570,6 +570,18 @@ transfer** / **Cancel transfer** pair.
 **A disabled server reminder stays disabled** when it is released to this
 device — the release moves the task, not its on/off state.
 
+**A recurring question's run/result history does not follow a
+server → local release.** A local → server move keeps the same task
+identity (this device's row just gains a server link), so its run and
+result history stays visible under either id, before and after the
+move. A server → local release is different: it creates a brand-new,
+independent local row rather than converting the existing one, so the
+findings and run history the automation built up while server-owned
+stay attached to the now-archived server-owned row and do not carry
+over to the new one. The new row starts a clean history from the
+moment it arms. There is currently no way to view or reattach the prior
+history from the new row.
+
 ## Creating a recurring question
 
 A recurring question runs a scoped search on a schedule and reports what

@@ -13403,6 +13403,33 @@ class TldwCli(
                 "initial screen not yet mounted"
             )
             return False
+
+        # TASK-31807: refuse to navigate while a modal that has opted out of
+        # stray-navigation dismissal is on the stack. The first-run setup
+        # wizard is such a gate: it is pushed over the initial screen at
+        # startup, and a navigation that arrives while it is still up is never
+        # user-driven (its own Next/Back/Skip/Esc controls dismiss it directly
+        # and post any follow-on navigation only AFTER it has left the stack).
+        # The real trigger is a shell-destination key (F9/F10/ctrl+N ...)
+        # leaking in during splash teardown -- the app's global bindings are
+        # live on the just-mounted initial screen while the wizard's own push
+        # is a `call_after_refresh` behind it. Left unguarded, that navigation
+        # reaches `_dismiss_navigation_overlays` below and `dismiss(None)`s the
+        # wizard, discarding onboarding with zero input (and stranding
+        # `setup_started`, persisted from the wizard's `on_mount`). Ignore it,
+        # keeping the wizard up. Returning False here is silent -- no
+        # "couldn't open" toast, unlike the overlay-refusal path below.
+        if any(
+            getattr(screen, "blocks_stray_navigation", False)
+            for screen in self._screen_stack
+        ):
+            logger.info(
+                "Ignoring navigation to %s: a first-run setup gate is active "
+                "and must be completed or explicitly cancelled first.",
+                requested_screen,
+            )
+            return False
+
         screen_name, current_tab_value, screen_class = (
             self._resolve_screen_navigation_target(requested_screen)
         )

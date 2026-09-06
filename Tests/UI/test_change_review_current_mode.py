@@ -38,6 +38,7 @@ import tldw_chatbook.Utils.path_validation as path_validation_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
     _land_on_ui,
+    CHECKING_FOR_CHANGES_COPY,
     CURRENT_MODE_SENTINEL,
     AgentRunsChangeReviewProvider,
     ChangeReviewDiffPane,
@@ -597,10 +598,12 @@ async def test_pseudo_entry_absent_without_candidate_roots(monkeypatch, tmp_path
         await _wait_for_detection(pilot, screen)
 
         assert _select_values(screen) == []
-        # TASK-19702: with no tracked roots the empty state now names the
-        # CAUSE rather than asserting nothing changed. This test's subject
-        # (no pseudo-entry without candidate roots) is unchanged.
-        assert "No folder is bound" in screen.diff_pane_text()
+        # TASK-19702: with no tracked roots the empty state must not assert
+        # nothing changed. This test's subject (no pseudo-entry without
+        # candidate roots) is unchanged; the exact copy is TASK-31664
+        # AC#5's cause-agnostic wording (a specific "no folder is bound"
+        # claim was wrong whenever the real cause was consent-off instead).
+        assert "Changes aren't tracked for this workspace" in screen.diff_pane_text()
         assert "Chats still work in private scratch" in screen.diff_pane_text()
 
 
@@ -1307,7 +1310,7 @@ async def test_unborn_head_renders_a_STAGED_add_through_the_preview_path(
 
 
 # ---------------------------------------------------------------------------
-# TASK-19702: an empty Change Review must say WHY, not imply "nothing changed".
+# TASK-19702: an empty Change Review must not imply "nothing changed".
 #
 # A Default-workspace conversation can never bind a folder — verified against
 # the real registry: `add_folder_binding(DEFAULT_WORKSPACE_ID, ...)` raises
@@ -1318,17 +1321,31 @@ async def test_unborn_head_renders_a_STAGED_add_through_the_preview_path(
 # conversation.", reads as a REPORT that the agent changed nothing, which is
 # a claim the app cannot support. That is the honesty rule (spec §8) applied
 # to the empty state.
+#
+# TASK-31664 AC#5 revised the fix: `self._workspace_roots` empty used to be
+# read as ALWAYS meaning "no folder is bound", and the copy named that one
+# specific cause. It is not the only cause -- the identical empty-roots
+# signal also occurs when Change Review's consent is not ENABLED for an
+# otherwise-bound folder (the common default) or when the consent service
+# is absent/raises -- so "No folder is bound…" was a confident, specific,
+# and sometimes WRONG claim. The copy is now cause-agnostic: it asserts
+# only what is always true (changes are not tracked here) and points at
+# both remediation steps (bind AND enable) instead of one.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_empty_review_without_tracked_roots_explains_why(monkeypatch, tmp_path):
-    """With nothing tracked, the empty state must name the CAUSE.
+    """With nothing tracked, the empty state must not claim nothing changed.
 
     "No file changes recorded for this conversation." is a claim the app
     can only support when the conversation HAS tracked roots; with none it
     never watched anything, so asserting the stronger thing is the same
     dishonest-empty-state class spec §8 forbids elsewhere on this screen.
+    The copy no longer names a specific cause (TASK-31664 AC#5: "no folder
+    is bound" was wrong whenever the real cause was consent-off instead),
+    so this asserts the two things that stay true regardless of cause: the
+    negative claim is gone, and the remediation names both fix steps.
     """
     _patch_git_actions(monkeypatch, True)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
@@ -1342,11 +1359,12 @@ async def test_empty_review_without_tracked_roots_explains_why(monkeypatch, tmp_
         await _wait_for_detection(pilot, screen)
         text = screen.diff_pane_text()
 
-    assert "no folder" in text.lower(), (
-        f"the empty state must name the CAUSE, not just the absence: {text!r}"
-    )
     assert "No file changes recorded" not in text, (
         "that copy asserts the agent changed nothing, which is not known here"
+    )
+    assert "not a report that nothing changed" in text
+    assert "bind" in text.lower() and "enable" in text.lower(), (
+        f"remediation must cover both the bind AND enable steps: {text!r}"
     )
 
 
@@ -1600,3 +1618,97 @@ async def test_initial_current_mode_is_noop_without_git(
         assert screen.git_detection_settled
         assert CURRENT_MODE_SENTINEL not in _select_values(screen)
         assert screen.query_one("#change-review-turn-select", Select).value == run1
+
+
+# ---------------------------------------------------------------------------
+# TASK-31665 AC#7: no transient "No file changes recorded" flash on entry
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def no_turns_repo_fixture(tmp_path):
+    """A real repo with real working-tree changes and ZERO recorded turns.
+
+    That is the shape every Console opener that lands on the working tree
+    produces -- `Review & commit… · N files` and `Review in Change Review`
+    both open here -- and it is the shape the flash lives in: snapshot turns
+    are read synchronously (none), while the `current` view arrives only
+    after the off-thread repo detection lands.
+    """
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "a.txt").write_text("changed in the working tree\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-empty"
+    )
+    try:
+        yield provider, repo, db
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_entry_never_flashes_the_empty_history_claim_before_the_diff(
+    monkeypatch, no_turns_repo_fixture
+):
+    """AC#7. Measured at <=0.5s in the critique: the screen asserted "No file
+    changes recorded for this conversation." -- a claim about the user's own
+    uncommitted work -- and then replaced it with the real diff. Detection is
+    blocked here on a real Event so the window is deterministic rather than
+    raced for."""
+    _patch_git_actions(monkeypatch, True)
+    provider, repo, _db = no_turns_repo_fixture
+
+    release = threading.Event()
+    real_detect = provider.detect_git
+
+    def blocking_detect(roots):
+        release.wait(timeout=10)
+        return real_detect(roots)
+
+    provider.detect_git = blocking_detect
+
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        painted = await _wait_for(
+            pilot,
+            lambda: _static_text(screen, "#change-review-diff-content") or None,
+            "the entry pane to paint something",
+        )
+        assert "No file changes recorded" not in painted, (
+            "the screen asserted the user's work away while detection was "
+            f"still in flight: {painted!r}"
+        )
+        assert painted == CHECKING_FOR_CHANGES_COPY
+
+        release.set()
+        await _wait_for_detection(pilot, screen)
+        await _wait_idle(pilot, app, "change-review-current")
+        await pilot.pause()
+        assert CURRENT_MODE_SENTINEL in _select_values(screen)
+
+
+@pytest.mark.asyncio
+async def test_the_empty_history_claim_still_lands_once_detection_finds_nothing(
+    monkeypatch, plain_review_fixture, tmp_path
+):
+    """AC#7's other half: the loading copy must not become the new permanent
+    lie. With no repository anywhere, detection settles empty-handed and the
+    honest empty-state copy takes over."""
+    _patch_git_actions(monkeypatch, True)
+    provider, root, db, _run1 = plain_review_fixture
+    # Drop the recorded turn so the screen is genuinely empty.
+    provider.turns = lambda: []
+
+    app = _Harness(provider, workspace_roots=[str(root)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        await pilot.pause()
+        painted = _static_text(screen, "#change-review-diff-content")
+        assert painted != CHECKING_FOR_CHANGES_COPY, (
+            "the transient loading copy outlived the thing it waited for"
+        )
+        assert painted == screen._empty_history_copy()

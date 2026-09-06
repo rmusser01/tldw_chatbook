@@ -6,6 +6,7 @@ TASK-21514: row actions -- kept badge, View preview, Open deep-link, Keep,
 Export.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -161,7 +162,13 @@ async def test_demo_cta_starts_the_detached_demo_task():
 
         def run_demo_detached(self):
             self.started += 1
-            return object()  # truthy task stand-in
+            # Match the real contract: run_demo_detached returns an
+            # asyncio.Task (or None), which the screen attaches a completion
+            # callback to (Qodo #5). A bare object() would not have one.
+            async def _noop():
+                return {"status": "ok"}
+
+            return asyncio.create_task(_noop())
 
     stub = _StubDemo()
     app.daily_report_demo_service = stub
@@ -172,6 +179,141 @@ async def test_demo_cta_starts_the_detached_demo_task():
             if stub.started:
                 break
         assert stub.started == 1
+
+
+# --- TASK-31801: a failed brief must keep a demo retry affordance -----------
+
+
+@pytest.mark.asyncio
+async def test_failed_report_keeps_demo_retry_cta():
+    """A failed brief leaves a report row, so the empty-state branch is gone;
+    the demo CTA must still be reachable (the failure toast says "run the demo
+    again"). It renders and starts the same detached demo task."""
+    app = _build_test_app(configured_default="artifacts")
+    _seed_report(app, status="failed")
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        cta = screen.query_one("#artifacts-daily-report-demo", Button)
+        assert cta.region.height >= 1, "retry CTA must paint, not just mount"
+
+
+@pytest.mark.asyncio
+async def test_completed_report_hides_demo_cta():
+    """A completed report means the user succeeded -- no retry CTA is shown
+    (the empty-state CTA belongs to the no-reports and no-success states)."""
+    app = _build_test_app(configured_default="artifacts")
+    _seed_report(app, status="complete")
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        assert not screen.query("#artifacts-daily-report-demo")
+
+
+@pytest.mark.asyncio
+async def test_older_success_then_new_failure_keeps_retry_cta():
+    """Qodo #4 (PR #2460): a historical success must not suppress the retry CTA
+    when the NEWEST run failed. The gate tracks the latest report's status, not
+    "any report ever completed"."""
+    app = _build_test_app(configured_default="artifacts")
+    db: SubscriptionsDB = app.subscriptions_db
+    # Older successful brief, then a newer failed brief (distinct watchlists to
+    # avoid a duplicate-name collision). Rows sort created_at DESC, id DESC, so
+    # the later-inserted failure is newest.
+    ok_wl = int(WatchlistBundleService(db).create("Older OK")["id"])
+    ok_id = db.insert_briefing(ok_wl)
+    db.update_briefing(ok_id, status="complete", body_markdown=_SEED_BODY, item_count=1)
+    fail_wl = int(WatchlistBundleService(db).create("Newer Fail")["id"])
+    fail_id = db.insert_briefing(fail_wl)
+    db.update_briefing(fail_id, status="failed")
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        assert screen._daily_reports[0]["id"] == fail_id, "newest row is the failure"
+        cta = screen.query_one("#artifacts-daily-report-demo", Button)
+        assert cta.region.height >= 1, "retry CTA must survive an older success"
+
+
+@pytest.mark.asyncio
+async def test_successful_retry_refreshes_rows_and_drops_cta():
+    """Qodo #5 (PR #2460): a retry that completes while Artifacts stays open must
+    refresh the rows on task completion -- the failed row + retry CTA give way to
+    the completed report without waiting for a screen resume."""
+    app = _build_test_app(configured_default="artifacts")
+    db: SubscriptionsDB = app.subscriptions_db
+    wl = int(WatchlistBundleService(db).create("Daily Brief")["id"])
+    fail_id = db.insert_briefing(wl)
+    db.update_briefing(fail_id, status="failed")
+
+    class _RetryDemo:
+        """Detached-task stub: flips the failed briefing to complete, mirroring
+        a real retry that succeeds, then resolves."""
+
+        def run_demo_detached(self):
+            async def _run():
+                db.update_briefing(
+                    fail_id, status="complete",
+                    body_markdown=_SEED_BODY, item_count=1,
+                )
+                return {"status": "ok"}
+
+            return asyncio.create_task(_run())
+
+    app.daily_report_demo_service = _RetryDemo()
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        screen.query_one("#artifacts-daily-report-demo", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: not screen.query("#artifacts-daily-report-demo"),
+            what="retry CTA to clear after a successful retry",
+        )
+        assert screen._daily_reports[0]["status"] == "complete"
+
+
+# --- TASK-31802: don't advertise an import path the user cannot take --------
+
+
+@pytest.mark.asyncio
+async def test_import_precondition_is_explained_and_empty_copy_is_honest():
+    """The Import button is permanently disabled, so the empty-state copy must
+    not tell users to "import an artifact", and the disabled control must
+    carry a visible inline explanation of its precondition."""
+    app = _build_test_app(configured_default="artifacts")
+    async with _open_artifacts(app) as (screen, pilot):
+        import_btn = screen.query_one("#artifacts-import-artifact", Button)
+        assert import_btn.disabled
+        note = screen.query_one("#artifacts-import-note", Static)
+        assert note.region.height >= 1, "import precondition note must paint"
+        empty = screen.query_one("#artifacts-detail-empty", Static)
+        assert "import an artifact" not in str(empty.renderable).lower()
+
+
+# --- TASK-31803: the PREVIEW header formats timestamps too -------------------
+
+
+@pytest.mark.asyncio
+async def test_report_preview_header_uses_formatted_timestamp():
+    """Qodo #3 (PR #2460): the preview header renderable must format the
+    timestamp (local, minute precision) -- never render raw microsecond ISO."""
+    from rich.console import Console
+
+    from tldw_chatbook.Subscriptions.daily_reports_view import (
+        format_report_timestamp,
+    )
+
+    app = _build_test_app(configured_default="artifacts")
+    async with _open_artifacts(app) as (screen, pilot):
+        raw = "2026-09-05T23:10:20.123456+00:00"
+        screen._previewed_report = {
+            "id": 1, "watchlist_name": "Daily Brief", "watchlist_id": 1,
+            "status": "complete", "created_at": raw, "item_count": 1,
+            "body_markdown": "## Brief\n\nbody",
+        }
+        console = Console(width=200)
+        with console.capture() as capture:
+            console.print(screen._report_preview_renderable())
+        rendered = capture.get()
+        assert format_report_timestamp(raw) in rendered
+        assert ".123456" not in rendered
+        assert raw not in rendered
 
 
 # --- TASK-21514: row actions (badge, preview, deep-link, keep, export) ------

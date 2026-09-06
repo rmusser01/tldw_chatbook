@@ -1571,6 +1571,36 @@ async def test_clear_selection_resets_everything():
         )
 
 
+async def test_clear_selection_drops_stale_avatar():
+    """TASK-31804: deselection must not leave a previous face in the rail.
+
+    The status line reads "Selected: none" after clear_selection(), but the
+    portrait box used to keep the previously-selected character's avatar
+    mounted -- a contradictory rail state. clear_selection() must blank the
+    avatar so the "Selected: none" summary and the portrait agree.
+    """
+    from rich.text import Text
+    from textual.containers import Container
+
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        pane.set_avatar_thumbnail(Text("portrait"))
+        await pilot.pause()
+        thumb_box = pane.query_one("#personas-inspector-avatar-thumb", Container)
+        assert len(thumb_box.children) == 1, "avatar should be mounted while selected"
+        await pane.clear_selection()
+        await pilot.pause()
+        assert "Selected: none" in str(
+            pilot.app.query_one("#personas-selected-name", Static).renderable
+        )
+        assert len(thumb_box.children) == 0, (
+            "clear_selection left a stale avatar mounted while the summary "
+            "reads 'Selected: none'"
+        )
+
+
 async def test_show_conversations_twice_in_same_tick_does_not_crash():
     app = InspectorApp()
     async with app.run_test() as pilot:

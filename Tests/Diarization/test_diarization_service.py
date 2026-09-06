@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from tldw_chatbook.Local_Ingestion.diarization_service import (
     DiarizationService,
     DiarizationError,
+    build_cosine_agglomerative,
 )
 
 
@@ -404,6 +405,35 @@ class TestDiarizationService(unittest.TestCase):
             invalid_config = base_config.copy()
             invalid_config["min_speakers"] = 0
             service._validate_config(invalid_config)
+
+
+class TestAgglomerativeCompat(unittest.TestCase):
+    """`affinity=` was removed in scikit-learn 1.4 and the `diarization` extra
+    is unpinned, so the old call raised TypeError inside clustering and the
+    whole pass silently produced no speakers."""
+
+    def test_modern_sklearn_gets_metric(self):
+        cls = MagicMock(name="AgglomerativeClustering")
+        build_cosine_agglomerative(cls, 3)
+        cls.assert_called_once_with(n_clusters=3, metric="cosine", linkage="average")
+
+    def test_old_sklearn_falls_back_to_affinity(self):
+        calls = []
+
+        def _cls(**kwargs):
+            calls.append(kwargs)
+            if "metric" in kwargs:
+                raise TypeError("__init__() got an unexpected keyword argument 'metric'")
+            return "clusterer"
+
+        self.assertEqual(build_cosine_agglomerative(_cls, 2), "clusterer")
+        self.assertEqual(
+            calls,
+            [
+                {"n_clusters": 2, "metric": "cosine", "linkage": "average"},
+                {"n_clusters": 2, "affinity": "cosine", "linkage": "average"},
+            ],
+        )
 
 
 if __name__ == "__main__":

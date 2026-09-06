@@ -21,12 +21,13 @@ Logs, Settings, and Research.
 The screen is a two-pane workbench under a one-line purpose banner:
 
 - **Sources** (left pane) — two device pickers (microphone, system-audio
-  source), three status lines, a consent note, the **Start / Pause / Stop**
+  source), four status lines, a consent note, the **Start / Pause / Stop**
   row, a timer, two audio-level meters, a recovery line, and a **Recover**
   button.
-- Transcript canvas (right pane) — the live transcript log, a partial-line
-  indicator while a segment is still being transcribed, a footer line that
-  appears after Stop, and an **Open in Library** button.
+- Transcript canvas (right pane) — a **Speakers** legend that grows one row
+  per distinct speaker as the meeting identifies them, the live transcript
+  log, a partial-line indicator while a segment is still being transcribed,
+  a footer line that appears after Stop, and an **Open in Library** button.
 
 ## Features & controls
 
@@ -37,6 +38,7 @@ The screen is a two-pane workbench under a one-line purpose banner:
 | **System audio: …** status line | What the system-audio picker resolved to for this session — a native tap ("Native (macOS tap)" / "Native (parec)"), a named virtual device ("Virtual device: BlackHole"), or "Unavailable, mic only (…)" with the reason, in which case the meeting records room-mode (mic only). |
 | **Transcriber: …** status line | The speech-to-text provider and model in use, plus "(finalises per segment)" — each transcript row is a *final* for its own segment, not a running partial for the whole meeting. |
 | **Speaker labels after the meeting: …** status line | Whether offline diarization will run once you stop: "on", or "off (…)" naming the missing Python packages (see "Speaker labels" below). |
+| **Live speaker labels: …** status line | Whether speaker ids will be assigned *while* recording (what fills the Speakers legend): "on", or "off (…)" with the reason — "not enabled in settings" (`meetings.live_diarization` is off), the missing packages, or an unsupported `diarizer_backend`. |
 | Consent note | "Recording other people may require their consent." — a static reminder, not a gate; the app does not ask anyone else for consent on your behalf. |
 | **Start** | Begins recording and live transcription. Disabled while a meeting is already running or before the device probe finishes. |
 | **Pause** / **Resume** | Pauses capture and transcription in place; the same button relabels itself and resumes where it left off. |
@@ -44,6 +46,9 @@ The screen is a two-pane workbench under a one-line purpose banner:
 | Timer | Elapsed recording time as `HH:MM:SS`, updated roughly 5×/second while recording. |
 | Level meters | Two bars (mic, system) showing live input level, 0–100%. |
 | **Recover** | Appears enabled with a line reading "Unfinished meeting found: `<folder-name>`" when the screen finds a meeting folder left behind by a crash or forced quit. Recovering patches the audio files, marks the meeting `recovered` in its metadata, and queues it for Library ingest — same as a normal Stop. |
+| **Speakers** legend | One row per speaker identified so far ("Speaker 1", "Speaker 2", … until renamed), each with a rename box next to it. Only fills in when a backend is actually assigning speaker ids to segments as they arrive (see "Speaker labels" below) — otherwise it stays empty and every row keeps reading "You"/"Others". |
+| Speaker rename box | Type a name and press Enter to rename that speaker everywhere: the legend row and every already-shown transcript line for that speaker, and it's saved into the meeting's `meeting.json` name map immediately (not only at Stop). Clearing the box and pressing Enter reverts that speaker back to the generic "Speaker N" label. |
+| Footer line (after Stop) | What was saved and where it went: segment count and duration, any dropped/failed segments, the folder, and the Library ingest job id (or why none was queued). It also reports "Speaker labels unavailable (…)" when live labelling was wanted but the backend never started or crashed mid-meeting (the recording, transcript and ingest are unaffected — the meeting simply stays on "You"/"Others"), and "Speaker merge to resolve: Alice / Bob" when the final pass decided two speakers you had named separately are one person; both names are kept on the survivor for you to fix. |
 | **Open in Library** | Enabled once a meeting has been queued for ingest (by Stop or Recover); switches to Library's Import view with the ingest queue in view. |
 
 ## Common tasks
@@ -100,6 +105,9 @@ flat keys only — a dotted lookup into a nested table does not work here):
 | `keep_raw_tracks` | `true` | Keep the separate `you.wav` / `others.wav` files after Library ingest finishes (rather than deleting them once the raw-track cleanup runs). |
 | `post_transcribe` | `true` | Run the offline transcription pass on `mixed.wav` during Library ingest. |
 | `post_diarize` | `true` | Ask that offline pass to also diarize (assign speaker labels) — see "Speaker labels" below. |
+| `live_diarization` | `false` | Assign speaker ids while recording instead of only in the offline pass — feeds the Speakers legend. Requires the same diarization packages as `post_diarize` and `diarizer_backend` set to `"local"`. |
+| `diarizer_backend` | `"local"` | Which live diarizer to build when `live_diarization` is on. Only `"local"` is implemented today. |
+| `max_speakers` | `8` | Upper bound the local live diarizer uses when clustering voices into speaker ids. |
 
 Each finished meeting's folder (named by start time, e.g.
 `2026-09-04_2121/`) contains:
@@ -145,14 +153,44 @@ what happens to a meeting once it's queued.
   loopback device — [BlackHole](https://existential.audio/blackhole/) on
   macOS or [VB-Cable](https://vb-audio.com/Cable/) on Windows — and pick it
   from the system-audio device dropdown instead of "Native (auto)".
-- **Speaker labels ("who said what") are computed after the meeting, not
-  live.** The live transcript during recording only ever distinguishes
-  "You" from "Others" (or omits labels entirely in room mode); per-speaker
-  diarization runs as part of the offline Library ingest pass, and only
-  when `torch`, `torchaudio`, `speechbrain`, and `scikit-learn` are
-  installed — otherwise the "Speaker labels after the meeting" status line
-  reads "off" and names the missing packages, and diarization is simply
-  skipped.
+- **Speaker labels ("who said what") are computed after the meeting by
+  default, not live.** With `meetings.live_diarization` left at its default
+  (off), the live transcript during recording only ever distinguishes "You"
+  from "Others" (or omits labels entirely in room mode), the Speakers legend
+  stays empty, and per-speaker diarization runs once, as part of the offline
+  Library ingest pass — only when `torch`, `torchaudio`, `speechbrain`, and
+  `scikit-learn` are installed (install them together with the
+  `diarization` extra: `pip install -e ".[diarization]"`); otherwise the
+  "Speaker labels after the meeting" status line reads "off" and names the
+  missing packages, and diarization is simply skipped. Turning on
+  `meetings.live_diarization` (with `diarizer_backend` left at its default,
+  `"local"`, and the same packages installed) assigns speaker ids as
+  segments arrive instead: the legend fills in with "Speaker 1", "Speaker
+  2", … as each new voice is heard, and typing a name into a row's rename
+  box relabels that speaker everywhere — the legend, the transcript shown so
+  far, and the name map saved into `meeting.json` for the finished
+  recording. This live path has automated pilot-test coverage only; it has
+  not been exercised in a live session on this page's verification host.
+- **Speaker names can also be renamed after the fact, on the finished
+  Library item — not only live, during the meeting.** A rename control
+  mirroring the live Speakers legend exists in the Library media item's
+  canvas for any recording whose meeting folder still holds `meeting.json`,
+  and updates the same `meeting.json` name map plus the stored, searchable
+  transcript text. As of this writing that control is not reachable by
+  clicking around Library today: it lives inside the media canvas's own
+  preview panel, which the Library shell keeps hidden in favor of its
+  separate reader pane. It is real and covered by automated tests
+  (`Tests/UI/test_library_media_speaker_rename.py`), just not yet surfaced
+  in the reader — tracked as a follow-up. Until then, renaming during the
+  meeting (the Speakers legend above) is the only way to change these names
+  from the UI. Note that this after-the-fact rename rewrites the Library
+  item's stored transcript, so it **refuses** — with a notice, changing
+  nothing on disk or in the database — whenever that stored text is not the
+  meeting's own render, which is the case whenever the offline ingest pass
+  produced the Library copy (`post_transcribe` left on). It also refuses
+  when the recording folder's `transcript.jsonl` is missing or empty. When
+  it does go through, the replaced text is kept as a document version, so
+  the change can be rolled back.
 - **Each transcript row is a per-segment final, not a whole-meeting
   transcript.** Rows can lag live speech by up to roughly the length of one
   segment (up to ~10 seconds) plus however long that segment took to
@@ -184,9 +222,25 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against feat/meeting-transcription @ 761590cb8f — 2026-09-05.
+*Verified against feat/meeting-diarization @ 14bbf2a7f + the PR #2456 fix
+wave — 2026-09-06. The rows added in that wave (the "Live speaker labels"
+status line, the footer's "Speaker labels unavailable" / "Speaker merge to
+resolve" copy, and the Library rename's refusal rules) are covered by pilot
+tests in `Tests/UI/test_meetings_screen.py` and
+`Tests/UI/test_library_media_speaker_rename.py`; they were NOT re-verified
+in a live session (this host still has no System Audio Recording grant).
+Earlier stamp: e26193495 — 2026-09-05.
 The "System source lost" rail copy above was verified by pilot test
 (`Tests/UI/test_meetings_screen.py::test_lost_tap_updates_system_status`),
 not in a live session — this host has no System Audio Recording grant, so
 no real tap loss was observed. Everything else on this page carries the
-2026-09-04 live verification described in the Quirks section.*
+2026-09-04 live verification described in the Quirks section. The Speakers
+legend and rename box (task 7) and the after-the-fact Library rename (task
+8) are covered only by pilot/unit tests —
+`test_legend_row_mounts_and_rename_input_updates_ui` and the `_apply_rename`
+unit cases in `Tests/UI/test_meetings_screen.py`, plus
+`Tests/UI/test_library_media_speaker_rename.py` — not by a live session with
+`live_diarization` turned on. The Library rename control also carries a
+known reachability gap documented above: it works and is tested, but is not
+yet visible in the running app (task 9 doc-only update; not re-verified
+live).*

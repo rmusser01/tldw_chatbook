@@ -324,6 +324,29 @@ def _lazy_import_sklearn():
     return _sklearn_modules
 
 
+def build_cosine_agglomerative(cluster_cls, n_clusters: int, linkage: str = "average"):
+    """Construct cosine `AgglomerativeClustering` across scikit-learn versions.
+
+    The `affinity` keyword was deprecated in scikit-learn 1.2 (renamed to
+    `metric`) and REMOVED in 1.4, while the `diarization` extra is unpinned --
+    so on a current install the old call raised `TypeError` inside the
+    clustering step and diarization silently produced no speakers.
+
+    Args:
+        cluster_cls: The `AgglomerativeClustering` class to instantiate.
+        n_clusters: Number of clusters to form.
+        linkage: Linkage criterion to pass through.
+
+    Returns:
+        A configured, unfitted clusterer using cosine distance.
+    """
+    try:
+        return cluster_cls(n_clusters=n_clusters, metric="cosine", linkage=linkage)
+    except TypeError:
+        # scikit-learn < 1.2 knows `affinity` and not `metric`.
+        return cluster_cls(n_clusters=n_clusters, affinity="cosine", linkage=linkage)
+
+
 def _lazy_import_torchaudio():
     """Lazy import torchaudio."""
     global _torchaudio
@@ -1277,8 +1300,8 @@ class DiarizationService:
             )
         else:  # agglomerative
             AgglomerativeClustering = sklearn_modules["AgglomerativeClustering"]
-            clustering = AgglomerativeClustering(
-                n_clusters=num_speakers, affinity="cosine", linkage="average"
+            clustering = build_cosine_agglomerative(
+                AgglomerativeClustering, num_speakers
             )
 
         labels = clustering.fit_predict(embeddings)

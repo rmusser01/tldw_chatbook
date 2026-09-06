@@ -13,6 +13,8 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+import pytest
+
 import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
 from tldw_chatbook.Canvas.archive import export_canvas_archive
 from tldw_chatbook.Canvas.repository import (
@@ -450,6 +452,342 @@ def test_canvas_v3_exact_same_identity_restore_is_idempotent(tmp_path: Path) -> 
         .fetchone()[0]
         == 4
     )
+    database.close_connection()
+
+
+def test_canvas_same_identity_message_fetch_is_sql_bounded(tmp_path, monkeypatch):
+    source_path = tmp_path / "bounded.sqlite"
+    expected = _seed_canvas_graph(source_path)
+    archive_path = tmp_path / "bounded.zip"
+    creator = ChatbookCreator({"ChaChaNotes": str(source_path)})
+    assert creator.create_chatbook(
+        name="bounded",
+        description="bounded",
+        content_selections={ContentType.CONVERSATION: [expected["conversation_id"]]},
+        output_path=archive_path,
+    )[0]
+    monkeypatch.setattr(importer_module, "_MAX_V2_GRAPH_MESSAGES", 4)
+    original_query = CharactersRAGDB.execute_query
+    graph_queries = []
+    context_queries = []
+
+    def observe_query(db, query, params=(), *args, **kwargs):
+        if "FROM messages" in query and "provider_continuation_json" in query:
+            if "OFFSET" in query:
+                context_queries.append((query, params))
+            else:
+                graph_queries.append((query, params))
+        return original_query(db, query, params, *args, **kwargs)
+
+    monkeypatch.setattr(CharactersRAGDB, "execute_query", observe_query)
+    importer = ChatbookImporter({"ChaChaNotes": str(source_path)})
+    success, message = importer.import_chatbook(archive_path)
+    assert success, message
+    assert graph_queries
+    for query, params in graph_queries:
+        assert "LIMIT ?" in query
+        assert params[-1] == 5
+    assert context_queries
+    for query, params in context_queries:
+        assert "LIMIT ? OFFSET ?" in query
+        assert params[-2:] == (100, 0)
+
+
+@pytest.mark.parametrize("shape", ["root", "messages", "message"])
+def test_canvas_same_identity_malformed_comparison_uses_typed_rejection(
+    tmp_path,
+    shape,
+):
+    from tldw_chatbook.Canvas.archive import CanvasArchiveValidationError
+    from tldw_chatbook.Chatbooks.chatbook_models import ChatbookManifest
+
+    source_path = tmp_path / "malformed.sqlite"
+    expected = _seed_canvas_graph(source_path)
+    archive_path = tmp_path / "malformed.zip"
+    creator = ChatbookCreator({"ChaChaNotes": str(source_path)})
+    assert creator.create_chatbook(
+        name="malformed",
+        description="malformed",
+        content_selections={ContentType.CONVERSATION: [expected["conversation_id"]]},
+        output_path=archive_path,
+    )[0]
+    extracted = tmp_path / "extracted"
+    with zipfile.ZipFile(archive_path) as archive:
+        archive.extractall(extracted)
+    manifest = ChatbookManifest.from_dict(
+        json.loads((extracted / "manifest.json").read_text())
+    )
+    conversation_path = next((extracted / "content" / "conversations").glob("*.json"))
+    payload = json.loads(conversation_path.read_text())
+    if shape == "root":
+        payload = []
+    elif shape == "messages":
+        payload["messages"] = None
+    else:
+        payload["messages"][0] = None
+    conversation_path.write_text(json.dumps(payload))
+    database = CharactersRAGDB(source_path, client_id="malformed-compare")
+    importer = ChatbookImporter({"ChaChaNotes": str(source_path)})
+    try:
+        before = tuple(database.get_connection().iterdump())
+        with pytest.raises(CanvasArchiveValidationError):
+            importer._validate_same_identity_conversation(
+                database,
+                extracted,
+                manifest,
+                expected["conversation_id"],
+            )
+        assert tuple(database.get_connection().iterdump()) == before
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize(
+    "field", [None, "citation_validation", "evidence_bundle", "citations"]
+)
+def test_canvas_same_identity_citations_are_compared_without_writes(
+    tmp_path,
+    monkeypatch,
+    field,
+):
+    import tldw_chatbook.Chatbooks.chatbook_creator as creator_module
+    from tldw_chatbook.Chat.citation_trace_identity import (
+        CitationFingerprintKeyUnavailable,
+        KeyringCitationFingerprintKeyProvider,
+    )
+
+    monkeypatch.setattr(creator_module, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(importer_module, "get_user_data_dir", lambda: tmp_path)
+    source_path = tmp_path / "citations.sqlite"
+    expected = _seed_canvas_graph(source_path)
+    conversation_id = expected["conversation_id"]
+    message_id = expected["message_ids"][1]
+    record = {
+        "rag_context": {
+            "citation_validation": {"valid": True},
+            "evidence_bundle": {"bundle_id": "bundle-a", "references": []},
+        },
+        "citations": [{"evidence_id": "1", "source_id": "note-a"}],
+    }
+    sidecar = tmp_path / "tldw_chatbook_chat_rag_context.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "conversations": {conversation_id: {message_id: record}},
+            }
+        )
+    )
+    archive_path = tmp_path / "citations.zip"
+    creator = ChatbookCreator({"ChaChaNotes": str(source_path)})
+    assert creator.create_chatbook(
+        name="citations",
+        description="citations",
+        content_selections={ContentType.CONVERSATION: [conversation_id]},
+        output_path=archive_path,
+    )[0]
+    if field:
+        changed_path = tmp_path / "changed.zip"
+
+        def change(name, payload):
+            if name.startswith("content/conversations/") and name.endswith(".json"):
+                data = json.loads(payload)
+                message = next(
+                    item for item in data["messages"] if item["id"] == message_id
+                )
+                assert field in message
+                del message[field]
+                payload = json.dumps(data).encode()
+            return name, payload
+
+        _rewrite_archive(archive_path, changed_path, change)
+        archive_path = changed_path
+
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_rag_citation_canonical_writes_enabled",
+        lambda: True,
+    )
+
+    def missing_key(*_args):
+        raise CitationFingerprintKeyUnavailable("fingerprint_key_unavailable")
+
+    provisioned = []
+
+    def forbidden_provision(*_args):
+        provisioned.append(True)
+        raise CitationFingerprintKeyUnavailable("fingerprint_key_unavailable")
+
+    monkeypatch.setattr(KeyringCitationFingerprintKeyProvider, "load_key", missing_key)
+    monkeypatch.setattr(
+        KeyringCitationFingerprintKeyProvider, "provision_key", forbidden_provision
+    )
+    database = CharactersRAGDB(source_path, client_id="citation-compare")
+    try:
+        before = tuple(database.get_connection().iterdump())
+        sidecar_before = sidecar.read_bytes()
+        status = ImportStatus()
+        success, message = ChatbookImporter(
+            {"ChaChaNotes": str(source_path)}
+        ).import_chatbook(
+            archive_path,
+            import_status=status,
+        )
+        assert success is (field is None), message
+        assert status.skipped_items == (1 if field is None else 0)
+        assert not provisioned
+        assert tuple(database.get_connection().iterdump()) == before
+        assert sidecar.read_bytes() == sidecar_before
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize("source_changed", [False, True])
+def test_canvas_same_identity_canonical_citations_require_read_only_verification(
+    tmp_path,
+    monkeypatch,
+    source_changed,
+):
+    import tldw_chatbook.Chatbooks.chatbook_creator as creator_module
+    from Tests.Chat.test_citation_legacy_migration import _record, _repository
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        CitationLegacyMigrationService,
+        LegacyMigrationState,
+    )
+    from tldw_chatbook.Chat.citation_trace_identity import (
+        KeyringCitationFingerprintKeyProvider,
+    )
+
+    monkeypatch.setattr(creator_module, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(importer_module, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_rag_citation_canonical_writes_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        KeyringCitationFingerprintKeyProvider, "load_key", lambda *_: b"m" * 32
+    )
+    source_path = tmp_path / "canonical.sqlite"
+    expected = _seed_canvas_graph(source_path)
+    conversation_id = expected["conversation_id"]
+    message_id = expected["message_ids"][1]
+    record = _record(message_id, answer="historical message 1")
+    record["conversation_id"] = conversation_id
+    sidecar = tmp_path / "tldw_chatbook_chat_rag_context.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "conversations": {conversation_id: {message_id: record}},
+            }
+        )
+    )
+    database = CharactersRAGDB(source_path, client_id="canonical-compare")
+    try:
+        migration = CitationLegacyMigrationService(
+            db=database,
+            repository=_repository(database),
+            sidecar_path=sidecar,
+        )
+        assert (
+            migration.migrate_next_batch(conversation_id).state
+            is LegacyMigrationState.COMPLETE
+        )
+        archive_path = tmp_path / "canonical.zip"
+        assert ChatbookCreator({"ChaChaNotes": str(source_path)}).create_chatbook(
+            name="canonical",
+            description="canonical",
+            content_selections={ContentType.CONVERSATION: [conversation_id]},
+            output_path=archive_path,
+        )[0]
+        with zipfile.ZipFile(archive_path) as archive:
+            name = next(
+                name
+                for name in archive.namelist()
+                if name.startswith("content/conversations/") and name.endswith(".json")
+            )
+            messages = json.loads(archive.read(name))["messages"]
+            assert next(item for item in messages if item["id"] == message_id)[
+                "evidence_bundle"
+            ]
+        if source_changed:
+            sidecar.write_bytes(
+                sidecar.read_bytes().replace(b"Legacy title", b"ChangedTitle")
+            )
+        before = tuple(database.get_connection().iterdump())
+        sidecar_before = sidecar.read_bytes()
+        status = ImportStatus()
+        success, message = ChatbookImporter(
+            {"ChaChaNotes": str(source_path)}
+        ).import_chatbook(
+            archive_path,
+            import_status=status,
+        )
+        assert success is (not source_changed), message
+        assert status.skipped_items == (0 if source_changed else 1)
+        assert tuple(database.get_connection().iterdump()) == before
+        assert sidecar.read_bytes() == sidecar_before
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.parametrize("divergence", ["message", "conversation", "lineage"])
+def test_canvas_same_identity_restore_rejects_divergent_message_graph_atomically(
+    tmp_path: Path,
+    divergence: str,
+) -> None:
+    source_path = tmp_path / "divergent.sqlite"
+    expected = _seed_canvas_graph(source_path)
+    archive_path = tmp_path / "before-edit.zip"
+    creator = ChatbookCreator({"ChaChaNotes": str(source_path)})
+    creator.temp_dir = tmp_path / "creator"
+    creator.temp_dir.mkdir()
+    assert creator.create_chatbook(
+        name="before edit",
+        description="graph equality",
+        content_selections={
+            ContentType.CONVERSATION: [str(expected["conversation_id"])]
+        },
+        output_path=archive_path,
+    )[0]
+    database = CharactersRAGDB(source_path, client_id="graph-edit")
+    connection = database.get_connection()
+    if divergence == "message":
+        message_id = expected["message_ids"][2]
+        version = connection.execute(
+            "SELECT version FROM messages WHERE id = ?", (message_id,)
+        ).fetchone()[0]
+        assert database.update_message(
+            message_id,
+            {"content": "changed originating message"},
+            version,
+            preserve_descendants=True,
+        )
+    elif divergence == "conversation":
+        with database.transaction() as cursor:
+            cursor.execute(
+                "UPDATE conversations SET title = ? WHERE id = ?",
+                ("changed title", expected["conversation_id"]),
+            )
+    else:
+        message_id = expected["message_ids"][2]
+        version = connection.execute(
+            "SELECT version FROM messages WHERE id = ?", (message_id,)
+        ).fetchone()[0]
+        assert database.update_message(
+            message_id,
+            {"parent_message_id": expected["message_ids"][0]},
+            version,
+            preserve_descendants=True,
+        )
+    before = tuple(connection.iterdump())
+    importer = ChatbookImporter({"ChaChaNotes": str(source_path)})
+    importer.temp_dir = tmp_path / "importer"
+    importer.temp_dir.mkdir()
+    status = ImportStatus()
+    success, _message = importer.import_chatbook(archive_path, import_status=status)
+    assert success is False
+    assert status.skipped_items == 0
+    assert tuple(connection.iterdump()) == before
     database.close_connection()
 
 

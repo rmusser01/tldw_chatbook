@@ -7,9 +7,10 @@ service surface, and a list of sinks.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol, Sequence
@@ -40,6 +41,8 @@ class MeetingMeta:
     system_source: str
     provider: str
     model: str
+    speaker_names: dict = field(default_factory=dict)
+    format_version: int = 2
 
     def to_json(self) -> dict:
         """Return the JSON-safe payload (``folder`` stringified)."""
@@ -64,6 +67,11 @@ class MeetingSegment:
     t_wall_end: float
     label: str | None
     text: str
+    # Trails `text` (not `label`, despite the brief's prose) so the two
+    # existing positional `MeetingSegment(...)` call sites in the test suite
+    # -- 7 positional args ending at `text` -- keep working: a defaulted
+    # field can't sit before `text`, which has no default.
+    speaker_id: str | None = None
 
     def to_json(self) -> dict:
         """Return the JSONL row for this segment."""
@@ -87,6 +95,14 @@ class MeetingResult:
     failed_segments: int
     stop_reason: str
     recovered: bool = False
+    # Cluster ids whose Stop-pass merge collided two user-assigned names and
+    # were kept as "Alice / Bob" for the user to resolve (spec §4). Empty
+    # unless the batch pass folded two differently-named live clusters.
+    flagged_speakers: list[str] = field(default_factory=list)
+    #: Static reason live speaker labels were not produced (spec §7 footer
+    #: copy), e.g. "backend unavailable" / "backend crashed". None when live
+    #: labelling was never requested or ran fine. Never a path or a name.
+    speaker_labels_reason: str | None = None
 
     def to_json(self) -> dict:
         """Return the full `meeting.json` payload (metadata plus outcome)."""
@@ -95,6 +111,8 @@ class MeetingResult:
             ended_at=self.ended_at, duration_s=self.duration_s, segment_count=self.segment_count,
             transcription_complete=self.transcription_complete, failed_segments=self.failed_segments,
             stop_reason=self.stop_reason, recovered=self.recovered,
+            flagged_speakers=list(self.flagged_speakers),
+            speaker_labels_reason=self.speaker_labels_reason,
         )
         return payload
 
@@ -121,9 +139,22 @@ class MeetingSink(Protocol):
 
 
 class Diarizer(Protocol):
-    """Phase-2 seam: MOSS or the server plugs in here (spec §3.3)."""
+    """Phase-2 seam: MOSS or the server plugs in here (spec §3.3).
+
+    The backend owns reconciliation: it holds the live online centroids and
+    the batch centroids and applies `OnlineClusterer.reconcile` internally.
+    The session never calls `reconcile` and never touches centroids -- every
+    id `assign`/`diarize` hands back is already the reconciled live cluster
+    id.
+    """
 
     def diarize(self, wav_path: Path, start_s: float, end_s: float) -> list[SpeakerSegment]: ...
+
+    def assign(self, pcm: bytes, sample_rate: int, seq: int) -> str | None: ...
+
+    def centroids(self) -> dict[str, Any]: ...
+
+    def close(self) -> None: ...
 
 
 def write_meeting_json(folder: Path, payload: dict) -> None:
@@ -153,7 +184,13 @@ def read_meeting_json(folder: Path) -> dict:
             (a crash mid-write); recovery reports this to the user.
     """
     path = Path(folder) / MEETING_JSON
-    return json.loads(path.read_text()) if path.exists() else {}
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text())
+    # Back-fill pre-task-2 (format_version 1 or absent) recordings so
+    # callers can always read `speaker_names` without a KeyError.
+    payload.setdefault("speaker_names", {})
+    return payload
 
 
 def update_meeting_json(folder: Path, **fields: Any) -> dict:
@@ -174,6 +211,72 @@ def update_meeting_json(folder: Path, **fields: Any) -> dict:
     return payload
 
 
+#: Speaker names are typed by the user and land in `meeting.json`, the
+#: transcript render, `Media.content` and FTS -- bound them at the one
+#: boundary both rename paths share (Qodo Q2).
+MAX_SPEAKER_NAME_CHARS = 64
+_WIDGET_SAFE_CLUSTER_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+def normalize_speaker_name(value: str) -> str:
+    """Clean one user-typed speaker name for storage and display.
+
+    Args:
+        value: The raw submitted name.
+
+    Returns:
+        The name stripped of surrounding whitespace and truncated to
+        `MAX_SPEAKER_NAME_CHARS`; `""` means "remove this speaker's name".
+    """
+    return (value or "").strip()[:MAX_SPEAKER_NAME_CHARS]
+
+
+def is_widget_safe_cluster_id(cluster_id: str) -> bool:
+    """Whether `cluster_id` can be interpolated into a Textual widget id.
+
+    Cluster ids come from `transcript.jsonl`, which a user can hand-edit; a
+    value with a space or a "#" would raise out of `compose()` and take the
+    screen down, so callers skip the legend row instead.
+
+    Args:
+        cluster_id: The candidate id.
+
+    Returns:
+        True when it matches Textual's identifier rules.
+    """
+    return bool(cluster_id) and bool(_WIDGET_SAFE_CLUSTER_ID.match(cluster_id))
+
+
+def render_label(segment: MeetingSegment, names: dict[str, str], user_display_name: str) -> str | None:
+    """Display name for a segment: the user for the mic channel, else the
+    named or generic speaker.
+
+    Args:
+        segment: The transcript segment to label.
+        names: The meeting's `cluster_id -> user name` map; ids absent from
+            it fall back to a generic "Speaker N".
+        user_display_name: What stands in for the mic channel ("You").
+
+    Returns:
+        The display name, or None when the segment carries no label at all
+        (room mode before diarization) or is overlap-coarse.
+    """
+    if segment.label == "you":
+        return user_display_name
+    if segment.speaker_id:
+        if segment.speaker_id in names:
+            return names[segment.speaker_id]
+        # Strip a leading live-style "S" prefix, and also a stray "F" so a
+        # legacy recording whose jsonl still holds an unmatched final-cluster
+        # id never renders as "Speaker F0" (final whole-branch review I2; new
+        # recordings mint an "S" id in the worker so this only guards old data).
+        n = segment.speaker_id[1:] if segment.speaker_id[:1] in ("S", "F") else segment.speaker_id
+        return f"Speaker {n}"
+    if segment.label in ("others", "both"):
+        return "Others"
+    return None
+
+
 def format_clock(seconds: float) -> str:
     """Format `seconds` as ``HH:MM:SS``; negatives clamp to zero."""
     total = int(max(0.0, seconds))
@@ -191,12 +294,14 @@ class MeetingSession:
         dictation_factory: Callable[[Any], Any],
         sinks: Sequence[MeetingSink],
         clock: Callable[[], float] = time.time,
+        diarizer: Diarizer | None = None,
     ) -> None:
         self.meta = meta
         self.capture = capture
         self._dictation_factory = dictation_factory
         self._sinks = list(sinks)
         self._clock = clock
+        self._diarizer = diarizer
         self.service: Any | None = None
         self.state = "idle"
         self.segments: list[MeetingSegment] = []
@@ -334,6 +439,71 @@ class MeetingSession:
             self.capture.stop_recording()
         except Exception as exc:  # noqa: BLE001
             logger.error("capture stop failed: {}", exc)
+        flagged_speakers: list[str] = []
+        speaker_labels_reason: str | None = None
+        if self._diarizer is not None:
+            # Best-effort authoritative batch pass (spec §3.3/§4): a failure
+            # here must never block the meeting result. `assign` labelled what
+            # it could near-live; this overlay fills in (and can correct)
+            # speaker ids from the full recording, then PERSISTS them by
+            # re-emitting the changed segments so the seq-keyed sink rewrites
+            # transcript.jsonl and the screen updates in place (final
+            # whole-branch review I2 -- the overlay used to touch in-memory
+            # segments only, which nothing persisted read). Never log segment
+            # text or speaker names -- lengths/types only.
+            try:
+                # Diarize the SAME channel the live centroids were built from
+                # (`_on_final` used "others" in call mode, "mixed" in room
+                # mode) so reconcile compares like-for-like. Absent file ->
+                # skip, keep near-live labels, never raise.
+                wav_name = "others.wav" if self.capture.mode == "call" else "mixed.wav"
+                wav_path = Path(self.meta.folder) / wav_name
+                if wav_path.exists():
+                    duration = float(self.capture.audio_position_s)
+                    speaker_segments = self._diarizer.diarize(wav_path, 0.0, duration)
+                    with self._lock:
+                        meeting_segments = list(self.segments)
+                    transitions: list[tuple[str | None, str]] = []
+                    changed: list[MeetingSegment] = []
+                    for meeting_segment in meeting_segments:
+                        midpoint = (meeting_segment.t_audio_start + meeting_segment.t_audio_end) / 2.0
+                        old = meeting_segment.speaker_id
+                        new = old
+                        for speaker_segment in speaker_segments:
+                            if speaker_segment.start_s <= midpoint <= speaker_segment.end_s:
+                                new = speaker_segment.speaker
+                                break
+                        if old is not None:
+                            transitions.append((old, new))
+                        if new != old:
+                            with self._lock:
+                                meeting_segment.speaker_id = new
+                            changed.append(meeting_segment)
+                    # Spec §4: a batch merge of two differently user-named live
+                    # clusters keeps both names on the survivor and flags it.
+                    from tldw_chatbook.Audio.diarizer_cluster import merged_speaker_names
+                    merged_names, flagged_speakers = merged_speaker_names(
+                        transitions, self.meta.speaker_names
+                    )
+                    if merged_names:
+                        with self._lock:
+                            self.meta.speaker_names.update(merged_names)
+                    # Persist the authoritative labels (idempotent by seq, I1):
+                    # off `_lock` -- the sinks marshal onto the app thread.
+                    for seg in changed:
+                        self._each_sink("on_segment", seg)
+                        self._emit("segment", seg)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("meeting: diarizer stop pass failed ({})", type(exc).__name__)
+            finally:
+                # Read BEFORE close(): the footer needs to say why the meeting
+                # ran on coarse labels (spec §7), and close() tears the
+                # backend down. Static string only -- never a path or a name.
+                speaker_labels_reason = getattr(self._diarizer, "coarse_reason", None)
+                try:
+                    self._diarizer.close()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("meeting: diarizer close failed ({})", type(exc).__name__)
         result = MeetingResult(
             meta=self.meta,
             ended_at=datetime.now().isoformat(timespec="seconds"),
@@ -342,6 +512,8 @@ class MeetingSession:
             transcription_complete=complete,
             failed_segments=self.failed_segments,
             stop_reason=reason,
+            flagged_speakers=flagged_speakers,
+            speaker_labels_reason=speaker_labels_reason,
         )
         payload = read_meeting_json(self.meta.folder)
         payload.update(result.to_json())
@@ -402,6 +574,46 @@ class MeetingSession:
             return
         self._emit("segment", segment)
         self._each_sink("on_segment", segment)
+        # Near-live speaker labelling (spec §3.3): "others" in call mode, or
+        # any segment in room mode (label is None there). `assign` may block
+        # on a subprocess in the real backend, so it MUST run off `_lock`,
+        # which is already released at this point in the method.
+        if self._diarizer is not None and segment is not None and segment.label in ("others", None):
+            source = "others" if segment.label == "others" else "mixed"
+            pcm = self.capture.pcm_window(source, segment.t_audio_start, segment.t_audio_end)
+            sid = None
+            if pcm:
+                try:
+                    sid = self._diarizer.assign(pcm, 16000, segment.seq)  # OFF the lock
+                except Exception as exc:  # noqa: BLE001 - best-effort, never breaks the meeting
+                    logger.warning("meeting: diarizer assign failed ({})", type(exc).__name__)
+            if sid is not None:
+                with self._lock:
+                    segment.speaker_id = sid
+                self._emit("segment", segment)
+                self._each_sink("on_segment", segment)
+
+    def _on_final_for_test(self, text: str, *, label: str | None = None) -> None:
+        """Test-only: drive `_on_final`, optionally forcing its label.
+
+        A thin wrapper over the real `_on_final` -- when `label` is given it
+        temporarily overrides `_label` (the coarse-source lookup) so tests
+        don't need a fake capture that reproduces exact dominant-source
+        timing math to exercise the "others"/room-mode diarizer paths.
+        """
+        if label is None:
+            self._on_final(text)
+            return
+        original = self._label
+        self._label = lambda *_a, **_kw: label
+        try:
+            self._on_final(text)
+        finally:
+            self._label = original
+
+    def _lock_is_held_for_test(self) -> bool:
+        """Test-only: True if the CURRENT thread holds `self._lock` right now."""
+        return self._lock._is_owned()
 
     def _on_service_state(self, state: str) -> None:
         self._emit("service_state", state)
@@ -445,9 +657,17 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
         "",
     ]
     names = {"you": "You", "others": "Others", "both": "You + Others"}
+    speaker_names = getattr(meta, "speaker_names", {}) or {}
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
-        if segment.label:
+        if segment.speaker_id:
+            # A diarized segment carries the authoritative (reconciled) speaker
+            # id; render its name/"Speaker N" so the markdown reflects the Stop
+            # pass, not the coarse You/Others label (final whole-branch review
+            # I2). Undiarized segments keep the coarse channel label below.
+            who = render_label(segment, speaker_names, names["you"])
+            lines.append(f"{stamp} **{who}:** {segment.text}" if who else f"{stamp} {segment.text}")
+        elif segment.label:
             lines.append(f"{stamp} **{names.get(segment.label, segment.label)}:** {segment.text}")
         else:
             lines.append(f"{stamp} {segment.text}")
@@ -487,7 +707,12 @@ class LocalMeetingSink:
         self.post_transcribe = post_transcribe
         self.post_diarize = post_diarize
         self._handle = None
-        self._segments: list[MeetingSegment] = []
+        # Keyed by `seq`, not a list: segment delivery is idempotent by seq
+        # (final whole-branch review I1) -- the near-live path emits a segment
+        # coarse then again with its speaker id, and the Stop pass re-emits
+        # reconciled segments, so a repeat seq must UPDATE its row, not append
+        # a duplicate.
+        self._segments: dict[int, MeetingSegment] = {}
         self.job_id: str | None = None
         self.last_submit_error: str | None = None
 
@@ -511,20 +736,48 @@ class LocalMeetingSink:
                 logger.warning("meeting transcript close failed: {}", redact_user_paths(str(exc)))
 
     def on_started(self, meta: MeetingMeta) -> None:
-        """Open the JSONL transcript for this meeting."""
+        """Open the JSONL transcript for this meeting (rewritten per segment)."""
         self.folder.mkdir(parents=True, exist_ok=True)
-        self._handle = open(self.folder / TRANSCRIPT_JSONL, "a", encoding="utf-8")  # noqa: SIM115
+        # "w", not "a": on_segment rewrites the whole file from the seq-keyed
+        # map, so a fresh, seekable, truncatable handle is what it needs.
+        self._handle = open(self.folder / TRANSCRIPT_JSONL, "w", encoding="utf-8")  # noqa: SIM115
 
     def on_partial(self, text: str, label: str | None) -> None:
         """Ignore partials: only finalised segments are persisted."""
         return None
 
     def on_segment(self, segment: MeetingSegment) -> None:
-        """Append one segment to the JSONL transcript and flush it."""
-        self._segments.append(segment)
-        if self._handle is not None:
+        """Record one segment by ``seq`` and rewrite the JSONL transcript.
+
+        Idempotent by ``seq`` (final whole-branch review I1): a repeat delivery
+        for the same segment -- its near-live speaker-id refinement, or the
+        Stop pass's reconciled id -- UPDATES that row in place rather than
+        appending a duplicate, so transcript.jsonl (and the markdown rendered
+        from these segments) carries exactly one row per segment.
+        """
+        self._segments[segment.seq] = segment
+        self._rewrite_transcript()
+
+    def _ordered_segments(self) -> list[MeetingSegment]:
+        """Segments in ``seq`` order -- the transcript's natural order."""
+        return [self._segments[seq] for seq in sorted(self._segments)]
+
+    def _rewrite_transcript(self) -> None:
+        """Rewrite transcript.jsonl from the seq-keyed map (one row per seq).
+
+        ponytail: truncate-and-rewrite through the open handle, not an atomic
+        temp+os.replace -- one open handle sidesteps replace-over-open-file
+        failing on Windows, and transcript.jsonl only feeds the best-effort
+        after-the-fact rename (the audio, not this file, is the record).
+        Rewriting the whole file each segment is cheap at meeting sizes.
+        """
+        if self._handle is None:
+            return
+        self._handle.seek(0)
+        self._handle.truncate()
+        for segment in self._ordered_segments():
             self._handle.write(json.dumps(segment.to_json()) + "\n")
-            self._handle.flush()
+        self._handle.flush()
 
     def on_stopped(self, result: MeetingResult) -> None:
         """Close the transcript and hand the meeting to the Library.
@@ -549,7 +802,7 @@ class LocalMeetingSink:
                 )
             else:
                 md_path = self.folder / "transcript.md"
-                md_path.write_text(render_markdown(result, self._segments), encoding="utf-8")
+                md_path.write_text(render_markdown(result, self._ordered_segments()), encoding="utf-8")
                 kwargs = dict(
                     source_path=str(md_path), title=title, keywords=("meeting",),
                     detected_type="document", ingest_options={},

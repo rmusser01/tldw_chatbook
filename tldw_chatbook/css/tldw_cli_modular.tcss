@@ -2569,6 +2569,7 @@ PromptVariablesDialog {
     text-overflow: clip;
 }
 
+/* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #prompt-variables-scroll {
     width: 100%;
     height: 1fr;
@@ -2580,7 +2581,8 @@ PromptVariablesDialog {
     overflow-y: auto;
     scrollbar-size: 1 1;
     scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-text-muted;
     scrollbar-color-active: $ds-action-focus;
 }
 

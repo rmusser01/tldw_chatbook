@@ -155,6 +155,10 @@ BACKLOG_BYTES = 10 * FRAME_BYTES   # 200 ms
 TAP_BUFFER_MAX = 50 * FRAME_BYTES  # 1 s
 BYTES_PER_S = 32000
 
+#: How much recent PCM `pcm_window` can still answer for, per source.
+RING_SECONDS = 60
+SAMPLE_RATE = 16000
+
 
 def mix_int16(a: bytes, b: bytes) -> bytes:
     """Saturating sum of two equal-length int16 buffers."""
@@ -229,6 +233,15 @@ class MeetingCapture:
         self.fault: Exception | None = None
         self._gate_carry = bytearray()
         self._stopped = False
+        self._pcm_rings: dict[str, Deque[Tuple[int, bytes]]] = {
+            "you": deque(),
+            "others": deque(),
+            "mixed": deque(),
+        }
+        # Cumulative sample count per source, independent of any writer --
+        # `_push_pcm` is called directly in tests without a real write path,
+        # so the ring's absolute positions can't be read back off a writer.
+        self._pcm_next_sample: dict[str, int] = {"you": 0, "others": 0, "mixed": 0}
 
     # ---- recorder surface -------------------------------------------------
     def start_recording(self, callback=None, save_to_file=None) -> bool:
@@ -372,6 +385,48 @@ class MeetingCapture:
     def dominant_source(self, start_s: float, end_s: float) -> str:
         return self._ring.dominant_source(start_s, end_s)
 
+    def _push_pcm(self, source: str, chunk: bytes) -> None:
+        """Append ``chunk`` to ``source``'s ring, keyed by absolute sample index.
+
+        Trims to the trailing `RING_SECONDS` so memory stays bounded by time,
+        not meeting length -- called from the same place each source's frame
+        reaches its WAV writer. Position is tracked per source by a running
+        sample count (not read off the writer): all three sources receive
+        equal-length chunks per real frame, so the counts stay in lockstep
+        with `audio_position_s`, and a direct call (as in tests) still gets
+        correct, monotonically increasing positions.
+        """
+        ring = self._pcm_rings.setdefault(source, deque())
+        start_sample = self._pcm_next_sample.get(source, 0)
+        n = len(chunk) // 2
+        ring.append((start_sample, chunk))
+        self._pcm_next_sample[source] = start_sample + n
+        cutoff = start_sample + n - RING_SECONDS * SAMPLE_RATE
+        while ring and ring[0][0] + len(ring[0][1]) // 2 <= cutoff:
+            ring.popleft()
+
+    def pcm_window(self, source: str, start_s: float, end_s: float) -> bytes:
+        """PCM16 mono 16 kHz bytes for `source` over `[start_s, end_s)`.
+
+        Clipped to whatever the bounded ring still holds; empty bytes once
+        the window has aged out of the ring.
+        """
+        ring = self._pcm_rings.get(source)
+        if not ring:
+            return b""
+        a = int(start_s * SAMPLE_RATE)
+        b = int(end_s * SAMPLE_RATE)
+        out = bytearray()
+        for start_sample, chunk in list(ring):
+            n = len(chunk) // 2
+            lo, hi = start_sample, start_sample + n
+            if hi <= a or lo >= b:
+                continue
+            s = max(a, lo) - lo
+            e = min(b, hi) - lo
+            out += chunk[s * 2 : e * 2]
+        return bytes(out)
+
     def _tap_backlog_bytes(self) -> int:
         with self._tap_lock:
             return len(self._tap_buf)
@@ -407,10 +462,13 @@ class MeetingCapture:
             mixed = mix_int16(chunk, sys_part) if self._tap is not None else chunk
             start_pos = self.audio_position_s
             self._writers["mixed"].write(mixed)
+            self._push_pcm("mixed", mixed)
             if "you" in self._writers:
                 self._writers["you"].write(chunk)
+                self._push_pcm("you", chunk)
             if "others" in self._writers:
                 self._writers["others"].write(sys_part)
+                self._push_pcm("others", sys_part)
             mic_rms, sys_rms = rms_int16(chunk), rms_int16(sys_part)
             self._levels = (min(1.0, mic_rms / 32768.0), min(1.0, sys_rms / 32768.0))
             self._ring.add(start_pos, mic_rms, sys_rms)
