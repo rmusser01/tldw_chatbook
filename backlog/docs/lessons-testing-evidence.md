@@ -87,6 +87,21 @@ geometry, widget identity and logical owner-pass assertions. Reproduce late work
 through the real scheduler rather than clearing its flags or extending timeouts;
 an isolated pass alone does not explain an intermittent failure.
 
+## A constructor-bypassing restore shell must not claim the live app runtime
+
+**Dev review / TASK-31750, 2026-09-05.** Assigning `_console_chat_store` on a
+`ChatScreen.__new__` restore fixture lazily attached that shell to the running
+app's Console runtime. Task-panel remount then queried its nonexistent Textual
+DOM (`_nodes`), before the restore assertions could run. The no-app variants
+instead reached missing settings-controller state during serialization.
+
+**What to do.** For direct view-state round trips, use an isolated real
+`ConsoleRuntime(None)` before assigning the store, and wire the current settings
+owner as the existing native-chat fixture does. Keep the real handoff store for
+claim/acknowledgement assertions, and verify the live runtime's view and store
+were not replaced. Do not silence the DOM error or weaken fail-loud controller
+wiring to accommodate a shell that was never mounted.
+
 ## A prepended script directory cannot override an already imported sibling name
 
 **TASK-31654, 2026-09-05.** The broader test sweep failed Terminal qualification
