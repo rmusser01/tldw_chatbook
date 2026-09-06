@@ -8,6 +8,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp

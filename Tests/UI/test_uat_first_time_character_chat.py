@@ -82,6 +82,10 @@ from Tests.Character_Chat.test_character_card_lenient_import import (
     _write_png_with_trailing_metadata,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.ui]
 
@@ -645,7 +649,7 @@ async def test_first_time_user_character_chat_journey(
 
         # The Start-Chat handoff must have seeded a character-bound session
         # (greeting) and acknowledged the store slot. Consumption runs off a
-        # mount timer, so allow a short grace period after mount.
+        # mount/resume timer, so allow a short grace period after navigation.
         def handoff_consumed():
             store = chat_screen._ensure_console_chat_store()
             return (

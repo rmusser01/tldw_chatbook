@@ -516,6 +516,9 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
             ),
             detail="enabled H3 Send button",
         )
+        # Synthetic Send must begin from the ordinary typing focus so an
+        # earlier navigation control cannot scroll the composer out of view.
+        composer.focus()
         await pilot.pause(0.1)
         send = console.query_one("#console-send-message", Button)
         send.post_message(Button.Pressed(send))
@@ -527,7 +530,21 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
             stop = console.query_one("#console-stop-generation", Button)
             assert stop.styles.display != "none"
             assert not stop.disabled
-            await asyncio.wait_for(pilot.click("#console-stop-generation"), timeout=0.5)
+            actions = composer.query_one("#console-composer-actions")
+            assert actions.content_region.contains_region(stop.region), {
+                "actions": actions.content_region,
+                "stop": stop.region,
+            }
+            assert console.region.contains_region(stop.region)
+            assert (
+                console.get_widget_at(
+                    stop.region.x + stop.region.width // 2, stop.region.y
+                )[0]
+                is stop
+            )
+            assert await asyncio.wait_for(
+                pilot.click("#console-stop-generation"), timeout=0.5
+            )
             assert operation.cancel_event.is_set()
         finally:
             release.set()

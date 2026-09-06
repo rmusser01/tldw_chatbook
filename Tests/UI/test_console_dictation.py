@@ -8,8 +8,13 @@ import time
 from unittest.mock import Mock
 
 import pytest
+from textual.screen import Screen
 from textual.widgets import Button
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -60,6 +65,8 @@ class FakeDictationSession:
         self._retry_available = False
 
     def retry_with_faster_whisper(self) -> str:
+        if not self._retry_available:
+            raise RuntimeError("No retained audio is available for retry.")
         self.retry_calls += 1
         self._retry_available = False
         if self.retry_started is not None:
@@ -91,8 +98,8 @@ class FakeDictationSession:
         self._retry_available = False
 
 
-def _ready_host():
-    app = _build_test_app()
+def _ready_host(build_app=None):
+    app = (build_app or _build_test_app)()
     _configure_native_ready_console(app)
     return app, ConsoleHarness(app)
 
@@ -289,8 +296,9 @@ async def test_console_mic_failures_are_visible_preserve_draft_and_recover_idle(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("defer_suspend_cleanup", [False, True])
 async def test_retryable_parakeet_failure_confirms_one_replay_and_normal_insertion(
-    monkeypatch,
+    monkeypatch, defer_suspend_cleanup
 ):
     fake = FakeDictationSession(
         stop_error="Parakeet transcription failed.",
@@ -309,6 +317,20 @@ async def test_retryable_parakeet_failure_confirms_one_replay_and_normal_inserti
         # The harness mounts a ChatScreen built with a separate app_instance;
         # production uses the running app for both identities.
         console.app_instance.push_screen_wait = host.push_screen_wait
+        cleanup_release = asyncio.Event()
+        if defer_suspend_cleanup:
+            suspend = console._dictation.suspend
+
+            def defer_cleanup():
+                cleanup = suspend()
+
+                async def wait_then_cleanup():
+                    await cleanup_release.wait()
+                    await cleanup
+
+                return wait_then_cleanup()
+
+            monkeypatch.setattr(console._dictation, "suspend", defer_cleanup)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello world")
         for _ in range(5):
@@ -326,13 +348,187 @@ async def test_retryable_parakeet_failure_confirms_one_replay_and_normal_inserti
         )
         assert dialog.confirm_label == "Retry"
         assert dialog.cancel_label == "Keep draft"
+        assert fake.retry_available is True
+        assert console._console_dictation_session is fake
+        assert console._console_dictation_state == "transcribing"
 
         await pilot.click("#confirm-button")
         await _wait_for_mic_label(composer, pilot, "Dictate")
 
+        # A suspend task may not start until after dismissal has cleared the
+        # controller's owned-dialog pointer. Its decision belongs to suspend.
+        cleanup_release.set()
+        await asyncio.gather(*console._console_suspend_flush_tasks)
+
         assert composer.draft_text() == "hello recovered words world"
         assert fake.retry_calls == 1
         assert fake.retry_available is False
+        assert fake.discard_calls == 0
+        assert console._console_dictation_session is fake
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", ["escape", "worker"])
+async def test_mounted_retry_cancellation_clears_audio_and_repaints_idle(
+    monkeypatch, cancel
+):
+    fake = FakeDictationSession(
+        stop_error="Parakeet transcription failed.", retry_available=True
+    )
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    _, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        prompt_tasks = []
+
+        async def push_screen_wait(dialog):
+            prompt_tasks.append(asyncio.current_task())
+            return await host.push_screen_wait(dialog)
+
+        console.app_instance.push_screen_wait = push_screen_wait
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        await pilot.pause(0.6)
+        await pilot.click("#console-dictation")
+        await _wait_for_mounted_retry_dialog(host, pilot)
+        assert fake.retry_available is True
+        if cancel == "escape":
+            await pilot.press("escape")
+        else:
+            prompt_tasks[0].cancel()
+            await host.pop_screen()
+        mic = await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert host.screen is console
+        assert mic.disabled is False
+        assert composer.draft_text() == "keep this draft"
+        assert console._console_dictation_state == "idle"
+        assert console._console_dictation_session is None
+        assert fake.retry_available is False
+        assert fake.retry_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cover", ["navigation", "other_confirmation"])
+async def test_suspend_abandons_recording_and_restores_mic_on_return(
+    monkeypatch, cover
+):
+    fake = FakeDictationSession()
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    _, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        await host.push_screen(
+            Screen() if cover == "navigation" else ConfirmationDialog()
+        )
+        await pilot.pause()
+        await asyncio.gather(*console._console_suspend_flush_tasks)
+        assert fake.discard_calls == 1
+        assert console._console_dictation_session is None
+        assert console._console_dictation_timer is None
+        assert console._console_dictation_elapsed_timer is None
+        await host.pop_screen()
+        mic = await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert mic.disabled is False
+        assert composer.draft_text() == "keep this draft"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cover", ["foreign_overlay", "navigation"])
+async def test_mounted_retry_losing_foreground_abandons_retained_audio(
+    monkeypatch, cover
+):
+    fake = FakeDictationSession(
+        stop_error="Parakeet transcription failed.", retry_available=True
+    )
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    _, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        console.app_instance.push_screen_wait = host.push_screen_wait
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        await pilot.pause(0.6)
+        await pilot.click("#console-dictation")
+        owned_dialog = await _wait_for_mounted_retry_dialog(host, pilot)
+        assert fake.retry_available is True
+        if cover == "foreign_overlay":
+            await host.push_screen(ConfirmationDialog(title=owned_dialog.title))
+        else:
+            await host.switch_screen(Screen())
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert fake.retry_available is False
+        assert fake.discard_calls == 1
+        assert console._console_dictation_session is None
+        await host.pop_screen()
+        if cover == "foreign_overlay":
+            assert host.screen is owned_dialog
+            await pilot.click("#confirm-button")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert host.screen is console
+        assert composer.draft_text() == "keep this draft"
+        assert fake.retry_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_unrelated_confirmation_during_retry_wait_does_not_preserve_audio(
+    monkeypatch,
+):
+    fake = FakeDictationSession(
+        stop_error="Parakeet transcription failed.", retry_available=True
+    )
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+    _, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        dialogs = []
+        decision = asyncio.get_running_loop().create_future()
+
+        async def push_screen_wait(dialog):
+            dialogs.append(dialog)
+            return await decision
+
+        console.app_instance.push_screen_wait = push_screen_wait
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+        await pilot.pause(0.6)
+        await pilot.click("#console-dictation")
+        owned_dialog = await _wait_for_retry_dialog(dialogs, pilot)
+        await host.push_screen(ConfirmationDialog(title=owned_dialog.title))
+        await pilot.pause()
+        await asyncio.gather(*console._console_suspend_flush_tasks)
+        assert fake.retry_available is False
+        assert fake.discard_calls == 1
+        decision.set_result(True)
+        await host.pop_screen()
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert composer.draft_text() == "keep this draft"
+        assert fake.retry_calls == 0
 
 
 @pytest.mark.asyncio
@@ -553,7 +749,10 @@ async def test_retry_prompt_screen_unmount_discards_retained_audio(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_retry_prompt_app_shutdown_discards_retained_audio(monkeypatch):
+@pytest.mark.parametrize("mount_dialog", [False, True])
+async def test_retry_prompt_app_shutdown_discards_retained_audio(
+    monkeypatch, mount_dialog
+):
     fake = FakeDictationSession(
         stop_error="Parakeet transcription failed.",
         retry_available=True,
@@ -572,6 +771,8 @@ async def test_retry_prompt_app_shutdown_discards_retained_audio(monkeypatch):
 
         async def push_screen_wait(dialog):
             dialogs.append(dialog)
+            if mount_dialog:
+                return await host.push_screen_wait(dialog)
             return await decision
 
         console.app_instance.push_screen_wait = push_screen_wait
@@ -582,6 +783,9 @@ async def test_retry_prompt_app_shutdown_discards_retained_audio(monkeypatch):
         await pilot.pause(0.6)
         await pilot.click("#console-dictation")
         await _wait_for_retry_dialog(dialogs, pilot)
+        if mount_dialog:
+            await _wait_for_mounted_retry_dialog(host, pilot)
+        assert fake.retry_available is True
 
     assert fake.retry_available is False
     assert fake.discard_calls == 1
