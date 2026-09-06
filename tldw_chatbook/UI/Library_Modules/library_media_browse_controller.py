@@ -54,14 +54,28 @@ _TIMEOUT_REASON = "timed out"
 # database or filesystem path. Match POSIX absolute (``/a/b``), home-relative
 # (``~/a``), Windows drive (``C:\a``), and ``file:`` URI tokens so the shared
 # mapper can redact them before any of it reaches a screen.
+#
+# Re-review round 2: a real path segment can contain a space (macOS
+# "Application Support", Windows "Program Files"), so a segment is
+# "word( word)*" -- but only a segment immediately followed by another
+# ``/``/``\`` may absorb extra space-joined words (the trailing mandatory
+# separator in ``_SEGMENT`` is what lets ordinary backtracking find the
+# right boundary instead of running to end-of-string). The path's FINAL
+# segment never merges -- nothing bounds how far that would run -- so it
+# stops at the first space, which is exactly where a real path ends and
+# trailing prose ("... is missing") begins.
+# ponytail: a final segment that itself contains a space with nothing
+# after it (no closing quote/separator) still under-redacts -- there's no
+# way to bound that merge without a real tokenizer. Not hit by any known
+# OSError/sqlite3 message shape; revisit if one shows up.
+_SEGMENT = r"[^\s/\\'\"]*(?:[ ][^\s/\\'\"]+)*[/\\]"
 _PATH_TOKEN_PATTERN = re.compile(
     r"""(?P<prefix>^|[\s'"])
-    (?:
-        file:[^\s'"]+
-      | [A-Za-z]:\\[^\s'"]*
-      | ~/[^\s'"]*
-      | /[^\s'"]+
-    )""",
+    (?:file:|[A-Za-z]:\\|~/|/)
+    (?:%s)*
+    [^\s/\\'"]+
+    """
+    % _SEGMENT,
     re.VERBOSE,
 )
 

@@ -12,6 +12,7 @@ import pytest
 from tldw_chatbook.Library.library_media_state import MediaBrowseScope
 from tldw_chatbook.UI.Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
+    _redact_paths,
 )
 
 
@@ -816,6 +817,44 @@ async def test_page_failure_reason_redacts_filesystem_paths(
     assert "/Users/x" not in state.why
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    (
+        # Qodo re-review (round 2): a path with an embedded space -- the
+        # real macOS/Windows shape -- must redact through its FINAL segment,
+        # not just up to the first space.
+        (
+            "~/Library/Application Support/media.db is missing",
+            "<path> is missing",
+        ),
+        (
+            "unable to open database file C:\\Program Files\\tldw\\db.sqlite",
+            "unable to open database file <path>",
+        ),
+        (
+            "No such file or directory: '/Users/x/My Docs/db.sqlite'",
+            "No such file or directory: '<path>'",
+        ),
+        # Negatives: no over-match.
+        ("database is locked", "database is locked"),
+        ("retry and/or restart the app", "retry and/or restart the app"),
+        ("snapshot from 2026/09/05 failed", "snapshot from 2026/09/05 failed"),
+        ("Library source services unavailable", "Library source services unavailable"),
+    ),
+)
+def test_redact_paths_consumes_spaced_segments_through_the_final_one(
+    text: str, expected: str
+) -> None:
+    """Qodo PR G finding 3, re-review round 2: ``_redact_paths`` under-
+    redacted any real OS path with an embedded space (macOS ``Application
+    Support``, Windows ``Program Files``), leaving the trailing segment --
+    a real folder/file name -- visible. It must now consume
+    ``segment(/segment)*`` through the path's final segment, where a
+    segment may itself contain single spaces.
+    """
+    assert _redact_paths(text) == expected
+
+
 @pytest.mark.asyncio
 async def test_page_failure_reason_redacts_home_relative_and_windows_paths() -> None:
     """The same mapper also covers ``~/...`` and ``C:\\...`` forms."""
@@ -829,8 +868,7 @@ async def test_page_failure_reason_redacts_home_relative_and_windows_paths() -> 
 
     state = controller.failure
     assert state is not None
-    assert "~/Library" not in state.why
-    assert "<path>" in state.why
+    assert state.why == "<path> is missing"
 
     windows_screen = _Screen()
     windows_controller = _controller(
@@ -842,8 +880,7 @@ async def test_page_failure_reason_redacts_home_relative_and_windows_paths() -> 
 
     windows_state = windows_controller.failure
     assert windows_state is not None
-    assert "C:\\Users" not in windows_state.why
-    assert "<path>" in windows_state.why
+    assert windows_state.why == "<path> not found"
 
 
 @pytest.mark.asyncio
