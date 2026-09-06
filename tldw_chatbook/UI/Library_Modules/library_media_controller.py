@@ -76,7 +76,7 @@ trash-named -- a second controller for 20 methods, still coupled through six
 shared fields, buys nothing the ratchet's per-file governance does not
 already give. The feared size did not materialise either: the hazard
 exclusions below remove 111 of the 251 candidates, so the 140 that move
-carry **3,155 source lines** of body, putting this file within a few hundred
+carry **3,166 source lines** of body, putting this file within a few hundred
 lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
 
 **111 of the 251 candidates excluded, not moved (140 move):**
