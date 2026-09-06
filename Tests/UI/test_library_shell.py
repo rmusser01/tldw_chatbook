@@ -11696,9 +11696,15 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
     bar the user was typing into out from under the mode row and pushed the
     Reader header down six rows. The contract this now pins: submitting a
     query only reveals the status/Prev/Next chrome -- the bar's own ``y``
-    is unchanged, it stays below the Back control, and clearing the query
+    is unchanged, it stays below the Reader header, and clearing the query
     hides the chrome again without moving anything. Spot-checked at 120x40
     per task-15774's larger-size non-regression note.
+
+    The header anchor is the viewer TITLE, not "\u2039 Back": task-31633 AC#2
+    gave Media's panes the eight cells its two grips used to waste, so a
+    120-column terminal now fits all three panes -- and task-31272 composes
+    no Back control in the three-pane layout, where the list never left the
+    screen. The title is the header's first row in both layouts.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
@@ -11713,12 +11719,12 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
         )
-        back_button = screen.query_one("#library-media-back", Button)
+        header = screen.query_one("#library-media-viewer-title", Static)
 
-        # Inactive: in-flow order holds (Back paints above the search box)
+        # Inactive: in-flow order holds (the header paints above the search box)
         # and no navigation chrome is painted anywhere.
         painted_inactive = "\n".join(_painted_rows(screen))
-        assert back_button.region.y < controls.region.y
+        assert header.region.y < controls.region.y
         assert "◀ Prev" not in painted_inactive
         assert "Next ▶" not in painted_inactive
 
@@ -11733,7 +11739,7 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
             LibraryMediaContentSearchControls,
         )
         assert controls_active.region.y == inactive_y
-        assert back_button.region.y < controls_active.region.y
+        assert header.region.y < controls_active.region.y
         assert len(screen.query("#library-media-content-search")) == 1
         assert "Match 1 of 101 matches" in "\n".join(_painted_rows(screen))
 
@@ -11753,7 +11759,7 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
         )
-        assert back_button.region.y < cleared.region.y
+        assert header.region.y < cleared.region.y
         assert cleared.region.y == inactive_y
 
 

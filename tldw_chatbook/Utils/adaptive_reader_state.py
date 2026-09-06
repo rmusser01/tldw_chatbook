@@ -45,6 +45,13 @@ class AdaptiveReaderLayoutProfile:
     ``list_comfort_width`` -- instead of absorbing every extra cell. It
     applies to automatic widths only; a custom width is obeyed as typed.
     Only Media opts in today.
+
+    ``grip_width`` is the width of EACH of the two pane grips, in cells --
+    both what they paint and what the resolver holds back for them, so the
+    two can never disagree. It is opt-in per destination for the same reason
+    (task-31633 AC#2): Media's two five-column grips left ten dead columns
+    around the Items pane, so Media narrows them to one cell each while every
+    other destination keeps ``PANE_GRIP_WIDTH``.
     """
 
     list_min_width: int = 32
@@ -54,6 +61,7 @@ class AdaptiveReaderLayoutProfile:
     work_min_width: int = 44
     work_comfort_width: int = 44
     list_grows: bool = False
+    grip_width: int = PANE_GRIP_WIDTH
 
 
 @dataclass(frozen=True)
@@ -200,7 +208,7 @@ def resolve_adaptive_reader_layout(
         ):
             priority = inherited
 
-    grip_width = 2 * PANE_GRIP_WIDTH
+    grip_width = 2 * profile.grip_width
     work_min_width = max(profile.work_min_width, 0)
     library_open = preferences.library_open
     items_open = preferences.items_open

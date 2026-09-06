@@ -23,10 +23,17 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from tldw_chatbook.Library.library_media_reader_state import (
-    PANE_GRIP_WIDTH,
+    MEDIA_READER_LAYOUT_PROFILE,
     MediaReaderLayoutPreferences,
     resolve_media_reader_layout,
 )
+
+# task-31633 AC#2: Media's grips are one cell each -- what they paint and what
+# the resolver holds back for them -- while every sibling reader keeps the
+# shared five (Tests/Library/test_library_adaptive_reader_state.py pins that).
+MEDIA_GRIP_WIDTH = MEDIA_READER_LAYOUT_PROFILE.grip_width
+MEDIA_GRIP_COLLAPSE = "‹"
+MEDIA_GRIP_EXPAND = "›"
 from tldw_chatbook.Library.library_media_viewer_state import (
     build_library_media_viewer_state,
 )
@@ -116,8 +123,8 @@ async def test_media_shell_mounts_library_items_reader_and_two_five_column_grips
             shell.effective_layout,
         )
         assert [grip.region.width for grip in grips] == [
-            PANE_GRIP_WIDTH,
-            PANE_GRIP_WIDTH,
+            MEDIA_GRIP_WIDTH,
+            MEDIA_GRIP_WIDTH,
         ]
         assert shell.content_region.contains_region(reader.region)
         assert "Select a media item to read it here." in _painted_text_in_region(
@@ -157,17 +164,17 @@ async def test_expanded_and_collapsed_grip_copy_names_its_action():
         _, shell = await _open_media_shell(host, pilot)
         for pane in ("library", "items"):
             grip = shell.query_one(f"#library-media-{pane}-grip", Button)
-            assert str(grip.label) == "<---"
+            assert str(grip.label) == MEDIA_GRIP_COLLAPSE
             assert str(grip.tooltip) == f"Collapse {pane.title()} pane"
             assert grip.name == f"Collapse {pane.title()} pane"
-            assert "<---" in _painted_text_in_region(pilot.app, grip.region)
+            assert MEDIA_GRIP_COLLAPSE in _painted_text_in_region(pilot.app, grip.region)
 
             grip.press()
             await pilot.pause()
-            assert str(grip.label) == "--->"
+            assert str(grip.label) == MEDIA_GRIP_EXPAND
             assert str(grip.tooltip) == f"Expand {pane.title()} pane"
             assert grip.name == f"Expand {pane.title()} pane"
-            assert "--->" in _painted_text_in_region(pilot.app, grip.region)
+            assert MEDIA_GRIP_EXPAND in _painted_text_in_region(pilot.app, grip.region)
 
 
 @pytest.mark.asyncio
@@ -186,12 +193,12 @@ async def test_grips_are_focusable_clickable_and_geometry_stable():
             assert grip.has_focus and grip.region == before
             await pilot.press("enter")
             await pilot.pause(0.4)
-            assert str(grip.label) == "--->"
-            assert grip.region.width == PANE_GRIP_WIDTH
+            assert str(grip.label) == MEDIA_GRIP_EXPAND
+            assert grip.region.width == MEDIA_GRIP_WIDTH
             await pilot.press("space")
             await pilot.pause(0.4)
-            assert str(grip.label) == "<---"
-            assert grip.region.width == PANE_GRIP_WIDTH
+            assert str(grip.label) == MEDIA_GRIP_COLLAPSE
+            assert grip.region.width == MEDIA_GRIP_WIDTH
 
 
 @pytest.mark.asyncio
@@ -402,7 +409,7 @@ async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size)
             expected.items_open,
         )
         for grip in shell.query(".library-media-pane-grip"):
-            assert grip.region.width == PANE_GRIP_WIDTH
+            assert grip.region.width == MEDIA_GRIP_WIDTH
             assert shell.content_region.contains_region(grip.region)
         reader = shell.query_one("#library-media-viewer")
         assert shell.content_region.contains_region(reader.region)
@@ -440,11 +447,12 @@ async def test_two_grips_leave_fifty_columns_for_reader_at_sixty_shell_columns()
         reader = shell.query_one("#library-media-viewer", LibraryMediaViewer)
 
         assert shell.region.width == 60
-        assert reader.region.width == 50
+        # 50 while Media's two grips still cost five cells each.
+        assert reader.region.width == 58
         assert reader.region.right <= shell.region.right
         assert (
             sum(grip.region.width for grip in shell.query(".library-media-pane-grip"))
-            == 10
+            == 2 * MEDIA_GRIP_WIDTH
         )
 
 

@@ -1544,8 +1544,9 @@ async def test_no_join_artifact_after_find_closes():
         await _open_first_reader_row(screen, pilot)
 
         def join_slices() -> list[str]:
-            """The five grip columns left of the Reader, top three rows."""
+            """The grip's own columns left of the Reader, top three rows."""
             viewer = screen.query_one("#library-media-viewer")
+            grip = screen.query_one("#library-media-items-grip")
             title = screen.query_one("#library-media-viewer-title")
             # The sample must actually cover the header: Back, title, toolbar.
             assert title.region.y - viewer.region.y <= 2, (
@@ -1556,7 +1557,10 @@ async def test_no_join_artifact_after_find_closes():
             # so the pane's first row is the title row itself; the sample
             # still starts at the viewer's top edge, where the grip paints.
             return [
-                _painted_row(host, y)[title.region.x - 5 : title.region.x]
+                # task-31633 AC#2: the grip is one column now, not five, so
+                # the sample is anchored to the grip itself -- a literal five
+                # reaches back into the Items pane and reads its border.
+                _painted_row(host, y)[grip.region.x : grip.region.right]
                 for y in range(viewer.region.y, viewer.region.y + 3)
             ]
 
@@ -2461,3 +2465,57 @@ async def test_media_failure_callout_tint_follows_the_severity():
         callout = screen.query_one("#library-media-load-failure")
         assert callout.has_class("is-blocked")
         assert callout.styles.border_top != timeout_border, timeout_border
+
+
+# ---------------------------------------------------------------------------
+# task-31633 (critique #5 P1): two rows per item, not three.
+#
+# Painted, not region-only: the third row was a bottom margin on the row
+# button, so every region assertion on the button itself already read "2" --
+# only the painted list shows the blank row that margin bought, and the eleven
+# items it cost a 52-row terminal.
+# ---------------------------------------------------------------------------
+
+_ROWS_PER_MEDIA_ITEM = 2
+
+
+def _fifteen_item_host() -> LibraryProductionCSSHarness:
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items(15))
+    return LibraryProductionCSSHarness(app)
+
+
+def _painted_item_lines(host, screen) -> list[str]:
+    """Return the painted row-scroll lines of the Media list."""
+    scroll = screen.query_one("#library-media-row-scroll")
+    strips = list(host.screen._compositor.render_strips())
+    return [
+        strips[y].crop(scroll.region.x, scroll.region.right).text
+        for y in range(scroll.region.y, min(scroll.region.bottom, len(strips)))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
+    """Fifteen seeded items all paint in a 52-row terminal, two rows each."""
+    host = _fifteen_item_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(4):
+            await pilot.pause()
+
+        lines = _painted_item_lines(host, screen)
+        titles = [
+            index
+            for index, line in enumerate(lines)
+            if "Media item " in line
+        ]
+
+        assert len(titles) >= 15, (len(titles), lines)
+        for previous, current in zip(titles, titles[1:]):
+            assert current - previous == _ROWS_PER_MEDIA_ITEM, (titles, lines)
+            meta = lines[previous + 1].strip()
+            assert meta.split(" ", 1)[0] in {"video", "audio", "PDF"}, (
+                meta,
+                lines,
+            )

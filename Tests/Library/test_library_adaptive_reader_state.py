@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from tldw_chatbook.Utils.adaptive_reader_state import (
@@ -31,6 +33,12 @@ from tldw_chatbook.Utils.library_rail_width import project_default_library_width
 
 
 MEDIA_PROFILE = AdaptiveReaderLayoutProfile()
+
+# The control for every "did list growth change this?" comparison: Media's own
+# profile with the one knob under test turned off, so a second divergence
+# (task-31633 AC#2 narrowed Media's grips to one cell) can never be read as
+# list growth.
+MEDIA_PROFILE_WITHOUT_GROWTH = replace(MEDIA_READER_LAYOUT_PROFILE, list_grows=False)
 
 
 def test_media_compatibility_names_reexport_shared_layout_types() -> None:
@@ -77,12 +85,15 @@ def test_shared_normalization_matches_current_media_custom_width_behavior() -> N
     [
         # task-31633: the Media profile shares the Reader's surplus with its
         # Items column, so it diverges from the generic profile wherever the
-        # Reader sits above its 46-cell minimum.
-        (160, (True, True, 30, 40, 80), (True, True, 30, 56, 64)),
-        (120, (True, True, 24, 40, 46), (True, True, 24, 40, 46)),
-        (100, (False, True, 0, 46, 44), (False, True, 0, 44, 46)),
-        (80, (False, False, 0, 0, 70), (False, False, 0, 0, 70)),
-        (60, (False, False, 0, 0, 50), (False, False, 0, 0, 50)),
+        # Reader sits above its 46-cell minimum -- and AC#2 narrowed Media's
+        # two grips from five cells each to one, so every Media row below also
+        # carries the eight cells they gave back. The generic column is
+        # untouched by both.
+        (160, (True, True, 30, 40, 80), (True, True, 30, 56, 72)),
+        (120, (True, True, 24, 40, 46), (True, True, 24, 44, 50)),
+        (100, (False, True, 0, 46, 44), (False, True, 0, 52, 46)),
+        (80, (False, False, 0, 0, 70), (False, False, 0, 0, 78)),
+        (60, (False, False, 0, 0, 50), (False, False, 0, 0, 58)),
     ],
 )
 def test_shared_resolution_uses_adaptive_width_classes(
@@ -185,9 +196,11 @@ def test_media_profile_protects_the_rendered_toolbar_work_minimum() -> None:
     assert MEDIA_READER_LAYOUT_PROFILE.work_min_width == 46
     assert layout.library_open is False
     assert layout.items_open is True
-    assert layout.items_width == 44
+    # 44 / 90 while Media's two grips still cost five cells each; the eight
+    # they gave back land on the list, because the Reader is on its minimum.
+    assert layout.items_width == 52
     assert layout.reader_width >= 46
-    assert layout.items_width + layout.reader_width == 90
+    assert layout.items_width + layout.reader_width == 98
 
 
 @pytest.mark.parametrize(
@@ -463,6 +476,11 @@ def _pane_widths(
 
 def test_only_the_media_profile_opts_into_list_growth() -> None:
     assert MEDIA_READER_LAYOUT_PROFILE.list_grows is True
+    # task-31633 AC#2: the one-cell grip is opt-in the same way.
+    assert MEDIA_READER_LAYOUT_PROFILE.grip_width == 1
+    for name, profile in DECLARED_PROFILES.items():
+        assert profile.grip_width == PANE_GRIP_WIDTH, name
+    assert AdaptiveReaderLayoutProfile().grip_width == PANE_GRIP_WIDTH
     assert set(SIBLING_PROFILES.values()) <= set(DECLARED_PROFILES.values())
     assert len(DECLARED_PROFILES) >= 6, sorted(DECLARED_PROFILES)
     for name, profile in DECLARED_PROFILES.items():
@@ -503,16 +521,21 @@ def test_sibling_reader_layouts_are_untouched_by_media_list_growth(
 @pytest.mark.parametrize(
     ("width", "expected"),
     [
-        # The Reader sits on its 46-cell minimum at both of these, so there is
-        # no surplus to share and the layout is byte-identical to badff73f1.
-        (100, (False, True, 0, 44, 46)),
-        (120, (True, True, 24, 40, 46)),
-        # 119 has surplus but the list is already at its 56-cell comfort
-        # ceiling, so growth has nowhere to go -- also byte-identical.
-        (119, (False, True, 0, 56, 53)),
+        # The Reader sits on its 46-cell minimum at both of these, so list
+        # growth has no surplus to share: every cell of movement from
+        # (0, 44, 46) / (24, 40, 46) is the eight the one-cell grips gave back
+        # (task-31633 AC#2), which is why the list -- not the Reader -- has
+        # them.
+        (100, (False, True, 0, 52, 46)),
+        (120, (True, True, 24, 44, 50)),
+        # 119 used to close the rail and put the list on its 56-cell comfort
+        # ceiling: (False, True, 0, 56, 53). Eight more cells is enough for the
+        # rail to stay open there, so this is the one width where the grips
+        # changed which panes are open, not just how wide they are.
+        (119, (True, True, 24, 43, 50)),
     ],
 )
-def test_media_layout_is_unchanged_where_the_reader_has_no_surplus(
+def test_media_layout_where_list_growth_has_no_surplus_to_share(
     width: int, expected: tuple[bool, bool, int, int, int]
 ) -> None:
     layout = resolve_media_reader_layout(width, MediaReaderLayoutPreferences())
@@ -525,9 +548,11 @@ def test_media_layout_is_unchanged_where_the_reader_has_no_surplus(
     [
         # 235: was (True, True, 34, 40, 151) -- 105 surplus cells all went to
         # the Reader. 122 is the narrowest width where growth moves a cell:
-        # was (True, True, 24, 40, 48).
-        (235, (True, True, 34, 56, 135)),
-        (122, (True, True, 24, 41, 47)),
+        # was (True, True, 24, 40, 48). Both rows then gained the eight cells
+        # the one-cell grips gave back (task-31633 AC#2): 135 -> 143 on the
+        # Reader at 235, and 41 -> 45 on the list at 122.
+        (235, (True, True, 34, 56, 143)),
+        (122, (True, True, 24, 45, 51)),
     ],
 )
 def test_media_items_column_grows_once_the_reader_is_comfortable(
@@ -555,11 +580,7 @@ def test_a_typed_custom_items_width_is_obeyed_rather_than_grown(
     )
 
     grown = resolve_media_reader_layout(width, custom)
-    ungrown = resolve_adaptive_reader_layout(
-        width,
-        custom,
-        AdaptiveReaderLayoutProfile(work_min_width=46),
-    )
+    ungrown = resolve_adaptive_reader_layout(width, custom, MEDIA_PROFILE_WITHOUT_GROWTH)
 
     assert grown.items_width == custom_items_width
     assert grown == ungrown
@@ -580,9 +601,7 @@ def test_list_growth_never_shrinks_the_list_or_starves_the_reader(
 ) -> None:
     preferences = MediaReaderLayoutPreferences()
     ungrown = resolve_adaptive_reader_layout(
-        width,
-        preferences,
-        AdaptiveReaderLayoutProfile(work_min_width=46),
+        width, preferences, MEDIA_PROFILE_WITHOUT_GROWTH
     )
     grown = resolve_media_reader_layout(width, preferences)
 
@@ -603,6 +622,8 @@ def test_list_growth_never_shrinks_the_list_or_starves_the_reader(
         assert grown.reader_width >= READER_COMFORT_WIDTH
         assert grown.reader_width >= MEDIA_READER_LAYOUT_PROFILE.work_min_width
     assert (
-        grown.library_width + grown.items_width + grown.reader_width
-        + 2 * PANE_GRIP_WIDTH
+        grown.library_width
+        + grown.items_width
+        + grown.reader_width
+        + 2 * MEDIA_READER_LAYOUT_PROFILE.grip_width
     ) == width

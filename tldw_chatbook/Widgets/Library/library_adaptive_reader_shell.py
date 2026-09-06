@@ -43,7 +43,11 @@ class AdaptiveReaderShellResized(Message):
 
 
 class LibraryAdaptiveReaderPaneGrip(Button):
-    """Five-column keyboard and pointer control for one optional pane."""
+    """Narrow keyboard and pointer control for one optional pane.
+
+    ``width`` is the destination profile's ``grip_width``: the grip paints
+    exactly the columns the resolver held back for it (task-31633 AC#2).
+    """
 
     BINDINGS = [Binding("enter,space", "press", "Press button", show=False)]
 
@@ -54,17 +58,19 @@ class LibraryAdaptiveReaderPaneGrip(Button):
         open: bool,
         pane_label: str,
         extra_classes: str = "",
+        width: int = PANE_GRIP_WIDTH,
         **kwargs: Any,
     ) -> None:
         self.pane = pane
         self.pane_label = pane_label
+        self.grip_width = width
         classes = LIBRARY_ADAPTIVE_READER_GRIP_CLASS
         if extra_classes:
             classes = f"{classes} {extra_classes}"
         super().__init__(compact=True, flat=True, classes=classes, **kwargs)
-        self.styles.width = PANE_GRIP_WIDTH
-        self.styles.min_width = PANE_GRIP_WIDTH
-        self.styles.max_width = PANE_GRIP_WIDTH
+        self.styles.width = width
+        self.styles.min_width = width
+        self.styles.max_width = width
         self.styles.height = "100%"
         self.styles.padding = 0
         self.styles.line_pad = 0
@@ -76,7 +82,13 @@ class LibraryAdaptiveReaderPaneGrip(Button):
         """Patch arrow and action copy without changing geometry."""
         action = "Collapse" if open else "Expand"
         copy = f"{action} {self.pane_label} pane"
-        label = "<---" if open else "--->"
+        # task-31633 AC#2: the arrow is as wide as the grip. The four-cell
+        # "<---"/"--->" run needs five columns; a one-cell grip paints the
+        # one-cell guillemet instead of a truncated "<".
+        if self.grip_width < len("<---"):
+            label = "‹" if open else "›"
+        else:
+            label = "<---" if open else "--->"
         if self.label != label:
             self.label = label
         if self._name != copy:
@@ -125,6 +137,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
         library_label: str,
         items_label: str,
         grip_classes: str = "",
+        grip_width: int = PANE_GRIP_WIDTH,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -140,6 +153,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             open=layout.library_open,
             pane_label=library_label,
             extra_classes=grip_classes,
+            width=grip_width,
             id=f"{id_prefix}-library-grip",
         )
         self.items_grip = LibraryAdaptiveReaderPaneGrip(
@@ -147,6 +161,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             open=layout.items_open,
             pane_label=items_label,
             extra_classes=grip_classes,
+            width=grip_width,
             id=f"{id_prefix}-items-grip",
         )
         self._last_focused_descendant: dict[PaneName, Widget | None] = {

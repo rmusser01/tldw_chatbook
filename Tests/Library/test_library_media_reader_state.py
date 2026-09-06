@@ -102,6 +102,12 @@ def test_fixed_mode_ignores_saved_custom_width_values() -> None:
     )
 
 
+# task-31633 AC#2: Media's two grips are one cell each, not the shared
+# five, so every Media width sum below is against the Media profile's own
+# reservation rather than the shared constant.
+MEDIA_GRIP_CELLS = 2 * MEDIA_READER_LAYOUT_PROFILE.grip_width
+
+
 def test_responsive_collapse_does_not_mutate_preferences() -> None:
     preferences = normalize_media_reader_preferences({})
 
@@ -130,7 +136,7 @@ def test_normal_resolution_collapses_library_then_items(
         layout.library_width
         + layout.items_width
         + layout.reader_width
-        + 2 * PANE_GRIP_WIDTH
+        + MEDIA_GRIP_CELLS
         == width
     )
 
@@ -166,7 +172,7 @@ def test_reader_can_drop_below_comfort_after_explicit_open_without_overflow() ->
 
     assert layout.items_open is True
     assert layout.items_width == ITEMS_MIN_WIDTH
-    assert layout.reader_width == 60 - 2 * PANE_GRIP_WIDTH - ITEMS_MIN_WIDTH
+    assert layout.reader_width == 60 - MEDIA_GRIP_CELLS - ITEMS_MIN_WIDTH
     assert layout.reader_width < READER_COMFORT_WIDTH
 
 
@@ -175,8 +181,9 @@ def test_two_grips_and_reader_remain_reachable_at_sixty_columns() -> None:
 
     assert layout.library_width == 0
     assert layout.items_width == 0
-    assert layout.reader_width == 50
-    assert layout.reader_width + 2 * PANE_GRIP_WIDTH == 60
+    # 50 while Media's two grips still cost five cells each (task-31633 AC#2).
+    assert layout.reader_width == 58
+    assert layout.reader_width + MEDIA_GRIP_CELLS == 60
 
 
 def test_returning_width_restores_target_widths_not_intermediate_widths() -> None:
@@ -197,14 +204,16 @@ def test_explicit_open_priority_survives_narrow_resize_resolution() -> None:
     resized = resolve_media_reader_layout(81, preferences, previous=opened)
 
     assert resized.items_open is True
-    assert resized.items_width == ITEMS_MIN_WIDTH
+    # The priority branch's ceiling is width-bound, so the eight cells the
+    # grips gave back reach it: 32 (ITEMS_MIN_WIDTH) at five-cell grips.
+    assert resized.items_width == 33
     assert resized.priority_pane == "items"
 
 
 def test_hysteresis_prevents_one_column_resize_thrashing() -> None:
     preferences = normalize_media_reader_preferences({})
     nominal_width = (
-        2 * PANE_GRIP_WIDTH
+        MEDIA_GRIP_CELLS
         + project_default_library_width(120)
         + ITEMS_TARGET_WIDTH
         + MEDIA_READER_LAYOUT_PROFILE.work_min_width

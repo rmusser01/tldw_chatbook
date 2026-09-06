@@ -42,6 +42,26 @@ from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
 )
 
 
+
+#: A scroll offset deep in the wide row list and reachable at BOTH sizes these
+#: return tests use. task-31633 made a wide item two painted rows instead of
+#: three, so a 20-row page's virtual height fell from 60 to 40 and the old
+#: literal ``y=42`` is now past the end everywhere (max_scroll_y is 37 at
+#: 100x20 and 33 at 80x24) -- it clamps, which is a different settlement
+#: outcome rather than a deeper scroll.
+DEEP_ROW_SCROLL_Y = 28
+
+
+def _park_row_scroll(owner) -> tuple[int, int]:
+    """Park the wide row scroller deep in the list and return its offset."""
+    owner.scroll_to(
+        y=DEEP_ROW_SCROLL_Y, animate=False, force=True, immediate=True
+    )
+    offset = (int(owner.scroll_x), int(owner.scroll_y))
+    assert offset == (0, DEEP_ROW_SCROLL_Y), offset
+    return offset
+
+
 async def _open_compact_media(host, pilot) -> LibraryScreen:
     """Enter Media after selecting the compact presentation contract."""
     screen = _active_library_screen(host)
@@ -1463,9 +1483,7 @@ async def test_trash_back_exact_scroll_precedes_captured_control_focus(
         selected_id = str(selected.media_id)
         screen._selected_media_id = selected_id
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
-        owner.scroll_to(y=42, animate=False, force=True, immediate=True)
-        scroll_offset = (int(owner.scroll_x), int(owner.scroll_y))
-        assert scroll_offset == (0, 42)
+        scroll_offset = _park_row_scroll(owner)
         opener = screen.query_one("#library-media-trash-open", Button)
         opener.focus()
         opener.press()
@@ -1530,8 +1548,7 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
         selected_id = str(selected.media_id)
         screen._selected_media_id = selected_id
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
-        owner.scroll_to(y=42, animate=False, force=True, immediate=True)
-        scroll_offset = (int(owner.scroll_x), int(owner.scroll_y))
+        scroll_offset = _park_row_scroll(owner)
         opener = screen.query_one("#library-media-trash-open", Button)
         opener.focus()
         opener.press()

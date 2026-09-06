@@ -1988,7 +1988,11 @@ ConsoleRunLogModal {
     min-width: 0;
     height: 2;
     min-height: 2;
-    margin: 0 0 1 0;
+    /* task-31633 (critique #5 P1): NO bottom margin. It bought a blank third
+       row per item, so a 52-row terminal listed eleven of fifteen seeded
+       items. The title/meta rhythm and the `▸` marker separate the items;
+       the compact override below has always been margin-free. */
+    margin: 0;
     padding: 0 1;
     text-align: left;
     content-align: left middle;
