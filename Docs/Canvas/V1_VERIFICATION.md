@@ -4,7 +4,76 @@ Date: 2026-09-05. Isolated branch: `codex/canvas-v1`.
 Architecture: [ADR-121](../../backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md).
 Plan: [Canvas implementation](../superpowers/plans/2026-09-03-chatbook-canvas-implementation.md).
 
-## Current merge blocker — production trace after a tool turn
+## Current checkpoint — reviewed trace repair, integration gates pending
+
+The approved completed-tool transition repair is implemented through `ed86d6a90`
+and independently reviewed. It composes exactly one verified replacement then
+one saved-user append; exact owned Retry and three-way commit reconciliation
+preserve at-most-once adapter entry. Operation-owned SQLite cleanup preserves
+borrowed connections. Governance is the amended
+[trace-ledger ADR-097](../../backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md)
+and [repair plan](../superpowers/plans/2026-09-05-console-tool-turn-surface-transition.md).
+The original failure and earlier checkpoints below are historical, not current
+claims that the repair is absent.
+
+Task 2 evidence: **983 passed, 1 known custom-API case deselected, 2 warnings**;
+the untouched repair baseline has **885 passed** with the same exclusion.
+The broad descriptor warning is pre-existing (+345 baseline, +204 current),
+not globally fixed. Focused resource controls have **207 passed**, zero regular
+file descriptor growth; the final replay-refusal fix selection has **169 passed**.
+The custom-API `api_key_resolved` failure was reproduced on the baseline, and
+Requests dependency warnings and ordinary Ruff debt remain qualified. No full
+repository sweep, global lint-clean or global resource-cleanliness claim is made.
+
+Task 3 current-tree commands (root execution, repository test isolation):
+
+```sh
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Benchmarks/test_console_trace_growth.py
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Benchmarks/test_console_trace_call_latency.py
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Canvas/browser/test_canvas_native_flow.py Tests/Canvas/browser/test_canvas_served_flow.py Tests/Canvas/browser/test_canvas_zero_egress.py
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Canvas/test_startup_deferral.py Tests/Packaging/test_console_interaction_import_closure.py Tests/Performance/test_ui_ready_module_census.py Tests/Performance/test_app_import_weight.py Tests/Performance/test_app_startup_performance.py Tests/App/test_startup_init_hygiene.py Tests/Chat/test_console_canvas_controller.py
+```
+
+- Growth: **7 passed, 1 Requests warning, 118.07s**. Both unchanged 200-turn
+  append/replacement gates pass. The additional two consecutive compound
+  transitions each add exactly two nodes, five ordered events and one replacement;
+  all six earlier/current native call projections equal hand-written literals.
+- Latency: **18 passed, 1 failed, 1 Requests warning, 38.86s**. The release test
+  rejects this Mac17,6/M5 Max/18-core/128-GiB host because its reference is
+  Mac16,8/M4 Pro/14-core/48-GiB. Python, SQLite, filesystem and architecture match.
+  The threshold gate was **not applied**. No waiver or fixture/budget change;
+  reference-machine evidence remains required. Parsed non-reference diagnostics
+  were reservation p95 2.670ms/max16.463ms and settlement p95 0.995ms, not release
+  evidence; subsequent pytest retention removed the temporary raw artifact.
+- First browser pass: **88 passed, 1 failed, 2 optional-browser skips, 1 Requests
+  warning, 165.45s**. The served real-Console case caught the fixture reading
+  `int('')` during a non-atomic counter write. A deterministic publication-race
+  regression reproduces the empty observation. Atomic counter publication
+  passes that regression; the live rerun then exposed status reads before final
+  response completion. Moving those exact assertions after the existing rendered
+  completion token yields **4 passed, 1 Requests warning, 35.16s** for the original
+  live failure, counter regression and both scripted controls. Full browser rerun
+  is pending. Firefox/WebKit absences are not coverage.
+- First startup/Canvas selection: **109 passed, 1 failed, 4 warnings, 79.07s**.
+  Census967/972 and import635/660 meet unchanged budgets. The optional-services
+  readiness test timed out in Textual Pilot; isolated rerun passes in5.02s.
+  The unchanged same-selection rerun passes **110 tests, 4 warnings, 40.72s**;
+  no product/test change was made for the timeout. Warnings include Requests,
+  census/import headroom and existing joblib semaphore exhaustion; no timeout
+  budget was increased. This establishes a successful rerun, not a proven cause
+  for the initial transient failure.
+- Derived preflight initially passes5/6 categories. The sole diagnostic drift
+  is one fixed warning, `Uncertain trace dispatch checkpoint could not be saved.`
+  Statement-level inspection confirms no interpolation or new sink. Its pin was
+  regenerated; the full preflight rerun passes all six categories (581 owners,
+  1344 TASK-492 calls, 12 sink files, 3343 task paths, 108 tables, 276 indexes).
+
+PR2432 remains open on published `b87f7ac31`; that head's protected CI is green
+and Qodo's eight original findings are resolved. Neither applies to the unpublished
+repair. Actual dev advanced to `c0fa6639a`; rebase, final review, fresh Qodo/CI and
+verified merge remain pending. TASK-31742 stays In Progress; V2 has not started.
+
+## Historical merge blocker — production trace after a tool turn
 
 PR2432 remains open at published head `b87f7ac31`, rebased onto dev
 `8e9d1128d`. All eight original Qodo comments have reviewed corrections and

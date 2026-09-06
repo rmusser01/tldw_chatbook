@@ -27,6 +27,22 @@ when moving DDL into a dedicated module. Register its source explicitly, keep
 real query-plan assertions, and verify a guard's name recognition before
 discarding evidence or weakening its inventory policy.
 
+## A test counter is neither atomic publication nor completion evidence
+
+**TASK-31742, Canvas integration, 2026-09-06.** A full Chromium run failed
+at `int('')`: the served child rewrote its call-count file with `write_text`,
+and the parent read between truncation and writing. A synchronized regression
+observed the empty value deterministically. Publishing through a sibling file
+and atomic replacement fixed that race. The next real-browser run then read an
+empty status file: the call count announced adapter entry, while the test read
+status before the child wrote it and emitted its final response.
+
+**What to do.** Atomically publish cross-process telemetry. Separately wait for
+the operation's actual completion signal before checking its resulting state;
+entry counts cannot prove completion. Keep malformed-state checks strict rather
+than retrying arbitrary parse failures. Here the existing rendered final-response
+token provides the ordering boundary, so no new polling protocol is needed.
+
 ## CSS ratchet paydown must preserve inherited subjects and specificity
 
 **PR #2419, 2026-09-05.** Re-keying three snapshot rules removed a

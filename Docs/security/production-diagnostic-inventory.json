@@ -323,8 +323,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 63,
-      "diagnostic_digest": "89be6c3f4de31869132b",
+      "call_count": 64,
+      "diagnostic_digest": "d35623ba465046f6d8bb",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -11419,7 +11419,7 @@
     "path_privacy_candidate_calls": 710,
     "persistent_sink_files": 12,
     "task_31551_calls": 30,
-    "task_492_calls": 1346,
+    "task_492_calls": 1347,
     "task_494_calls": 7646
   }
 }

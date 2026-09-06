@@ -146,6 +146,7 @@ Reason: the compound surface and recovery handoff extend cross-module contracts.
 **Files:**
 - Test: `Tests/Benchmarks/test_console_trace_growth.py` (actual real-gateway growth fixture) and existing `Tests/Benchmarks/test_console_trace_call_latency.py` release gates; preserve their checked fixtures and thresholds.
 - Test: existing `Tests/Chat/test_console_trace_*` growth/lifecycle tests and `Tests/Canvas/browser/test_canvas_{native_flow,served_flow,zero_egress}.py`
+- Correct only the observed test-counter publication race in `Tests/Canvas/browser/canvas_live_chatbook_child.py`, with a deterministic regression in the served-flow tests; publish complete counter values atomically without suppressing malformed observations or changing product behavior.
 - Update: `Docs/Canvas/V1_VERIFICATION.md`, the owning Backlog task and this plan's checkboxes.
 
 **Interfaces:** Consume the public gateway and native-reader behavior from Tasks 1/2; produce evidence and reviewed PR updates, not a new runtime API.

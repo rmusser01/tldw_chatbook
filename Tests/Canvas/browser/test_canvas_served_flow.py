@@ -12,6 +12,7 @@ import sqlite3
 import tomllib
 from http.cookies import SimpleCookie
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 from typing import ClassVar
 from urllib.parse import parse_qs, urlsplit
@@ -426,6 +427,63 @@ async def _scripted_gateway_reply(gateway, messages: list[dict[str, str]]) -> st
     return chunks[0]
 
 
+async def test_scripted_gateway_counter_retains_prior_value_until_replaced(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Readers keep the last complete counter while its successor is staged."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    gateway = _ScriptedCanvasGateway()
+    counter = tmp_path / "canvas-live-gateway-calls"
+    write_started = Event()
+    read_complete = Event()
+    observed: list[str] = []
+    original_write_text = Path.write_text
+
+    def pause_new_counter_write(
+        path: Path,
+        data: str,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> int:
+        if data != "1":
+            return original_write_text(
+                path,
+                data,
+                encoding=encoding,
+                errors=errors,
+                newline=newline,
+            )
+        with path.open(
+            "w", encoding=encoding, errors=errors, newline=newline
+        ) as output:
+            write_started.set()
+            assert read_complete.wait(timeout=1)
+            return output.write(data)
+
+    def read_during_staged_write() -> None:
+        assert write_started.wait(timeout=1)
+        observed.append(counter.read_text(encoding="ascii"))
+        read_complete.set()
+
+    monkeypatch.setattr(Path, "write_text", pause_new_counter_write)
+    reader = Thread(target=read_during_staged_write)
+    reader.start()
+    try:
+        await _scripted_gateway_reply(
+            gateway,
+            [{"role": "system", "content": "available tools: canvas_create"}],
+        )
+    finally:
+        read_complete.set()
+        reader.join(timeout=1)
+
+    assert not reader.is_alive()
+    assert observed == ["0"]
+    assert counter.read_text(encoding="ascii") == "1"
+
+
 @pytest.mark.parametrize("discovery", [False, True], ids=["direct", "progressive"])
 async def test_actual_chatbook_scripted_gateway_emits_create_then_stable_update(
     tmp_path: Path, monkeypatch, discovery: bool
@@ -528,6 +586,9 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             await _wait_for_gateway_calls(
                 tmp_path / "test_data" / "canvas-live-gateway-calls", 2
             )
+            await expect(page.locator("#terminal")).to_contain_text(
+                "CHATBOOK_CANVAS_CREATED", timeout=45_000
+            )
             disclosure = (
                 tmp_path / "test_data" / "canvas-live-tool-disclosure"
             ).read_text(encoding="ascii")
@@ -537,9 +598,6 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             assert (tmp_path / "test_data" / "canvas-live-tool-status").read_text(
                 encoding="utf-8"
             ) == "canvas"
-            await expect(page.locator("#terminal")).to_contain_text(
-                "CHATBOOK_CANVAS_CREATED", timeout=45_000
-            )
             await assert_persisted_complete("CHATBOOK_CANVAS_CREATED")
             shell = page.frame_locator("#served-canvas-frame")
             await expect(shell.locator("#connection-state")).to_have_text(
@@ -560,12 +618,12 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             await _wait_for_gateway_calls(
                 tmp_path / "test_data" / "canvas-live-gateway-calls", 4
             )
-            assert (tmp_path / "test_data" / "canvas-live-tool-status").read_text(
-                encoding="ascii"
-            ) == "canvas_create,staged"
             await expect(page.locator("#terminal")).to_contain_text(
                 "CHATBOOK_CANVAS_UPDATED", timeout=45_000
             )
+            assert (tmp_path / "test_data" / "canvas-live-tool-status").read_text(
+                encoding="ascii"
+            ) == "canvas_create,staged"
             await assert_persisted_complete("CHATBOOK_CANVAS_UPDATED")
             await expect(preview.locator("#chatbook-app-revision")).to_have_text(
                 "v2", timeout=15_000

@@ -35,6 +35,12 @@ def _document(version: str) -> str:
     )
 
 
+def _publish_counter(path: Path, value: int) -> None:
+    staged = path.with_name(f".{path.name}.tmp")
+    staged.write_text(str(value), encoding="ascii")
+    staged.replace(path)
+
+
 class _ScriptedCanvasGateway:
     """Replay two genuine agent/tool cycles without contacting a provider."""
 
@@ -53,7 +59,7 @@ class _ScriptedCanvasGateway:
         self._disclosure_path = (
             Path(os.environ["XDG_DATA_HOME"]) / "canvas-live-tool-disclosure"
         )
-        self._call_count_path.write_text("0", encoding="ascii")
+        _publish_counter(self._call_count_path, 0)
         self._tool_status_path.write_text("pending", encoding="ascii")
         self._disclosure_path.write_text("pending", encoding="ascii")
 
@@ -134,7 +140,7 @@ class _ScriptedCanvasGateway:
 
     async def stream_chat(self, _resolution, messages, **_kwargs):
         self.calls += 1
-        self._call_count_path.write_text(str(self.calls), encoding="ascii")
+        _publish_counter(self._call_count_path, self.calls)
         system_prompt = self._system_prompt(messages)
         if self._run_phase in {"initial", "update_initial"}:
             self._discovery = "use find_tools, then load_tools" in system_prompt
