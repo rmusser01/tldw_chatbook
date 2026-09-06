@@ -219,3 +219,16 @@ d0ec95b16f17668af9e32725eed788aeeed1d991
 # same shape as the export/collections/search+RAG/skills/ingest series'
 # own closing commits above.
 6fd2b753aaa90160c286579fe07257cb72917f32
+
+# Wave-7 task 1: media state object + shims (media series 1/3). 82 of the 85
+# "media"-named LibraryScreen attributes relocated verbatim into
+# LibraryMediaState (2 WIRING controller instances and 1 shared shell field
+# stayed); 78 __init__ assignments removed (75 outright, 3 becoming
+# constructor arguments for their computed defaults) plus the sole class-body
+# attribute (_library_media_arrival_note); 4 assignments kept at their
+# original positions because they run after the forced-early construction
+# point; 131 comment lines moved byte-for-byte with their fields; a
+# sentinel-wrapped generated-property shim block installed at module end; one
+# bypass-fixture seeding line and the screen size-ratchet re-pin. Zero method
+# bodies touched.
+76b248c05811de06277f5fbae7abe5bc2de59b29
