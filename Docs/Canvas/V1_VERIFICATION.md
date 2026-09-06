@@ -46,8 +46,29 @@ their Done states and inbound references. The task-ID guard passes 3347 paths.
 Post-rebase diagnostic review compared app statements with dev and the last pin:
 only the three fixed-code Canvas warnings were added to dev, with exception type
 names only; no statement changed after the last pin. The stale digest is being
-regenerated after that inspection. Final preflight, numerical gates, independent
-I3 review, publication, current-head Qodo/CI and normal merge remain pending.
+regenerated after that inspection. Final preflight passes all six categories:
+583 diagnostic owners, 1347 TASK-492/30 TASK-31551/7646 TASK-494 calls,
+12 sink files, 3347 task paths, 113 declared tables and 281 index census rows.
+
+The complete post-integration latency file passes **19 tests**, 1 Requests
+warning, 50.78s. All five runs match the approved v5 reference and apply the
+unchanged thresholds. Aggregate reservation/dispatch p95 is **3.798ms**, max
+**7.900ms**; settlement p95 is **1.657ms**. The raw artifact is retained at
+`.superpowers/sdd/2026-09-05-console-tool-turn-surface-transition/latency-reference-v5-integrated.json`
+(SHA256 `d781eafe0474772468e6c9c15d933a0651ecbfcede2b7a375aea32ba0b092044`),
+copied from the unique synthetic basetemp
+`/private/tmp/chatbook-trace-integration-v5.n1I0qu/latency`.
+The exact command was:
+
+```sh
+env -u TLDW_TRACE_LATENCY_ALLOW_NON_REFERENCE ../../.venv/bin/python -m pytest -q --tb=short --show-capture=no --basetemp=/private/tmp/chatbook-trace-integration-v5.n1I0qu/latency Tests/Benchmarks/test_console_trace_call_latency.py
+```
+
+Independent I3 review, final growth/runtime preservation checks, publication,
+current-head Qodo/CI and normal merge remain pending. A fresh fetch found dev
+`cc22deb0a` adds only 14 lines in two CI workflow files beyond the tested base;
+it will be carried forward before publication, without claiming those workflows
+have already run on the unpublished integration head.
 
 ### Earlier trace-repair checkpoint
 
