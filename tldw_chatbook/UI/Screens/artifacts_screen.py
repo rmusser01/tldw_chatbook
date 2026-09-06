@@ -35,6 +35,7 @@ from ...Subscriptions.briefing_export import (
     default_briefing_filename,
 )
 from ...Subscriptions.briefing_keep import KeepRefused, keep_briefing
+from ...Subscriptions.daily_reports_view import format_report_timestamp
 from ...Subscriptions.briefing_service import (
     STATUS_COMPLETE,
     STATUS_EMPTY,
@@ -69,6 +70,15 @@ CHATBOOK_OUTCOME_TRANSIENT = "transient"
 #: named constant driving the slice, the overflow check, and the "+ N more"
 #: count -- previously three separate `5` literals that could drift).
 REPORT_DISPLAY_LIMIT = 5
+#: Shared tooltip for the Daily Report demo control -- rendered both as the
+#: empty-state "Create Your First Daily Report" CTA and, after a failed brief
+#: (TASK-31801), as the "Run the Daily Report demo again" retry affordance
+#: that the failure toast ("...then run the demo again") points users to.
+DAILY_REPORT_DEMO_TOOLTIP = (
+    "Seeds a 'Daily Brief' watchlist from live RSS, drafts a text brief with "
+    "your configured LLM provider, and records audio when a TTS voice profile "
+    "exists. Uses live sources and your provider's API quota."
+)
 ARTIFACTS_EMPTY_CHATBOOK_RECOVERY = DestinationRecoveryState(
     status_label="Select an artifact",
     unavailable_what="Console launch for Chatbook artifacts",
@@ -275,6 +285,19 @@ class ArtifactsScreen(BaseAppScreen):
     # --- TASK-21514: previewing one Daily Report in the detail pane ---------
 
     @property
+    def _has_complete_report(self) -> bool:
+        """True when any listed Daily Report has completed successfully.
+
+        Drives the retry-CTA gate (TASK-31801): while every report so far is
+        failed/empty/generating, the demo retry affordance stays visible so
+        the failure toast's "run the demo again" path exists on-screen.
+        """
+        return any(
+            str(report.get("status") or "").strip().lower() == STATUS_COMPLETE
+            for report in self._daily_reports
+        )
+
+    @property
     def _previewed_report_complete(self) -> bool:
         """True when the previewed report's status is `complete`."""
         report = self._previewed_report
@@ -380,7 +403,7 @@ class ArtifactsScreen(BaseAppScreen):
         header.append(strip_control_characters(watchlist_name), style="bold")
         header.append(" · ")
         header.append(
-            strip_control_characters(str(row.get("created_at") or "unknown time"))
+            strip_control_characters(format_report_timestamp(row.get("created_at")))
         )
         header.append(" · ")
         header.append(strip_control_characters(status or "unknown status"))
@@ -929,6 +952,17 @@ class ArtifactsScreen(BaseAppScreen):
                             disabled=not self._previewed_report_complete,
                             tooltip=export_tooltip,
                         )
+                        # TASK-31801: a failed/empty-only run leaves report
+                        # rows (so the empty-state branch below is gone), yet
+                        # the failure toast tells the user to "run the demo
+                        # again". Keep that retry affordance reachable here
+                        # until at least one report has completed.
+                        if not self._has_complete_report:
+                            yield Button(
+                                "Run the Daily Report demo again",
+                                id="artifacts-daily-report-demo",
+                                tooltip=DAILY_REPORT_DEMO_TOOLTIP,
+                            )
                     else:
                         yield Static(
                             "  Reports: none yet", id="artifacts-list-reports"
@@ -936,12 +970,7 @@ class ArtifactsScreen(BaseAppScreen):
                         yield Button(
                             "Create Your First Daily Report",
                             id="artifacts-daily-report-demo",
-                            tooltip=(
-                                "Seeds a 'Daily Brief' watchlist from live RSS, drafts "
-                                "a text brief with your configured LLM provider, and "
-                                "records audio when a TTS voice profile exists. Uses "
-                                "live sources and your provider's API quota."
-                            ),
+                            tooltip=DAILY_REPORT_DEMO_TOOLTIP,
                         )
                     yield Static(
                         "  Datasets: none available", id="artifacts-list-datasets"
@@ -970,6 +999,15 @@ class ArtifactsScreen(BaseAppScreen):
                         id="artifacts-import-artifact",
                         disabled=True,
                         tooltip="Artifact import is a later-stage path for this shell.",
+                    )
+                    # TASK-31802: the Import control is permanently disabled,
+                    # so state its precondition inline rather than leaving the
+                    # empty-state copy to advertise an action the user cannot
+                    # take (the copy below no longer says "import an artifact").
+                    yield Static(
+                        "Import Artifact is not yet available in this shell.",
+                        id="artifacts-import-note",
+                        classes="destination-purpose",
                     )
                     yield Static(
                         "Generated outputs from local and server output services will appear here.",
@@ -1030,7 +1068,7 @@ class ArtifactsScreen(BaseAppScreen):
                         )
                     else:
                         yield Static(
-                            "No artifact selected. Create a Chatbook in Console, import an artifact, "
+                            "No artifact selected. Create a Chatbook in Console, "
                             "or use Library sources to generate outputs.",
                             id="artifacts-detail-empty",
                         )

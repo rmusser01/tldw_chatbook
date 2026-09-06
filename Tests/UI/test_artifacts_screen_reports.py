@@ -174,6 +174,51 @@ async def test_demo_cta_starts_the_detached_demo_task():
         assert stub.started == 1
 
 
+# --- TASK-31801: a failed brief must keep a demo retry affordance -----------
+
+
+@pytest.mark.asyncio
+async def test_failed_report_keeps_demo_retry_cta():
+    """A failed brief leaves a report row, so the empty-state branch is gone;
+    the demo CTA must still be reachable (the failure toast says "run the demo
+    again"). It renders and starts the same detached demo task."""
+    app = _build_test_app(configured_default="artifacts")
+    _seed_report(app, status="failed")
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        cta = screen.query_one("#artifacts-daily-report-demo", Button)
+        assert cta.region.height >= 1, "retry CTA must paint, not just mount"
+
+
+@pytest.mark.asyncio
+async def test_completed_report_hides_demo_cta():
+    """A completed report means the user succeeded -- no retry CTA is shown
+    (the empty-state CTA belongs to the no-reports and no-success states)."""
+    app = _build_test_app(configured_default="artifacts")
+    _seed_report(app, status="complete")
+    async with _open_artifacts(app) as (screen, pilot):
+        await _wait_for_rows(screen, pilot)
+        assert not screen.query("#artifacts-daily-report-demo")
+
+
+# --- TASK-31802: don't advertise an import path the user cannot take --------
+
+
+@pytest.mark.asyncio
+async def test_import_precondition_is_explained_and_empty_copy_is_honest():
+    """The Import button is permanently disabled, so the empty-state copy must
+    not tell users to "import an artifact", and the disabled control must
+    carry a visible inline explanation of its precondition."""
+    app = _build_test_app(configured_default="artifacts")
+    async with _open_artifacts(app) as (screen, pilot):
+        import_btn = screen.query_one("#artifacts-import-artifact", Button)
+        assert import_btn.disabled
+        note = screen.query_one("#artifacts-import-note", Static)
+        assert note.region.height >= 1, "import precondition note must paint"
+        empty = screen.query_one("#artifacts-detail-empty", Static)
+        assert "import an artifact" not in str(empty.renderable).lower()
+
+
 # --- TASK-21514: row actions (badge, preview, deep-link, keep, export) ------
 
 
