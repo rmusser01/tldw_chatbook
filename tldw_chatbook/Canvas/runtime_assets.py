@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
-from importlib.resources import files
 import json
-from typing import Any, Mapping
-
+from collections.abc import Mapping
+from dataclasses import dataclass
+from importlib.resources import files
+from types import MappingProxyType
+from typing import Any
 
 RUNTIME_DISABLED_DIAGNOSTIC = (
     "Canvas scripting is disabled because packaged runtime verification failed."
 )
-_MANIFEST_BYTES = 256 * 1024
+RUNTIME_MANIFEST_BYTES = 256 * 1024
 _JAVASCRIPT_BYTES = 8 * 1024 * 1024
 _TRUSTED_JAVASCRIPT_BYTES = 512 * 1024
 _NOTICE_BYTES = 256 * 1024
@@ -35,6 +36,7 @@ class CanvasRuntimeAssets:
     worker_javascript: bytes | None
     renderer_javascript: bytes | None
     manifest: Mapping[str, Any] | None
+    manifest_bytes: bytes | None
     diagnostic: str | None
 
 
@@ -62,14 +64,26 @@ def _valid_output_metadata(value: object) -> bool:
     )
 
 
+def _freeze_json(value: Any) -> Any:
+    """Return an immutable ownership copy of already-validated JSON data."""
+
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
 def _load_verified() -> CanvasRuntimeAssets:
     static = files("tldw_chatbook.Canvas").joinpath("static")
     manifest_bytes = _read_bounded(
-        static.joinpath("runtime-manifest.json"), _MANIFEST_BYTES
+        static.joinpath("runtime-manifest.json"), RUNTIME_MANIFEST_BYTES
     )
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     if not isinstance(manifest, dict):
-        raise ValueError("manifest must be an object")
+        raise TypeError("manifest must be an object")
     if (
         manifest.get("schema_version") != 1
         or manifest.get("runtime_profile") != "canvas-v1"
@@ -110,7 +124,8 @@ def _load_verified() -> CanvasRuntimeAssets:
         javascript=loaded["quickjs-runtime.js"],
         worker_javascript=loaded["canvas_runtime_worker.js"],
         renderer_javascript=loaded["canvas_renderer.js"],
-        manifest=manifest,
+        manifest=_freeze_json(manifest),
+        manifest_bytes=manifest_bytes,
         diagnostic=None,
     )
 
@@ -120,19 +135,21 @@ def load_canvas_runtime_assets() -> CanvasRuntimeAssets:
 
     try:
         return _load_verified()
-    except Exception:
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
         return CanvasRuntimeAssets(
             enabled=False,
             javascript=None,
             worker_javascript=None,
             renderer_javascript=None,
             manifest=None,
+            manifest_bytes=None,
             diagnostic=RUNTIME_DISABLED_DIAGNOSTIC,
         )
 
 
 __all__ = [
-    "CanvasRuntimeAssets",
     "RUNTIME_DISABLED_DIAGNOSTIC",
+    "RUNTIME_MANIFEST_BYTES",
+    "CanvasRuntimeAssets",
     "load_canvas_runtime_assets",
 ]

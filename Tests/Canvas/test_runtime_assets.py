@@ -229,6 +229,10 @@ def test_runtime_loader_returns_only_verified_packaged_bytes() -> None:
     )
     assert result.renderer_javascript == (STATIC / "canvas_renderer.js").read_bytes()
     assert result.manifest["runtime_profile"] == "canvas-v1"
+    assert result.manifest_bytes == MANIFEST.read_bytes()
+
+    with pytest.raises(TypeError):
+        result.manifest["runtime_profile"] = "canvas-v2"
 
 
 @pytest.mark.parametrize(
