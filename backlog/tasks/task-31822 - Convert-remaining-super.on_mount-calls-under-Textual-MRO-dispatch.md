@@ -1,5 +1,5 @@
 ---
-id: TASK-31742
+id: TASK-31822
 title: Convert remaining super().on_mount() calls under Textual MRO dispatch
 status: To Do
 assignee: []
@@ -23,3 +23,7 @@ Follow-up from close-out burndown Task 4 (31418) review. 31418 converted every o
 - [ ] #2 change_review_screen.py's on_mount docstrings describe the MRO-walk mechanism correctly, not 'ordinary attribute lookup / shadowing'
 - [ ] #3 An AST guard (mirroring the on_unmount guard) fails if a super().on_mount() to a dispatched handler is re-introduced
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Renumbered from **TASK-31742 → TASK-31822** on 2026-09-06 per the TASK-19601 owner rule (older arrival keeps the id). `Address-Qodo-review-findings-for-Canvas-V1` (created 2026-09-05 21:37) is the older TASK-31742 and keeps that id on dev; this task (created 2026-09-06 04:14) is the younger and renumbers. Surfaced when dev was merged into the schedules close-out burndown branch (PR #2454). No dependency/reference updates were needed — the burndown tasks reference this follow-up by description, not by number.

@@ -1,5 +1,5 @@
 ---
-id: TASK-31741
+id: TASK-31821
 title: >-
   Route auth-account login bearer writes through the per-profile credential
   scope
@@ -25,3 +25,7 @@ Follow-up from close-out burndown Task 3 (31416) review. RuntimeServerContextPro
 - [ ] #2 A non-default profile's login bearer is not readable by the default profile in scoped mode
 - [ ] #3 Default single-profile users are unaffected (no re-auth, matching 31416 AC#4)
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Renumbered from **TASK-31741 → TASK-31821** on 2026-09-06 per the TASK-19601 owner rule (older arrival keeps the id). `Complete-Canvas-integration-artifact-guards` (created 2026-09-05 20:02) is the older TASK-31741 and keeps that id on dev; this task (created 2026-09-05 23:20) is the younger and renumbers. Surfaced when dev was merged into the schedules close-out burndown branch (PR #2454). No dependency/reference updates were needed — the burndown tasks reference this follow-up by description, not by number.
