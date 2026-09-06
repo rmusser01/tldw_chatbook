@@ -129,6 +129,26 @@ def test_settings_from_config_reads_flat_meetings_section(tmp_path):
     assert default.recordings_dir == (tmp_path / "meetings").resolve()
 
 
+def test_meeting_user_display_name_defaults_to_you_when_unset():
+    """No `chat_defaults.user_display_name` at all: `get_setting` returns the
+    factory default it was handed, same as the real `get_cli_setting`."""
+    assert mo.meeting_user_display_name(get_setting=lambda section, key, default: default) == "You"
+
+
+def test_meeting_user_display_name_defaults_to_you_for_the_factory_default():
+    """A configured value that merely ECHOES the shipped factory default
+    (task 31746) must not be mistaken for a deliberate choice -- compared
+    against `config.py`'s own shipped constant, not a literal re-typed here."""
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    factory_default = DEFAULT_CONFIG_FROM_TOML["chat_defaults"]["user_display_name"]
+    assert mo.meeting_user_display_name(get_setting=lambda section, key, default: factory_default) == "You"
+
+
+def test_meeting_user_display_name_honours_a_real_override():
+    assert mo.meeting_user_display_name(get_setting=lambda section, key, default: "Alice") == "Alice"
+
+
 def test_diarization_requirements_uses_find_spec_not_imports():
     missing = mo.diarization_requirements(find_spec=lambda name: None if name in ("torch", "speechbrain") else object())
     assert missing == ("torch", "speechbrain")
@@ -260,6 +280,19 @@ def test_start_call_mode_has_three_writers(tmp_path, monkeypatch):
     folder = session.meta.folder
     assert {p.name for p in folder.glob("*.wav")} == {"mixed.wav", "you.wav", "others.wav"}
     assert session.meta.mode == "call"
+    owner.stop()
+
+
+def test_start_stamps_the_configured_display_name_onto_meta(tmp_path, monkeypatch):
+    """task 31746: the owner stamps the SAME name the live session shows onto
+    `meta.user_display_name`, so an after-the-fact render (transcript.md, the
+    Library rename view) agrees with what the user saw while recording."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "meeting_user_display_name", lambda **kw: "Alice")
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+    session = owner.start()
+    assert session.meta.user_display_name == "Alice"
     owner.stop()
 
 

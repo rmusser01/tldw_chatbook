@@ -41,6 +41,13 @@ class MeetingMeta:
     system_source: str
     provider: str
     model: str
+    #: The one shared display name for the mic ("you") channel (task 31746),
+    #: stamped by `MeetingSessionOwner.start()` from `meeting_owner.
+    #: meeting_user_display_name()` -- so `render_markdown` and every
+    #: after-the-fact render agree with what the live session showed.
+    #: Defaulted to "You" for direct-construction call sites (tests, and any
+    #: `MeetingMeta` built before this field existed).
+    user_display_name: str = "You"
     speaker_names: dict = field(default_factory=dict)
     format_version: int = 2
 
@@ -192,6 +199,10 @@ def read_meeting_json(folder: Path) -> dict:
     # Back-fill pre-task-2 (format_version 1 or absent) recordings so
     # callers can always read `speaker_names` without a KeyError.
     payload.setdefault("speaker_names", {})
+    # Back-fill pre-task-31746 recordings the same way: they were made
+    # before the mic channel's display name was persisted, and always
+    # showed "You" live.
+    payload.setdefault("user_display_name", "You")
     return payload
 
 
@@ -681,7 +692,9 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
         f"- Transcriber: {meta.provider} {meta.model}".rstrip(),
         "",
     ]
-    names = {"you": "You", "others": "Others", "both": "You + Others"}
+    # task 31746: the mic channel's name comes from `meta` (stamped by the
+    # owner at start, or back-filled by `read_meeting_json`), not a literal.
+    names = {"you": meta.user_display_name, "others": "Others", "both": "You + Others"}
     speaker_names = getattr(meta, "speaker_names", {}) or {}
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"

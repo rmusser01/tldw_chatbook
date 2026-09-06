@@ -65,6 +65,37 @@ def resolve_effective_config() -> "EffectiveConfig | None":
     return resolve()
 
 
+def meeting_user_display_name(get_setting: Callable[[str, str, Any], Any] | None = None) -> str:
+    """The one shared display name for the mic ("you") channel (task 31746).
+
+    Deliberately NOT a bare `chat_defaults.user_display_name` read: that
+    section's own factory default ships as the literal "User" (`config.py`'s
+    `DEFAULT_CONFIG_FROM_TOML`), so a fresh install has no way to tell "never
+    touched this setting" apart from "chose User" -- returning it unconditio-
+    nally would silently turn every untouched install's "You:" rows into
+    "User:" rows. Only a value that actually DIFFERS from that shipped
+    default counts as a deliberate choice; everything else falls back to
+    Meetings' own already-shipped "You".
+
+    Args:
+        get_setting: `(section, key, default)` config accessor, injectable
+            for tests; defaults to the real CLI config.
+
+    Returns:
+        The configured `chat_defaults.user_display_name` when it differs
+        from the shipped factory default, else "You".
+    """
+    if get_setting is None:
+        get_setting = _config_accessors()[0]
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    factory_default = DEFAULT_CONFIG_FROM_TOML.get("chat_defaults", {}).get("user_display_name", "User")
+    configured = get_setting("chat_defaults", "user_display_name", factory_default)
+    if configured and configured != factory_default:
+        return configured
+    return "You"
+
+
 class MeetingSettings(BaseModel):
     """Validated `[meetings]` configuration for one meeting session.
 
@@ -518,6 +549,7 @@ class MeetingSessionOwner:
                     mic_device=self.settings.mic_device or "default",
                     system_source=self.prepared.tap_mode.reason,
                     provider=self.prepared.provider, model=self.prepared.model,
+                    user_display_name=meeting_user_display_name(),
                 )
                 # Two independent mechanisms, deliberately NOT conflated
                 # (Qodo Q12): the live backend's authoritative Stop pass is

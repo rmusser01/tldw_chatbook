@@ -586,6 +586,16 @@ def test_apply_rename_on_unmounted_screen_does_not_raise(meetings_screen_with_se
     assert screen._session.meta.speaker_names["S1"] == "Alice"
 
 
+def test_transcript_honours_the_configured_display_name(meetings_screen_with_session, monkeypatch):
+    """task 31746: `_user_display_name` delegates to the shared helper, so a
+    configured mic name shows in the transcript wherever "You:" used to."""
+    import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
+
+    monkeypatch.setattr(meetings_screen_module, "meeting_user_display_name", lambda **kw: "Alice")
+    screen = meetings_screen_with_session(segments=[("you", None, "hi")])
+    assert screen.rendered_lines == ["[00:00:00] Alice: hi"]
+
+
 @pytest.mark.asyncio
 async def test_legend_row_mounts_and_rename_input_updates_ui(tmp_path):
     """End-to-end through the real widget tree: a segment with a

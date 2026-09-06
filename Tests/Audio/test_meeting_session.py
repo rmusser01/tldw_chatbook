@@ -491,5 +491,29 @@ def test_render_markdown_room_mode_omits_labels(tmp_path):
     assert "[00:00:00] hello" in md and "**You:**" not in md
 
 
+def test_render_markdown_uses_the_meeting_configured_display_name(tmp_path):
+    """task 31746: a `you` segment renders `meta.user_display_name`, not a
+    hardcoded "You" -- so the saved transcript agrees with what the live
+    session showed."""
+    meta = _meta(tmp_path)
+    meta.user_display_name = "Alice"
+    result = MeetingResult(
+        meta=meta, ended_at="2026-09-04T15:00:00", duration_s=2.0, segment_count=1,
+        transcription_complete=True, failed_segments=0, stop_reason="user",
+    )
+    segment = MeetingSegment(0, 0.0, 2.0, 0.0, 2.0, "you", "hello")
+    md = render_markdown(result, [segment])
+    assert "[00:00:00] **Alice:** hello" in md
+
+
+def test_old_meeting_json_backfills_the_user_display_name(tmp_path):
+    """A recording from before task 31746 has no `user_display_name` key at
+    all; reading it back must not silently drop to a KeyError downstream."""
+    from tldw_chatbook.Audio.meeting_session import write_meeting_json
+
+    write_meeting_json(tmp_path, {"mode": "call"})
+    assert read_meeting_json(tmp_path)["user_display_name"] == "You"
+
+
 def test_format_clock():
     assert format_clock(0) == "00:00:00" and format_clock(3725.9) == "01:02:05"

@@ -64,7 +64,11 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 # (holding `meeting.json`'s name map and `transcript.jsonl`'s per-segment
 # records) is reachable for free as `Media.url`'s parent directory (`url` is
 # the `mixed.wav` path). Both survive raw-track cleanup.
-_MEETING_USER_DISPLAY_NAME = "You"  # mirrors meetings_screen.py's LABELS["you"]
+#
+# task 31746: the mic channel's display name is read from THIS meeting's own
+# `meeting.json` (`user_display_name`, back-filled to "You" by
+# `read_meeting_json` for old recordings) rather than a hardcoded literal, so
+# this render agrees with what the live Meetings screen showed.
 
 
 def can_rename_meeting_speakers(db: Any, media_id: int) -> bool:
@@ -104,13 +108,16 @@ def _read_meeting_transcript_segments(folder: Path) -> list[MeetingSegment]:
     return segments
 
 
-def _render_meeting_transcript(segments: list[MeetingSegment], names: dict[str, str]) -> str:
+def _render_meeting_transcript(
+    segments: list[MeetingSegment], names: dict[str, str], user_display_name: str
+) -> str:
     """Render `segments` as the same "[hh:mm:ss] Label: text" lines the live
-    meeting screen shows, using the CURRENT name map (task 2's `render_label`)."""
+    meeting screen shows, using the CURRENT name map (task 2's `render_label`)
+    and the meeting's own mic-channel display name (task 31746)."""
     lines = []
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
-        label = render_label(segment, names, _MEETING_USER_DISPLAY_NAME)
+        label = render_label(segment, names, user_display_name)
         lines.append(f"{stamp} {label}: {segment.text}" if label else f"{stamp} {segment.text}")
     return "\n".join(lines) + ("\n" if lines else "")
 
@@ -254,8 +261,9 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
 
     meeting = read_meeting_json(folder)
     names = dict(meeting.get("speaker_names") or {})
+    user_display_name = meeting.get("user_display_name", "You")
     segments = _read_meeting_transcript_segments(folder)
-    current_content = _render_meeting_transcript(segments, names)
+    current_content = _render_meeting_transcript(segments, names, user_display_name)
     if not current_content.strip():
         return SpeakerRenameResult(False, RENAME_REFUSED_EMPTY_TRANSCRIPT)
     if (row["content"] or "").strip() != current_content.strip():
@@ -268,7 +276,7 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
         names.pop(cluster_id, None)
     update_meeting_json(folder, speaker_names=names)
 
-    new_content = _render_meeting_transcript(segments, names)
+    new_content = _render_meeting_transcript(segments, names, user_display_name)
     new_hash = hashlib.sha256(new_content.encode()).hexdigest()
 
     media_uuid = row["uuid"]
@@ -318,7 +326,9 @@ def _meeting_speaker_legend_rows(db: Any, media_id: int) -> list[tuple[str, str]
     if row is None:
         return []
     folder = Path(row["url"]).parent
-    names = dict(read_meeting_json(folder).get("speaker_names") or {})
+    meeting = read_meeting_json(folder)
+    names = dict(meeting.get("speaker_names") or {})
+    user_display_name = meeting.get("user_display_name", "You")
     segments = _read_meeting_transcript_segments(folder)
     seen: list[str] = []
     for segment in segments:
@@ -332,7 +342,7 @@ def _meeting_speaker_legend_rows(db: Any, media_id: int) -> list[tuple[str, str]
     rows = []
     for cluster_id in seen:
         placeholder = MeetingSegment(0, 0.0, 0.0, 0.0, 0.0, "others", "", speaker_id=cluster_id)
-        label = render_label(placeholder, names, _MEETING_USER_DISPLAY_NAME) or cluster_id
+        label = render_label(placeholder, names, user_display_name) or cluster_id
         rows.append((cluster_id, label))
     return rows
 

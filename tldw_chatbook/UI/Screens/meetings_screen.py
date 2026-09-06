@@ -17,7 +17,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, ProgressBar, RichLog, Select, Static
 
-from ...Audio.meeting_owner import PrepareResult, recover_folder
+from ...Audio.meeting_owner import PrepareResult, meeting_user_display_name, recover_folder
 from ...Audio.meeting_session import (
     MeetingResult,
     MeetingSegment,
@@ -517,15 +517,17 @@ class MeetingsScreen(BaseAppScreen):
     def _user_display_name(self) -> str:
         """The name that stands in for "you" in the transcript and legend.
 
-        Deliberately NOT `chat_defaults.user_display_name`: that section's
-        own factory default is the literal string ``"User"`` (see
-        `config.py`'s `CONFIG_TOML_CONTENT`), so a fresh install has no way
-        to tell "never touched this setting" apart from "chose User" --
-        wiring it in here would silently turn every untouched install's
-        "You:" rows into "User:" rows. `LABELS["you"]` is Meetings' own,
-        already-shipped default; a per-meeting override is future scope.
+        Delegates to `meeting_owner.meeting_user_display_name` (task 31746),
+        the ONE place this decision is made: `chat_defaults.user_display_
+        name`'s own factory default is the literal string ``"User"`` (see
+        `config.py`'s `DEFAULT_CONFIG_FROM_TOML`), so a fresh install has no
+        way to tell "never touched this setting" apart from "chose User" --
+        honouring it unconditionally would silently turn every untouched
+        install's "You:" rows into "User:" rows. The owner stamps this same
+        value onto `meta.user_display_name` at `start()`, so the saved
+        transcript and the Library view agree with what was shown live.
         """
-        return LABELS["you"]
+        return meeting_user_display_name()
 
     def _line_for_segment(self, segment: MeetingSegment) -> str:
         stamp = f"[{format_clock(segment.t_audio_start)}]"

@@ -507,25 +507,38 @@ def meeting_folder_media_item(tmp_path, tmp_media_db):
     Library `Media` row that points at its `mixed.wav`, exactly as a real
     finished meeting recording leaves them (Task 8's Interfaces section).
 
-    Returns a factory: ``factory(names: dict, segments: list[tuple[str,
-    str]], content: str | None) -> (media_id, folder)``, where each segment
-    tuple is ``(speaker_id, text)``.
+    Returns a factory: ``factory(names: dict, segments: list[tuple], content:
+    str | None, user_display_name: str) -> (media_id, folder)``, where each
+    segment tuple is ``(speaker_id, text)`` (label defaults to ``"others"``)
+    or ``(speaker_id, text, label)`` to pick a specific coarse label (e.g.
+    ``"you"``).
 
     `Media.content` defaults to the meeting's OWN render of those segments --
     what a meeting-produced Library item holds, and what
     `rename_meeting_speaker` requires before it will rewrite anything (fix
     C2). Pass `content=` to stand in for an item whose transcript came from
     somewhere else (the ingest's offline pass, say).
+
+    `user_display_name` (task 31746) is stamped into `meeting.json` exactly
+    as a real meeting would, so it feeds the default render the same way
+    `rename_meeting_speaker` reads it back.
     """
     import json as _json
 
-    def _factory(*, names: dict, segments: list[tuple[str, str]], content: str | None = None):
+    def _factory(
+        *, names: dict, segments: list[tuple], content: str | None = None,
+        user_display_name: str = "You",
+    ):
         folder = tmp_path / f"meeting-{len(segments)}-{id(segments)}"
         folder.mkdir()
         (folder / "mixed.wav").write_bytes(b"")
-        (folder / "meeting.json").write_text(_json.dumps({"speaker_names": dict(names)}))
+        (folder / "meeting.json").write_text(
+            _json.dumps({"speaker_names": dict(names), "user_display_name": user_display_name})
+        )
         lines = []
-        for seq, (speaker_id, text) in enumerate(segments):
+        for seq, segment in enumerate(segments):
+            speaker_id, text, *rest = segment
+            label = rest[0] if rest else "others"
             lines.append(
                 _json.dumps(
                     {
@@ -534,7 +547,7 @@ def meeting_folder_media_item(tmp_path, tmp_media_db):
                         "t_audio_end": float(seq) + 1.0,
                         "t_wall_start": 0.0,
                         "t_wall_end": 0.0,
-                        "label": "others",
+                        "label": label,
                         "text": text,
                         "speaker_id": speaker_id,
                     }
@@ -548,7 +561,7 @@ def meeting_folder_media_item(tmp_path, tmp_media_db):
             )
 
             content = _render_meeting_transcript(
-                _read_meeting_transcript_segments(folder), dict(names)
+                _read_meeting_transcript_segments(folder), dict(names), user_display_name
             )
         media_id, _uuid, _msg = tmp_media_db.add_media_with_keywords(
             url=str(folder / "mixed.wav"),

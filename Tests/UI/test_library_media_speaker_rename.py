@@ -67,6 +67,17 @@ def test_rename_to_empty_name_removes_map_entry_and_drops_the_label(
     assert "S1" not in meeting["speaker_names"]
 
 
+def test_render_uses_the_meetings_stored_display_name(tmp_media_db, meeting_folder_media_item):
+    """task 31746: the Library item's own render reads `meeting.json`'s
+    `user_display_name`, not a hardcoded "You" -- so it agrees with what the
+    live Meetings screen showed for this recording."""
+    media_id, _folder = meeting_folder_media_item(
+        names={}, segments=[(None, "hello", "you")], user_display_name="Alice",
+    )
+    row = tmp_media_db.get_media_by_id(media_id)
+    assert "Alice:" in row["content"]
+
+
 def test_presentation_reachability_reflects_meeting_folder(
     tmp_media_db, meeting_folder_media_item
 ):
