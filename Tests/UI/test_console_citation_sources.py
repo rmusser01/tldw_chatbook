@@ -516,7 +516,10 @@ def _bare_screen(
     screen._console_annotation_loaded_conversation = None
     # Dev's turn-activity line (task-17652 era): the sync path reads
     # self._agent.console_turn_activity() every tick.
-    screen._agent = SimpleNamespace(console_turn_activity=lambda: "")
+    screen._agent = SimpleNamespace(
+        console_turn_activity=lambda: "",
+        console_turn_activity_abandon_action=lambda: "",
+    )
     screen._console_citation_resolved_signatures = {}
     screen._console_citation_input_signature = None
     screen._console_citation_repository_token = None
@@ -1072,7 +1075,7 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
         set_annotation_previews=Mock(),
         apply_turn_activity=Mock(return_value=""),
         set_original_attempt_previews=Mock(),
-        set_summary_boundary=Mock(),
+        set_memory_banner_presentation=Mock(),
         sync_jump_indicator=Mock(),
         set_image_specs=Mock(),
         set_generation_card_specs=Mock(),

@@ -378,7 +378,8 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
                 ConsoleComposerBar,
             )
             assert restored_composer.draft_text() == draft
-            assert restored_chat is not chat
+            # Console is installed and reused on warm navigation (TASK-31520).
+            assert restored_chat is chat
             assert (
                 restored_chat._video._ensure_console_video_store()
                 is app.generated_video_store
@@ -600,7 +601,7 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
                     target_session_id=session_id,
                 ),
             )
-            await chat._consume_pending_console_prompt_insert()
+            await chat._prompts._consume_pending_console_prompt_insert()
             assert not app.pending_handoffs.has_pending(
                 HandoffChannel.CONSOLE_PROMPT_INSERT
             )
@@ -617,7 +618,7 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
                     target_session_id=session_id,
                 ),
             )
-            await chat._consume_pending_console_prompt_insert()
+            await chat._prompts._consume_pending_console_prompt_insert()
             assert app.pending_handoffs.has_pending(
                 HandoffChannel.CONSOLE_PROMPT_INSERT
             )
