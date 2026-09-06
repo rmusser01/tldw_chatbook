@@ -1,11 +1,11 @@
 ---
 id: TASK-31933
 title: Design Canvas V2 Mermaid subset and pinned runtime profiles
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 18:16'
-updated_date: '2026-09-06 21:53'
+updated_date: '2026-09-06 22:20'
 labels:
   - canvas
   - design
@@ -29,7 +29,7 @@ Define the first offline diagram library experience without weakening Canvas iso
 - [x] #1 Written spec incorporates the seven approved review corrections and defines the supported Mermaid subset and exclusions.
 - [x] #2 A canonical ADR and durable spike evidence explain runtime profile ownership, security refusal, and compatibility trade-offs.
 - [x] #3 The design specifies measurable qualification gates for native and served delivery, resource limits, lifecycle, and archives.
-- [ ] #4 The written design is self-reviewed and the user approves it before implementation planning begins.
+- [x] #4 The written design is self-reviewed and the user approves it before implementation planning begins.
 - [x] #5 The revised spec defines restart-required policy updates, complete profile compatibility, assistant subset guidance, and bounded geometry and typography.
 <!-- AC:END -->
 
@@ -59,6 +59,8 @@ Awaiting user review of the written spec, including proposed numeric admission c
 Follow-up design review (2026-09-06): incorporated all four approved findings into the spec and ADR-124. Packaged policy updates now require complete host/server restart with snapshot mismatch refusal; existing explicit disable remains immediate containment. Profiles pin engine/facade/plan and Unicode compatibility, with new identities for changed pinned inputs and separate nonsemantic security-validation identity. Added requirements for bounded profile-aware assistant guidance, executable example fixtures and source-free repair hints, plus geometry/area ceilings, explicit typography, scrolling and CSS-override limits.
 
 Validation: documentation whitespace check passed; 14 local links, code fences, table columns and placeholder checks passed across the three design/evidence documents; Backlog guard passed across 3383 task files. Only spec, proposed ADR and design task changed; no product tests or implementation work. AC4 remains open for review of the revised written spec.
+
+User approved the revised written design on 2026-09-06. ADR-124 is Accepted. The implementation handoff plan covers eight independently testable slices with exact integration owners, red/green examples, shared constraints and release gates; implementation tasks remain To Do. Documentation link/fence/table/placeholder checks and Backlog uniqueness/path validation passed. Product tests, performance and runtime security qualification are not applicable to this documentation-only design closeout and remain explicit implementation gates; no application code, dependencies, schema or runtime permissions changed. No implementation has started.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

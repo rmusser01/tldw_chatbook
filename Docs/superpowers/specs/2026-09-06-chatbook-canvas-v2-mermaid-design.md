@@ -1,7 +1,7 @@
 # Canvas V2: offline Mermaid subset and immutable runtime profiles
 
 Date: 2026-09-06
-Status: Written design awaiting user review; implementation has not started.
+Status: Approved by the user on 2026-09-06; implementation has not started.
 Owner: [TASK-31933](../../../backlog/tasks/task-31933%20-%20Design-Canvas-V2-Mermaid-subset-and-pinned-runtime-profiles.md)
 
 ADR required: yes
@@ -312,7 +312,7 @@ outside the measured operation or reset clocks/counters per diagram. An engine
 interrupt target is not a guaranteed wall-clock deadline; test worker termination
 separately, including slow parsing.
 
-Initial additional admission ceilings proposed for the first immutable profile:
+Approved initial additional admission ceilings for the first immutable profile:
 
 | Resource | Per diagram | Whole document |
 | --- | --- | --- |
@@ -437,3 +437,10 @@ reviewed with this written spec. The follow-up four corrections define
 restart-required policy deployment, complete profile compatibility, profile-aware
 assistant guidance and bounded/default-styled geometry. User approval of this
 document precedes an implementation plan.
+
+## Approval and implementation handoff
+
+The user approved this written design on 2026-09-06, including the follow-up
+review clarifications. The [implementation plan](../plans/2026-09-06-chatbook-canvas-v2-mermaid-implementation.md)
+records the task sequence and verification gates. Approval is not evidence that
+V2 has been implemented or qualified.
