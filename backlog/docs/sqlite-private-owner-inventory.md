@@ -73,6 +73,7 @@ Classifications have these meanings:
 | C53 | tldw_chatbook/Personal_Context/interview_draft_repository | InterviewDraftRepository._connect | personal_context.interview_drafts | private_file | encrypted local interview draft read/write | Migrated via `connect_private_sqlite`. The dedicated draft store contains only short-lived encrypted interview state under per-session protector keys, is local-only, and is excluded from centralized backup. |
 | C54 | tldw_chatbook/DB/Chunking_Lab_DB | CheckpointStore._connection | db.chunking_lab | private_file | profile-local experiment recovery | Migrated via `connect_private_sqlite`. One lazily opened worker-owned connection publishes checkpoint/blob references with WAL and synchronous FULL, epoch/generation CAS, and current/previous/undo retention. Clear commits a content-free tombstone; private storage and deletion are not encryption or secure erasure. Excluded from centralized backup. |
 | C55 | tldw_chatbook/Chat/console_trace_maintenance | PhysicalTraceCompactor._open_maintenance_connection | chat.trace_maintenance | private_file | same-file maintenance write | Migrated via `connect_private_sqlite`. Registered under its actual module owner. Reopens the existing conversation database with `must_exist=True` for leased physical maintenance, preserving path hardening, connection options and PRAGMAs. Memory compaction remains deferred; no centralized backup permission. |
+| C56 | tldw_chatbook/Library/collections_legacy_recovery | LegacyCollectionsRecovery._read_transaction | library.legacy_recovery | read_only_uri | schema-independent legacy recovery read | Migrated via `connect_private_sqlite`. Existing-file, read-only access without schema initialization or mode changes; namespace checks fail closed. No centralized backup authority. SQLite may maintain WAL/SHM sidecars while reading committed WAL frames. |
 
 ## SQLite backup and restore inventory
 
@@ -153,11 +154,19 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The inventory records 54 classified connection sites and thirteen
+The inventory records 55 classified connection sites and thirteen
 classified backup/restore operations. TASK-31778 registers the existing trace
 maintenance connection under its actual module, without widening its authority.
-The current review also reproduced two separate open inventory gaps: a raw
-read-only connection in `Library/collections_legacy_recovery.py`, and the
-quiescent connection's `super().backup()` wrapper in `DB/base_db.py`. Neither is
-excluded from the guards or treated as resolved by this registration. Settings
-has no SQLite database `shutil.copy2()` site.
+TASK-31779 routes legacy Collections recovery through its source-mode-preserving,
+read-only owner. It retains the lexical absolute path so initial and substituted
+symlinks reach the seam's no-follow checks; failed transaction setup also closes
+the connection. Recovery does not create, migrate or write the main database.
+
+TASK-31780 qualifies both existing direct backup calls by module, symbol,
+receiver and multiplicity: `DB/private_sqlite:_backup_pages:source` and
+`DB/base_db:_QuiescentSQLiteConnection.backup:super()`. The latter only reserves
+quiescence while delegating the same operation; it does not open a destination
+or grant backup authority. Negative controls reject extra, duplicate, moved,
+receiver-changed and other-module calls. Real SQLite checks enforce reservation
+during backup and release after success or callback failure. Settings has no
+SQLite database `shutil.copy2()` site.

@@ -566,26 +566,129 @@ def test_recovery_path_opens_legacy_tables_when_capture_schema_is_too_new(
     )
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX source mode contract")
+def test_path_recovery_preserves_source_and_cannot_write_even_without_query_only(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy.db"
+    db = LibraryCollectionsDB(path)
+    _seed_legacy(db, count=2)
+    db.close()
+    path.chmod(0o640)
+    before = path.read_bytes()
+    recovery = LegacyCollectionsRecovery(path)
+    with recovery._read_transaction() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0]
+            == 2
+        )
+        connection.execute("PRAGMA query_only = OFF")
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            connection.execute("DELETE FROM library_collections")
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+    assert path.read_bytes() == before
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")
+@pytest.mark.parametrize("replacement", ["symlink", "missing", "shared_parent"])
+def test_path_recovery_rejects_unsafe_source_without_disclosing_path(
+    tmp_path: Path,
+    replacement: str,
+) -> None:
+    parent = tmp_path / "selected"
+    parent.mkdir(mode=0o700)
+    path = parent / "private-source.db"
+    db = LibraryCollectionsDB(path)
+    _seed_legacy(db, count=1)
+    db.close()
+    recovery = LegacyCollectionsRecovery(path)
+    if replacement == "shared_parent":
+        parent.chmod(0o777)
+    else:
+        retained = parent / "retained.db"
+        path.rename(retained)
+        if replacement == "symlink":
+            path.symlink_to(retained)
+    try:
+        with pytest.raises(LegacyCollectionsRecoveryError) as caught:
+            recovery.list_collections(page=1)
+        assert caught.value.reason == "legacy_database_unavailable"
+        assert "private-source" not in str(caught.value)
+        assert caught.value.__cause__ is None
+        assert caught.value.__suppress_context__ is True
+    finally:
+        parent.chmod(0o700)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")
+@pytest.mark.parametrize("alias_kind", ["leaf", "parent"])
+def test_path_recovery_rejects_source_alias_supplied_at_construction(
+    tmp_path: Path,
+    alias_kind: str,
+) -> None:
+    parent = tmp_path / "source"
+    parent.mkdir(mode=0o700)
+    path = parent / "legacy.db"
+    db = LibraryCollectionsDB(path)
+    _seed_legacy(db, count=1)
+    db.close()
+    alias = tmp_path / "alias"
+    alias.symlink_to(path if alias_kind == "leaf" else parent)
+    selected = alias if alias_kind == "leaf" else alias / path.name
+    with pytest.raises(LegacyCollectionsRecoveryError) as caught:
+        LegacyCollectionsRecovery(selected).list_collections(page=1)
+    assert caught.value.reason == "legacy_database_unavailable"
+    assert "alias" not in str(caught.value)
+
+
+def test_path_recovery_closes_connection_when_transaction_setup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "legacy.db"
+    db = LibraryCollectionsDB(path)
+    db.close()
+    opened = []
+    real_connect = sqlite3.connect
+
+    class FailingBeginConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=()):
+            if sql == "BEGIN DEFERRED":
+                raise sqlite3.OperationalError("injected setup failure")
+            return super().execute(sql, parameters)
+
+    def connect(*args, **kwargs):
+        connection = real_connect(*args, factory=FailingBeginConnection, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    try:
+        with pytest.raises(LegacyCollectionsRecoveryError):
+            LegacyCollectionsRecovery(path).list_collections(page=1)
+        assert len(opened) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            opened[0].execute("SELECT 1")
+    finally:
+        for connection in opened:
+            connection.close()
+
+
 def test_recovery_normalizes_database_disappearance_without_path_disclosure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "private-database-name.db"
     original_is_file = Path.is_file
-    original_resolve = Path.resolve
 
     def raced_is_file(candidate: Path) -> bool:
         if candidate == path:
-            return True
+            raise FileNotFoundError(str(path))
         return original_is_file(candidate)
 
-    def raced_resolve(candidate: Path, *args, **kwargs) -> Path:
-        if candidate == path:
-            raise FileNotFoundError(str(path))
-        return original_resolve(candidate, *args, **kwargs)
-
     monkeypatch.setattr(Path, "is_file", raced_is_file)
-    monkeypatch.setattr(Path, "resolve", raced_resolve)
 
     with pytest.raises(LegacyCollectionsRecoveryError) as caught:
         LegacyCollectionsRecovery(path)

@@ -219,6 +219,13 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "Local Kanban supports private files and exact in-memory targets.",
     ),
+    "library.legacy_recovery": SQLiteOwnerPolicy(
+        "tldw_chatbook/Library/collections_legacy_recovery",
+        _READ_ONLY_URI,
+        "Legacy recovery reads an existing Collections database without "
+        "creating or migrating it, preserving the source owner's file modes.",
+        preserve_read_only_source_mode=True,
+    ),
     "notes.file_notes_replica": SQLiteOwnerPolicy(
         "tldw_chatbook/Notes/file_notes_replica",
         _PRIVATE_OR_MEMORY,

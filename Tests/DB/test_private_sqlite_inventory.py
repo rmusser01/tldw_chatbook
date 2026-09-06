@@ -591,10 +591,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # encrypted local-only Personal Context interview draft database.
         # C54 is the dedicated profile-local Chunking Lab recovery owner.
         # C55 is the existing private-file trace maintenance connection.
+        # C56 is schema-independent, read-only legacy Collections recovery.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 56)
+        for number in range(1, 57)
         if number != 10
     ]
     assert [row["id"] for row in backup_rows] == [
@@ -1061,20 +1062,73 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
     )
 
 
-def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> None:
-    direct_backup_modules: Counter[str] = Counter()
-    for source_path in PRODUCTION_ROOT.rglob("*.py"):
-        backup_count = sum(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "backup"
-            for node in ast.walk(_parse_source(source_path))
+def _assert_direct_backup_census(sources) -> None:
+    calls = Counter()
+    for module, tree in sources:
+        visitor = _QualifiedCallNodeVisitor(
+            lambda call: (
+                isinstance(call.func, ast.Attribute) and call.func.attr == "backup"
+            )
         )
-        if backup_count:
-            module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
-            direct_backup_modules[module] = backup_count
+        visitor.visit(tree)
+        calls.update(
+            (module, symbol, ast.unparse(call.func.value))
+            for symbol, call in visitor.calls
+        )
+    # The wrapper reserves the source for the existing seam operation; it does
+    # not create a destination or grant another owner backup authority.
+    assert calls == Counter(
+        {
+            ("tldw_chatbook/DB/private_sqlite", "_backup_pages", "source"): 1,
+            (
+                "tldw_chatbook/DB/base_db",
+                "_QuiescentSQLiteConnection.backup",
+                "super()",
+            ): 1,
+        }
+    )
 
-    assert direct_backup_modules == Counter({"tldw_chatbook/DB/private_sqlite": 1})
+
+@pytest.mark.parametrize(
+    "mutation", ["extra", "duplicate", "moved", "receiver", "other_module"]
+)
+def test_direct_backup_census_rejects_unreviewed_calls(mutation: str) -> None:
+    sources = {
+        "tldw_chatbook/DB/private_sqlite": "def _backup_pages(source, target):\n    source.backup(target)\n",
+        "tldw_chatbook/DB/base_db": "class _QuiescentSQLiteConnection:\n    def backup(self, target):\n        super().backup(target)\n",
+    }
+    _assert_direct_backup_census(
+        (module, ast.parse(code)) for module, code in sources.items()
+    )
+    module = "tldw_chatbook/DB/base_db"
+    if mutation == "extra":
+        sources[module] += (
+            "def unregistered(source, target):\n    source.backup(target)\n"
+        )
+    elif mutation == "duplicate":
+        sources[module] += "        super().backup(target)\n"
+    elif mutation == "moved":
+        sources[module] = sources[module].replace("def backup(", "def other(")
+    elif mutation == "receiver":
+        sources[module] = sources[module].replace(
+            "super().backup", "self.source.backup"
+        )
+    else:
+        sources["tldw_chatbook/DB/unregistered"] = sources.pop(module)
+    with pytest.raises(AssertionError):
+        _assert_direct_backup_census(
+            (module, ast.parse(code)) for module, code in sources.items()
+        )
+
+
+def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> None:
+    _assert_direct_backup_census(
+        (
+            source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix(),
+            _parse_source(source_path),
+        )
+        for source_path in PRODUCTION_ROOT.rglob("*.py")
+    )
 
     settings_path = PROJECT_ROOT / "tldw_chatbook/UI/Tools_Settings_Window.py"
     settings_copy_count = sum(

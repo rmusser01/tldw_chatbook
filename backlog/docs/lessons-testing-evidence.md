@@ -12031,3 +12031,15 @@ growing-history computations. Independent review caught a second loophole:
 fixture now makes that fallback fail explicitly. To prove a fast path, measure
 the path that actually executes and make both no-work and fallback outcomes
 visible; an upper bound alone cannot distinguish caching from a disconnected spy.
+
+## A no-follow seam cannot reject aliases already resolved by its caller
+
+**TASK-31779, 2026-09-05 dev review.** Migrating legacy Collections recovery
+from raw SQLite to the shared read-only opener passed its source-replacement
+symlink regression and the initial 432-test selection. Independent review found
+that the constructor still called `Path.resolve()`, erasing a symlink supplied
+at construction before the opener could reject it. New public-entry tests for
+both leaf and parent aliases failed before the correction. The constructor now
+retains the lexical absolute path. When adopting a path-validation boundary,
+trace earlier canonicalization and test aliases at selection as well as later
+replacement; a safe opener cannot inspect path components it never receives.
