@@ -1399,6 +1399,21 @@ def is_valid_provider_api_key(value: object) -> bool:
     return resolve_provider_api_key(value) is not None
 
 
+def resolve_tldw_api_auth_token(value: object) -> Optional[str]:
+    """Return `value` stripped, or None if blank, a provider-key placeholder,
+    or `TLDW_API_PLACEHOLDER_AUTH_TOKEN` -- the value the app's own config
+    load synthesizes into `[tldw_api]` when a profile's file omits
+    `auth_token` (task-31417). Reuses `resolve_provider_api_key`'s existing
+    blank/placeholder screening rather than duplicating the rule; adds only
+    the one extra rejected literal this credential's boot-rewrite is known
+    to produce.
+    """
+    resolved = resolve_provider_api_key(value)
+    if resolved is None or resolved == TLDW_API_PLACEHOLDER_AUTH_TOKEN:
+        return None
+    return resolved
+
+
 def normalize_provider_config_key(provider: object) -> str:
     """Return the canonical lookup form used for provider config tables.
 

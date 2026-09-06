@@ -15531,7 +15531,8 @@ class ChatScreen(BaseAppScreen):
             # go: `detach_view` clears the store's `on_scope_flushed` and
             # drops the claim.
             await leave_console_runtime(self.app_instance, view=self)
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
 
     @classmethod
     def _serialize_console_message(cls, message: ConsoleChatMessage) -> dict[str, Any]:

@@ -321,6 +321,15 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     text-align: center;
 }
 
+/* 31712 AC#6: same "empty state replaces the real content" idiom as
+ * `#scheduling-task-detail-empty-state` above -- distinguishes "no task
+ * selected" from a selected task whose metadata rows read "-" too. */
+#scheduling-task-inspector-empty-state {
+    color: $text-muted;
+    text-align: center;
+    padding: 3 1;
+}
+
 /* Inspector metadata */
 #scheduling-inspector-metadata {
     height: auto;

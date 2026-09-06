@@ -28,6 +28,7 @@ from tldw_chatbook.runtime_policy.server_context import (
     ServerCredentialsUnavailable,
     ServerContextUnavailable,
 )
+from tldw_chatbook import config as config_module
 from tldw_chatbook.runtime_policy.types import (
     RuntimeSourceState,
     SERVER_CONTEXT_FAILURE_REASON_CODES,
@@ -71,6 +72,15 @@ class RaisingCredentialStore:
     def clear_all(self) -> None:
         raise RuntimeError("keyring unavailable")
 
+    def set_scoped_secret(self, scope, secret: str) -> None:
+        raise RuntimeError("keyring unavailable")
+
+    def get_scoped_secret(self, scope) -> str | None:
+        raise RuntimeError("keyring unavailable")
+
+    def delete_scoped_secret(self, scope) -> None:
+        raise RuntimeError("keyring unavailable")
+
 
 class LookupFailingCredentialStore:
     def set_secret(self, server_id: str, purpose: str, secret: str) -> None:
@@ -86,6 +96,15 @@ class LookupFailingCredentialStore:
         return None
 
     def clear_all(self) -> None:
+        return None
+
+    def set_scoped_secret(self, scope, secret: str) -> None:
+        return None
+
+    def get_scoped_secret(self, scope) -> str | None:
+        raise RuntimeError("lookup unavailable")
+
+    def delete_scoped_secret(self, scope) -> None:
         return None
 
 
@@ -131,12 +150,14 @@ def _provider(
     targets: list[ConfiguredServerTarget] | None = None,
     credential_store: InMemoryServerCredentialStore | None = None,
     app_config: dict | None = None,
+    credential_profile_id: str | None = None,
 ) -> RuntimeServerContextProvider:
     return RuntimeServerContextProvider(
         runtime_context=runtime_context or _runtime_context(),
         target_store=_target_store(tmp_path, targets),
         credential_store=credential_store or InMemoryServerCredentialStore(),
         app_config=app_config or {},
+        credential_profile_id=credential_profile_id,
     )
 
 
@@ -2812,3 +2833,263 @@ def test_store_static_server_credential_rejects_empty_arguments(tmp_path):
         provider.store_static_server_credential("", "token")
     with pytest.raises(ValueError):
         provider.store_static_server_credential("https://server.example.com/api", "  ")
+
+
+# --- task-31416: per-profile credential isolation ---------------------------
+
+
+def test_credential_profile_id_isolates_two_profiles_at_the_same_base_url(tmp_path):
+    """Two profiles pointed at the same base URL with different tokens each
+    authenticate with their own token, and a profile's first-boot import
+    does not outrank the other profile's corrected config value
+    (task-31416 AC#1/#2)."""
+    server_id = "https://server.example.com/api"
+    shared_credential_store = InMemoryServerCredentialStore()
+    target = ConfiguredServerTarget(
+        server_id=server_id,
+        label="Primary",
+        base_url=server_id,
+        auth_mode="bearer",
+        auth_reference="legacy:tldw_api",
+        is_default=True,
+    )
+    shared_target_store = _target_store(tmp_path, [target])
+
+    scratch_provider = RuntimeServerContextProvider(
+        runtime_context=_runtime_context(active_server_id=server_id),
+        target_store=shared_target_store,
+        credential_store=shared_credential_store,
+        app_config={
+            "tldw_api": {
+                "base_url": server_id,
+                "bearer_token": "scratch-first-boot-token",
+                "auth_mode": "bearer",
+            }
+        },
+        credential_profile_id="scratch-profile",
+    )
+    # Scratch profile's first boot imports its own token into its own scope.
+    assert scratch_provider.get_active_context().auth_token == (
+        "scratch-first-boot-token"
+    )
+
+    main_provider = RuntimeServerContextProvider(
+        runtime_context=_runtime_context(active_server_id=server_id),
+        target_store=shared_target_store,
+        credential_store=shared_credential_store,
+        app_config={
+            "tldw_api": {
+                "base_url": server_id,
+                "bearer_token": "main-corrected-token",
+                "auth_mode": "bearer",
+            }
+        },
+        credential_profile_id="main-profile",
+    )
+
+    # The OTHER profile's corrected config value is not shadowed by the
+    # scratch profile's earlier import against the same base URL.
+    assert main_provider.get_active_context().auth_token == "main-corrected-token"
+    # Re-resolving each profile again still returns its own token -- neither
+    # import clobbered the other's scope.
+    assert scratch_provider.get_active_context().auth_token == (
+        "scratch-first-boot-token"
+    )
+    assert main_provider.get_active_context().auth_token == "main-corrected-token"
+
+
+def test_unconfigured_credential_profile_id_reads_pre_scoping_keyring_entry(tmp_path):
+    """A credential stored via the plain (pre-scoping) API is still found by
+    a provider constructed the default way -- an existing single-profile
+    install upgrades with no re-entry prompt (task-31416 AC#4)."""
+    server_id = "https://server.example.com/api"
+    credentials = InMemoryServerCredentialStore()
+    credentials.set_secret(
+        server_id, SERVER_CREDENTIAL_BEARER_TOKEN, "pre-upgrade-token"
+    )
+
+    provider = _provider(
+        tmp_path,
+        runtime_context=_runtime_context(active_server_id=server_id),
+        targets=[
+            ConfiguredServerTarget(
+                server_id=server_id,
+                label="Primary",
+                base_url=server_id,
+                auth_mode="bearer",
+                is_default=True,
+            )
+        ],
+        credential_store=credentials,
+        # credential_profile_id intentionally omitted: default install.
+    )
+
+    context = provider.get_active_context()
+
+    assert context.auth_token == "pre-upgrade-token"
+    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+
+
+def test_legacy_import_logs_the_chosen_purpose_and_profile(tmp_path):
+    """The resolved credential's source is visible in the log, not only by
+    reading the resolver (task-31416 AC#3)."""
+    server_id = "https://server.example.com/api"
+    provider = _provider(
+        tmp_path,
+        runtime_context=_runtime_context(active_server_id=server_id),
+        targets=[
+            ConfiguredServerTarget(
+                server_id=server_id,
+                label="Primary",
+                base_url=server_id,
+                auth_mode="bearer",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": server_id,
+                "bearer_token": "legacy-bearer",
+                "auth_mode": "bearer",
+            }
+        },
+        credential_profile_id="named-profile",
+    )
+    infos: list[str] = []
+    sink = server_context_module.logger.add(
+        infos.append, level="INFO", format="{message}"
+    )
+    try:
+        context = provider.get_active_context()
+    finally:
+        server_context_module.logger.remove(sink)
+
+    assert context.auth_token == "legacy-bearer"
+    assert any(
+        SERVER_CREDENTIAL_BEARER_TOKEN in line and "named-profile" in line
+        for line in infos
+    )
+
+
+# --- task-31417: auth_token placeholder screening ---------------------------
+
+
+def test_boot_rewrite_placeholder_auth_token_does_not_outrank_real_api_key(
+    tmp_path, monkeypatch
+):
+    """End-to-end: a [tldw_api] file carrying only a real api_key, loaded
+    through the app's real config bootstrap -- which synthesizes the
+    boot-rewrite placeholder auth_token beside it -- still resolves the
+    real credential through RuntimeServerContextProvider
+    (task-31417 AC#1/#5)."""
+    import toml
+
+    server_id = "https://server.example.com/api"
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps(
+            {"tldw_api": {"base_url": server_id, "api_key": "real-secret"}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    app_config = config_module.load_settings(force_reload=True)
+    tldw_api_config = config_module.resolve_tldw_api_config(app_config)
+    # Sanity: the app's own config load DID synthesize the placeholder
+    # beside the real key -- the exact incident this task fixes.
+    assert (
+        tldw_api_config.get("auth_token")
+        == config_module.TLDW_API_PLACEHOLDER_AUTH_TOKEN
+    )
+    assert tldw_api_config.get("api_key") == "real-secret"
+
+    provider = RuntimeServerContextProvider(
+        runtime_context=_runtime_context(active_server_id=server_id),
+        target_store=_target_store(
+            tmp_path,
+            [
+                ConfiguredServerTarget(
+                    server_id=server_id,
+                    label="Primary",
+                    base_url=server_id,
+                    auth_mode="api_key",
+                    auth_reference="legacy:tldw_api",
+                    is_default=True,
+                )
+            ],
+        ),
+        credential_store=InMemoryServerCredentialStore(),
+        app_config=app_config,
+    )
+
+    context = provider.get_active_context()
+
+    assert context.auth_token == "real-secret"
+    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_API_KEY}"
+
+
+def test_genuine_auth_token_still_outranks_api_key(tmp_path):
+    """A deliberately configured auth_token still wins over api_key -- the
+    screening only rejects the known placeholder (task-31417 AC#3)."""
+    provider = _provider(
+        tmp_path,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "auth_token": "real-auth-token",
+                "api_key": "should-not-be-used",
+            }
+        },
+    )
+
+    assert provider.get_active_context().auth_token == "real-auth-token"
+
+
+def test_legacy_config_token_logs_when_placeholder_auth_token_is_rejected(tmp_path):
+    """Choosing api_key over the rejected placeholder auth_token is visible
+    in the log with the source named, not silent (task-31417 AC#4)."""
+    provider = _provider(
+        tmp_path,
+        targets=[
+            ConfiguredServerTarget(
+                server_id="https://server.example.com/api",
+                label="Primary",
+                base_url="https://server.example.com/api",
+                auth_mode="api_key",
+                auth_reference="legacy:tldw_api",
+                is_default=True,
+            )
+        ],
+        app_config={
+            "tldw_api": {
+                "base_url": "https://server.example.com/api",
+                "auth_token": config_module.TLDW_API_PLACEHOLDER_AUTH_TOKEN,
+                "api_key": "real-secret",
+            }
+        },
+    )
+    infos: list[str] = []
+    sink = server_context_module.logger.add(
+        infos.append, level="INFO", format="{message}"
+    )
+    try:
+        context = provider.get_active_context()
+    finally:
+        server_context_module.logger.remove(sink)
+
+    assert context.auth_token == "real-secret"
+    assert any(
+        "placeholder" in line.lower() and "config:api_key" in line for line in infos
+    )

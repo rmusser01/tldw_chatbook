@@ -38,7 +38,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
 from tldw_chatbook.Scheduling.models import PreviewStatus, ScheduleKind
-from tldw_chatbook.Scheduling.schedule_input_parsing import parse_forgiving_datetime
+from tldw_chatbook.Scheduling.schedule_input_parsing import (
+    example_run_at_text,
+    parse_forgiving_datetime,
+)
 
 from ..task_detail import definition_cron_expression
 
@@ -330,16 +333,17 @@ class AutomationDefinitionForm(ModalScreen):
             yield Select(
                 [(kind.value.replace("_", " ").title(), kind.value) for kind in ScheduleKind],
                 allow_blank=False,
-                value=ScheduleKind.ONE_TIME.value,
+                value=self._default_schedule_kind(),
                 id="automation-schedule-kind",
             )
             yield Static("", id="automation-schedule-error", classes="error-text")
 
             with Vertical(id="automation-run-at-group"):
+                run_at_example = example_run_at_text()
                 yield Label("Run at:", classes="form-label")
-                yield Input(placeholder="2026-08-28 09:00", id="automation-run-at")
+                yield Input(placeholder=run_at_example, id="automation-run-at")
                 yield Static(
-                    "A local time like 2026-08-28 09:00, or full ISO-8601 with offset.",
+                    f"A local time like {run_at_example}, or full ISO-8601 with offset.",
                     classes="form-helper",
                 )
 
@@ -415,10 +419,27 @@ class AutomationDefinitionForm(ModalScreen):
                     yield Button("Save", variant="success", id="automation-save")
                     yield Button("Cancel", id="automation-cancel")
 
+    def _default_schedule_kind(self) -> str:
+        """Create mode's Schedule Kind default (31712 AC#2).
+
+        This form's whole purpose is authoring a RECURRING question, so a
+        brand-new definition now preselects `Recurring` -- a user creating
+        a one-off no longer has to switch it every time. Edit mode keeps
+        `One Time` as its own fallback default (unchanged): it is what
+        `_prefill_from_row` leaves standing for a schedule shape this form
+        cannot itself reverse-map (`test_edit_mode_unrecognized_schedule_
+        falls_back_to_create_defaults`), and that fallback must stay
+        `one_time`/blank run-at regardless of what a brand-new form
+        defaults to.
+        """
+        if self._definition_row is not None:
+            return ScheduleKind.ONE_TIME.value
+        return ScheduleKind.RECURRING.value
+
     def on_mount(self) -> None:
         self.query_one("#automation-preset-time", Input).value = DEFAULT_TIME_OF_DAY
         self.query_one("#automation-cron", Input).value = "0 9 * * *"
-        self._update_schedule_field_visibility(ScheduleKind.ONE_TIME.value)
+        self._update_schedule_field_visibility(self._default_schedule_kind())
         self._update_preset_field_visibility("daily")
         self._update_scope_field_visibility("all_searchable_library")
         if self._definition_row is not None:
@@ -793,7 +814,7 @@ class AutomationDefinitionForm(ModalScreen):
                 return "Run at is required for one-time automations."
             parsed, _assumed_local = parse_forgiving_datetime(raw)
             if parsed is None:
-                return "Run at must be a date and time like 2026-08-28 09:00."
+                return f"Run at must be a date and time like {example_run_at_text()}."
             return None
 
         preset = self._selected_preset()

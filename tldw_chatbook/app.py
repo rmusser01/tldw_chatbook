@@ -749,7 +749,10 @@ from tldw_chatbook.runtime_policy.bootstrap import (  # noqa: E402
 from tldw_chatbook.runtime_policy.server_capabilities import (  # noqa: E402
     ActiveServerCapabilityService,
 )
-from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider  # noqa: E402
+from tldw_chatbook.runtime_policy.server_context import (  # noqa: E402
+    RuntimeServerContextProvider,
+    default_server_credential_profile_id,
+)
 from tldw_chatbook.runtime_policy.server_credentials import (  # noqa: E402
     CredentialStoreUnavailable,
     UnavailableServerCredentialStore,
@@ -8506,6 +8509,7 @@ class TldwCli(
             target_store=self.unified_mcp_target_store,
             credential_store_factory=lambda: self.server_credential_store,
             app_config=self.app_config,
+            credential_profile_id=default_server_credential_profile_id(),
         )
 
     def _build_local_skill_trust_service(self) -> Any:

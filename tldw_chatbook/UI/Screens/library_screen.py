@@ -9931,7 +9931,8 @@ class LibraryScreen(BaseAppScreen):
         self._clear_library_prompt_selection(announce=False)
         self._prompts_state.mutation_disabled_states.clear()
         self._invalidate_library_external_submission()
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
         registry = self._library_ingest_registry()
         if registry is not None:
             registry.remove_listener(self._handle_library_ingest_registry_changed)
