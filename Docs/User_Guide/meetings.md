@@ -172,6 +172,12 @@ what happens to a meeting once it's queued.
   far, and the name map saved into `meeting.json` for the finished
   recording. This live path has automated pilot-test coverage only; it has
   not been exercised in a live session on this page's verification host.
+- **The name that stands in for you is fixed when the meeting starts.** It
+  is your configured chat display name when you have set one (otherwise
+  "You"), and it is stamped onto the recording at Start — so changing that
+  setting while a meeting is running leaves the rows already on screen, the
+  rows still to come, and the saved transcript all saying the same thing.
+  The new value applies to the next meeting you start.
 - **Hybrid rooms — someone else sharing your microphone — can also be
   diarized, behind `meetings.diarize_mic_channel` (off by default).**
   Normally the mic ("you") and overlap ("both") channels in call mode are
@@ -203,7 +209,13 @@ what happens to a meeting once it's queued.
   a Markdown transcript keeps its header and its `**Name:**` lines. It
   refuses the same way when the recording folder's `transcript.jsonl` is
   missing or empty. When it does go through, the replaced text is kept as a
-  document version, so the change can be rolled back.
+  document version, so the change can be rolled back. If the write fails —
+  a concurrent edit to the same item, say — nothing is left half-applied:
+  the name map on disk is put back, and the rename can simply be retried.
+  Whatever you type is stored as typed apart from control characters, which
+  are dropped; a name containing Markdown punctuation (`*`, `` ` ``, `[…]`)
+  shows as those characters in a Markdown transcript rather than turning
+  into formatting or a link.
 - **Each transcript row is a per-segment final, not a whole-meeting
   transcript.** Rows can lag live speech by up to roughly the length of one
   segment (up to ~10 seconds) plus however long that segment took to
@@ -235,8 +247,16 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against feat/meeting-followups @ e060f8d27 + the final-review fix
-wave — 2026-09-06. That wave made the "either shape the app itself writes"
+*Verified against feat/meeting-followups @ 97a823256 + the PR #2471 Qodo fix
+wave — 2026-09-06. That wave added the three sentences above about the
+start-stamped display name, the retryable failed rename, and control
+characters / Markdown punctuation in a typed name; all three are covered by
+pilot/unit tests
+(`Tests/UI/test_meetings_screen.py::test_a_display_name_change_mid_meeting_never_splits_the_live_rows`,
+`Tests/UI/test_library_media_speaker_rename.py::test_a_failed_rename_restores_meeting_json_so_a_retry_can_succeed`
+and its Markdown twin, plus the two name-sanitization cases in the same
+file), not by a live session. Earlier stamp: feat/meeting-followups @
+e060f8d27 + the final-review fix wave — 2026-09-06. That wave made the "either shape the app itself writes"
 sentence above true (the rename used to refuse every `post_transcribe =
 false` recording, which this page had implied it accepted); it is covered by
 `Tests/UI/test_library_media_speaker_rename.py::
