@@ -158,11 +158,16 @@ async def test_console_failed_regenerate_auto_restores_previous_answer():
         )
 
         gateway.release.set()
-        await _wait_until(
+        failure_feedback = await _wait_until(
             pilot,
-            lambda: any(
-                message.startswith("Provider stream failed:") and severity == "error"
-                for message, severity in notifications
+            lambda: next(
+                (
+                    message
+                    for message, severity in notifications
+                    if message.startswith("Provider stream failed:")
+                    and severity == "error"
+                ),
+                None,
             ),
             "visible provider-failure feedback",
         )
@@ -184,6 +189,16 @@ async def test_console_failed_regenerate_auto_restores_previous_answer():
         assert failure_row.content == controller.run_state.visible_copy
         assert failure_row.content.startswith("Provider stream failed:")
         assert pending_replacement.id not in active_path
+
+        active_messages = store.messages_for_session(session.id)
+        failure_notice = active_messages[-1]
+        assert failure_notice.role is ConsoleMessageRole.SYSTEM
+        assert failure_notice.content == failure_feedback
+        assert store.active_leaf(session.id) == failure_notice.id
+        assert store.active_path_message_ids(session.id)[-2:] == [
+            source.id,
+            failure_notice.id,
+        ]
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.query_one(f"#console-message-{source.id}")

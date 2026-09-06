@@ -152,3 +152,23 @@ handoff settlement calls the current owner. No behavioral assertions removed,
 no production change, no new ADR. Full lint, changed-region format, diff checks
 and independent review pass. First inventory pass was 1,071 passed / 20 failed;
 607 unreached cases continue in 31 complete files. AC3 and task remain open.
+
+Final remaining-inventory qualification (2026-09-06): all 1,698 selected
+identities were executed; the original 53 distinct failures now have 48 accepted
+passing unchanged/replacement contracts. Current-owner UI fixtures, exact prompt
+and skill callback guards, ADR-097 local soft-delete retention with content-free
+sync/provider exclusion, and failed-regeneration source-plus-notice behavior are
+qualified without production changes. Root file groups pass 74, 25, 116, 19, 26,
+51 and 127 as recorded in the checkpoint (groups may overlap). Final raw queue
+spy review correction passes all20; it guards the actual prompt queue and demands
+no recorded dispatch. Independent review and scoped static checks pass.
+
+Do not count the rejected forced-scroll Stop candidate: the original test remains
+red. Remaining baseline failures are two dictation retry cases, Stop clipping,
+character Chat warm handoff and a teardown ContentsRebuilt race. Their root causes
+and bounded proposals are TASK31817/31822/31823/31824; a conditional downstream
+Capture-On system-provenance failure is TASK31825. Fresh size guard remains
+4 passed / 1 failed (16,900/16,818 lines, 508/505 methods); ceilings unchanged.
+The brainstorming production-design approval hold and full-suite opt-in remain
+unanswered. AC3 and this task remain In Progress, with precise evidence and the
+remaining ledger in backlog/docs/dev-test-review-checkpoint-2026-09-05.md.

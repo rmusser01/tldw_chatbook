@@ -282,9 +282,13 @@ async def test_model_apply_exact_origin_is_captured_before_catalog_await(
                 origin.id
             )
         ),
-        _providers_models_for_console_settings=delayed_catalog,
-        _provider_readiness_app_config=lambda: {},
-        _console_context_control_state_for_session=context_state_for_session,
+        _provider_selection=SimpleNamespace(
+            _providers_models_for_console_settings=delayed_catalog,
+            _provider_readiness_app_config=lambda: {},
+        ),
+        _context_cost=SimpleNamespace(
+            _console_context_control_state_for_session=context_state_for_session,
+        ),
         _settings_navigation=SimpleNamespace(
             _console_settings_initial_draft=(
                 ConsoleSettingsNavigationController._console_settings_initial_draft
