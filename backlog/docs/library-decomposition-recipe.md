@@ -4205,14 +4205,16 @@ the two prior series used:
   decorator-driven whitelist misses them; and no code anywhere spells
   `screen.on_prompt_block_editor_back_requested`, so a **reference-count
   census reports them as zero-referenced and marks all six PRUNE**. Deleting
-  them would have silently unhooked `LibraryScreen` from six messages with
-  every test still green, because the canvas widget below also defines
-  handlers of the same names and keeps handling them one level down.
+  them would have silently unhooked `LibraryScreen` from six messages.
   **The rule this generalises to: before pruning any moved name matching
   `on_[a-z]`, check it against Textual's name-based dispatch, not just
   against the reference census.** (The 6 do appear to have "code
   references" in a naive census — but every hit is a `def` of the SAME name
-  in an unrelated class, which is the opposite of a caller.)
+  in a DIFFERENT class, which is the opposite of a caller: 2 in
+  `Widgets/Library/library_prompts_canvas.py`, 4 more in a
+  `Tests/UI/test_prompt_block_editor.py` harness. That coincidence is also
+  why the deletion would have stayed green — the canvas keeps handling its
+  own two one level down.)
 
 Of the remaining 88 candidates (1 staticmethod + 87 plain), **49 have a
 genuine external caller** and **39 have none**. Every verdict was derived
@@ -4226,8 +4228,9 @@ The broad pass is what earns its keep: it caught three names
 callables** — `self.call_after_refresh(self._arm_library_prompt_editor)`,
 `sync_memberships=lambda: self._sync_library_prompt_memberships`, and one
 passed as a positional argument on its own line — which a `<name>\s*\(`
-call-shaped regex scores as zero, marking all three PRUNE. That is the skills series' own lesson-2 sanity check
-(§19) firing for real rather than passing vacuously.
+call-shaped regex scores as zero, marking all three PRUNE. That is the
+skills series' own lesson-2 sanity check (§19) firing for real rather than
+passing vacuously.
 
 **A second novel census finding: an uncollected-but-executable script under
 `Docs/`.** `_library_prompt_can_update_original` has zero references in

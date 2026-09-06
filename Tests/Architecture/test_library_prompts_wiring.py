@@ -426,7 +426,11 @@ _PROMPTS_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: *`; Textual resolves these off `Message.handler_name` through
 #: `MessagePump._get_dispatch_methods`, so deleting one silently stops the
 #: screen handling that message) -- and 49 more with a genuine external
-#: caller.
+#: caller. One of those 49, `_library_prompt_can_update_original`, has its
+#: only caller OUTSIDE `tldw_chatbook/` and `Tests/`, in an uncollected
+#: evidence script (`Docs/superpowers/reviews/evidence/task-22033/
+#: task22033_live_matrix_runner.py`) -- a census narrowed to the two usual
+#: roots reports it as zero-referenced.
 _PROMPTS_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     {
         "_apply_library_prompt_detail_failure",

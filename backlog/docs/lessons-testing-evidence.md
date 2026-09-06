@@ -11474,3 +11474,52 @@ widget `display`. A mounted regression proved four unwanted dispatches. Its firs
 attempt also exposed that `Screen.is_current` includes background screens. Use
 `app.screen is screen` for top-screen-only I/O, including deferred dispatch gates;
 exercise real cover/return and retained-owner refresh, not a visibility mock.
+
+## A zero-reference census does NOT license deleting a Textual `on_<Message>` handler (library wave-6 task 3, 2026-09-05)
+
+**The incident.** The prompts cleanup ran the recipe's delegator-prune census
+over 139 moved names: for each, every reference anywhere in the repo, in all
+four spellings (attribute, quoted-string, bare-assignment, patch-target
+table). Six names came back with ZERO references and were headed for
+deletion: `on_prompt_block_editor_back_requested` and its five siblings on
+`LibraryScreen`. Nothing calls them, and nothing names them in a string —
+correctly, because **Textual never calls them by reference**. `Message`
+sets `cls.handler_name = f"on_{name}"`
+(`textual/message.py:86`), and `MessagePump._get_dispatch_methods` walks
+`self.__class__.__mro__` doing a NAME lookup for exactly that string
+(`textual/message_pump.py:743-758, :817-821`). Deleting the six would have
+unhooked the screen from six messages.
+
+It would also have looked GREEN. Two of the six names are defined again, on a
+different class, in `Widgets/Library/library_prompts_canvas.py` (the canvas
+keeps handling its own copies one level down), and four more in a
+`Tests/UI/test_prompt_block_editor.py` harness — so a naive census even
+reports "code references exist", and the suite would not have noticed the
+screen going deaf.
+
+**What to do.** The recipe's transform whitelist (`@on`, `action_*`) is
+incomplete: name-convention `on_<snake_message_name>` handlers are a THIRD
+unconditional keep. Before pruning any moved name matching `^on_[a-z]`, check
+it against Textual's name dispatch, not against the reference census. And
+treat "the only 'references' are `def`s of the same name in other classes" as
+a red flag, not as evidence of use — that is the signature of name dispatch,
+not of a caller.
+
+## Check a dead-import candidate against `_SURFACE` by exact name, not by a subsystem-word grep (library wave-6 task 3, 2026-09-05)
+
+**The incident.** The recipe already requires checking every dead-import
+candidate individually against `Tests/Architecture/test_library_support_layer_
+surface.py`'s `_SURFACE` re-export contract — a rule written after that
+contract bit two earlier series. This task's first check honoured the rule
+but implemented it as a case-sensitive `grep "prompt"` over that file, which
+returned ZERO matches. It looked like a clean result. Five of the 30
+candidates are in fact pinned there — `LIBRARY_PROMPT_DIRTY_VETO_COPY`,
+`LIBRARY_PROMPT_SAVE_STATUS_COPY`, `_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP`,
+`_LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS`, `_LIBRARY_PROMPT_WRITE_WORKER_
+GROUPS` — every one spelling it `PROMPT`, uppercase. Deleting all five would
+have turned `test_screen_still_re_exports_every_moved_name` red. The re-check
+(exact-name lookup per candidate) caught them.
+
+**What to do.** "Check against `_SURFACE`" means resolve each candidate NAME
+against the contract, one at a time. A grep for the subsystem word is a
+different, weaker question, and it answers "no" for the wrong reason.
