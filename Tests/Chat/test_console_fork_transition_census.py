@@ -99,6 +99,9 @@ DELEGATED_TRANSITION_ROUTES = {
     "pause_auto_speak": "_set_speech_preferences",
     "resume_auto_speak": "_set_speech_preferences",
     "set_auto_speak": "_set_speech_preferences",
+    "set_session_user_display_name_override_for_commit": (
+        "set_session_user_display_name_override"
+    ),
 }
 
 # These public methods assign a fork field but cannot race an eligible fork:
@@ -291,8 +294,83 @@ def _root_name(node: ast.expr) -> str | None:
     return current.id if isinstance(current, ast.Name) else None
 
 
+def _has_detached_settings_drain(node: ast.AST) -> bool:
+    """Recognize the existing local carrier, not an exemption for its method."""
+    if not isinstance(node, ast.AsyncFunctionDef) or (
+        node.name != "_join_console_settings_persistence_drain"
+    ):
+        return False
+    nodes = tuple(ast.walk(node))
+    allowed_targets: set[ast.AST] = set()
+    bindings: list[str] = []
+    for child in nodes:
+        if isinstance(child, (ast.AnnAssign, ast.NamedExpr)) and (
+            child.value is not None
+            and _root_name(child.value) in {"drain", "lifecycle"}
+        ):
+            return False
+        if isinstance(child, ast.Assign) and len(child.targets) != 1:
+            if _root_name(child.value) in {"drain", "lifecycle"}:
+                return False
+        if not isinstance(child, ast.Assign) or len(child.targets) != 1:
+            continue
+        target = child.targets[0]
+        name, value = _expr_text(target), _expr_text(child.value)
+        if name == "lifecycle":
+            if value != (
+                "self._settings_persistence_lifecycles.setdefault("
+                "session_id, _ConsoleSettingsPersistenceLifecycle())"
+            ):
+                return False
+            bindings.append("lifecycle")
+        elif name == "drain":
+            if value in {"lifecycle.drain", "None"}:
+                bindings.append(value)
+            elif isinstance(child.value, ast.Call) and (
+                _expr_text(child.value.func) == "_ConsoleSettingsPersistenceDrain"
+            ):
+                bindings.append("constructor")
+            else:
+                return False
+        elif name == "lifecycle.drain":
+            if value not in {"drain", "None"}:
+                return False
+        elif _root_name(child.value) in {"drain", "lifecycle"}:
+            # Do not lose provenance through an additional local alias.
+            return False
+        else:
+            continue
+        allowed_targets.add(target)
+    if sorted(bindings) != ["None", "constructor", "lifecycle", "lifecycle.drain"]:
+        return False
+    for child in nodes:
+        # Catch walrus, augmented, destructuring, loop/with and deleted bindings,
+        # not only ordinary Assign nodes. Unknown syntax keeps the event live.
+        if isinstance(child, (ast.Name, ast.Attribute)) and isinstance(
+            child.ctx, (ast.Store, ast.Del)
+        ):
+            if _expr_text(child) in {"drain", "lifecycle", "lifecycle.drain"}:
+                if child not in allowed_targets:
+                    return False
+        if isinstance(child, ast.arg) and child.arg in {"drain", "lifecycle"}:
+            return False
+        if isinstance(child, (ast.MatchAs, ast.MatchStar, ast.ExceptHandler)):
+            if child.name in {"drain", "lifecycle"}:
+                return False
+        if isinstance(child, ast.MatchMapping) and child.rest in {"drain", "lifecycle"}:
+            return False
+        if isinstance(child, ast.Call) and _expr_text(child.func) in {
+            "setattr",
+            "delattr",
+        }:
+            if child.args and _root_name(child.args[0]) in {"drain", "lifecycle"}:
+                return False
+    return True
+
+
 def _mutation_events(node: ast.AST) -> tuple[tuple[int, str | None], ...]:
     bindings = _owner_bindings(node)
+    detached_settings_drain = _has_detached_settings_drain(node)
     parameter_names = set()
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         parameter_names = {arg.arg for arg in (*node.args.posonlyargs, *node.args.args)}
@@ -325,6 +403,13 @@ def _mutation_events(node: ast.AST) -> tuple[tuple[int, str | None], ...]:
             targets = [child.func.value]
             field = "rag_scope"
         for target in targets:
+            if (
+                detached_settings_drain
+                and isinstance(child, ast.Assign)
+                and len(child.targets) == 1
+                and _expr_text(target) == "drain.context_policy_overrides"
+            ):
+                continue
             attrs = {
                 nested.attr
                 for nested in ast.walk(target)
@@ -1195,6 +1280,30 @@ class Store:
     assert "public" in _fork_mutating_routes(methods)
 
 
+def _assert_delegated_transition(
+    route: str,
+    owner: str,
+    methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
+) -> None:
+    node = methods[route]
+    assert owner in _called_attributes(node)
+    assert "_fork_source_transition" in _called_attributes(methods[owner])
+    if route == "set_session_user_display_name_override_for_commit":
+        calls = [
+            child
+            for child in ast.walk(node)
+            if isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == owner
+        ]
+        assert [_expr_text(call) for call in calls] == [
+            "self.set_session_user_display_name_override("
+            "commit.session_id, value, global_default=global_default)"
+        ]
+        assert not _mutation_events(node)
+        assert _self_calls(node) & _fork_mutating_routes(methods) == {owner}
+
+
 def test_public_fork_transition_inventory_is_bidirectional() -> None:
     methods = _store_methods()
     actual_direct = {
@@ -1207,8 +1316,7 @@ def test_public_fork_transition_inventory_is_bidirectional() -> None:
     for route in DIRECT_TRANSITION_ROUTES - {"fork_source_transition"}:
         assert _transitioned(methods[route], methods=methods), route
     for route, owner in DELEGATED_TRANSITION_ROUTES.items():
-        assert owner in _called_attributes(methods[route])
-        assert "_fork_source_transition" in _called_attributes(methods[owner])
+        _assert_delegated_transition(route, owner, methods)
 
     detached = methods["persist_roleplay_projection_plan"]
     assert "self" not in {
@@ -1217,6 +1325,127 @@ def test_public_fork_transition_inventory_is_bidirectional() -> None:
     assert "fork_transition_token" in {
         node.attr for node in ast.walk(detached) if isinstance(node, ast.Attribute)
     }
+
+
+def test_settings_drain_is_not_a_live_fork_mutation() -> None:
+    methods = _store_methods()
+    assert not _mutation_events(methods["_join_console_settings_persistence_drain"])
+    assert not {
+        "persist_console_settings_commit_serialized",
+        "retry_console_settings_persistence",
+        "reconcile_durable_turn_settings",
+    } & _fork_mutating_routes(methods)
+
+
+@pytest.mark.parametrize(
+    "injected",
+    (
+        "drain = session",
+        "lifecycle = session",
+        "lifecycle.drain = session",
+        "drain += session",
+        "(drain := session)",
+        "for drain in sessions: pass",
+        "with context() as drain: pass",
+        "setattr(lifecycle, 'drain', session)",
+        "session.context_policy_overrides = context_policy_overrides",
+        "self._new_live_mutation(session_id)",
+    ),
+)
+def test_settings_drain_cannot_hide_live_mutations(injected: str) -> None:
+    methods = _store_methods()
+    name = "_join_console_settings_persistence_drain"
+    source = ast.unparse(methods[name])
+    anchor = "drain.context_policy_overrides = context_policy_overrides"
+    assert source.count(anchor) == 1
+    methods[name] = _synthetic_callable(
+        source.replace(anchor, injected + "; " + anchor)
+    )
+    methods["_new_live_mutation"] = _synthetic_method(
+        "def _new_live_mutation(self, session_id):\n"
+        "    self._sessions[session_id].title = 'changed'\n"
+    )
+
+    assert {
+        "persist_console_settings_commit_serialized",
+        "retry_console_settings_persistence",
+        "reconcile_durable_turn_settings",
+    } <= _fork_mutating_routes(methods)
+
+
+@pytest.mark.parametrize(
+    "injected",
+    (
+        "alias: object = lifecycle; alias.drain = session",
+        "(alias := lifecycle); alias.drain = session",
+        "alias = second_alias = lifecycle; alias.drain = session",
+    ),
+)
+def test_settings_drain_rejects_alternative_alias_bindings(injected: str) -> None:
+    methods = _store_methods()
+    name = "_join_console_settings_persistence_drain"
+    source = ast.unparse(methods[name])
+    anchor = "drain = lifecycle.drain"
+    methods[name] = _synthetic_callable(
+        source.replace(anchor, injected + "; " + anchor)
+    )
+    assert _mutation_events(methods[name])
+
+
+def test_settings_drain_rejects_pattern_capture_of_live_session() -> None:
+    methods = _store_methods()
+    name = "_join_console_settings_persistence_drain"
+    source = ast.unparse(methods[name])
+    anchor = "drain.context_policy_overrides = context_policy_overrides"
+    methods[name] = _synthetic_callable(
+        source.replace(
+            anchor,
+            "match self._sessions[session_id]:\n"
+            "                case drain:\n"
+            "                    " + anchor,
+        )
+    )
+    assert _mutation_events(methods[name])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("receiver", "owner", "value", "default", "live_write", "extra_child"),
+)
+def test_committed_name_delegation_rejects_unguarded_changes(mutation: str) -> None:
+    methods = _store_methods()
+    route = "set_session_user_display_name_override_for_commit"
+    owner = "set_session_user_display_name_override"
+    wrapper = methods[route]
+    call = next(
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == owner
+    )
+    if mutation == "receiver":
+        call.func.value = ast.Name(id="other_store", ctx=ast.Load())
+    elif mutation == "owner":
+        call.args[0] = ast.Constant(value="other-session")
+    elif mutation == "value":
+        call.args[1] = ast.Constant(value="wrong-name")
+    elif mutation == "default":
+        call.keywords[0].value = ast.Constant(value="wrong-default")
+    else:
+        statement = (
+            "session.title = 'changed'"
+            if mutation == "live_write"
+            else "self._new_live_mutation(commit.session_id)"
+        )
+        wrapper.body.insert(-1, ast.parse(statement).body[0])
+        methods["_new_live_mutation"] = _synthetic_method(
+            "def _new_live_mutation(self, session_id):\n"
+            "    self._sessions[session_id].title = 'changed'\n"
+        )
+    ast.fix_missing_locations(wrapper)
+    with pytest.raises(AssertionError):
+        _assert_delegated_transition(route, owner, methods)
 
 
 def test_every_public_direct_fork_field_assignment_is_fenced_or_classified() -> None:

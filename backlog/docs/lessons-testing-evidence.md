@@ -12069,3 +12069,15 @@ writer drains cancellation before its task can finish. Event-controlled real
 SQLite tests keep the writer blocked during delivered cancellation and sibling
 failure, verify that forks remain rejected, then release the writer and verify
 cleanup. Test the lifetime of the actual writer, not just the awaiting caller.
+
+## AST binding checks must include captures and alternative assignment syntax
+
+**TASK-31808, 2026-09-06 dev review.** Narrowing a false-positive fork mutation
+to a verified pending-work carrier initially passed 44 census tests. Review
+showed that an annotated alias could poison its lifecycle, while a `match`
+capture could bind the carrier name directly to a live session. Four additional
+mutations reproduced the misses: annotated, walrus and chained aliases plus a
+pattern capture. Checking only `Assign` and `Name(Store)` was insufficient;
+pattern and exception binding names are string fields in the AST. Keep detached
+recognition local to the proven target, reject unexpected binding forms, and
+exercise the actual classifier with poisoned bindings before trusting a pass.
