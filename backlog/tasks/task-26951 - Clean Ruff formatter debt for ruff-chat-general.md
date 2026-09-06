@@ -55,7 +55,6 @@ Clean the `ruff-chat-general` Ruff formatter batch at the owner boundary recorde
 ```
 
 ## Acceptance Criteria
-<!-- AC:BEGIN -->
 Owner-approved exception (2026-09-05): strict AST parity permits only splitting the first combined import in `test__zz_probe2.py` into three imports preserving order, replacing the unused `note_id = db.add_change_note(...)` assignment in `test_mark_notes_delivered_empty_list_is_noop` with the identical call expression, and removing the unused `threading` import from `test_fleet_autowake.py`. Verify these precise changes separately and compare formatting against the corrected baseline; all other AST structure and comments/directives remain protected.
 <!-- AC:BEGIN -->
 - [x] #1 After rebasing onto current `origin/dev`, reproduce and reconcile every TASK-26000 assigned path; if upstream deleted, renamed, modified, or already formatted it, record that lineage and amend ownership mechanically without silently dropping it or absorbing an unassigned path. <!-- TASK-26000-CONTRACT: rebase-reconcile --><!-- TASK-26000-CONTRACT: drift-reconciliation -->
@@ -124,4 +123,3 @@ At integration base `c0fa6639a1fd294bf2bfbdc043c0dcb70782a689`, the compact JSON
 
 - `Tests/Chat/test_anthropic_caching_degrade.py`: `ed6c31a4687b3fc2532c71f6b70922a4de664f93`, `c2db1f7054cadbabd03fe7b92b25dda97fc12280`, and `75c69f2f34bbbbd0be853bfed6574a8085cd8b1a` added prompt-cache behavior and review corrections.
 - `Tests/Chat/test_fleet_attention.py`: `b3860842c0f74cb0c6a5a1d37e7d997cf30c9aa9` completed the Console activity switchboard.
-<!-- AC:END -->
