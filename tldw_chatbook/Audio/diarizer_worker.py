@@ -59,11 +59,53 @@ def _embed(encoder, torch, np, pcm: bytes):
     return np.asarray(emb.squeeze().detach().cpu().numpy(), dtype=np.float32)
 
 
+def _reconcile_windows(spans, embeddings, live_centroids, max_speakers, cluster_fn):
+    """Pure (no torch): cluster window embeddings, reconcile to live ids.
+
+    The authoritative Stop pass. ``cluster_fn(embeddings, num_speakers)`` is the
+    project's batch agglomerative pass -- its labels can differ from (and so
+    correct) the greedy live labels, which is the whole point of reconciliation.
+
+    Args:
+        spans: One ``(start_s, end_s)`` per window, in file order.
+        embeddings: One embedding per window (same order/length as ``spans``).
+        live_centroids: The live cluster centroids held during the meeting.
+        max_speakers: Cap on the batch speaker count.
+        cluster_fn: ``(np.ndarray[n,d], int) -> labels[n]``; skipped when one
+            speaker or fewer than two windows.
+
+    Returns:
+        Segment dicts (``start_s``/``end_s``/``speaker``), speaker = reconciled
+        live id (falls back to the final label when nothing lives to match).
+    """
+    import numpy as np
+
+    from tldw_chatbook.Audio.diarizer_cluster import reconcile
+
+    if not embeddings:
+        return []
+    num_speakers = max(1, min(len(live_centroids), max_speakers, len(embeddings)))
+    if num_speakers == 1 or len(embeddings) < 2:
+        labels = [0] * len(embeddings)
+    else:
+        labels = [int(x) for x in cluster_fn(np.asarray(embeddings, dtype=np.float32), num_speakers)]
+
+    grouped: dict[str, list] = {}
+    for label, emb in zip(labels, embeddings):
+        grouped.setdefault(f"F{label}", []).append(emb)
+    final_centroids = [(key, np.mean(vecs, axis=0)) for key, vecs in grouped.items()]
+    mapping = reconcile(live_centroids, final_centroids)  # final label -> live id
+    return [
+        {"start_s": s0, "end_s": s1, "speaker": mapping.get(f"F{label}", f"F{label}")}
+        for (s0, s1), label in zip(spans, labels)
+    ]
+
+
 def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float, max_speakers: int):
-    """Cluster the whole file, reconcile to live ids, return segment dicts."""
+    """Embed the whole file (torch), then cluster + reconcile to live ids."""
     import torchaudio
 
-    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer, reconcile
+    from tldw_chatbook.Local_Ingestion.diarization_service import ClusteringMethod, DiarizationService
 
     wav, sr = torchaudio.load(wav_path)  # (channels, samples)
     if wav.shape[0] > 1:
@@ -77,19 +119,24 @@ def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float
     win = int(WINDOW_S * sr)
     floor = int(0.4 * sr)  # skip a too-short tail window
 
-    batch = OnlineClusterer(max_speakers=max_speakers)
-    placed: list[tuple[float, float, str]] = []
+    spans: list[tuple[float, float]] = []
+    embeddings: list = []
     for pos in range(a, b, win):
         chunk = wav[0, pos:pos + win]
         if chunk.shape[0] < floor:
             continue
         with torch.no_grad():
             emb = encoder.encode_batch(chunk.unsqueeze(0)).squeeze().detach().cpu().numpy()
-        fid = batch.assign(np.asarray(emb, dtype=np.float32))
-        placed.append((pos / sr, min(pos + win, b) / sr, fid))
+        spans.append((pos / sr, min(pos + win, b) / sr))
+        embeddings.append(np.asarray(emb, dtype=np.float32))
 
-    mapping = reconcile(live.centroids(), list(batch.centroids().items()))  # final id -> live id
-    return [{"start_s": s0, "end_s": s1, "speaker": mapping.get(fid, fid)} for s0, s1, fid in placed]
+    # Cheap: __init__ loads no models; only _cluster_speakers (sklearn) runs.
+    svc = DiarizationService(config={
+        "max_speakers": max_speakers,
+        "min_speakers": 1,
+        "clustering_method": ClusteringMethod.AGGLOMERATIVE.value,
+    })
+    return _reconcile_windows(spans, embeddings, live.centroids(), max_speakers, svc._cluster_speakers)
 
 
 def _write(stdout, obj) -> None:

@@ -147,6 +147,52 @@ def test_diarize_parses_segments():
     assert segs[0].start_s == 0.0 and segs[1].end_s == 3.0
 
 
+def test_batch_uses_agglomerative_pass_with_live_count_and_reconciles():
+    # The torch-free Stop-pass seam: cluster window embeddings with the
+    # injected agglomerative pass, then reconcile final labels -> live ids.
+    import numpy as np
+
+    from tldw_chatbook.Audio.diarizer_worker import _reconcile_windows
+
+    live = {"S1": np.array([1.0, 0.0], np.float32), "S2": np.array([0.0, 1.0], np.float32)}
+    embs = [
+        np.array([1.0, 0.05], np.float32), np.array([0.05, 1.0], np.float32),
+        np.array([1.0, 0.0], np.float32), np.array([0.0, 1.0], np.float32),
+    ]
+    spans = [(0.0, 1.5), (1.5, 3.0), (3.0, 4.5), (4.5, 6.0)]
+    seen: dict = {}
+
+    def fake_cluster(x, n):
+        seen["n"] = n
+        seen["rows"] = x.shape[0]
+        return np.array([0, 1, 0, 1])  # two final clusters
+
+    out = _reconcile_windows(spans, embs, live, 8, fake_cluster)
+    assert seen["n"] == 2       # min(len(live)=2, max_speakers=8, len(embs)=4)
+    assert seen["rows"] == 4
+    # final label 0 (near S1) -> S1; final label 1 (near S2) -> S2
+    assert [s["speaker"] for s in out] == ["S1", "S2", "S1", "S2"]
+
+
+def test_batch_skips_clustering_for_a_single_live_speaker():
+    import numpy as np
+
+    from tldw_chatbook.Audio.diarizer_worker import _reconcile_windows
+
+    live = {"S1": np.array([1.0, 0.0], np.float32)}
+    embs = [np.array([1.0, 0.0], np.float32), np.array([0.9, 0.1], np.float32)]
+    spans = [(0.0, 1.5), (1.5, 3.0)]
+    called = {"v": False}
+
+    def fake_cluster(x, n):
+        called["v"] = True
+        return np.zeros(len(x))
+
+    out = _reconcile_windows(spans, embs, live, 8, fake_cluster)
+    assert called["v"] is False                       # 1 speaker -> no clustering
+    assert [s["speaker"] for s in out] == ["S1", "S1"]
+
+
 def test_close_is_best_effort_and_idempotent():
     proc = FakeProc(['{"id": "S1"}\n'])
     d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc)
