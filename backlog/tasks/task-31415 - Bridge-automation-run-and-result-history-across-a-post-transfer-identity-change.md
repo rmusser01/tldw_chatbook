@@ -62,3 +62,9 @@ AC#5 ruling: NOT bridged, recorded as server-side/data-does-not-exist-locally. T
 
 Files: tldw_chatbook/Scheduling/db/scheduled_tasks_db.py (_definition_id_aliases + 3 call sites), tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py (_definition_results_query, _definition_unread_result_ids simplified to single calls), Tests/Scheduling/test_scheduled_tasks_db.py (3 new tests), Docs/User_Guide/schedules.md (AC#5 gap note).
 <!-- SECTION:NOTES:END -->
+
+**Known limitation (from review, LOW, pre-existing):** `_definition_id_aliases`
+resolves without an owner scope from its current callers; two different owners
+sharing a `server_id` would make the `LIMIT 1` pick arbitrary. The exposure
+predates this change (the workbench's hand-rolled both-id loops had it too)
+and the collision surface is narrow; noted here rather than fixed.
