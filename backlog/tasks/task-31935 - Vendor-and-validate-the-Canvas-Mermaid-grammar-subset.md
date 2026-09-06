@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:11'
-updated_date: '2026-09-06 23:45'
+updated_date: '2026-09-06 23:52'
 labels:
   - canvas
   - v2
@@ -50,4 +50,6 @@ Reason: Direct implementation of the accepted offline library and pinned Unicode
 Implemented the pinned Mermaid 11.17.2 Jison grammar subset, Unicode 16.0.0 / UAX29 revision45 tables, closed semantic admission and shared document parse budgets. The stdlib-only Python 3.12.11 vendor authenticates the full archive and extracts only the declared maps, metadata and license; independent builds match every output byte. The real candidate retains verified assets and separate source-byte accounting while execution remains disabled and the diagram default remains null. Added explicit package data, separate notices and the test-only real-hash candidate fixture. Validation: 112 final Mermaid semantic/vendor tests passed (including all 1093 official Unicode rows and two offline rebuilds), plus 2 branch/rejoin cases; preceding affected run had 166 passes with one subsequently fixed input-preprocessing interruption, including successful legacy runtime rebuild and loopback checks. Scoped Ruff, formatter and node syntax checks pass; 3 existing lint findings outside the edited runtime-test range and the existing RequestsDependencyWarning are unchanged. ADR: backlog/decisions/124-canvas-mermaid-subset-and-immutable-runtime-profiles.md. Compatibility and the comment-preprocessing testing lesson are updated. Parent review and status completion remain pending.
 
 Review fix round 1: reproduced and fixed the production-47 trailing-whitespace compound-edge bypass; sequence comments now use upstream token boundaries and flow preprocessing tracks pipe labels, preserving literal percent pairs; emphasis refusal includes punctuation boundaries. Added exact-label, whitespace, formatting, directive and long-comment controls. Affected checks: 187 passed, 1 existing offline-runtime-cache skip, 1 unchanged loopback test deselected; 4 additional directive/long-sequence-comment controls passed. Candidate assets/catalog regenerated and two-build identity check passed; no budget, input-version or release-policy changes. Task remains In Progress for re-review.
+
+Review fix round 2: underscore emphasis boundaries now include Unicode symbol categories as well as punctuation. RED: 12 symbol-boundary failures and 2 ordinary-label positives. GREEN: 147 Mermaid semantic/integrity/reproducibility checks passed with only the existing warning; scoped Ruff, formatter, node syntax and diff checks passed. Previous compound-edge and comment-label fixes are untouched; candidate remains non-executable. In Progress for scoped re-review.
 <!-- SECTION:NOTES:END -->

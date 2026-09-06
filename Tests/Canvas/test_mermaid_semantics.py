@@ -383,3 +383,40 @@ def test_review_long_sequence_comment_keeps_raw_input_accounting():
         "line": None,
         "column": None,
     }
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "_emphasis_+",
+        "+_emphasis_",
+        "_emphasis_€",
+        "_emphasis_©",
+        "_emphasis_^",
+        "😀_emphasis_😀",
+    ],
+)
+@pytest.mark.parametrize("family", ["flow", "sequence"])
+def test_review_underscore_emphasis_uses_symbol_punctuation(label, family):
+    source = (
+        f'flowchart TD\nA["{label}"]'
+        if family == "flow"
+        else "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: " + label
+    )
+    result = run_mermaid_case({"operation": "parse", "source": source})
+    assert result["ok"] is False, result
+    assert result["error"]["code"] == "unsupported-label"
+
+
+@pytest.mark.parametrize("family", ["flow", "sequence"])
+def test_review_symbol_punctuation_keeps_ordinary_label_content(family):
+    label = "first_name + last_name € © ^ 😀"
+    source = (
+        f'flowchart TD\nA["{label}"]'
+        if family == "flow"
+        else "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: " + label
+    )
+    result = run_mermaid_case({"operation": "parse", "source": source})
+    assert result["ok"] is True, result
+    rows = result["model"]["nodes" if family == "flow" else "messages"]
+    assert rows[0]["label"] == label
