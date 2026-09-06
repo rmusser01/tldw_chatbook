@@ -15,6 +15,7 @@ from typing import Mapping
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from loguru import logger as loguru_logger
 from rich.cells import cell_len
 from textual import events
 from textual.app import App, ComposeResult
@@ -10732,6 +10733,21 @@ def _painted_cells(host, region):
     return cells
 
 
+def _painted_text(host, region) -> str:
+    """Compositor-rendered text for every row inside ``region``.
+
+    Same shape as ``test_library_media_render_fixes.py``'s ``_painted`` --
+    asserting the actual painted glyphs, not a widget's ``.renderable``,
+    is how task-31221's ``*:focus`` bug (a solid outline painting OVER
+    content while region/renderable assertions stayed green) got caught.
+    """
+    strips = list(host.screen._compositor.render_strips())
+    return "\n".join(
+        strips[y].crop(region.x, region.right).text
+        for y in range(region.y, min(region.bottom, len(strips)))
+    )
+
+
 def _row_is_painted_focused(host, row) -> bool:
     """Whether ``row`` really carries the media row focus cue on screen.
 
@@ -16027,13 +16043,19 @@ async def test_source_snapshot_timeout_paints_a_warning_callout_with_its_own_ret
         callout = await _wait_for_selector(screen, pilot, "#library-hub-load-failure")
         assert callout.has_class("ds-recovery-callout")
         assert not callout.has_class("is-blocked")
-        assert str(
-            screen.query_one("#library-hub-load-failure-copy", Static).renderable
-        ) == state.message
+        copy = screen.query_one("#library-hub-load-failure-copy", Static)
+        assert str(copy.renderable) == state.message
         retry = screen.query_one("#library-source-retry", Button)
         assert retry in list(callout.query(Button)), (
             "the Retry must live INSIDE the callout, next to the reason"
         )
+        # Final review M-6: the actual PAINTED glyphs, not just the
+        # Static's ``.renderable`` -- an app-global focus outline can paint
+        # over content while a renderable/CSS-class assertion stays green
+        # (the task-31221 lesson `_painted_text` exists for).
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "Retry" in _painted_text(host, retry.region)
         # AC#3: Continue is no longer the failure's control, and nothing
         # navigated away from Library.
         assert not screen.query("#library-hub-continue")
@@ -16041,6 +16063,47 @@ async def test_source_snapshot_timeout_paints_a_warning_callout_with_its_own_ret
         # No false zeros anywhere: the callout carries the failure instead.
         hub_counts = str(screen.query_one("#library-hub-counts", Static).renderable)
         assert "Notes (0)" not in hub_counts
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_timeout_logs_one_warning_with_a_deadline_marker(
+    monkeypatch,
+):
+    """task-31632 final review I-2: splitting the deadline into its own
+    ``except TimeoutError`` branch (AC#2) dropped the only log line the old
+    bare ``except`` gave every failure kind, timeouts included -- a hung
+    snapshot became diagnosable only from the running UI. The fix routes the
+    timeout through the SAME warning call the hard-failure branch already
+    emits (no new ``logger.*`` call site), with a marker naming the deadline.
+    """
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
+    )
+    app = _library_source_failure_app(_SlowLibraryNotesScopeService())
+    host = LibraryHarness(app)
+
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING")
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lookup_recovery_state is not None,
+                message="Snapshot timeout never produced a recovery state.",
+            )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    matches = [
+        text
+        for text in messages
+        if "Failed to load local Library source snapshot." in text
+    ]
+    assert len(matches) == 1, (
+        f"expected exactly one warning for the timeout, found {matches!r}"
+    )
+    assert "waited 0.05 s" in matches[0]
 
 
 @pytest.mark.asyncio
@@ -16068,11 +16131,59 @@ async def test_source_snapshot_hard_failure_paints_an_error_callout_named_by_cla
         callout = await _wait_for_selector(screen, pilot, "#library-hub-load-failure")
         assert callout.has_class("ds-recovery-callout")
         assert callout.has_class("is-blocked")
+        copy = screen.query_one("#library-hub-load-failure-copy", Static)
         retry = screen.query_one("#library-source-retry", Button)
         assert retry in list(callout.query(Button))
+        # Final review M-6: painted glyphs, not just ``.renderable`` (see the
+        # timeout test's own comment for why).
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "Retry" in _painted_text(host, retry.region)
         assert not screen.query("#library-hub-continue")
         assert host.seen_routes == []
         assert "private-snapshot-failure" not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_repeated_identical_failure_still_repaints():
+    """task-31632 final review I-1: ``_apply_local_source_snapshot``'s
+    dataclass-equality dedup treats two separately-built
+    ``DestinationRecoveryState``s with identical fields as unchanged, so
+    pressing Retry against a PERSISTENT, byte-identical hard failure produced
+    zero visible change -- the exact "Retry reads as inert" class of bug this
+    branch fixes everywhere else. A repeat failure must bump ``attempt`` so
+    equality breaks and the callout reads a fresh attempt number.
+    """
+    app = _library_source_failure_app(_RaisingLibraryNotesScopeService())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        first_state = screen._library_lookup_recovery_state
+        assert first_state.attempt == 1
+        first_generation = screen._library_snapshot_state_generation
+        await _wait_for_selector(screen, pilot, "#library-source-retry")
+
+        await pilot.click("#library-source-retry")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_snapshot_state_generation > first_generation,
+            message="Retry against an identical failure produced no repaint.",
+        )
+
+        second_state = screen._library_lookup_recovery_state
+        assert second_state.attempt == 2, (
+            "a repeated, byte-identical failure must still visibly repaint"
+        )
+        copy = str(
+            screen.query_one("#library-hub-load-failure-copy", Static).renderable
+        )
+        assert "attempt 2" in copy
 
 
 @pytest.mark.asyncio

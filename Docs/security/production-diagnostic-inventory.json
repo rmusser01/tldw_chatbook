@@ -2820,7 +2820,7 @@
     },
     {
       "call_count": 104,
-      "diagnostic_digest": "4bbbf33e6f485be7555b",
+      "diagnostic_digest": "bf46c11a19bf8997409f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"

@@ -106,6 +106,9 @@ knows more than the source owners do:
   is red and waits for you to press **Retry**. The reason is the failure's own
   words for an operating-system or database error, and otherwise just its type
   name (for example `RuntimeError`), so a private path is never painted.
+  Pressing **Retry** against an unchanged failure still repaints — the
+  message gains "· attempt 2", "· attempt 3", and so on, so a press is never
+  silent even when the outcome repeats.
 - **From your Library** uses cached summaries in the fixed order **Database
   Notes → Media → Conversations**. Missing or unresolved sources are omitted;
   the order does not imply that items were ranked against each other.

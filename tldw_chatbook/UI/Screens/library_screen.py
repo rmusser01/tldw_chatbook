@@ -920,6 +920,21 @@ def _assign_library_reader_preferences_attribute(
     setattr(target, tail, value)
 
 
+def _log_source_snapshot_failure(deadline_marker: str = "") -> None:
+    """The one warning both source-snapshot failure branches share.
+
+    task-31632 final review I-2: splitting the deadline into its own
+    ``except TimeoutError`` branch left it with no log line at all, while
+    the hard-failure branch kept the single ``warning`` the old bare
+    ``except`` gave every failure kind. Routing both branches through this
+    one call -- instead of adding a second ``logger.*`` site -- keeps the
+    call-site count unchanged; only its own text (the marker) differs.
+    """
+    logger.opt(exception=True).warning(
+        f"Failed to load local Library source snapshot.{deadline_marker}"
+    )
+
+
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
@@ -12937,6 +12952,27 @@ class LibraryScreen(BaseAppScreen):
             if study_counts is not None
             else {"study_decks": None, "flashcards_due": None, "quizzes": None}
         )
+        if recovery_state is not None:
+            previous_recovery = self._library_lookup_recovery_state
+            if (
+                previous_recovery is not None
+                and dataclasses.replace(recovery_state, attempt=1)
+                == dataclasses.replace(previous_recovery, attempt=1)
+            ):
+                # task-31632 final review I-1: a byte-identical repeat
+                # failure must still visibly repaint, never go silent --
+                # bumping ``attempt`` breaks the equality check below (and
+                # the ones above never differ for a repeat, since records/
+                # counts/lookup_error are just as static) so the callout
+                # reads a fresh attempt number instead of nothing at all.
+                recovery_state = dataclasses.replace(
+                    recovery_state, attempt=previous_recovery.attempt + 1
+                )
+                # Keep the two in sync: every existing ``_library_lookup_
+                # error`` consumer (the rail's Details line, the bare
+                # ``#library-canvas-error`` Statics) already reads
+                # ``recovery_state.message`` through this field.
+                lookup_error = recovery_state.message
         presentation_changed = not self._library_loaded or (
             normalized_records != self._local_source_records
             or normalized_counts != self._local_source_counts
@@ -13498,8 +13534,13 @@ class LibraryScreen(BaseAppScreen):
             # collapsed into the same static sentence, a deadline the next
             # attempt may beat read as an indefinite outage. This is the one
             # place the deadline figure is true, so the reason quotes it.
-            # No log line: the deadline is the expected shape of a slow
-            # source, and the generic branch below keeps the single warning.
+            # Final review I-2: shares the generic branch's one warning
+            # (via ``_log_source_snapshot_failure``) with a deadline marker,
+            # so a chronic/repeated deadline stays diagnosable off-screen
+            # too, without a second ``logger.*`` call site.
+            _log_source_snapshot_failure(
+                f" (deadline: waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s)"
+            )
             timeout_state = load_failure_recovery_state(
                 what=LIBRARY_SOURCE_TIMEOUT_COPY,
                 reason=f"waited {LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS:g} s",
@@ -13516,9 +13557,7 @@ class LibraryScreen(BaseAppScreen):
                 empty_study_counts,
             )
         except Exception as exc:
-            logger.opt(exception=True).warning(
-                "Failed to load local Library source snapshot.",
-            )
+            _log_source_snapshot_failure()
             # ``_retry_failure_reason`` is the shared leak rule the Media
             # callout already applies: an OS/SQLite message is the reader's
             # own words, anything else is reduced to its class name so an

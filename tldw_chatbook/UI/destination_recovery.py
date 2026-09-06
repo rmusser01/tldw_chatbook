@@ -24,6 +24,14 @@ class DestinationRecoveryState:
             (`$error`, a hard failure).
         retry_id: Id of the Retry button that recovers this state, for callouts
             that carry their own Retry. Empty when recovery is not a retry.
+        attempt: How many consecutive times this same failure has repeated
+            (task-31632 final review I-1). A caller that dedups a fresh state
+            against the previous one by equality (this dataclass's own
+            ``==``) would otherwise render nothing when a Retry reproduces a
+            byte-identical failure -- bumping this on repeat breaks that
+            equality so the repaint, and the reason for it, are both visible.
+            Defaults to 1 (a first attempt); ``message`` stays silent about it
+            until it actually repeats.
     """
 
     status_label: str
@@ -36,6 +44,7 @@ class DestinationRecoveryState:
     disabled_tooltip: str
     severity: Literal["error", "warning"] = "warning"
     retry_id: str = ""
+    attempt: int = 1
 
     @staticmethod
     def _sentence(value: str) -> str:
@@ -46,9 +55,17 @@ class DestinationRecoveryState:
 
     @property
     def message(self) -> str:
-        """Render the one-line callout copy: what failed, then why."""
+        """Render the one-line callout copy: what failed, then why.
 
-        return f"{self.unavailable_what} · {self.why}"
+        Silent about ``attempt`` on a first failure; once a caller bumps it
+        past 1 (the same failure repeating), the label names the attempt so
+        a retry against an unchanged failure still reads as a fresh press.
+        """
+
+        base = f"{self.unavailable_what} · {self.why}"
+        if self.attempt > 1:
+            return f"{base} · attempt {self.attempt}"
+        return base
 
     @property
     def visible_copy(self) -> str:

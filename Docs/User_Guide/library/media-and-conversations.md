@@ -217,11 +217,14 @@ and the Undo-gets-focus-so-Enter-undoes behavior to the receipt paragraph
 above. Confirmed against the product code and its tests, not re-verified
 live for this doc-only pass.)*
 
-*Verified against fix/media-wave5-g @ de24c4bac — 2026-09-05 (task-31632:
+*Verified against fix/media-wave5-g @ c9b3f3a77 — 2026-09-05 (task-31632:
 launched with a scratch profile whose media DB path is a directory; Library ▸
 Media painted one red-bordered callout reading "Couldn't load media ·
 ValueError" with "Retry" on the same row — the only Retry on screen — and
-pressing it repainted the callout and left focus on that button.)*
+pressing it repainted the callout and left focus on that button. The same run
+is the evidence for the "Retry" row's class-name-only disclosure above:
+`ValueError`, not a raw path, is exactly what a non-OS/database reason
+renders as.)*
 
 *Verified against fix/media-wave5-f @ 1b1d8b8d84 — 2026-09-05 (tasks
 31631 / 31634 / 31567: select mode now focuses a row on entry so Down and
