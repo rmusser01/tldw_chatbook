@@ -232,3 +232,18 @@ d0ec95b16f17668af9e32725eed788aeeed1d991
 # bypass-fixture seeding line and the screen size-ratchet re-pin. Zero method
 # bodies touched.
 76b248c05811de06277f5fbae7abe5bc2de59b29
+
+# Wave-7 task 2: media controller + delegators (media series 2/3). 141 of the
+# 251 media-named LibraryScreen methods relocated verbatim into
+# LibraryMediaController (UI/Library_Modules/library_media_controller.py),
+# each replaced by a one-line screen delegator; the other 110 stayed
+# screen-resident and full-bodied (73 unbound-fake-self, 16
+# instance-attribute-monkeypatch, 8 inspect.getsource census, 4
+# module-globals-coupling, 3 screen-identity, 2 class-monkeypatch, 2
+# bypassed-construction-lifecycle, 1 shared shell helper, 1 generic
+# dispatcher). Every moved body byte-for-byte identical, verified both
+# TEXT-wise and by ast.dump. Also: four module-level constants relocated to
+# screen_constants.py and imported back, the born-lazy controller import, the
+# 91-dependency construction site, both size-ratchet re-pins, the
+# preimport-closure suffix and the wiring pins. Zero logic changes.
+9187bd281916c79f5412838af322a3c07cbb3ff0
