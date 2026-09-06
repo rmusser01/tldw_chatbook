@@ -1048,7 +1048,7 @@ now a one-line delegator on `LibraryScreen` with the modal push living in
 EXCLUSION — still screen-resident, still correct, do not touch it.)
 
 **The rows cannot simply be repointed.** `_SUPPORTED_OWNER_SCOPES`
-(**`:518-524`** — re-verified here; the review note said `:520-526`)
+(**`:520-526`** — the review note had this RIGHT; the fix round's "re-verification" wrote `:518-524`, which spans two blank lines and misses the fifth `_OwnerScope` entry and the closing paren. Corrected by the coordinator after the scoped re-review caught it against the live file — third count-class error to survive a "verified" claim this task; the number-verification lesson applies to line ranges too.)
 hard-codes the only five `(file, class)` pairs discovery will parse:
 `library_screen.py`/`LibraryScreen`,
 `prompt_collections.py`/`LibraryPromptCollectionsController`, and three
