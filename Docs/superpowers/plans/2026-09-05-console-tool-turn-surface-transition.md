@@ -151,6 +151,15 @@ Reason: the compound surface and recovery handoff extend cross-module contracts.
 
 **Interfaces:** Consume the public gateway and native-reader behavior from Tasks 1/2; produce evidence and reviewed PR updates, not a new runtime API.
 
+Owner-approved reference amendment (2026-09-05): ADR required: yes, amend
+`backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md`.
+Reason: explicitly replace the former pinned M4 Pro identity with the
+directly verified local M5 Max/18-core/128-GiB host. Update only hardware identity
+and fixture version to 5; preserve workload, environment software pins and every
+threshold. Run the whole latency test file without correctness-only opt-in and
+retain its raw artifact outside automatic pytest retention. Record the result
+without claiming equivalence to the former hardware or closing other PR gates.
+
 - [x] **Step 1: Strengthen measured growth coverage.** Extend the existing real-gateway fixture with repeated completed-tool/next-send transitions; assert hand-counted new surface nodes/events per transition and unchanged earlier reconstruction. Keep ADR-097 growth and latency gates unchanged. Root executes relevant existing tests; no full suite.
 - [ ] **Step 2: Run affected trace, gateway/controller, Canvas and startup checks.** Preserve existing warning/baseline qualifications rather than raising budgets. Run all three mandatory Chromium Canvas browser files after runtime integration is stable; optional browser absences remain explicit skips, not claims of coverage.
 - [ ] **Step 3: Broad review of this repair range and its integration with Canvas.** Reviewer gets the approved spec, complete diff since `c2d5aac3a`, reports and parked findings. Resolve load-bearing issues before merge readiness.

@@ -274,6 +274,25 @@ defines staged verification. This amendment authorizes the contract, not a claim
 that implementation or merge verification is complete. It adds no Canvas
 privileges, dependency, synchronization contract or new persistence registry.
 
+### Amendment recorded 2026-09-05: owner-approved latency reference replacement
+
+For TASK-31742, the owner explicitly approved replacing the latency reference
+machine with the current host after a direct hardware check: Mac17,6, Apple M5
+Max, 18 logical CPUs, 137438953472 bytes (128 GiB). Fixture version 5 identifies
+this host as `tldw-mac17-6-m5-max-18c-128gb-apfs-v5`, replacing the M4 Pro
+14-core/48-GiB version 4 reference. Keep arm64/APFS, CPython 3.12.11, SQLite
+3.49.1, sample counts/order, SQLite settings, checkpoint policy and all numerical
+thresholds unchanged. Non-reference hosts still fail release qualification;
+correctness-only opt-in is not release evidence.
+
+This is an explicit reference-platform change, not proof of equivalent performance
+on the old hardware. Retain the new raw benchmark artifact and report its exact
+environment and whether thresholds were applied. The previous M5 diagnostic run
+against version 4 remains non-reference evidence and is not retroactively promoted.
+Retaining the old reference would require another machine; silently bypassing
+identity checks or raising thresholds was rejected. This changes no runtime or
+storage contract and does not waive current-head integration/PR gates.
+
 ## Consequences
 
 - Safe remains diagnostically useful because the stored trace can explain provider-

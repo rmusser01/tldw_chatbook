@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 21:37'
-updated_date: '2026-09-06 03:44'
+updated_date: '2026-09-06 03:58'
 labels:
   - canvas
   - review
@@ -32,12 +32,21 @@ Resolve every finding posted on PR 2432 with verified corrections or evidence-ba
 - [x] #8 Both agent-mode and ordinary fresh next-message sends support the verified transition after a completed tool turn; other routes gain no implicit permission.
 - [x] #9 Short-lived trace worker operations release only their owned database handles on completion, failure and cancellation; repeated real agent and settlement operations do not accumulate exited-thread handles, and caller-owned or same-file observer connections remain usable.
 - [x] #10 After a proven pre-dispatch trace failure, explicit Send without capture and Cancel work for ordinary and agent sends without reviving terminal trace calls, weakening uncertain-delivery guards, or dispatching automatically.
+- [x] #11 The explicitly owner-approved M5 Max reference fixture is versioned and documented in ADR-097; workload and numerical limits are unchanged, and a retained benchmark artifact proves environment matching and threshold enforcement.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR for direct review corrections. ADR path: backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md; ADR-097 governs startup costs. Reason: preserve existing security and ownership boundaries; stop for design approval if a suggestion requires new authority or architecture. 1. Read every Qodo review body and inline comment; record stable comment IDs and evaluate against actual call paths and approved contracts. 2. Reproduce verified behavioral defects before changes, starting with stale card session routing; use one bounded correction at a time and retain first-use/strict-zero-egress coverage. 3. For path, transactions, bridge validation and configuration findings, use existing shared mechanisms only when semantics remain exact; document justified disagreement instead of inventing containment roots or loosening validation. 4. Correct public helper documentation, compatibility wrapper naming and bounded operational log context; audit diagnostic inventory before regeneration. 5. Run targeted checks and independent review, reply to every original thread with evidence, update the PR and wait for current-head protected CI and Qodo completion. Root exclusively executes isolated pytest/browser checks; no full sweep, OS resource changes or V2 work before merge.
+Approved reference-platform amendment: ADR required: yes, amend
+backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md.
+Reason: the owner explicitly designated the directly verified local M5 Max
+18-core/128-GiB host as the benchmark reference. Reproduce the existing identity
+failure, bump fixture identity/version only, then run the entire latency file
+without non-reference opt-in and retain the raw result outside pytest retention.
+Preserve all workload, software, SQLite and threshold values. Record the changed
+platform honestly; this cannot establish performance on the former M4 Pro.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -56,6 +65,8 @@ Task3 checkpoint ffb934ce9: compound-growth file7passed; corrected observed test
 Broad repair review found fresh AGENT_FIRST actor/chain identities could replay the same unresolved saved turn. Two real gateway regressions confirmed this before product correction. Real agent-enabled Retry anyway positive established its existing Capture Off behavior and unchanged old trace ledger, so the fix reuses the current owner/turn unresolved-call query for AGENT_FIRST as well as FRESH without a new recovery authority. Post-format preservation selection172passed1Requests warning73.73s; all six preflight guards pass. Scoped final rereview pending. Reference-machine latency and latest-dev migration/task collision/rebase plus fresh Qodo/CI remain open; no merge or V2.
 
 Final scoped rereview of f55ab2cbe..ee27c7193 approves runtimeI1 and minorM2 with no new Critical/Important fix breakage. I2 reference-hardware numerical latency and I3 actual-dev migration/task reconciliation plus current-head PR/Qodo/CI remain unaddressed merge gates. Current code has172focused passes,90Chromium passes(two optional skips),1compound-growth pass and all6preflight guards. No rebase, push, merge or V2 in this checkpoint; keep In Progress/AC4 unchecked. Reference M4Pro14CPU48GiB availability requested from user; actual hostM5Max cannot satisfy the unchanged identity gate.
+
+Owner-approved reference update: amended backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md and the repair plan before changing fixture hardware/version only (v5 M5 Max18CPU128GiB). Fresh v4 gate fails on the four hardware fields:1failed1Requests warning32.25s. Full v5 latency file passes19tests1Requests warning43.11s, environment_match=true and threshold_gate_applied=true with no opt-in. Reservation/dispatch p95 2.811ms/max4.467ms and settlement p95 1.701ms satisfy unchanged10/50/25ms limits; all five per-database checks pass. Both raw sample artifacts retained in the local SDD evidence workspace with SHA-256 digests and exact commands in Docs/Canvas/V1_VERIFICATION.md. No runtime/test-logic changes or claim of performance on the former M4 Pro. I2 closed for this checkpoint; I3 latest-dev migration/task-ID reconciliation, rebase, Qodo/current-headCI and merge remain open. AC4 stays unchecked and task remains In Progress.
 <!-- SECTION:NOTES:END -->
 
 ### Approved integration expansion, 2026-09-05

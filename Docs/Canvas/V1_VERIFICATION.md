@@ -21,8 +21,9 @@ skips, 1 Requests warning, 180.07s**, and all six derived preflight checks pass.
 Changed-range formatting and fatal static checks pass; ordinary Ruff remains
 unchanged from the fix baseline (41 existing findings across the four files).
 Scoped rereview of `f55ab2cbe..ee27c7193` approves the runtime fix and prose
-corrections with no new Critical/Important breakage. Reference-machine latency
-and latest-dev integration/PR gates remain open; this is not merge approval.
+corrections with no new Critical/Important breakage. The owner-approved version 5
+reference-machine latency gate now passes (see below); latest-dev integration/PR
+gates remain open. This is not merge approval.
 The implemented repair composes exactly one verified replacement then
 one saved-user append; exact owned Retry and three-way commit reconciliation
 preserve at-most-once adapter entry. Operation-owned SQLite cleanup preserves
@@ -41,7 +42,53 @@ The custom-API `api_key_resolved` failure was reproduced on the baseline, and
 Requests dependency warnings and ordinary Ruff debt remain qualified. No full
 repository sweep, global lint-clean or global resource-cleanliness claim is made.
 
-Task 3 current-tree commands (root execution, repository test isolation):
+### Owner-approved latency reference update
+
+After a direct local hardware check, the owner explicitly approved replacing the
+M4 Pro reference with this Mac17,6/M5 Max/18-core/128-GiB host. Fixture version 5
+and the [ADR-097 amendment](../../backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md)
+record that change. No workload, numerical threshold, software pin, SQLite setting
+or non-reference refusal policy changed. This does not establish performance on
+the former M4 Pro or retroactively qualify the older diagnostic run.
+
+Runtime baseline: `c8ba26a296dbe15c1706c1dfd437b76bfa22c476`, with only the
+approved fixture and documentation changes. Root executed:
+
+```sh
+env -u TLDW_TRACE_LATENCY_ALLOW_NON_REFERENCE ../../.venv/bin/python -m pytest -q --tb=short --show-capture=no --basetemp=/private/tmp/chatbook-trace-reference-v5.NSHpRx/before Tests/Benchmarks/test_console_trace_call_latency.py::test_console_trace_call_persistence_latency_reference_gate
+env -u TLDW_TRACE_LATENCY_ALLOW_NON_REFERENCE ../../.venv/bin/python -m pytest -q --tb=short --show-capture=no --basetemp=/private/tmp/chatbook-trace-reference-v5.NSHpRx/after Tests/Benchmarks/test_console_trace_call_latency.py
+```
+
+Before: **1 failed, 1 Requests warning, 32.25s**, exactly the four hardware identity
+fields; `threshold_gate_applied=false`. After: **19 passed, 1 Requests warning,
+43.11s**, `environment_match=true`, no mismatches, `threshold_gate_applied=true`.
+All five databases and aggregate checks pass unchanged limits: reservation plus
+dispatch p95 **2.811ms ≤10ms**, max **4.467ms ≤50ms**; settlement p95
+**1.701ms ≤25ms**. Each database retained 1,000 measured samples per operation
+after 100 warmups. CPython3.12.11/SQLite3.49.1/APFS/arm64 match the unchanged pins.
+The existing Requests dependency warning remains; no full suite was run.
+
+Both raw artifacts are retained outside automatic pytest retention at the
+`before`/`after` paths above, under `test_console_trace_call_persis0/`, and copied
+without overwrite into the retained local evidence workspace:
+`.superpowers/sdd/2026-09-05-console-tool-turn-surface-transition/`.
+The copied files and SHA-256 digests are:
+
+- `latency-reference-v4-before.json`: `a9cac4da50c8072c7b244924e10b8911861d8338829948c2ea28fca762522b55`.
+- `latency-reference-v5-after.json`: `633206d14f553b69816992196093fd01bfaedd9444a4b9cf20354469cf6aed36`.
+- Version 5 fixture: `e5efa726deb24d22e6301d2a6e3d365e6a6e3a22c075e8113a38eceee7f94dda`.
+
+Self-review confirms a normalized fixture comparison is identical after excluding
+the four hardware fields, reference identity and version. `git diff --check` and
+`PYTHON=../../.venv/bin/python ./scripts/preflight.sh` pass (all six categories).
+No executable Python changed, so no new Python lint/format claim is made.
+
+This closes I2 for this checkpoint only. Migration/task-ID reconciliation,
+latest-dev rebase, fresh Qodo and current-head CI remain required before merge.
+
+### Earlier Task 3 evidence
+
+Task 3 earlier checkpoint commands (root execution, repository test isolation):
 
 ```sh
 ../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Benchmarks/test_console_trace_growth.py
@@ -54,7 +101,7 @@ Task 3 current-tree commands (root execution, repository test isolation):
   append/replacement gates pass. The additional two consecutive compound
   transitions each add exactly two nodes, five ordered events and one replacement;
   all six earlier/current native call projections equal hand-written literals.
-- Latency: **18 passed, 1 failed, 1 Requests warning, 38.86s**. The release test
+- Historical version 4 latency: **18 passed, 1 failed, 1 Requests warning, 38.86s**. The release test
   rejects this Mac17,6/M5 Max/18-core/128-GiB host because its reference is
   Mac16,8/M4 Pro/14-core/48-GiB. Python, SQLite, filesystem and architecture match.
   The threshold gate was **not applied**. No waiver or fixture/budget change;
