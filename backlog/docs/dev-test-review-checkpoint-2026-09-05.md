@@ -1055,3 +1055,60 @@ continuation argv establishes an exact current remainder, and renamed/parameteri
 cases cannot be assumed equivalent. `/private/tmp/tldw-nonui-remaining-inventory.json`
 records the qualified reconstruction. A fresh full-suite opt-in was requested;
 until answered, execution remains targeted to the affected Console inventory.
+
+### Inventory execution complete; further scoped qualification
+
+The tail completed **577 passed / 34 failed in 982.28s**
+(`/private/tmp/tldw-console-remaining-inventory-tail.xml`). Together with the
+first pass, all **1,698 selected identities** were exercised: 1,645 passed and
+53 distinct failed identities before subsequent repairs (four launch-wake cases
+overlap the reports). This is the formerly unreached Console selection, not all
+3,286 manifest cases or the repository-wide suite.
+
+The four stale architecture expectations now follow exact current ownership:
+the dictation lambda resolves the owner at invocation; four post-Wave-6 retired
+command facades remain in historical raw accounting and current absent/unique-owner
+checks, with exact late-bound argument-forwarding/await guards. Historical removals
+stay **132**, approved private cleanup stays **64**, and public skill event decorators,
+stop-first ordering and argument forwarding remain pinned. Seven callback mutations
+are rejected. Three complete architecture files: **116 passed in 9.43s**, two
+dependency warnings (`/private/tmp/tldw-inventory-architecture-final.xml`). The
+separate screen-size failure is not part of this repair or waived.
+
+The run-state stop fixture had created only in-memory rows in a durable session:
+its local helper now requests real persistence for the user and empty assistant,
+and the test checks committed stopped content as well as original cancellation
+and other-session isolation. Complete file: **19 passed in 6.22s**, two dependency
+warnings (`/private/tmp/tldw-inventory-run-state-final.xml`).
+
+System-prompt click diagnosis found a zero-size target beneath the collapsed Model
+section. Opening that real section before the real click preserves modal assertions.
+The CSS contract now checks the generated app styling union, including the existing
+lazy Console sheet, instead of incorrectly requiring moved rules in the boot bundle.
+Complete file: **26 passed in 45.14s**, three dependency warnings
+(`/private/tmp/tldw-inventory-system-prompt-final.xml`). No CSS/runtime was changed.
+
+### TASK-31816: newly attributed controller/hydration resources
+
+Shared owner cleanup removed ChaChaNotes retention, but an interim **314 passed**
+run still retained auxiliary handles in eight cases. The fixture now yields a
+standard-library ExitStack for exact database-close callbacks, run after controller
+drain and ChaChaNotes quiescence. Hydration's local fixture disposes only its own
+app runtimes before those database callbacks; it never calls broad app.on_unmount
+or closes a foreign registry. The original live behavior assertions are unchanged.
+Nine callback-order negative controls failed before stack closure and pass after,
+including errors and cancellation.
+
+Final root verification of every shared importing file: **563 passed in 185.03s**,
+three dependency warnings, **no retained SQLite descriptor lines or FD-growth
+warning** (`/private/tmp/tldw-all-owned-resource-importers-final.xml`). Independent
+review and scoped static checks pass. TASK-31816 is Done; no new ADR is needed for
+this test-only use of existing lifecycle APIs.
+
+TASK-31817 records the separately reproduced runtime dictation bug: its retry
+confirmation suspends Console and discards the retained audio, leaving controller
+state idle but the actual mounted composer transcribing. The fake retry omitted
+the real session's availability check, masking the lost audio. Proposed repair
+preserves only the owned retry-dialog suspension and restores the canonical mic
+projection; ordinary navigation/unmount still abandon. The brainstorming skill's
+design approval is pending, so no production dictation change has been made.

@@ -9,6 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.Chat.console_close_helpers import close_controller_session
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
 from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
     RUN_DONE,
@@ -2603,14 +2607,16 @@ async def test_active_session_failure_toast_not_refired_on_terminal_restamp():
     assert len(toasts) == 1
 
 
-def test_inactive_direct_terminal_outcome_publishes_and_corrects_receipt(tmp_path):
+def test_inactive_direct_terminal_outcome_publishes_and_corrects_receipt(
+    tmp_path, close_owned_console_resources
+):
     store = ConsoleChatStore()
     active = store.ensure_session(title="Active")
     background = store.create_session(title="Background", ephemeral=True)
     store.switch_session(active.id)
-    service = ConsoleActivityReceiptService(
-        AgentRunsDB(tmp_path / "activity-runs.db"), None
-    )
+    database = AgentRunsDB(tmp_path / "activity-runs.db")
+    close_owned_console_resources.callback(database.close)
+    service = ConsoleActivityReceiptService(database, None)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=StreamingGateway(),
@@ -2638,12 +2644,15 @@ def test_inactive_direct_terminal_outcome_publishes_and_corrects_receipt(tmp_pat
     assert controller.run_marker_for(background.id) is ConsoleRunMarker.FINISHED_OK
 
 
-def test_inactive_receipt_failure_preserves_compatibility_marker(tmp_path, monkeypatch):
+def test_inactive_receipt_failure_preserves_compatibility_marker(
+    tmp_path, monkeypatch, close_owned_console_resources
+):
     store = ConsoleChatStore()
     active = store.ensure_session(title="Active")
     background = store.create_session(title="Background", ephemeral=True)
     store.switch_session(active.id)
     database = AgentRunsDB(tmp_path / "activity-runs.db")
+    close_owned_console_resources.callback(database.close)
     service = ConsoleActivityReceiptService(database, None)
     controller = ConsoleChatController(
         store=store,
@@ -3754,7 +3763,7 @@ def test_review_hook_leaves_non_file_builtins_unflagged():
     assert row.path_precheck_failed is False
 
 
-def _two_workspace_registry(tmp_path):
+def _two_workspace_registry(tmp_path, cleanup):
     """Build a REAL registry with two workspaces, each bound to a DIFFERENT
     folder, and ws-b set ACTIVE. Used by the round-1-review CRITICAL 1
     regression tests below: a fake registry that merely raises (the
@@ -3765,9 +3774,9 @@ def _two_workspace_registry(tmp_path):
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
-    registry = LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "ws.sqlite", client_id="review-hook-test")
-    )
+    database = WorkspaceDB(tmp_path / "ws.sqlite", client_id="review-hook-test")
+    cleanup.callback(database.close)
+    registry = LocalWorkspaceRegistryService(database)
     registry.ensure_default_workspace()
     registry.create_workspace(workspace_id="ws-a", name="A")
     registry.create_workspace(workspace_id="ws-b", name="B")
@@ -3784,7 +3793,7 @@ def _two_workspace_registry(tmp_path):
 
 
 def test_review_hook_precheck_uses_the_runs_workspace_not_the_active_one(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, close_owned_console_resources
 ):
     """Round 1 review CRITICAL 1: `path_precheck_failed` (threaded through
     `build_tool_review_hook`'s `workspace_id` param) must resolve THIS RUN's
@@ -3801,7 +3810,9 @@ def test_review_hook_precheck_uses_the_runs_workspace_not_the_active_one(
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
-    registry, folder_a, _folder_b = _two_workspace_registry(tmp_path)
+    registry, folder_a, _folder_b = _two_workspace_registry(
+        tmp_path, close_owned_console_resources
+    )
     monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
 
     target_in_a = folder_a / "notes.txt"
@@ -3830,7 +3841,7 @@ def test_review_hook_precheck_uses_the_runs_workspace_not_the_active_one(
 
 
 def test_review_hook_precheck_does_not_fall_back_to_the_active_workspace(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, close_owned_console_resources
 ):
     """Inverse of the above: a path inside ws-b's (the ACTIVE workspace's)
     folder, while the reviewed run is bound to ws-a (which does NOT cover
@@ -3847,7 +3858,9 @@ def test_review_hook_precheck_does_not_fall_back_to_the_active_workspace(
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
     monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
-    registry, _folder_a, folder_b = _two_workspace_registry(tmp_path)
+    registry, _folder_a, folder_b = _two_workspace_registry(
+        tmp_path, close_owned_console_resources
+    )
     monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
 
     target_in_b = folder_b / "notes.txt"
