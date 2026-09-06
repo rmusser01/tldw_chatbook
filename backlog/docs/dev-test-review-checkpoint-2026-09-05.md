@@ -948,7 +948,7 @@ the other 1,347 have no later record. Obsolete unparameterized names are not sil
 mapped to their newer parameterized cases. All seven original pass-three failures
 have later passing reports. Historical evidence is not claimed as a fresh HEAD run.
 Machine inventory: `/private/tmp/tldw-31750-remaining-inventory.json`;
-collection hash `236f6c20e66f572571d99a047992ab8d06877f4bf6f5b3fcbfb9f7f8da9934fa`.
+manifest-path hash `236f6c20e66f572571d99a047992ab8d06877f4bf6f5b3fcbfb9f7f8da9934fa`.
 The first selection stopped at its 20-failure limit: **1,071 passed / 20 failed
 in 813.51s**, plus a new 475-descriptor growth warning that is not yet attributed
 (`/private/tmp/tldw-console-remaining-inventory-current.xml`). The **607 unreached
@@ -1019,3 +1019,39 @@ two dependency warnings (`/private/tmp/tldw-mcp-reap-review-final.xml`).
 These results close the specifically reproduced resource/retry races, not the
 remaining inventory or architecture guards. No production code changed in these
 four tasks; existing lifecycle/retry interfaces require no new ADR.
+
+### First current inventory owner-fixture repairs
+
+Six complete files now pass together: **127 passed in 71.00s**, three existing
+dependency warnings (`/private/tmp/tldw-inventory-six-owner-files-final.xml`).
+The inspector fixture restores its real screen import and moves only cost-data
+assembly to the existing owner. Citation doubles implement current activity-action
+and memory-banner setters; refresh/count assertions are unchanged. Permission
+command output has its message owner, and the draft-clear spy is installed after
+the real command controller is built. Memoization spies follow the actual provider
+selection owner, still delegating to the real uncached method with exact one/two
+call assertions.
+
+The composer tests initialize only their current visible-session/prompts owners.
+Their provider double now accepts the production keyword-only route and asserts
+the exact IMPERSONATE route, preserving payload rules. Production-app navigation
+expects the same installed Console instance under TASK-31520 and retains actual
+Settings leave/return, draft/video/store restoration and retention assertions.
+Prompt handoff tests call the current prompt owner while preserving transient
+release and terminal acknowledgement checks. Nine unused fleet-stub imports were
+removed for lint; no production change or behavioral assertion was removed.
+Independent review, full-file lint, changed-region formatting and diff checks pass.
+TASK-31750 remains open for inventory tail and architecture qualification.
+
+The new 475-FD inventory warning is still under attribution. A 12-file Chat split
+passed **479 tests in 71.77s** with no aggregate warning, but the native per-test
+probe still found retained handles in 14 controller and 14 hydration cases.
+TASK-31816 tracks their exact ChaChaNotes, Workspace/AgentRuns and test-app database
+owners. Passing below a warning threshold is not resource closure.
+
+The wider non-UI inventory is explicitly historical: reconstructed saved reports
+leave roughly 11,900 old identities without latest passing evidence. No saved
+continuation argv establishes an exact current remainder, and renamed/parameterized
+cases cannot be assumed equivalent. `/private/tmp/tldw-nonui-remaining-inventory.json`
+records the qualified reconstruction. A fresh full-suite opt-in was requested;
+until answered, execution remains targeted to the affected Console inventory.

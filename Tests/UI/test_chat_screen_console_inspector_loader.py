@@ -41,6 +41,7 @@ from tldw_chatbook.UI.Console_Modules.context_cost import (
     ConsoleContextCostController,
     _build_console_inspector_exchanges_loader,
 )
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
 def _capture(seq: int = 1, run_tag: str = "run-1", model: str = "m") -> ExchangeCapture:
@@ -387,11 +388,13 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
     )
     pushed = Mock()
     screen = SimpleNamespace(
-        _build_console_inspector_cost_data=lambda: (
-            [],
-            SimpleNamespace(),
-            [],
-            _empty_loader,
+        _context_cost=SimpleNamespace(
+            _build_console_inspector_cost_data=lambda: (
+                [],
+                SimpleNamespace(),
+                [],
+                _empty_loader,
+            ),
         ),
         _ensure_console_chat_controller=lambda: controller,
         _console_active_session_is_ephemeral=lambda: False,
