@@ -12,3 +12,5 @@ Reason: mechanical formatting under the existing TASK-26000 contract; no archite
 4. Rebase on current dev if necessary, repeat affected verification, publish a PR, address Qodo feedback, wait for required CI, merge, and clean up the isolated worktree.
 
 The focused test command uses all 15 task-owned test modules. Structural parity and deterministic replay provide the mutation-sensitive evidence for this formatting-only change; no new behavioral test or full-suite run is planned.
+
+Owner-approved amendment: fix the two E741 generator variable names and one F811 redundant import in the assigned test files. Prove the six identifier substitutions and one import-alias removal explicitly; retain exact AST parity elsewhere and formatter parity against the corrected baseline. The inherited citation failures are assessed by complete before/after outcome parity with identical bounded test commands.
