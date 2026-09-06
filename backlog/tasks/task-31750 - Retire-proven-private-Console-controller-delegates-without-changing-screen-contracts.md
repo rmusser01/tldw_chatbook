@@ -3,11 +3,11 @@ id: TASK-31750
 title: >-
   Retire proven private Console controller delegates without changing screen
   contracts
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 20:06'
-updated_date: '2026-09-06 04:50'
+updated_date: '2026-09-06 16:19'
 labels: []
 dependencies: []
 ---
@@ -22,7 +22,7 @@ Remove redundant private screen forwarding methods so existing controller owners
 <!-- AC:BEGIN -->
 - [x] #1 Exactly the64 approved private delegates are removed and their real callers resolve the existing owners, while public/event/action methods, agent-bridge injection and transcript ephemeral lookup remain intact.
 - [x] #2 Callback lookup phases, arguments, await/return behavior and targeted fault-injection semantics are preserved, with explicit late-bound hook regressions.
-- [ ] #3 Affected whole-file checks and static ownership tests pass or separately evidenced baseline failures remain tracked, and actual screen size satisfies unchanged ceilings without unrelated compression or boundary moves.
+- [x] #3 Affected whole-file checks and static ownership tests pass or separately evidenced baseline failures remain tracked, and actual screen size satisfies unchanged ceilings without unrelated compression or boundary moves.
 - [x] #4 The residual internals-decomposition UI cases preserve real paste confirmation/reset with unchanged payload, compact ready-state geometry relative to the owning tab row, and visible staged source details; the complete affected file passes.
 - [x] #5 The Watchlists follow action remains reachable by a real click after scrolling into view and routes the eligible run exactly once; the complete Console live-work handoff file passes.
 - [x] #6 The seven expanded handoff failures retain real restore/supersession, empty-channel, notice, legacy-state, nested card ownership and media-sendability assertions under current owners; navigation evidence proves the actual leave/return phases, including a reused Console instance.
@@ -39,8 +39,6 @@ ADR required: no. ADR path: N/A. Follow root-approved Docs/superpowers/plans/202
    Diagnosis changed the navigation hypothesis: TASK-31520 intentionally reuses Console. Library navigation completes, but returning resumes the same Console with A still resident and B still pending. No timing-only repair is justified. Proposed bounded runtime repair is to consume and refresh pending live-work handoffs on ordinary resume using the existing claim/acknowledgement and staging paths, preserving suspend/ordered-startup boundaries; hold implementation for design approval under the brainstorming skill. Test-only repairs proceed independently.
 9. User approved the bounded resume repair. Extend real navigation coverage across resident/empty launch and new/no-new handoff combinations; assert same-instance resume, no hidden consumption, rendered latest title, sent-notice clearing only on new staging, and a settled claim. Rename/reuse the existing claim-and-refresh helper from ordinary warm resume (not mount replay or ordered saved-chat startup), without adding a timer or changing acknowledgement/failure containment. Verify red before production edits, then complete handoff/reuse/ordered-resume files and static checks with independent review. ADR required: no; routine lifecycle regression repair preserves ADR-033 handoff ownership and TASK-31520 installed-screen reuse, with no new interface or storage policy.
 10. Complete lifecycle verification exposed two constructor-bypass fixtures that patch a nonexistent prompt owner before invoking startup. Initialize only that owner with their existing async spy, retain release/error assertions unchanged, rerun the complete lifecycle selection and independently review. ADR required: no; test-only fixture repair preserves existing controller ownership.
-<!-- SECTION:PLAN:END -->
-
 11. Remaining exact-node inventory follow-up (2026-09-06): the first 68-file
 selection reached 1,091 cases (1,071 passed / 20 failed). Run complete files
 containing the 607 unreached cases without another failure-count cutoff. For
@@ -53,6 +51,7 @@ report architecture/size failures unless the exact current ownership contract
 can be proved. Run each modified complete file, scoped checks and independent
 review. ADR required: no for test-only owner/precondition corrections; assess
 separately and obtain design approval for any new runtime behavior change.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
@@ -138,6 +137,25 @@ broader task remain open; the testing-evidence lessons record the compose/reuse
 trap. The prior approval hold is resolved by the user's explicit approval.
 
 Final complete five-file lifecycle selection: 147 passed in 243.84s, six existing warning occurrences (/private/tmp/tldw-warm-handoff-lifecycle-final.xml). Includes all 69 live-work handoff tests, Console/generic reuse, ordered-resume navigation and saved active-path coverage. Full changed-file Ruff, changed-region formatting and diff checks pass; independent review found no actionable issues. AC5/AC6/AC7 are qualified; AC3 and overall status remain In Progress for the broader census and unchanged architecture failures.
+
+Final qualification (2026-09-06): the separately approved TASK-31750.1/.2/.3
+repairs close the remaining size, provenance-census and Retry Speech failures.
+Exactly three citation policy helpers move to the existing message owner;
+the original 64-delegate inventory and retained screen contracts are unchanged.
+Actual size and the lowered ceiling are 16,811 lines / 505 methods. The strict
+summary/Settings route census now reflects current capture-off/excluded owners.
+Retry Speech retains a real 90x30 production-CSS click. Final complete-file
+selections: 127 citation/architecture, 593 auxiliary/census, 349 native flow,
+27 narrow/paused-retry, and 13 cleanup-owner controls; all pass (1,109 distinct
+test identities). Native resource attribution is clean after exact-owned
+restart and app-factory fixture cleanup; shared cleanup code and thresholds
+are unchanged. Independent reviews and scoped lint/format checks pass.
+See backlog/docs/dev-test-review-checkpoint-2026-09-05.md for exact XML/logs.
+No new ADR: existing ownership and capture contracts remain intact.
+
+This task is complete, not a full-repository or merge-readiness claim. The
+unrelated Backlog guard still reports pre-existing duplicate IDs 31714/31737/31758;
+their six historical files are unchanged by this qualification.
 <!-- SECTION:NOTES:END -->
 
 Remaining inventory follow-up: six complete repaired files pass together,
