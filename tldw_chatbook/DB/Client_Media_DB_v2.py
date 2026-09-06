@@ -151,6 +151,26 @@ _MEDIA_POST_DELETE_CALLBACKS_LOCK = threading.Lock()
 #: small-allowlist case.
 _MEDIA_IDS_FILTER_JSON_EACH_THRESHOLD = 500
 
+#: Whether the NEWEST document version of a media row carries analysis text
+#: (task-28008). The same "newest version wins" rule the Reader applies in
+#: ``Library.library_media_viewer_state._latest_version_analysis_text``, so
+#: the browse list and the Reader can never disagree about one item.
+#: Projected in SQL rather than looked up per row: both legs ride the
+#: existing ``UNIQUE (media_id, version_number)`` index, so no new index is
+#: needed. The plan is pinned in ``Tests/DB/test_client_media_pagination.py``
+#: with ``sqlite_stat1`` ABSENT -- no DB module here runs ``ANALYZE``, so
+#: that is the state every real user's database is planned in.
+_HAS_ANALYSIS_SELECT = (
+    "EXISTS ("
+    "SELECT 1 FROM DocumentVersions v"
+    " WHERE v.media_id = m.id"
+    " AND v.version_number = ("
+    "SELECT MAX(version_number) FROM DocumentVersions WHERE media_id = m.id"
+    ")"
+    " AND TRIM(COALESCE(v.analysis_content, '')) <> ''"
+    ") AS has_analysis"
+)
+
 
 def register_media_post_ingest_callback(callback: MediaPostIngestCallback) -> None:
     """Register a callback invoked after a media item is added or updated.
@@ -2549,8 +2569,10 @@ class MediaDatabase:
                 any author/type LIKE predicates continue to use ``search_query``.
             offset (Optional[int]): Exact zero-based row offset. When omitted,
                 the legacy ``page`` coordinate determines the offset.
-            library_summary (bool): Select only the four fields required by the
-                Library browse surface. Generic callers retain the broad row.
+            library_summary (bool): Select only the fields required by the
+                Library browse surface (id/title/type/last_modified plus the
+                projected ``has_analysis`` flag). Generic callers retain the
+                broad row.
             chunking_status (Optional[str]): Exact Media chunking status to include.
 
         Returns:
@@ -2644,7 +2666,7 @@ class MediaDatabase:
             "m.deleted",
         ]
         base_select_parts = (
-            ["m.id", "m.title", "m.type", "m.last_modified"]
+            ["m.id", "m.title", "m.type", "m.last_modified", _HAS_ANALYSIS_SELECT]
             if library_summary
             else broad_select_parts
         )

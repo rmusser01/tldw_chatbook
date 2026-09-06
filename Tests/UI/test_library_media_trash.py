@@ -19,6 +19,7 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.library_media_rows import summary_row
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
@@ -4106,13 +4107,12 @@ async def test_restore_via_real_db_moves_item_back_and_updates_counts(tmp_path):
         {
             "remove_ids": (),
             "upsert_items": (
-                {
-                    "id": f"local:media:{trashed_id}",
-                    "backing_media_id": trashed_id,
-                    "title": "Trashed Doc",
-                    "media_type": "document",
-                    "updated_at": None,
-                },
+                summary_row(
+                    id=trashed_id,
+                    title="Trashed Doc",
+                    media_type="document",
+                    updated_at=None,
+                ),
             ),
         },
     ) in fake._mutation_events

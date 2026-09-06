@@ -2732,6 +2732,8 @@ class LibrarySummaryLocalService:
                     "title": "Summary title",
                     "type": "article",
                     "last_modified": "2026-08-16T12:00:00Z",
+                    # SQLite EXISTS projects 1/0, not True/False.
+                    "has_analysis": 1,
                     "content": "PRIVATE_BODY",
                     "path": "/private/media/path",
                 }
@@ -2876,7 +2878,7 @@ async def test_scope_library_media_trash_rejects_server_before_touching_server_s
 
 
 @pytest.mark.asyncio
-async def test_scope_service_library_media_summary_preserves_envelope_and_five_keys():
+async def test_scope_service_library_media_summary_preserves_envelope_and_seven_keys():
     local = LibrarySummaryLocalService()
     scope_service = MediaReadingScopeService(local_service=local, server_service=None)
 
@@ -2912,12 +2914,52 @@ async def test_scope_service_library_media_summary_preserves_envelope_and_five_k
                 "title": "Summary title",
                 "media_type": "article",
                 "updated_at": "2026-08-16T12:00:00Z",
+                "has_analysis": True,
+                # Not a media-DB fact: the screen decorates it from the
+                # active review set. None means "no active set".
+                "reviewed": None,
             }
         ],
         "total": 45,
         "offset": 40,
         "limit": 20,
     }
+
+
+@pytest.mark.asyncio
+async def test_scope_service_normalizes_sql_analysis_presence_to_a_real_bool():
+    """SQLite EXISTS returns 1/0; the contract requires True/False."""
+    local = LibrarySummaryLocalService(
+        {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "Absent",
+                    "type": "article",
+                    "last_modified": "2026-08-16T12:00:00Z",
+                    "has_analysis": 0,
+                },
+                {
+                    "id": 42,
+                    "title": "Present",
+                    "type": "article",
+                    "last_modified": "2026-08-16T12:00:00Z",
+                    "has_analysis": 1,
+                },
+            ],
+            "total": 2,
+            "offset": 0,
+            "limit": 20,
+        }
+    )
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    result = await scope_service.search_media(
+        mode="local", limit=20, offset=0, library_summary=True
+    )
+
+    assert [item["has_analysis"] for item in result["items"]] == [False, True]
+    assert all(item["reviewed"] is None for item in result["items"])
 
 
 @pytest.mark.asyncio
@@ -6890,13 +6932,15 @@ async def test_library_media_browse_filter_matches_keywords_not_only_titles():
 
         assert [item["backing_media_id"] for item in payload["items"]] == [tagged_id]
         assert payload["total"] == 1
-        # The frozen five-key summary shape is unchanged by the keyword leg.
+        # The frozen summary shape is unchanged by the keyword leg.
         assert set(payload["items"][0]) == {
             "id",
             "backing_media_id",
             "title",
             "media_type",
             "updated_at",
+            "has_analysis",
+            "reviewed",
         }
     finally:
         db.close_connection()

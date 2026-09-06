@@ -15872,7 +15872,13 @@ class LibraryScreen(BaseAppScreen):
         media_id: str,
         record: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        """Normalize one known restored row for stale retained display."""
+        """Normalize one known restored row for stale retained display.
+
+        The restore seam does not project ``has_analysis``, so the marker
+        reads as absent until the next page fetch replaces this placeholder
+        -- understating rather than inventing an analysis. ``reviewed`` is
+        decorated from the active review set, never carried here.
+        """
         backing_id = self._required_library_media_backing_id(media_id)
         return {
             "id": f"local:media:{backing_id}",
@@ -15880,6 +15886,8 @@ class LibraryScreen(BaseAppScreen):
             "title": record.get("title"),
             "media_type": record.get("media_type", record.get("type")),
             "updated_at": record.get("updated_at", record.get("last_modified")),
+            "has_analysis": bool(record.get("has_analysis")),
+            "reviewed": None,
         }
 
     @staticmethod

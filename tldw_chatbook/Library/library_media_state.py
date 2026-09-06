@@ -62,8 +62,23 @@ MEDIA_SORT_CHOICES = (
     ("title_asc", "Title A-Z"),
     ("title_desc", "Title Z-A"),
 )
+#: The exact Library Media browse row contract (task-28008). ``has_analysis``
+#: is projected in SQL from the newest ``DocumentVersions`` row, so the list
+#: and the Reader can never disagree about whether an item is analysed.
+#: ``reviewed`` is NOT a media-DB fact: the projection leaves it ``None`` and
+#: the screen decorates it from the active review set (``None`` = no active
+#: set; ``False``/``True`` = in the set, not-yet/reviewed). Keyword match
+#: reasons stay a per-query side channel, deliberately not an eighth key.
 _MEDIA_SUMMARY_KEYS = frozenset(
-    {"id", "backing_media_id", "title", "media_type", "updated_at"}
+    {
+        "id",
+        "backing_media_id",
+        "title",
+        "media_type",
+        "updated_at",
+        "has_analysis",
+        "reviewed",
+    }
 )
 _MEDIA_TRASH_SUMMARY_KEYS = frozenset(
     {"id", "backing_media_id", "title", "media_type", "trash_date"}
@@ -154,7 +169,7 @@ def _freeze_media_summary_value(value: Any) -> Any:
 def validate_media_browse_items(
     items: Sequence[Mapping[str, Any]],
 ) -> tuple[Mapping[str, Any], ...]:
-    """Validate and detach exact five-key Library Media summary rows."""
+    """Validate and detach exact seven-key Library Media summary rows."""
     if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
         raise TypeError("Media browse result items must be a sequence.")
     stable_ids: set[str] = set()
@@ -165,8 +180,12 @@ def validate_media_browse_items(
             raise TypeError("Media browse result items must be mappings.")
         if set(item) != _MEDIA_SUMMARY_KEYS:
             raise ValueError(
-                "Media browse items must contain exactly five summary keys."
+                "Media browse items must contain exactly seven summary keys."
             )
+        if type(item["has_analysis"]) is not bool:
+            raise TypeError("has_analysis must be an exact bool.")
+        if item["reviewed"] is not None and type(item["reviewed"]) is not bool:
+            raise TypeError("reviewed must be True, False or None.")
         backing_id = item["backing_media_id"]
         if type(backing_id) is not int or backing_id < 1:
             raise ValueError("backing_media_id must be a positive integer.")

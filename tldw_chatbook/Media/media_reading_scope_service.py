@@ -503,6 +503,13 @@ class MediaReadingScopeService:
 
     @staticmethod
     def _normalize_local_library_summary(record: Mapping[str, Any]) -> dict[str, Any]:
+        """Project one local row onto the exact seven-key browse contract.
+
+        ``has_analysis`` arrives from SQLite's ``EXISTS`` as 1/0 and is
+        narrowed to a real bool the row validator accepts. ``reviewed`` is
+        not a media-DB fact -- it stays ``None`` here and the Library screen
+        decorates it from the active review set (task-28008).
+        """
         backing_media_id = record.get("id")
         return {
             "id": f"local:media:{backing_media_id}",
@@ -510,6 +517,8 @@ class MediaReadingScopeService:
             "title": record.get("title"),
             "media_type": record.get("type"),
             "updated_at": record.get("last_modified"),
+            "has_analysis": bool(record.get("has_analysis")),
+            "reviewed": None,
         }
 
     @staticmethod

@@ -193,6 +193,7 @@ from Tests.UI.test_destination_shells import (
     _link_library_items_to_active_workspace,
 )
 from Tests.UI.app_factory import _build_test_app as _build_tldw_test_app
+from Tests.UI.library_media_rows import summary_row
 
 
 def _build_test_app(
@@ -553,13 +554,13 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         page = rows[offset : offset + limit]
         return {
             "items": [
-                {
-                    "id": f"local:media:{self._backing_id(row, index)}",
-                    "backing_media_id": self._backing_id(row, index),
-                    "title": row.get("title"),
-                    "media_type": row.get("type"),
-                    "updated_at": row.get("last_modified"),
-                }
+                summary_row(
+                    id=self._backing_id(row, index),
+                    title=row.get("title"),
+                    media_type=row.get("type"),
+                    updated_at=row.get("last_modified"),
+                    has_analysis=bool(row.get("has_analysis")),
+                )
                 for index, row in enumerate(page, start=offset)
             ],
             "total": total,
@@ -26126,13 +26127,12 @@ def _apply_continue_media_scope(
         scope,
         {
             "items": [
-                {
-                    "id": f"local:media:{offset + 1}",
-                    "backing_media_id": offset + 1,
-                    "title": "PRIVATE MEDIA TITLE",
-                    "media_type": scope.media_type or "audio",
-                    "updated_at": "2026-08-21T00:00:00+00:00",
-                }
+                summary_row(
+                    id=offset + 1,
+                    title="PRIVATE MEDIA TITLE",
+                    media_type=scope.media_type or "audio",
+                    updated_at="2026-08-21T00:00:00+00:00",
+                )
             ],
             "total": offset + 1,
             "limit": scope.page_size,
