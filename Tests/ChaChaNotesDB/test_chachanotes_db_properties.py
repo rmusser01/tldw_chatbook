@@ -6,6 +6,7 @@
 # Imports
 import uuid
 import shutil
+import sqlite3
 
 import pytest
 import json
@@ -669,25 +670,23 @@ class TestCascadeAndLinkingProperties:
         # This is an important check of the current behavior.
         assert db_instance.get_message_by_id(msg["id"]) is not None
 
-    def test_hard_deleting_conversation_cascades_to_messages(
+    def test_raw_conversation_delete_cannot_bypass_semantic_preservation(
         self, db_instance: CharactersRAGDB, populated_conversation
     ):
-        """
-        Property: A hard DELETE on a conversation should cascade and delete its
-        messages, enforcing the FOREIGN KEY ... ON DELETE CASCADE constraint.
-        """
+        """An unauthorized cascade must leave both parent and child unchanged."""
         conv = populated_conversation["conv"]
         msg = populated_conversation["msg"]
 
-        # 1. Verify message exists before
-        assert db_instance.get_message_by_id(msg["id"]) is not None
+        before_conversation = db_instance.get_conversation_by_id(conv["id"])
+        before_message = db_instance.get_message_by_id(msg["id"])
+        assert before_conversation is not None and before_message is not None
+        with pytest.raises(sqlite3.IntegrityError, match="semantic mutation"):
+            with db_instance.transaction() as cursor:
+                cursor.execute("DELETE FROM conversations WHERE id = ?", (conv["id"],))
 
-        # 2. Perform a hard delete in a clean transaction
-        with db_instance.transaction() as conn:
-            conn.execute("DELETE FROM conversations WHERE id = ?", (conv["id"],))
-
-        # 3. Now the message should be truly gone.
-        assert db_instance.get_message_by_id(msg["id"]) is None
+        db_instance.close_connection()
+        assert db_instance.get_conversation_by_id(conv["id"]) == before_conversation
+        assert db_instance.get_message_by_id(msg["id"]) == before_message
 
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
     @given(keyword_text=st_required_text)
