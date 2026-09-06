@@ -5247,7 +5247,7 @@ ConsoleExchangeExportDialog {
     color: $ds-status-blocked;
 }
 
-/* Resume is briefly disabled while Roleplay dispatches ID-only navigation.
+/* Resume is briefly disabled while Roleplay dispatches exact typed navigation.
    Neutralize the generic opacity stack and keep the busy label readable while
    the raised surface and dim treatment still distinguish the disabled state. */
 #personas-conversation-resume:disabled {
@@ -5263,9 +5263,38 @@ ConsoleExchangeExportDialog {
 #personas-conversation-resume,
 #personas-conversation-continue-console,
 #personas-conversation-back,
-#personas-conversation-open-library {
+#personas-conversation-open-library,
+#personas-conversation-back-source {
     height: 3;
     min-height: 3;
+}
+
+#personas-conversations-search {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    border: none;
+}
+
+/* At the 52x20 floor the saved-chat preview owns the single pane. Keep full
+   action labels and transcript rows visible instead of spending its cells on
+   the separate test-chat toggle, collapsed rails and nested panel border. */
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-preview-pane {
+    display: none;
+}
+
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-work-area {
+    border: none;
+    padding: 0;
+}
+
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-conversation-navigation-actions {
+    layout: vertical;
+}
+
+#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-conversation-navigation-actions Button {
+    width: 100%;
+    padding: 0;
 }
 
 .workbench-command-strip,

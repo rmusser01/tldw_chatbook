@@ -3,10 +3,11 @@
 
 import asyncio
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 import inspect
 import json
+import os
 from pathlib import Path
 import threading
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from uuid import UUID
 
 import pytest
 from textual.app import App
+from textual.screen import Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -31,6 +33,16 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     CharacterCardImportOutcome,
     CharacterCardTTSInspection,
+)
+from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+    LocalCharacterConversationTarget,
+    ResolvedLocalCharacterKey,
+)
+from tldw_chatbook.Chat.console_conversation_activation import (
+    CharacterConversationActivationRequest,
+    ConsoleActivationCommit,
+    ConsoleActivationResultKind,
+    ConsoleConversationActivationResult,
 )
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -74,9 +86,16 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaProfileUpdate,
 )
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
+from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
+    RoleplayCharacterConversationLink,
+)
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.UI.Screens.personas_screen import (
+    CharacterConversationLinkOutcome,
+    PersonasScreen,
+)
 from tldw_chatbook.UI.tts_profile_recovery import dependency_recovery_actions
 from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
     PersonaBuddyWidget,
@@ -510,6 +529,22 @@ class TestWorkbenchShell:
             # readiness line never claims ready (F-031 auto-select means a
             # selection exists, so this is the provider gate talking).
             assert "blocked" in str(readiness.renderable).lower()
+
+    async def test_52_by_20_roleplay_shows_exactly_one_workbench_pane(
+        self, mock_app_instance, stub_characters
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(52, 20)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            panes = (
+                screen.query_one("#personas-library-pane"),
+                screen.query_one("#personas-work-area"),
+                screen.query_one("#personas-inspector-pane"),
+            )
+            assert sum(bool(pane.display) for pane in panes) == 1
 
     async def test_header_band_merges_purpose_and_count(
         self, mock_app_instance, stub_characters
@@ -3764,6 +3799,1027 @@ class _StyledNavCaptureApp(_NavCaptureApp):
     CSS_PATH = StyledPersonasTestApp.CSS_PATH
 
 
+class _RoleplayActivationApp(_StyledNavCaptureApp):
+    """Mounted caller harness implementing the production app-owned seam."""
+
+    def __init__(self, mock_app_instance):
+        super().__init__(mock_app_instance)
+        self.activation_started = asyncio.Event()
+        self.activation_release = asyncio.Event()
+        self.activation_requests: list[CharacterConversationActivationRequest] = []
+
+    async def activate_character_conversation_from_roleplay(
+        self, request, cancellation, phase_changed
+    ):
+        self.activation_requests.append(request)
+        self.activation_started.set()
+        await self.activation_release.wait()
+        if cancellation.is_set():
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.CANCELLED_PRECOMMIT,
+                request.target,
+                False,
+            )
+        phase_changed("finishing")
+        return ConsoleConversationActivationResult(
+            ConsoleActivationResultKind.FAILED, request.target, True
+        )
+
+
+class _RaisingRoleplayActivationApp(_StyledNavCaptureApp):
+    """Production-seam harness that raises after source ownership is claimed."""
+
+    async def activate_character_conversation_from_roleplay(
+        self, request, cancellation, phase_changed
+    ):
+        phase_changed("finishing")
+        raise RuntimeError("activation failed")
+
+
+class _CharacterActivationColdHost:
+    """Cold-route cache adapter for reduced app orchestration harnesses."""
+
+    def _current_runtime_identity(self):
+        return None
+
+    def _reusable_navigation_screen(self, _route, _identity):
+        return None
+
+    def _retain_reusable_navigation_screen(self, route, identity, screen):
+        TldwCli._retain_reusable_navigation_screen(self, route, identity, screen)
+
+
+async def test_app_preflight_keeps_roleplay_current_until_caller_cancels() -> None:
+    """The production app orchestration does not mount Console before commit."""
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            started.set()
+            await release.wait()
+
+        async def activate_character_conversation(self, _request, cancellation):
+            raise AssertionError("cancelled preflight must not reach hydration")
+
+    candidate = SimpleNamespace(_workspace=_Workspace())
+
+    class _AppHost(_CharacterActivationColdHost):
+        def __init__(self):
+            self.pushes = 0
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+        async def push_screen(self, _screen):
+            self.pushes += 1
+
+    host = _AppHost()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    cancellation = asyncio.Event()
+    phases: list[str] = []
+    task = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, cancellation, phases.append
+        )
+    )
+    await started.wait()
+    assert host.pushes == 0
+    cancellation.set()
+
+    result = await task
+    release.set()
+    assert result.kind is ConsoleActivationResultKind.CANCELLED_PRECOMMIT
+    assert host.pushes == 0
+    assert phases == []
+
+
+async def test_app_escape_cancels_while_global_activation_lane_is_held() -> None:
+    """Waiting for the app-wide lane remains caller-visible and cancellable."""
+
+    lane = asyncio.Lock()
+    await lane.acquire()
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            return None
+
+    candidate = SimpleNamespace(_workspace=_Workspace())
+
+    class _Runtime:
+        character_conversation_activation_lock = lane
+
+    class _Host(_CharacterActivationColdHost):
+        console_runtime = _Runtime()
+        pushes = 0
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+        async def push_screen(self, _screen):
+            self.pushes += 1
+
+    host = _Host()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    cancellation = asyncio.Event()
+    task = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, cancellation, lambda _phase: None
+        )
+    )
+    await asyncio.sleep(0)
+    cancellation.set()
+    result = await task
+    lane.release()
+
+    assert result.kind is ConsoleActivationResultKind.CANCELLED_PRECOMMIT
+    assert host.pushes == 0
+
+
+async def test_app_owner_cancellation_while_waiting_for_lane_leaves_it_reusable() -> None:
+    """Cancelling the activation task cannot orphan a later lock acquisition."""
+
+    lane = asyncio.Lock()
+    await lane.acquire()
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            return ConsoleActivationResultKind.FAILED
+
+    candidate = SimpleNamespace(_workspace=_Workspace())
+
+    class _Host(_CharacterActivationColdHost):
+        def __init__(self):
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=lane
+            )
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+    host = _Host()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    abandoned = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, asyncio.Event(), lambda _phase: None
+        )
+    )
+    await asyncio.sleep(0)
+    abandoned.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await abandoned
+
+    lane.release()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not lane.locked()
+
+    result = await asyncio.wait_for(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, asyncio.Event(), lambda _phase: None
+        ),
+        timeout=1,
+    )
+    assert result.kind is ConsoleActivationResultKind.FAILED
+    assert result.commit_started is False
+    assert not lane.locked()
+
+
+@pytest.mark.parametrize("failure_site", ("constructor", "preflight"))
+async def test_app_precommit_exceptions_never_claim_commit_started(
+    failure_site: str,
+) -> None:
+    """Constructor and preflight failures remain on the reversible side."""
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            raise RuntimeError("preflight failed")
+
+    class _Host(_CharacterActivationColdHost):
+        def __init__(self):
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            if failure_site == "constructor":
+                raise RuntimeError("constructor failed")
+            return SimpleNamespace(_workspace=_Workspace())
+
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    result = await TldwCli.activate_character_conversation_from_roleplay(
+        _Host(), request, asyncio.Event(), lambda _phase: None
+    )
+
+    assert result.kind is ConsoleActivationResultKind.FAILED
+    assert result.commit_started is False
+
+
+async def test_app_transfers_proved_console_into_the_only_content_screen_slot() -> None:
+    """Successful Resume unmounts Roleplay and retains the proved Console."""
+
+    roleplay_unmounted = asyncio.Event()
+
+    class _RoleplayScreen(Screen):
+        def on_unmount(self) -> None:
+            roleplay_unmounted.set()
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            return None
+
+        async def activate_character_conversation_after_commit(
+            self, request, *, finalize_visible
+        ):
+            await finalize_visible()
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.OPENED, request.target, True
+            )
+
+    class _ConsoleScreen(Screen):
+        def __init__(self):
+            super().__init__()
+            self._workspace = _Workspace()
+
+    class _App(_CharacterActivationColdHost, App):
+        def __init__(self):
+            super().__init__()
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+            self.roleplay = _RoleplayScreen()
+            self.candidate = _ConsoleScreen()
+            self.created = 0
+            self.current_tab = "personas"
+
+        def on_mount(self) -> None:
+            self.push_screen(self.roleplay)
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, _ConsoleScreen
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            self.created += 1
+            return self.candidate
+
+        async def _remove_promoted_screen_caller(self, caller):
+            self.candidate_callbacks_before_transfer = tuple(
+                self.candidate._result_callbacks
+            )
+            await TldwCli._remove_promoted_screen_caller(self, caller)
+
+    app = _App()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.screen is app.roleplay
+        roleplay_callbacks = tuple(app.roleplay._result_callbacks)
+
+        result = await TldwCli.activate_character_conversation_from_roleplay(
+            app, request, asyncio.Event(), lambda _phase: None
+        )
+        await pilot.pause()
+
+        assert result.kind is ConsoleActivationResultKind.OPENED
+        assert app.created == 1
+        assert app.screen is app.candidate
+        assert app.is_screen_installed(app.candidate)
+        assert app._reusable_screen_instances[TAB_CHAT][1] is app.candidate
+        assert list(app.screen_stack)[1:] == [app.candidate]
+        assert app.roleplay not in app.screen_stack
+        assert roleplay_unmounted.is_set()
+        # Textual's is_mounted means "has mounted at least once" and is not
+        # reset on removal.  DOM detachment plus the Unmount event prove the
+        # outgoing Roleplay screen actually left the content slot.
+        assert app.roleplay.parent is None
+        assert not app.roleplay.is_running
+        assert len(roleplay_callbacks) == 1
+        assert tuple(app.roleplay._result_callbacks) == roleplay_callbacks[:-1]
+        assert len(app.candidate_callbacks_before_transfer) == 1
+        assert (
+            tuple(app.candidate._result_callbacks)
+            == app.candidate_callbacks_before_transfer
+        )
+        assert (
+            app.candidate._result_callbacks[0]
+            is app.candidate_callbacks_before_transfer[0]
+        )
+
+
+async def test_app_promotion_fault_restores_exact_roleplay_runtime_and_lane() -> None:
+    """A fault after caller removal cannot strand either live screen off-stack."""
+
+    fault_reached = asyncio.Event()
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller._chat_store_accessor = lambda: store
+
+    async def preflight(_request):
+        return None
+
+    async def open_target(_request):
+        owned = store.restore_persisted_session(
+            title="Target",
+            workspace_id=None,
+            persisted_conversation_id="conversation-X",
+            all_nodes=[],
+        )
+        return ConsoleActivationCommit(True, owned)
+
+    async def revalidate(_request):
+        return None
+
+    async def restore(prior_session_id):
+        store.switch_session(prior_session_id)
+
+    controller.preflight_character_conversation_activation = preflight
+    controller._open_character_conversation_activation = open_target
+    controller._revalidate_character_conversation_target = revalidate
+    controller._restore_character_conversation_prior_session = restore
+    controller._character_conversation_target_visible = lambda _request: True
+
+    class _RoleplayScreen(Screen):
+        pass
+
+    class _ConsoleScreen(Screen):
+        def __init__(self):
+            super().__init__()
+            self._workspace = controller
+
+    class _App(_CharacterActivationColdHost, App):
+        def __init__(self):
+            super().__init__()
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+            self.roleplay = _RoleplayScreen()
+            self.candidate = _ConsoleScreen()
+            self.current_tab = "personas"
+
+        def on_mount(self) -> None:
+            self.push_screen(self.roleplay)
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, _ConsoleScreen
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return self.candidate
+
+        async def _remove_promoted_screen_caller(self, caller):
+            assert caller is self.roleplay
+            assert self.screen is self.candidate
+            assert self.roleplay not in self.screen_stack
+            assert self.candidate in self.screen_stack
+            await TldwCli._remove_promoted_screen_caller(self, caller)
+            assert not caller.is_running and caller.parent is None
+            fault_reached.set()
+            raise RuntimeError("fault after Roleplay unmount")
+
+    app = _App()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        roleplay_callbacks = tuple(app.roleplay._result_callbacks)
+        result = await TldwCli.activate_character_conversation_from_roleplay(
+            app, request, asyncio.Event(), lambda _phase: None
+        )
+        await pilot.pause()
+
+        assert fault_reached.is_set()
+        assert result.kind is ConsoleActivationResultKind.FAILED
+        assert not app.is_screen_installed(app.candidate)
+        assert TAB_CHAT not in getattr(app, "_reusable_screen_instances", {})
+        assert app.screen is app.roleplay
+        assert list(app.screen_stack)[1:] == [app.roleplay]
+        assert app.roleplay.is_running and app.roleplay.parent is app
+        assert tuple(app.roleplay._result_callbacks) == roleplay_callbacks
+        assert app.candidate not in app.screen_stack
+        assert not app.candidate.is_running and app.candidate.parent is None
+        assert app.candidate._result_callbacks == []
+        assert store.active_session_id == prior.id
+        assert all(
+            session.persisted_conversation_id != "conversation-X"
+            for session in store.sessions()
+        )
+        lane = app.console_runtime.character_conversation_activation_lock
+        assert not lane.locked()
+        await asyncio.wait_for(lane.acquire(), timeout=1)
+        lane.release()
+
+
+async def test_named_post_commit_cancellation_restores_exact_screen_and_runtime() -> None:
+    """Cancelling app-owned commit work settles exact UI and store rollback."""
+
+    roleplay_unmounted = asyncio.Event()
+    removal_suspended = asyncio.Event()
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    unrelated = store.create_session(title="Unrelated")
+    store.switch_session(prior.id)
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller._chat_store_accessor = lambda: store
+
+    async def preflight(_request):
+        return None
+
+    async def open_target(_request):
+        owned = store.restore_persisted_session(
+            title="Target",
+            workspace_id=None,
+            persisted_conversation_id="conversation-X",
+            all_nodes=[],
+        )
+        return ConsoleActivationCommit(True, owned)
+
+    async def revalidate(_request):
+        return None
+
+    async def restore(prior_session_id):
+        store.switch_session(prior_session_id)
+
+    controller.preflight_character_conversation_activation = preflight
+    controller._open_character_conversation_activation = open_target
+    controller._revalidate_character_conversation_target = revalidate
+    controller._restore_character_conversation_prior_session = restore
+    controller._character_conversation_target_visible = lambda _request: True
+
+    class _RoleplayScreen(Screen):
+        def on_unmount(self) -> None:
+            roleplay_unmounted.set()
+
+    class _ConsoleScreen(Screen):
+        def __init__(self):
+            super().__init__()
+            self._workspace = controller
+
+    class _App(_CharacterActivationColdHost, App):
+        def __init__(self):
+            super().__init__()
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+            self.roleplay = _RoleplayScreen()
+            self.candidate = _ConsoleScreen()
+            self.current_tab = "personas"
+
+        def on_mount(self) -> None:
+            self.push_screen(self.roleplay)
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, _ConsoleScreen
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return self.candidate
+
+        async def _remove_promoted_screen_caller(self, caller):
+            await TldwCli._remove_promoted_screen_caller(self, caller)
+            assert roleplay_unmounted.is_set()
+            assert not caller.is_running and caller.parent is None
+            removal_suspended.set()
+            await asyncio.Future()
+
+    app = _App()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        original_stack = tuple(app.screen_stack)
+        roleplay_callbacks = tuple(app.roleplay._result_callbacks)
+        activation = asyncio.create_task(
+            TldwCli.activate_character_conversation_from_roleplay(
+                app, request, asyncio.Event(), lambda _phase: None
+            )
+        )
+        await removal_suspended.wait()
+        post_commit = next(
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() == "character_conversation_post_commit"
+        )
+        post_commit.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await activation
+        await pilot.pause()
+
+        assert post_commit.cancelled()
+        assert activation.cancelled()
+        assert tuple(app.screen_stack) == original_stack
+        assert app.screen is app.roleplay
+        assert app.roleplay.is_running and app.roleplay.parent is app
+        assert tuple(app.roleplay._result_callbacks) == roleplay_callbacks
+        assert app.candidate not in app.screen_stack
+        assert not app.candidate.is_running and app.candidate.parent is None
+        assert app.candidate._result_callbacks == []
+        assert store.active_session_id == prior.id
+        assert {session.id for session in store.sessions()} == {
+            prior.id,
+            unrelated.id,
+        }
+        lane = app.console_runtime.character_conversation_activation_lock
+        assert not lane.locked()
+        await asyncio.wait_for(lane.acquire(), timeout=1)
+        lane.release()
+
+
+async def test_app_partial_console_mount_failure_restores_roleplay() -> None:
+    """A push that partially changes current screen remains inside rollback."""
+
+    class _Workspace:
+        async def preflight_character_conversation_activation(self, _request):
+            return None
+
+    roleplay = object()
+    candidate = SimpleNamespace(_workspace=_Workspace())
+
+    class _Runtime:
+        character_conversation_activation_lock = asyncio.Lock()
+
+    class _Host(_CharacterActivationColdHost):
+        console_runtime = _Runtime()
+
+        def __init__(self):
+            self.screen = roleplay
+            self.popped = 0
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+        async def push_screen(self, screen):
+            self.screen = screen
+            raise RuntimeError("mount failed")
+
+        async def pop_screen(self):
+            self.popped += 1
+            self.screen = roleplay
+
+    host = _Host()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+
+    result = await TldwCli.activate_character_conversation_from_roleplay(
+        host, request, asyncio.Event(), lambda _phase: None
+    )
+
+    assert result.kind is ConsoleActivationResultKind.FAILED
+    assert result.commit_started is True
+    assert host.screen is roleplay
+    assert host.popped == 1
+    assert not host.console_runtime.character_conversation_activation_lock.locked()
+
+
+@pytest.mark.parametrize("held_stage", ("mount", "hydrate", "revalidate", "rollback"))
+async def test_app_owner_cancellation_after_commit_waits_for_atomic_settlement(
+    held_stage: str,
+) -> None:
+    """Caller-task cancellation cannot strand any committed activation stage."""
+
+    stage_started = asyncio.Event()
+    stage_release = asyncio.Event()
+    roleplay = object()
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller._chat_store_accessor = lambda: store
+
+    async def hold_stage(name: str) -> None:
+        if held_stage == name:
+            stage_started.set()
+            await stage_release.wait()
+
+    async def open_target(_request):
+        owned = store.restore_persisted_session(
+            title="Target",
+            workspace_id=None,
+            persisted_conversation_id="conversation-X",
+            all_nodes=[],
+        )
+        await hold_stage("hydrate")
+        return ConsoleActivationCommit(True, owned)
+
+    revalidation_calls = 0
+
+    async def revalidate(_request):
+        nonlocal revalidation_calls
+        revalidation_calls += 1
+        if revalidation_calls == 1:
+            return None
+        await hold_stage("revalidate")
+        return ConsoleActivationResultKind.FAILED
+
+    async def rollback(owned):
+        await hold_stage("rollback")
+        await ConsoleWorkspaceController._rollback_character_conversation_activation(
+            controller, owned
+        )
+
+    async def restore(prior_session_id):
+        store.switch_session(prior_session_id)
+
+    controller._open_character_conversation_activation = open_target
+    controller._revalidate_character_conversation_target = revalidate
+    controller._rollback_character_conversation_activation = rollback
+    controller._restore_character_conversation_prior_session = restore
+    candidate = SimpleNamespace(_workspace=controller)
+
+    class _Host(_CharacterActivationColdHost):
+        def __init__(self):
+            self.console_runtime = SimpleNamespace(
+                character_conversation_activation_lock=asyncio.Lock()
+            )
+            self.stack = [roleplay]
+
+        @property
+        def screen(self):
+            return self.stack[-1]
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return candidate
+
+        async def push_screen(self, screen):
+            self.stack.append(screen)
+            await hold_stage("mount")
+
+        async def pop_screen(self):
+            assert self.stack[-1] is candidate
+            self.stack.pop()
+
+    host = _Host()
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    activation = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, request, asyncio.Event(), lambda _phase: None
+        )
+    )
+    await stage_started.wait()
+
+    activation.cancel()
+    await asyncio.sleep(0)
+    assert not activation.done()
+    stage_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await activation
+
+    assert host.stack == [roleplay]
+    assert store.active_session_id == prior.id
+    assert all(
+        session.persisted_conversation_id != "conversation-X"
+        for session in store.sessions()
+    )
+    assert not host.console_runtime.character_conversation_activation_lock.locked()
+
+
+async def test_app_serializes_two_targets_before_touching_screen_stack() -> None:
+    """A second target cannot push while the first owns the app transaction."""
+
+    release_first = asyncio.Event()
+    first_started = asyncio.Event()
+
+    class _Workspace:
+        def __init__(self, conversation_id):
+            self.conversation_id = conversation_id
+
+        async def preflight_character_conversation_activation(self, _request):
+            return None
+
+        async def activate_character_conversation_after_commit(
+            self, request, *, finalize_visible
+        ):
+            if self.conversation_id == "conversation-X":
+                first_started.set()
+                await release_first.wait()
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.FAILED, request.target, True
+            )
+
+    class _Runtime:
+        character_conversation_activation_lock = asyncio.Lock()
+
+    class _Host(_CharacterActivationColdHost):
+        console_runtime = _Runtime()
+
+        def __init__(self):
+            self.pending_ids = ["conversation-X", "conversation-Y"]
+            self.roleplay = object()
+            self.screen = self.roleplay
+            self.stack: list[object] = []
+            self.max_depth = 0
+
+        def _resolve_screen_navigation_target(self, _target):
+            return None, None, object
+
+        def _create_navigation_screen(self, _target, _screen_class):
+            return SimpleNamespace(
+                _workspace=_Workspace(self.pending_ids.pop(0))
+            )
+
+        async def push_screen(self, screen):
+            self.stack.append(screen)
+            self.screen = screen
+            self.max_depth = max(self.max_depth, len(self.stack))
+
+        async def pop_screen(self):
+            self.stack.pop()
+            self.screen = self.stack[-1] if self.stack else self.roleplay
+
+    host = _Host()
+    first_request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-X"
+        ),
+        "authority-A",
+        1,
+    )
+    second_request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey("authority-A", 1), "conversation-Y"
+        ),
+        "authority-A",
+        1,
+    )
+    first = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, first_request, asyncio.Event(), lambda _phase: None
+        )
+    )
+    await first_started.wait()
+    second = asyncio.create_task(
+        TldwCli.activate_character_conversation_from_roleplay(
+            host, second_request, asyncio.Event(), lambda _phase: None
+        )
+    )
+    await asyncio.sleep(0)
+    assert len(host.stack) == 1
+    release_first.set()
+    await asyncio.gather(first, second)
+    assert host.max_depth == 1
+
+
+async def test_aggregate_navigation_reads_real_mounted_attachment_owner(
+    mock_app_instance, stub_characters
+) -> None:
+    """The aggregate snapshot uses the mounted editor's staged avatar owner."""
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._ensure_center_view("character-editor")
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor.load_character({"id": 1, "name": "Ada", "image": b"old"})
+        assert not editor.has_unsaved_attachment()
+        editor.set_avatar_image(b"new")
+
+        snapshot = screen._aggregate_roleplay_draft_snapshot()
+
+        assert snapshot.attachments_dirty
+        assert "attachments" in snapshot.dirty_domains
+        editor.discard_unsaved_attachment()
+        assert not screen._aggregate_roleplay_draft_snapshot().attachments_dirty
+
+
+async def test_mounted_partial_save_names_failed_domains_and_offers_retry_stay(
+    mock_app_instance, stub_characters, monkeypatch
+) -> None:
+    """A failed real editor/attachment save keeps navigation recoverable."""
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await pilot.app.workers.wait_for_complete()
+        await screen._ensure_center_view("character-editor")
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor.load_character({"id": 1, "name": "Ada", "image": b"old"})
+        editor.set_avatar_image(b"new")
+        screen.state.has_unsaved_changes = True
+        monkeypatch.setattr(screen, "action_personas_save", lambda: None)
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-roleplay-draft-recovery"
+        )
+        await pilot.pause()
+        assert app.screen.query_one("#roleplay-draft-navigation-dialog")
+        await pilot.click("#roleplay-draft-save-continue")
+        await pilot.pause()
+        failed = app.screen.query_one("#roleplay-draft-recovery-domains", Static)
+        copy = str(failed.renderable)
+        assert "character form" in copy and "attachments" in copy
+        assert app.screen.query_one("#roleplay-draft-retry", Button)
+        await pilot.click("#roleplay-draft-recovery-stay")
+        assert await decision.wait() is False
+        assert editor.has_unsaved_attachment()
+
+
+@pytest.mark.parametrize(
+    ("selector", "expected"),
+    (("#roleplay-draft-discard-continue", True), ("#roleplay-draft-stay", False)),
+)
+async def test_mounted_aggregate_discard_and_stay(
+    mock_app_instance, stub_characters, selector, expected
+) -> None:
+    """Mounted draft owners honor both non-save decisions."""
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await app.workers.wait_for_complete()
+        await screen._ensure_center_view("character-editor")
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor.load_character({"id": 1, "name": "Ada", "image": b"old"})
+        editor.set_avatar_image(b"new")
+        screen.state.has_unsaved_changes = True
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-roleplay-draft-choice"
+        )
+        await pilot.pause()
+        await pilot.click(selector)
+
+        assert await decision.wait() is expected
+        assert editor.has_unsaved_attachment() is (not expected)
+
+
+async def test_mounted_aggregate_waits_exact_inflight_character_save(
+    mock_app_instance, stub_characters, monkeypatch
+) -> None:
+    """An incumbent real save settles without Resume waiting on itself."""
+
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+        EditCharacterRequested,
+    )
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def delayed_update(_character_id, _data):
+        started.set()
+        assert release.wait(5)
+        return True
+
+    monkeypatch.setattr(character_handler_module, "update_character", delayed_update)
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await app.workers.wait_for_complete()
+        screen.post_message(EditCharacterRequested("1"))
+        await pilot.pause()
+        screen.state.has_unsaved_changes = True
+        screen.action_personas_save()
+        assert await asyncio.to_thread(started.wait, 5)
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-roleplay-inflight-navigation"
+        )
+        await pilot.pause()
+        assert not decision.is_finished
+        release.set()
+
+        assert await asyncio.wait_for(decision.wait(), 5) is True
+        assert screen.state.has_unsaved_changes is False
+
+
+async def test_mounted_aggregate_save_and_continue_uses_real_owner_worker(
+    mock_app_instance, stub_characters, monkeypatch
+) -> None:
+    """Save and continue dispatches and awaits the mounted editor's worker."""
+
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+        EditCharacterRequested,
+    )
+
+    persisted: list[str] = []
+    monkeypatch.setattr(
+        character_handler_module,
+        "update_character",
+        lambda character_id, _data: persisted.append(str(character_id)) or True,
+    )
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await app.workers.wait_for_complete()
+        screen.post_message(EditCharacterRequested("1"))
+        await pilot.pause()
+        screen.state.has_unsaved_changes = True
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-roleplay-save-navigation"
+        )
+        await pilot.pause()
+        await pilot.click("#roleplay-draft-save-continue")
+
+        assert await asyncio.wait_for(decision.wait(), 5) is True
+        assert persisted == ["1"]
+        assert screen.state.has_unsaved_changes is False
+
+
+async def test_mounted_aggregate_save_waits_real_persona_owner(
+    mock_app_instance, stub_characters, stub_scope_service
+) -> None:
+    """The same guard awaits the mounted Persona profile save task."""
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await pilot.click("#personas-mode-personas")
+        await app.workers.wait_for_complete()
+        await pilot.click("#personas-library-row-persona-p-1")
+        screen.post_message(EditPersonaProfileRequested("p-1"))
+        await pilot.pause()
+        screen.state.has_unsaved_changes = True
+
+        decision = screen.run_worker(
+            screen.confirm_navigation(), group="test-persona-save-navigation"
+        )
+        await pilot.pause()
+        domains = str(
+            app.screen.query_one("#roleplay-draft-navigation-domains", Static).renderable
+        )
+        assert "Persona form" in domains
+        await pilot.click("#roleplay-draft-save-continue")
+
+        assert await asyncio.wait_for(decision.wait(), 5) is True
+        stub_scope_service.update_persona_profile.assert_awaited()
+        assert screen.state.has_unsaved_changes is False
+
+
 class TestConversationsPanel:
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
@@ -5341,13 +6397,86 @@ class TestConversationsPanel:
             assert library.has_class("console-action-subdued")
             assert str(resume.label) == "Resume chat"
             assert str(send.label) == "Send transcript to Console draft"
-            assert str(back.label) == "Back to card"
+            assert str(back.label) == "Back to conversations"
             assert str(library.label) == "Open in Library"
             assert actions.region.height == 9
             assert resume.region.width == actions.content_region.width
             assert send.region.width == actions.content_region.width
             assert back.region.width == library.region.width
             assert resume.region.y < send.region.y < back.region.y
+
+    @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
+    async def test_task_31243_real_pilot_preview_back_and_focus_evidence(
+        self, mock_app_instance, stub_characters, stub_conversations, size
+    ):
+        """Exercise production widgets at the two task-mandated terminal sizes."""
+
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=size) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.app.workers.wait_for_complete()
+            if size[0] <= 60:
+                card_action = screen.query_one("#personas-card-conversations", Button)
+                assert str(card_action.label) == "Conversations (1)"
+                screen.query_one("#personas-library-rows", ListView).focus()
+                for _ in range(40):
+                    if pilot.app.focused is card_action:
+                        break
+                    await pilot.press("tab")
+                assert pilot.app.focused is card_action
+                await pilot.press("enter")
+                conversation_list = screen.query_one(
+                    "#personas-conversations-list", ListView
+                )
+                await pilot.pause()
+                assert pilot.app.focused is conversation_list
+                conversation_list.index = 0
+                await pilot.press("enter")
+            else:
+                await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.query_one("#personas-conversation-transcript-view").display
+
+            painted = "\n".join(
+                strip.text for strip in screen._compositor.render_strips()
+            )
+            assert "Back to conversations" in painted, painted
+            assert "Hello there" in painted, painted
+            assert "Send transcript to Console draft" in painted, painted
+            assert "Open in Library" in painted, painted
+            if size[0] <= 60:
+                assert sum(
+                    screen.query_one(selector).display
+                    for selector in (
+                        "#personas-library-pane",
+                        "#personas-work-area",
+                        "#personas-inspector-pane",
+                    )
+                ) == 1
+            back = screen.query_one("#personas-conversation-back", Button)
+            assert back.content_region.width >= len(str(back.label))
+            hit, _ = screen.get_widget_at(*back.content_region.center)
+            assert hit is back
+
+            qa_root = os.environ.get("TASK_31243_QA_DIR")
+            if qa_root:
+                pilot.app.save_screenshot(
+                    filename=f"roleplay-preview-{size[0]}x{size[1]}.svg",
+                    path=qa_root,
+                )
+
+            await pilot.click("#personas-conversation-back")
+            await pilot.pause()
+            conversation_list = screen.query_one(
+                "#personas-conversations-list", ListView
+            )
+            assert pilot.app.focused is conversation_list, (
+                conversation_list.display,
+                conversation_list.region,
+                conversation_list.can_focus,
+                screen._compact_active_pane,
+            )
 
     @pytest.mark.parametrize("size", ((80, 24), (160, 50)), ids=("compact", "standard"))
     async def test_conversation_actions_fit_production_css(
@@ -5440,6 +6569,161 @@ class TestConversationsPanel:
             callbacks[0]()
             assert resume.disabled is False
             assert str(resume.label) == "Resume chat"
+
+    async def test_deep_link_query_synchronizes_visible_search_without_event(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            searched = AsyncMock()
+            monkeypatch.setattr(screen.conversations, "search_conversations", searched)
+
+            screen.conversations.synchronize_deep_link_query("case file")
+            await pilot.pause()
+
+            assert screen.query_one("#personas-conversations-search", Input).value == "case file"
+            searched.assert_not_awaited()
+
+    @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
+    async def test_rejected_deep_link_is_visible_and_retries_same_immutable_link(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+        size,
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=size) as pilot:
+            screen = await self._select_first_character(pilot)
+            authority = {"value": "other"}
+            db = SimpleNamespace(
+                get_local_authority_id=lambda: authority["value"],
+                get_character_card_by_id=lambda _character_id: {
+                    "id": 1,
+                    "name": "Detective Sam",
+                },
+            )
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey("wanted", 1), query="case"
+            )
+            screen._pending_character_conversation_link = link
+
+            outcome = await screen._apply_pending_character_conversation_link()
+            await pilot.pause()
+
+            assert outcome is CharacterConversationLinkOutcome.REJECTED
+            assert screen._pending_character_conversation_link is link
+            assert screen.query_one("#personas-character-link-recovery").display
+            retry = screen.query_one("#personas-character-link-retry", Button)
+            assert retry.region.height > 0
+            authority["value"] = "wanted"
+            assert (
+                await screen._apply_pending_character_conversation_link()
+                is CharacterConversationLinkOutcome.APPLIED
+            )
+            assert screen._pending_character_conversation_link is None
+            assert screen.conversations._conversation_query == "case"
+
+    async def test_deferred_deep_link_rolls_back_staged_selection_and_can_retry(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            before = replace(screen.state)
+            db = SimpleNamespace(
+                get_local_authority_id=lambda: "wanted",
+                get_character_card_by_id=lambda _character_id: {
+                    "id": 2,
+                    "name": "Lab Assistant",
+                },
+            )
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            original_select = screen._select_character
+
+            async def staged_failure(character_id, name):
+                screen.state.select_entity(
+                    entity_kind="character",
+                    entity_id=character_id,
+                    entity_name=name,
+                )
+                raise RuntimeError("render failed")
+
+            monkeypatch.setattr(screen, "_select_character", staged_failure)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey("wanted", 2), query="case"
+            )
+            screen._pending_character_conversation_link = link
+
+            outcome = await screen._apply_pending_character_conversation_link()
+
+            assert outcome is CharacterConversationLinkOutcome.DEFERRED
+            assert screen._pending_character_conversation_link is link
+            assert asdict(screen.state) == asdict(before)
+            assert screen.query_one("#personas-character-link-recovery").display
+            assert screen.query_one("#personas-character-link-retry", Button)
+            monkeypatch.setattr(screen, "_select_character", original_select)
+            assert (
+                await screen._apply_pending_character_conversation_link()
+                is CharacterConversationLinkOutcome.APPLIED
+            )
+            assert screen._pending_character_conversation_link is None
+
+    async def test_mounted_roleplay_escape_cancels_before_console_commit(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = _RoleplayActivationApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            target = LocalCharacterConversationTarget(
+                ResolvedLocalCharacterKey("authority", 1), "conv-1"
+            )
+            request = CharacterConversationActivationRequest(
+                target, "authority", 4
+            )
+            screen.conversations._conversation_activation_requests["conv-1"] = request
+
+            await pilot.click("#personas-conversation-resume")
+            await app.activation_started.wait()
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert str(resume.label) == "Opening…"
+            assert app.screen is screen
+            await pilot.press("escape")
+            app.activation_release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert app.screen is screen
+            assert str(resume.label) == "Retry"
+            assert app.activation_requests == [request]
+
+    async def test_resume_exception_releases_exact_attempt_and_offers_retry(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = _RaisingRoleplayActivationApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            request = CharacterConversationActivationRequest(
+                LocalCharacterConversationTarget(
+                    ResolvedLocalCharacterKey("authority", 1), "conv-1"
+                ),
+                "authority",
+                4,
+            )
+            screen.conversations._conversation_activation_requests["conv-1"] = request
+
+            await pilot.click("#personas-conversation-resume")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            resume = screen.query_one("#personas-conversation-resume", Button)
+            assert str(resume.label) == "Retry"
+            assert resume.disabled is False
+            assert screen.conversations._resume_cancellation is None
+            assert screen.conversations._resume_in_flight_attempts == {}
 
     async def test_conversation_resume_reselection_keeps_same_target_single_flight(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch

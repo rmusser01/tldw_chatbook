@@ -80,8 +80,10 @@ from ...config import (
     save_settings_to_cli_config,
 )
 from ...Constants import (
+    CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
@@ -562,6 +564,13 @@ if TYPE_CHECKING:
         LibraryFileNotesWorkspace,
     )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from ..Library_Modules.library_character_repair_controller import (
+        LibraryCharacterRepairController,
+    )
+    from ..Navigation.character_conversation_navigation import (
+        LibraryCharacterRepairContext,
+        RoleplayReturnTarget,
+    )
 else:
 
     def LibraryFileNotesWorkspace(*args: Any, **kwargs: Any) -> Any:
@@ -2189,6 +2198,13 @@ class LibraryScreen(BaseAppScreen):
             LibraryLandingAttentionAction | None
         ) = None
         self._library_navigation_context_generation: int = 0
+        self._character_repair_present_on_resume = False
+        self._pending_character_repair_context: (
+            LibraryCharacterRepairContext | None
+        ) = None
+        self._library_character_repair_controller: (
+            LibraryCharacterRepairController | None
+        ) = None
         self._conversations_state = LibraryConversationsState()
         # Constructed early -- see LibraryCollectionsState's docstring.
         self._collections_state = LibraryCollectionsState()
@@ -9564,6 +9580,8 @@ class LibraryScreen(BaseAppScreen):
         work already running on its thread).
         """
         self._library_screen_suspended = False
+        if self._character_repair_present_on_resume:
+            self.call_after_refresh(self._present_character_repair_context)
         self.call_after_refresh(self.refresh_notes_sync_runtime)
         self._refresh_library_visit_surfaces()
 
@@ -9704,6 +9722,7 @@ class LibraryScreen(BaseAppScreen):
         self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
         self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
         self.call_after_refresh(self._present_library_skills_import_choice_if_needed)
+        self.call_after_refresh(self._present_character_repair_context)
         if (
             self._library_new_profile_admission
             and not self._library_lifecycle_was_stored
@@ -11203,6 +11222,24 @@ class LibraryScreen(BaseAppScreen):
             return
         if not isinstance(context, Mapping):
             return
+        if set(context) == {LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR}:
+            from ..Navigation.character_conversation_navigation import (
+                deserialize_library_character_repair_context,
+            )
+
+            payload = context.get(LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR)
+            if not isinstance(payload, Mapping):
+                return
+            try:
+                repair_context = deserialize_library_character_repair_context(payload)
+            except (TypeError, ValueError):
+                logger.warning("Rejected invalid Library character-repair context")
+                return
+            self._pending_character_repair_context = repair_context
+            self._character_repair_present_on_resume = True
+            if self.is_mounted:
+                self.call_after_refresh(self._present_character_repair_context)
+            return
         target_row_id = self._library_navigation_context_target_row(context)
         if target_row_id is None:
             return
@@ -11285,6 +11322,70 @@ class LibraryScreen(BaseAppScreen):
                     "prompt": LIBRARY_ROW_BROWSE_PROMPTS,
                 }[source_type]
         return target_row_id
+
+    def _present_character_repair_context(self) -> None:
+        """Open Library's only mutation surface for a validated repair context."""
+
+        context = self._pending_character_repair_context
+        if (
+            context is None or not self._character_repair_present_on_resume
+            or not self.is_mounted or self.app.screen is not self
+        ):
+            return
+        database = getattr(self.app_instance, "chachanotes_db", None)
+        try:
+            if database.get_local_authority_id() != context.unresolved.data_authority_id:
+                self._notify(
+                    "The active Data Profile changed. Repair was not applied.",
+                    "warning",
+                )
+                return
+        except Exception:  # noqa: BLE001 - database boundary stays recoverable
+            logger.opt(exception=True).warning(
+                "Could not validate Library character-repair authority"
+            )
+            return
+        from ...Character_Chat.character_conversation_navigation import (
+            CharacterConversationNavigationService,
+        )
+        from ..Library_Modules.library_character_repair_controller import (
+            LibraryCharacterRepairController,
+            LibraryCharacterRepairDialog,
+        )
+
+        service = CharacterConversationNavigationService(database)
+        controller = LibraryCharacterRepairController(
+            service=service,
+            invalidate_keyword=self._invalidate_character_keyword_candidates,
+            invalidate_semantic=self._invalidate_character_semantic_candidates,
+            return_to_anchor=self._return_from_character_repair,
+            focus_refresh=lambda: None,
+            source_revision=database.get_character_conversation_search_revision,
+        )
+        self._library_character_repair_controller = controller
+        self._character_repair_present_on_resume = False
+        self.app.push_screen(LibraryCharacterRepairDialog(controller, context))
+
+    def _invalidate_character_keyword_candidates(self) -> None:
+        self._library_character_keyword_generation = (
+            getattr(self, "_library_character_keyword_generation", 0) + 1
+        )
+
+    def _invalidate_character_semantic_candidates(self) -> None:
+        self._library_character_semantic_generation = (
+            getattr(self, "_library_character_semantic_generation", 0) + 1
+        )
+
+    def _return_from_character_repair(self, target: RoleplayReturnTarget) -> None:
+        """Clear only an applied repair and return to its stable source anchor."""
+
+        self._pending_character_repair_context = None
+        self.post_message(
+            NavigateToScreen(
+                target.screen_id,
+                {CHARACTER_NAV_CONTEXT_RETURN_FOCUS: target.focus_id},
+            )
+        )
 
     async def _apply_navigation_context_after_flush(
         self,

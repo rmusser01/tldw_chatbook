@@ -378,6 +378,10 @@ class PersonasCharacterEditorWidget(Container):
         self._loading: bool = False
         self._loaded_snapshot: tuple | None = None
         self._dirty_posted: bool = False
+        self._loaded_attachment_snapshot: tuple[object | None, object | None] = (
+            None,
+            None,
+        )
         # Live validation (Roleplay P3b Task 4): the pending debounce timer
         # scheduled by _field_changed, cancelled and re-armed on every real
         # field change so only the last edit in a typing burst validates.
@@ -756,6 +760,7 @@ class PersonasCharacterEditorWidget(Container):
         # returns, so the handler compares against this snapshot (taken from
         # the just-populated form) and ignores events that match it.
         self._loaded_snapshot = self._form_snapshot()
+        self._loaded_attachment_snapshot = self._attachment_snapshot()
         self._dirty_posted = False
         self._user_touched = False
         if self.is_mounted:
@@ -779,6 +784,7 @@ class PersonasCharacterEditorWidget(Container):
             str(g) for g in (self._character_data.get("alternate_greetings") or [])
         ]
         self._loaded_snapshot = self._form_snapshot()
+        self._loaded_attachment_snapshot = self._attachment_snapshot()
         self._dirty_posted = False
         self.query_one("#personas-char-editor-validation", Static).update("")
         # A create-session's first Save assigns the brand-new character its
@@ -971,6 +977,25 @@ class PersonasCharacterEditorWidget(Container):
         """
         data = self._character_data.get("image")
         return data if isinstance(data, (bytes, bytearray)) else None
+
+    def has_unsaved_attachment(self) -> bool:
+        """Return whether the real staged avatar differs from its saved baseline."""
+
+        return self._attachment_snapshot() != self._loaded_attachment_snapshot
+
+    def _attachment_snapshot(self) -> tuple[object | None, object | None]:
+        return (self._character_data.get("image"), self._character_data.get("avatar"))
+
+    def discard_unsaved_attachment(self) -> None:
+        """Restore only the avatar bytes owned by this editor session."""
+
+        image, avatar = self._loaded_attachment_snapshot
+        for key, value in (("image", image), ("avatar", avatar)):
+            if value is None:
+                self._character_data.pop(key, None)
+            else:
+                self._character_data[key] = value
+        self._set_avatar_status_from_record()
 
     # --- LLM-assisted generation -------------------------------------------------
 

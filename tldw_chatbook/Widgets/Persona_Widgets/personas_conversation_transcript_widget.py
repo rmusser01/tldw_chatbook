@@ -115,6 +115,22 @@ class PersonasConversationTranscriptWidget(Container):
             token,
         )
 
+    async def show_unavailable(
+        self, render_attempt: object | None = None
+    ) -> bool:
+        """Hide transcript content after its authority or revision changes."""
+
+        token = self._standalone_or_existing_attempt(render_attempt)
+        return await self._replace_scroll_contents(
+            [
+                Static(
+                    "This conversation changed or moved. Refresh conversations to retry.",
+                    id="personas-transcript-unavailable",
+                )
+            ],
+            token,
+        )
+
     async def load_messages(
         self,
         messages: List[Dict[str, Any]],
