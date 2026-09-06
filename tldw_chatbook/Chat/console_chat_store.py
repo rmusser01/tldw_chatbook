@@ -15998,8 +15998,12 @@ class ConsoleChatStore:
                 canvas_settlement = candidate
                 if candidate.contribution is not None:
                     canvas_contributions = (candidate.contribution,)
+        session = self._sessions[self._message_session_index[message.id]]
+        if session.ephemeral:
+            self._settle_provider_trace_settlements(message.id, None)
+            return
         try:
-            if not (
+            if (
                 message.role is ConsoleMessageRole.ASSISTANT
                 and self.persist_selected_generation(
                     message.id,
@@ -16012,7 +16016,12 @@ class ConsoleChatStore:
                     if canvas_settlement is not None
                     else None,
                 )
-            ) and not self._persist_existing_message(
+            ):
+                # The paired writer bypasses the ordinary content-write hook
+                # that flushes legacy, local-only exchange captures.
+                if message.exchanges:
+                    self._persist_exchanges_only(message)
+            elif not self._persist_existing_message(
                 message, preserve_provider_continuation=True
             ):
                 raise RuntimeError("Terminal generation persistence did not commit.")
