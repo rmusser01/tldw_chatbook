@@ -51,6 +51,9 @@ if TYPE_CHECKING:
     from ...Chat.console_conversation_activation import (
         CharacterConversationActivationRequest,
     )
+    from ..Navigation.character_conversation_navigation import (
+        RoleplayCharacterConversationLink,
+    )
     from ..Screens.personas_screen import PersonasScreen
 
 
@@ -148,6 +151,11 @@ class PersonasConversationsController:
     async def search_conversations(self, query: str) -> None:
         """Start a new exact-character Keyword generation for the current card."""
 
+        # An explicit new query abandons the old exact-row seek, not its identity
+        # in favor of a substitute row. Ordinary browsing owns the new results.
+        if getattr(self.screen, "_pending_character_conversation_link", None) is not None:
+            self.screen._pending_character_conversation_link = None
+        self._requested_conversation_id = None
         self._conversation_query = str(query or "").strip()
         character_id = self._list_character_id
         if character_id is not None:
@@ -170,6 +178,58 @@ class PersonasConversationsController:
         """Focus a deep-linked row after its owned page commits."""
 
         self._requested_conversation_id = str(conversation_id).strip() or None
+
+    def exact_link_problem(self, link: RoleplayCharacterConversationLink) -> str | None:
+        """Re-fence one exact link using only authoritative SQLite metadata.
+
+        Returns:
+            Recovery copy for a stale/unavailable target, otherwise None.
+        """
+
+        db = self.screen._character_db()
+        with db.transaction() as connection:
+            authority = db.get_local_authority_id()
+            if authority != link.character.data_authority_id:
+                return "The active Data Profile changed."
+            row = connection.execute(
+                "SELECT c.deleted, c.runtime_backend, c.assistant_kind, "
+                "c.assistant_authority_id, c.character_id, card.deleted AS card_deleted "
+                "FROM conversations AS c LEFT JOIN character_cards AS card "
+                "ON card.id = c.character_id WHERE c.id = ?",
+                (link.conversation_id,),
+            ).fetchone()
+            if row is None or row["deleted"]:
+                return "The exact conversation is no longer available."
+            if (
+                row["runtime_backend"] != "local"
+                or row["assistant_kind"] != "character"
+                or row["assistant_authority_id"] != authority
+                or row["character_id"] != link.character.character_id
+                or row["card_deleted"] is None
+                or row["card_deleted"]
+            ):
+                return "The exact conversation no longer belongs to this saved character."
+            if db.get_character_conversation_search_revision() != link.data_revision:
+                return "Results changed. Retry to refresh this exact conversation."
+        return None
+
+    def reveal_deep_link_row(self, link: RoleplayCharacterConversationLink) -> None:
+        """Reveal a proved exact row after compact pane layout has settled."""
+
+        request = self._conversation_activation_requests.get(link.conversation_id)
+        if (
+            not self.screen.is_mounted
+            or self.screen.app.screen is not self.screen
+            or request is None
+            or request.target.character != link.character
+            or request.data_revision != link.data_revision
+            or self._conversation_query != link.query.strip()
+        ):
+            return
+        try:
+            self.screen.query_one(PersonasInspectorPane).focus_conversation(link.conversation_id)
+        except (QueryError, ValueError):
+            pass
 
     async def request_older_conversations(self) -> None:
         """Handle the actionable Load/Retry tail without starting duplicates."""
@@ -405,6 +465,7 @@ class PersonasConversationsController:
         """Release one owned attempt and make a bounded retry presentation."""
         if not self._owns_conversation_page(character_id, cursor, attempt):
             return
+
         self._conversation_list_attempt = None
         self._conversation_list_phase = "initial-retry" if initial else "append-retry"
         preserved_rows = (
@@ -493,6 +554,16 @@ class PersonasConversationsController:
 
         if not self._owns_conversation_page(character_id, cursor, attempt):
             return
+
+        link = getattr(self.screen, "_pending_character_conversation_link", None)
+        if link is not None and link.conversation_id is not None:
+            problem = await asyncio.to_thread(self.exact_link_problem, link)
+            if not self._owns_conversation_page(character_id, cursor, attempt):
+                return
+            if problem is not None:
+                self._conversation_list_attempt = None
+                self.screen._show_character_link_recovery(problem)
+                return
 
         durable_page: list[
             tuple[
@@ -668,6 +739,14 @@ class PersonasConversationsController:
             return
         if not self._owns_conversation_page(character_id, cursor, attempt):
             return
+        if link is not None and link.conversation_id is not None:
+            problem = await asyncio.to_thread(self.exact_link_problem, link)
+            if not self._owns_conversation_page(character_id, cursor, attempt):
+                return
+            if problem is not None:
+                self._conversation_list_attempt = None
+                self.screen._show_character_link_recovery(problem)
+                return
         self._conversation_rows = proposed_rows
         self._conversation_activation_requests = proposed_requests
         self._loaded_conversation_ids = proposed_ids
@@ -695,16 +774,29 @@ class PersonasConversationsController:
             pass
         if self._requested_conversation_id in self._conversation_rows:
             requested = self._requested_conversation_id
-            self._requested_conversation_id = None
             try:
                 inspector.focus_conversation(requested)
             except (QueryError, ValueError):
-                pass
+                if link is not None:
+                    self.screen._show_character_link_recovery(
+                        "The exact conversation could not be focused. Retry."
+                    )
+            else:
+                self._requested_conversation_id = None
+                if link is not None and self.screen._pending_character_conversation_link is link:
+                    self.screen._pending_character_conversation_link = None
         elif self._requested_conversation_id is not None and has_more:
             # A deep link may target any row in the character's complete
             # history, not only the first page. Continue the owned keyset walk
             # until the exact durable id is rendered or history is exhausted.
             await self.request_older_conversations()
+        elif self._requested_conversation_id is not None:
+            self._requested_conversation_id = None
+            if link is not None:
+                self.screen._show_character_link_recovery(
+                    "The exact conversation is not in these results. "
+                    "Retry after refreshing the source, or change the search."
+                )
 
     # ===== Read-only view =====
 

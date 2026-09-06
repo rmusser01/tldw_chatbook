@@ -1323,6 +1323,7 @@ class PersonasInspectorPane(VerticalScroll):
             if self._conversation_lookup.get(str(item.id or "")) == conversation_id:
                 list_view.index = index
                 list_view.focus()
+                item.scroll_visible(animate=False)
                 return
         raise ValueError("conversation row is not rendered")
 

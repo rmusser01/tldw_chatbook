@@ -997,6 +997,15 @@ class PersonasCharacterEditorWidget(Container):
                 self._character_data[key] = value
         self._set_avatar_status_from_record()
 
+    def discard_unsaved_form(self) -> None:
+        """Restore all fields and attachments to this session's saved/new base."""
+
+        actor_pack = self._actor_pack_mode
+        self.discard_unsaved_attachment()
+        self.load_character(self._character_data)
+        self._actor_pack_mode = actor_pack
+        self._sync_actor_pack_mode()
+
     # --- LLM-assisted generation -------------------------------------------------
 
     @staticmethod

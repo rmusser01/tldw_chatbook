@@ -101,7 +101,7 @@
     layout: vertical;
 }
 
-#personas-workbench.personas-workbench-narrow.personas-transcript-active #personas-conversation-navigation-actions Button {
+#personas-workbench.personas-workbench-narrow.personas-transcript-active .personas-conversation-navigation-action {
     width: 100%;
     padding: 0;
 }

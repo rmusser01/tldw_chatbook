@@ -1518,12 +1518,12 @@ class PersonasScreen(BaseAppScreen):
                                 yield Button(
                                     "Back to conversations",
                                     id="personas-conversation-back",
-                                    classes="console-action-subdued",
+                                    classes="console-action-subdued personas-conversation-navigation-action",
                                 )
                                 yield Button(
                                     "Open in Library",
                                     id="personas-conversation-open-library",
-                                    classes="console-action-subdued",
+                                    classes="console-action-subdued personas-conversation-navigation-action",
                                 )
                         dictionary_detail_slot = Vertical(
                             id="personas-dictionary-detail-slot"
@@ -1932,7 +1932,7 @@ class PersonasScreen(BaseAppScreen):
                 pass
 
     async def _apply_pending_character_conversation_link(
-        self,
+        self, *, refresh_revision: bool = False,
     ) -> CharacterConversationLinkOutcome:
         """Consume one validated deep link only after exact authority revalidation."""
 
@@ -1975,6 +1975,19 @@ class PersonasScreen(BaseAppScreen):
                     "The saved character is unavailable."
                 )
                 return CharacterConversationLinkOutcome.REJECTED
+            if link.conversation_id is not None:
+                if refresh_revision:
+                    link = dataclasses.replace(
+                        link,
+                        data_revision=await asyncio.to_thread(
+                            db.get_character_conversation_search_revision
+                        ),
+                    )
+                    self._pending_character_conversation_link = link
+                problem = await asyncio.to_thread(self.conversations.exact_link_problem, link)
+                if problem is not None:
+                    self._show_character_link_recovery(problem)
+                    return CharacterConversationLinkOutcome.REJECTED
             self.state.runtime_source = "local"
             self.state.active_mode = "characters"
             self.conversations._conversation_query = str(link.query or "").strip()
@@ -1995,16 +2008,22 @@ class PersonasScreen(BaseAppScreen):
                         Button(
                             "Back to Console",
                             id="personas-conversation-back-source",
-                            classes="console-action-subdued",
+                            classes="console-action-subdued personas-conversation-navigation-action",
                         )
                     )
             for button in self.query("#personas-conversation-back-source"):
                 button.display = link.return_target is not None
             self._sync_responsive_workbench()
-            if link.conversation_id is not None and self.size.width <= 60:
+            if (
+                link.conversation_id is not None
+                and self.size.width <= 60
+                and not self.query_one(_CHARACTER_DEEP_LINK_RECOVERY_ID).display
+            ):
                 self._compact_active_pane = "inspector"
                 self._sync_personas_rails()
-            self._pending_character_conversation_link = None
+                self.call_after_refresh(self.conversations.reveal_deep_link_row, link)
+            if link.conversation_id is None:
+                self._pending_character_conversation_link = None
             return CharacterConversationLinkOutcome.APPLIED
         except Exception:  # noqa: BLE001 - restore browse state after any destination callback failure
             self.state = prior_state
@@ -2025,11 +2044,15 @@ class PersonasScreen(BaseAppScreen):
     def _show_character_link_recovery(self, copy: str) -> None:
         """Render a stable retry state while retaining the immutable link."""
 
+        self.conversations._requested_conversation_id = None
         try:
             self.query_one(
                 "#personas-character-link-recovery-copy", Static
             ).update(copy)
             self._show_center(_CHARACTER_DEEP_LINK_RECOVERY_ID)
+            if self.size.width <= 60:
+                self._compact_active_pane = "work"
+                self._sync_personas_rails()
             self.query_one("#personas-character-link-retry", Button).focus()
         except QueryError:
             pass
@@ -2041,7 +2064,7 @@ class PersonasScreen(BaseAppScreen):
         event.stop()
         event.button.disabled = True
         try:
-            await self._apply_pending_character_conversation_link()
+            await self._apply_pending_character_conversation_link(refresh_revision=True)
         finally:
             if self.is_mounted and self._pending_character_conversation_link is not None:
                 event.button.disabled = False
@@ -15726,18 +15749,17 @@ class PersonasScreen(BaseAppScreen):
                     return False
                 snapshot = self._aggregate_roleplay_draft_snapshot()
         if choice == "discard":
-            self.state.has_unsaved_changes = False
-            self._set_active_row_unsaved(False)
             await self._drain_visual_identity_authoring()
             await self._drain_persona_shared_visual_identity_authoring()
             await self._discard_persona_visual_authoring_async()
             await self._drain_actor_pack_creation()
-            try:
-                self.query_one(
-                    PersonasCharacterEditorWidget
-                ).discard_unsaved_attachment()
-            except (AttributeError, QueryError):
-                pass
+            for editor in (
+                *self.query(PersonasCharacterEditorWidget),
+                *self.query(PersonaProfileEditorWidget),
+            ):
+                editor.discard_unsaved_form()
+            self.state.has_unsaved_changes = False
+            self._set_active_row_unsaved(False)
             return self._aggregate_roleplay_draft_snapshot().is_clean
         return False
 

@@ -4705,6 +4705,8 @@ async def test_mounted_aggregate_discard_and_stay(
         editor = screen.query_one(PersonasCharacterEditorWidget)
         editor.load_character({"id": 1, "name": "Ada", "image": b"old"})
         editor.set_avatar_image(b"new")
+        editor.query_one("#personas-char-editor-name", Input).value = "Discarded name"
+        editor.query_one("#personas-char-editor-description", TextArea).text = "Discarded description"
         screen.state.has_unsaved_changes = True
 
         decision = screen.run_worker(
@@ -4715,6 +4717,57 @@ async def test_mounted_aggregate_discard_and_stay(
 
         assert await decision.wait() is expected
         assert editor.has_unsaved_attachment() is (not expected)
+        await pilot.pause()
+        # Reusing the same screen/editor must not resurrect a discarded form,
+        # including when a later Save reads its values.
+        assert screen.query_one(PersonasCharacterEditorWidget) is editor
+        assert editor.get_character_data()["name"] == ("Ada" if expected else "Discarded name")
+        assert editor.get_character_data()["description"] == ("" if expected else "Discarded description")
+        assert screen.state.has_unsaved_changes is (not expected)
+
+
+@pytest.mark.parametrize("kind", ("character", "persona"))
+@pytest.mark.parametrize("saved", (False, True))
+async def test_discard_restores_form_baseline_across_cached_screen_return(
+    mock_app_instance, stub_characters, kind, saved
+):
+    from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_editor_widget import (
+        PersonaProfileEditorWidget,
+    )
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(120, 50)) as pilot:
+        screen = await _mounted(pilot)
+        await app.workers.wait_for_complete()
+        await screen._ensure_center_view(f"{kind}-editor")
+        record = {"id": 1, "name": "Saved name", "description": "Saved description"} if saved else {}
+        if kind == "character":
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            editor.load_character(record)
+            prefix = "personas-char-editor"
+            values = editor.get_character_data
+        else:
+            screen.state.active_mode = "personas"
+            editor = screen.query_one(PersonaProfileEditorWidget)
+            editor.load_persona(record)
+            prefix = "personas-editor"
+            values = editor.collect
+        before = values()
+        editor.query_one(f"#{prefix}-name", Input).value = "Unwanted name"
+        editor.query_one(f"#{prefix}-description", TextArea).text = "Unwanted description"
+        await pilot.pause()
+        screen.state.has_unsaved_changes = True
+        decision = screen.run_worker(screen.confirm_navigation())
+        await pilot.pause()
+        await pilot.click("#roleplay-draft-discard-continue")
+        assert await decision.wait() is True
+        await app.push_screen(Screen())
+        await app.pop_screen()
+        await pilot.pause()
+        assert app.screen is screen
+        assert editor.is_mounted
+        assert values() == before, "a later Save must never serialize discarded fields"
+        assert not screen.state.has_unsaved_changes
 
 
 async def test_mounted_aggregate_waits_exact_inflight_character_save(
@@ -6437,6 +6490,179 @@ class TestConversationsPanel:
             with db.quiesce_connections(timeout_seconds=2.0):
                 pass
             assert db.registered_connection_count() == 0
+
+    @pytest.mark.parametrize("mutation", ("stale", "deleted", "moved"))
+    async def test_exact_deep_link_rejects_changed_snapshot_before_selection(
+        self, mock_app_instance, stub_characters, stub_conversations,
+        monkeypatch, late_link_database, mutation,
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
+                conversation_id="conv-1",
+                data_revision=db.get_character_conversation_search_revision(),
+            )
+            if mutation == "stale":
+                db.add_character_card({"name": "Unrelated new card"})
+            else:
+                with db.transaction() as connection:
+                    if mutation == "deleted":
+                        connection.execute("UPDATE conversations SET deleted = 1 WHERE id = ?", ("conv-1",))
+                    else:
+                        connection.execute("UPDATE conversations SET assistant_authority_id = ? WHERE id = ?", ("other-authority", "conv-1"))
+            before = replace(screen.state)
+            rows = dict(screen.conversations._conversation_rows)
+            screen._pending_character_conversation_link = link
+            screen.conversations.request_conversation_focus("conv-1")
+            assert await screen._apply_pending_character_conversation_link() is CharacterConversationLinkOutcome.REJECTED
+            assert screen.state == before
+            assert screen.conversations._conversation_rows == rows
+            assert screen.conversations._requested_conversation_id is None
+            assert screen._pending_character_conversation_link is link
+            assert screen.query_one("#personas-character-link-recovery").display
+            await pilot.pause()
+            assert await pilot.click("#personas-character-link-retry")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            if mutation == "stale":
+                assert screen._pending_character_conversation_link is None
+                assert "conv-1" in screen.conversations._conversation_rows
+            else:
+                assert screen._pending_character_conversation_link.conversation_id == "conv-1"
+                assert screen.conversations._requested_conversation_id is None
+                assert screen.query_one("#personas-character-link-recovery").display
+
+    @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
+    @pytest.mark.parametrize("missing_from_query", (False, True))
+    async def test_exact_deep_link_keeps_ownership_until_later_page_or_missing_recovery(
+        self, mock_app_instance, stub_characters, stub_conversations,
+        monkeypatch, late_link_database, missing_from_query, size,
+    ):
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=size) as pilot:
+            screen = await self._select_first_character(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            authority = db.get_local_authority_id()
+            for index in range(21):
+                db.add_conversation({
+                    "id": f"newer-{index}", "title": f"Newer {index}",
+                    "character_id": character_id, "assistant_kind": "character",
+                    "assistant_id": str(character_id), "assistant_authority_id": authority,
+                })
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            pending_pages = []
+            controller = screen.conversations
+            def schedule(*, initial, attempt):
+                pending_pages.append((str(character_id), controller._next_conversation_cursor, initial, attempt))
+            monkeypatch.setattr(controller, "_schedule_conversation_page", schedule)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(authority, character_id),
+                conversation_id="conv-1", query="nonexistentneedle" if missing_from_query else "",
+                data_revision=db.get_character_conversation_search_revision(),
+            )
+            screen._pending_character_conversation_link = link
+            await screen._apply_pending_character_conversation_link()
+            assert screen._pending_character_conversation_link is link
+            assert pending_pages
+            pages = 0
+            while pending_pages:
+                await asyncio.to_thread(controller._load_conversations_sync, *pending_pages.pop(0))
+                pages += 1
+                assert pages <= 3
+            await pilot.pause()
+            assert controller._requested_conversation_id is None
+            if missing_from_query:
+                assert screen._pending_character_conversation_link is link
+                assert screen.query_one("#personas-character-link-recovery").display
+                copy = str(screen.query_one("#personas-character-link-recovery-copy", Static).renderable)
+                assert "not in" in copy.lower()
+                painted = "\n".join(strip.text for strip in screen._compositor.render_strips())
+                assert "not in" in painted, painted
+                retry = screen.query_one("#personas-character-link-retry", Button)
+                assert screen.get_widget_at(*retry.region.center)[0] is retry
+                await controller.search_conversations("")
+                assert screen._pending_character_conversation_link is None
+                assert controller._requested_conversation_id is None
+                while pending_pages:
+                    await asyncio.to_thread(controller._load_conversations_sync, *pending_pages.pop(0))
+                assert len(controller._conversation_rows) == 20
+            else:
+                assert pages == 2
+                assert screen._pending_character_conversation_link is None
+                assert await screen._apply_pending_character_conversation_link() is CharacterConversationLinkOutcome.ABSENT
+                listing = screen.query_one("#personas-conversations-list", ListView)
+                inspector = screen.query_one(PersonasInspectorPane)
+                assert inspector._conversation_lookup[listing.highlighted_child.id] == "conv-1"
+
+    @pytest.mark.parametrize("mutation", ("deleted", "revision"))
+    async def test_exact_link_refences_after_owned_page_render(
+        self, mock_app_instance, stub_characters, stub_conversations,
+        monkeypatch, late_link_database, mutation,
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(120, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            inspector = screen.query_one(PersonasInspectorPane)
+            original = inspector.show_conversations
+            async def change_after_render(*args, **kwargs):
+                rendered = await original(*args, **kwargs)
+                if mutation == "deleted":
+                    with db.transaction() as connection:
+                        connection.execute("UPDATE conversations SET deleted = 1 WHERE id = ?", ("conv-1",))
+                else:
+                    db.add_character_card({"name": "Concurrent mutation"})
+                return rendered
+            monkeypatch.setattr(inspector, "show_conversations", change_after_render)
+            link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
+                conversation_id="conv-1",
+                data_revision=db.get_character_conversation_search_revision(),
+            )
+            screen._pending_character_conversation_link = link
+            await screen._apply_pending_character_conversation_link()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen._pending_character_conversation_link is link
+            assert screen.conversations._requested_conversation_id is None
+            assert screen.query_one("#personas-character-link-recovery").display
+
+    async def test_fast_exact_link_completion_keeps_compact_focused_list_visible(
+        self, mock_app_instance, stub_characters, stub_conversations,
+        monkeypatch, late_link_database,
+    ):
+        app = _StyledNavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(52, 20)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await app.workers.wait_for_complete()
+            db, character_id = late_link_database
+            monkeypatch.setattr(screen, "_character_db", lambda: db)
+            original = screen._select_character
+            async def finish_page_before_selection_returns(*args):
+                await original(*args)
+                await app.workers.wait_for_complete()
+            monkeypatch.setattr(screen, "_select_character", finish_page_before_selection_returns)
+            screen._pending_character_conversation_link = RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
+                conversation_id="conv-1", data_revision=db.get_character_conversation_search_revision(),
+            )
+            await screen._apply_pending_character_conversation_link()
+            await pilot.pause()
+            assert screen._pending_character_conversation_link is None
+            assert screen._compact_active_pane == "inspector"
+            listing = screen.query_one("#personas-conversations-list", ListView)
+            assert listing.has_focus
+            row = listing.highlighted_child
+            painted = "\n".join(strip.text for strip in screen._compositor.render_strips())
+            assert screen.get_widget_at(*row.region.center)[0] in (row, *row.walk_children()), painted
 
     @pytest.mark.parametrize("input_kind", ("pointer", "keyboard"))
     async def test_late_compact_deep_link_allocates_back_to_console(
