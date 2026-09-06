@@ -224,8 +224,8 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
 
     screen = LibraryScreen.__new__(LibraryScreen)
     # (wave-7 task 1) Every `_library_media_*` name below -- the two timer
-    # attrs in the table, and the four settlement fields the focus-disarm
-    # helper resets -- is now a generated property over `_media_state`, so a
+    # attrs in the table, and three of the five settlement fields the
+    # focus-disarm helper resets -- is now a generated property over `_media_state`, so a
     # `setattr` on this `__new__`-bypassed screen would reach a state object
     # `__init__` never built (recipe section 3's SEVENTH bypass shape). Seeded
     # here, exactly like the `_ingest_state`/`_prompts_state` seeds below;
