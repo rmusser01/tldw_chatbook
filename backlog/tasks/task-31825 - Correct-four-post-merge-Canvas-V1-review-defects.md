@@ -1,11 +1,11 @@
 ---
 id: TASK-31825
 title: Correct four post-merge Canvas V1 review defects
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 13:36'
-updated_date: '2026-09-06 14:02'
+updated_date: '2026-09-06 14:22'
 labels:
   - canvas
   - review
@@ -20,11 +20,11 @@ Correct four independently reproduced defects in the merged Canvas V1 implementa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Unknown or unsupported imported runtime profiles remain source-inspectable and exportable but cannot compile or execute in native or served Canvas.
-- [ ] #2 The next assistant Canvas read or update honors the live session historical selection and preserves branch reachability and stale-authority fences.
-- [ ] #3 Same-identity Canvas archive restore rejects any divergent canonical conversation or message graph atomically while exact restores remain idempotent.
-- [ ] #4 Untouched textarea and select defaults have matching rendered and virtual values in real Chromium; edits and reconstruction preserve supported form behavior.
-- [ ] #5 All four findings have permanent regressions with observed RED then GREEN, focused preservation tests and independent scoped review, without weakened sandbox or performance limits.
+- [x] #1 Unknown or unsupported imported runtime profiles remain source-inspectable and exportable but cannot compile or execute in native or served Canvas.
+- [x] #2 The next assistant Canvas read or update honors the live session historical selection and preserves branch reachability and stale-authority fences.
+- [x] #3 Same-identity Canvas archive restore rejects any divergent canonical conversation or message graph atomically while exact restores remain idempotent.
+- [x] #4 Untouched textarea and select defaults have matching rendered and virtual values in real Chromium; edits and reconstruction preserve supported form behavior.
+- [x] #5 All four findings have permanent regressions with observed RED then GREEN, focused preservation tests and independent scoped review, without weakened sandbox or performance limits.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,5 +53,5 @@ Report concerns before expanding architectural authority. Do not commit/push/mer
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the four post-merge Canvas V1 corrections under ADR-121: fail-closed stored-profile compilation in native/served paths; authoritative historical selection at assistant dispatch with exact temporary-promotion proof; canonical conversation/message/Canvas equality for atomic same-identity restore; and synchronized virtual textarea/select state. Added permanent RED-to-GREEN regressions and form-subset documentation. Focused verification: 403 Python tests passed; 26 Chromium zero-egress tests passed (Firefox/WebKit unavailable); five post-format selection controls passed. Offline pinned runtime assets regenerated and verified. Existing Requests warning and inherited lint debt remain; no new lint diagnostics at checkpoint. Independent scoped review pending; no PR publication or merge performed.
+Corrected all four post-merge V1 findings under existing ADR-121 (no new ADR, schema, dependency, authority, quotas, or scheduling changes): native/served stored-profile gates; live historical selection with stale-owner and atomic-promotion fences; canonical conversation/message/Canvas archive equality under writer transactions; and virtual textarea/select defaults, dirty state and reflected disabled controls. Native screen and dispatch now share the existing durable-only SYSTEM-row projection rule via ConsoleChatStore. Permanent regressions were observed RED then GREEN. Independent scoped review addressed the four findings; its two new regressions were reproduced, fixed, and independently re-reviewed with spec compliance pass and code quality approval, no remaining findings. Local repair commits:40cd4e653 and53ae7d5bd. Consolidated targeted Python verification:413 passed. Final Chromium security/native workflows:34 passed,2 optional browser-engine skips (Firefox/WebKit unavailable). Asset verification:21 passed including cached reproducibility; final formatted control regressions:6 passed. Counts overlap and are not summed. Existing RequestsDependencyWarning remains. Static comparison found no new lint diagnostic signatures (622 inherited/current across touched Python files); changed ranges formatted, diff-check and runtime integrity passed. Updated runtime compatibility docs; preserved all worktrees, refs and ignored reports/probes. No full repository sweep, user database operations, remote publication, PR or merge. Mermaid V2 remains next after integration.
 <!-- SECTION:NOTES:END -->
