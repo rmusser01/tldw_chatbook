@@ -30,6 +30,37 @@ def rollback_records():
         logger.remove(sink)
 
 
+def test_unavailable_authority_failure_keeps_exception_canary_out_of_diagnostics():
+    from tldw_chatbook.UI.Library_Modules.library_unavailable_navigation import (
+        _library_character_authority_is_current,
+    )
+
+    secret = "/synthetic/private-profile/CANARY-unavailable-authority.sqlite"
+
+    def fail():
+        raise RuntimeError(secret)
+
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            chachanotes_db=SimpleNamespace(get_local_authority_id=fail)
+        )
+    )
+    records = []
+    sink = logger.add(
+        lambda message: records.append((str(message), message.record)),
+        level="WARNING",
+    )
+    try:
+        assert not _library_character_authority_is_current(screen, "authority")
+    finally:
+        logger.remove(sink)
+    assert len(records) == 1
+    rendered, record = records[0]
+    assert secret not in rendered
+    assert record["exception"] is None
+    assert "exception_type=RuntimeError" in record["message"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("owner", ("coordinator", "workspace"))
 async def test_activation_rollback_logs_have_safe_attempt_context(

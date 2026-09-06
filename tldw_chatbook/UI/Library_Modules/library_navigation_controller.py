@@ -16,10 +16,13 @@ from loguru import logger
 
 from ...Constants import (
     CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
+    LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE,
+    LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION,
     LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR,
 )
 from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_COLLECTIONS,
+    LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_PROMPTS,
 )
@@ -79,6 +82,10 @@ class LibraryNavigationController:
             return
         if not isinstance(context, Mapping):
             return
+        is_character_navigation = set(context) in (
+            {LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION},
+            {LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE},
+        )
         if set(context) == {LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR}:
             from ..Navigation.character_conversation_navigation import (
                 deserialize_library_character_repair_context,
@@ -97,10 +104,25 @@ class LibraryNavigationController:
             if self.screen.is_mounted:
                 self.screen.call_after_refresh(self.present_pending_repair)
             return
-        target_row_id = self.screen._library_navigation_context_target_row(context)
+        target_row_id = (
+            LIBRARY_ROW_BROWSE_CONVERSATIONS
+            if is_character_navigation
+            else self.screen._library_navigation_context_target_row(context)
+        )
         if target_row_id is None:
             return
         self.screen._library_navigation_context_generation += 1
+        character_admission = (
+            self.screen._unavailable_navigation._library_character_navigation_admission(
+                self.screen,
+                context,
+                generation=self.screen._library_navigation_context_generation,
+            )
+            if is_character_navigation
+            else None
+        )
+        if is_character_navigation and character_admission is None:
+            return
         if target_row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._invalidate_media_browse()
         if target_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
@@ -122,12 +144,15 @@ class LibraryNavigationController:
                     dict(context),
                     target_row_id,
                     generation,
+                    character_admission,
                 ),
                 exclusive=True,
                 group="library_nav_context",
             )
             return
-        self.screen._apply_navigation_context_state(context)
+        self.screen._apply_navigation_context_state(
+            context, character_admission=character_admission
+        )
 
     def present_pending_repair(self) -> None:
         """Present a typed context once the retained Library owns the screen."""

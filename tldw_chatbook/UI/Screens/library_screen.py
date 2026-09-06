@@ -80,7 +80,6 @@ from ...config import (
     save_settings_to_cli_config,
 )
 from ...Constants import (
-    LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_MODE,
@@ -537,6 +536,9 @@ if TYPE_CHECKING:
         LibraryFileNotesWorkspace,
     )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from ..Library_Modules.library_unavailable_navigation import (
+        _LibraryCharacterNavigationAdmission,
+    )
 else:
 
     def LibraryFileNotesWorkspace(*args: Any, **kwargs: Any) -> Any:
@@ -2167,6 +2169,11 @@ class LibraryScreen(BaseAppScreen):
             LibraryLandingAttentionAction | None
         ) = None
         self._library_navigation_context_generation: int = 0
+        from ..Library_Modules import library_unavailable_navigation
+
+        self._unavailable_navigation = library_unavailable_navigation
+        self._pending_library_character_navigation = None
+        self._library_unavailable_browse_scope = None
         from ..Library_Modules.library_navigation_controller import (
             LibraryNavigationController,
         )
@@ -9564,8 +9571,21 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
             and self._pending_library_source_open is None
+            and self._pending_library_character_navigation is None
+            and self._library_unavailable_browse_scope is None
         ):
             self._start_library_conversation_page_request(
+                self._conversations_state.requested_page,
+                self._conversations_state.requested_query,
+            )
+        elif (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+            and self._pending_library_source_open is None
+            and self._pending_library_character_navigation is None
+            and self._library_unavailable_browse_scope is not None
+        ):
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
                 self._conversations_state.requested_page,
                 self._conversations_state.requested_query,
             )
@@ -9802,6 +9822,12 @@ class LibraryScreen(BaseAppScreen):
                 self._open_pending_library_source(),
                 exclusive=True,
                 group="library_nav_open_source",
+            )
+        if self._pending_library_character_navigation is not None:
+            self.run_worker(
+                self._unavailable_navigation._open_pending_library_character_navigation(self, ),
+                exclusive=True,
+                group="library_nav_character",
             )
 
     async def on_unmount(self) -> None:
@@ -11118,6 +11144,7 @@ class LibraryScreen(BaseAppScreen):
             and skill_flush_allowed
         )
 
+
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Admit route context through the Library-owned navigation controller."""
         self._navigation_controller.apply_navigation_context(context)
@@ -11176,6 +11203,7 @@ class LibraryScreen(BaseAppScreen):
         context: Mapping[str, Any],
         target_row_id: str | None = None,
         generation: int | None = None,
+        character_admission: _LibraryCharacterNavigationAdmission | None = None,
     ) -> None:
         """Admit every mounted editor/source, then apply navigation context.
 
@@ -11194,6 +11222,9 @@ class LibraryScreen(BaseAppScreen):
         if generation != self._library_navigation_context_generation:
             return
         file_notes_flush_allowed = await self._flush_active_file_notes()
+        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+            return
         if generation != self._library_navigation_context_generation:
             return
         if not file_notes_flush_allowed:
@@ -11206,6 +11237,7 @@ class LibraryScreen(BaseAppScreen):
                 context,
                 target_row_id,
                 generation,
+                character_admission,
             )
         finally:
             if callable(release_source):
@@ -11216,6 +11248,7 @@ class LibraryScreen(BaseAppScreen):
         context: Mapping[str, Any],
         target_row_id: str,
         generation: int,
+        character_admission: _LibraryCharacterNavigationAdmission | None = None,
     ) -> None:
         """Apply mounted navigation context while source admission is held."""
         if self._prompts_state.mutation_in_flight:
@@ -11223,16 +11256,25 @@ class LibraryScreen(BaseAppScreen):
         if generation != self._library_navigation_context_generation:
             return
         note_flush = await self._flush_library_note_save()
+        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+            return
         if generation != self._library_navigation_context_generation:
             return
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         prompt_flush_allowed = await self._flush_library_prompt_save()
+        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+            return
         if generation != self._library_navigation_context_generation:
             return
         if not prompt_flush_allowed:
             return
         skill_flush_allowed = await self._flush_library_skill_save()
+        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+            return
         if generation != self._library_navigation_context_generation:
             return
         if not skill_flush_allowed:
@@ -11240,210 +11282,35 @@ class LibraryScreen(BaseAppScreen):
             return
         if target_row_id != LIBRARY_ROW_BROWSE_PROMPTS:
             self._clear_library_prompt_selection(announce=True)
-        self._apply_navigation_context_state(context, recompose=False)
+        self._apply_navigation_context_state(
+            context,
+            recompose=False,
+            character_admission=character_admission,
+        )
+        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+            return
         if self.is_mounted and self._pending_library_source_open is None:
             await self.recompose()
+            if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
+                self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+                return
+        if character_admission is not None:
+            await self._unavailable_navigation._open_pending_library_character_navigation(self, )
 
     def _apply_navigation_context_state(
         self,
         context: Mapping[str, Any],
         *,
         recompose: bool = True,
+        character_admission: _LibraryCharacterNavigationAdmission | None = None,
     ) -> None:
-        """Apply validated navigation context to canvas state and recompose.
+        """Commit admitted routes through the Library navigation owner."""
+        from ..Library_Modules import library_unavailable_navigation
 
-        Split from ``apply_navigation_context`` so its mounted path can admit
-        every pending save first (see
-        ``_apply_navigation_context_after_flush``) while the pre-mount and
-        clean-editor paths apply directly.
-        """
-        if self._prompts_state.mutation_in_flight:
-            return
-        self._supersede_library_notes_navigation()
-        raw_open_source_type = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE)
-        raw_open_source_id = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID)
-        open_source_type = ""
-        open_source_id = ""
-        should_open_pending_source = False
-        if type(raw_open_source_type) is str and type(raw_open_source_id) is str:
-            validated_source_type = self._safe_text(
-                raw_open_source_type,
-                max_length=64,
-            )
-            validated_source_id = self._safe_text(
-                raw_open_source_id,
-                max_length=500,
-            )
-            if (
-                validated_source_type == raw_open_source_type
-                and validated_source_id == raw_open_source_id
-                and validated_source_type
-                in ("media", "notes", "conversations", "prompt")
-                and validated_source_id
-            ):
-                open_source_type = validated_source_type
-                open_source_id = validated_source_id
-                self._pending_library_source_open = (
-                    open_source_type,
-                    open_source_id,
-                )
-                should_open_pending_source = True
-        requested_mode = self._safe_text(
-            context.get(LIBRARY_NAV_CONTEXT_MODE),
-            max_length=64,
+        library_unavailable_navigation._apply_navigation_context_state(
+            self, context, recompose=recompose, character_admission=character_admission
         )
-        conversation_id = self._safe_text(
-            context.get(LIBRARY_NAV_CONTEXT_CONVERSATION_ID),
-            max_length=200,
-        )
-        note_id = self._safe_text(
-            context.get(LIBRARY_NAV_CONTEXT_NOTE_ID),
-            max_length=200,
-        )
-        notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
-        ingest_media = bool(context.get(LIBRARY_NAV_CONTEXT_INGEST))
-        target_mode = (
-            requested_mode if requested_mode in LIBRARY_NAV_MODE_TO_ROW_ID else ""
-        )
-        if conversation_id and not target_mode:
-            target_mode = LIBRARY_MODE_CONVERSATIONS
-        if target_mode:
-            selected_row_id = LIBRARY_NAV_MODE_TO_ROW_ID.get(target_mode)
-            if selected_row_id:
-                self._set_library_destination_with_conversation_fence(selected_row_id)
-            self._invalidate_library_workspace_depth_state()
-        if conversation_id:
-            self._selected_conversation_id = conversation_id
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_BROWSE_CONVERSATIONS
-            )
-            if not should_open_pending_source:
-                # Persona still emits the legacy conversation_id context.
-                # A paged snapshot may not contain that id, so resolve it
-                # through the same point-lookup opener used by Search/RAG.
-                self._pending_library_source_open = (
-                    "conversations",
-                    conversation_id,
-                )
-                should_open_pending_source = True
-        if requested_mode == "notes" and not note_id:
-            # "notes" is a canvas row, not a nav-context table entry (see
-            # target_mode above), so it needs its own selection here --
-            # mirrors handle_library_notes_row's list-view entry state.
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_BROWSE_NOTES
-            )
-        if notes_create:
-            # Mirrors _select_library_rail_row(LIBRARY_ROW_CREATE_NOTE) --
-            # the create-note rail row's own target_id. The rail row's
-            # flush of a dirty editor is handled upstream by
-            # apply_navigation_context's mounted dirty-editor branch; here we
-            # only apply the selection the recompose reads. Reset the note
-            # editor state FIRST (a mounted screen re-entered via this
-            # deep link can still hold a previously opened note's
-            # id/detail/version) then re-assert the create-note target state
-            # AFTER, since the reset flips _library_notes_view back to
-            # "list" -- same reset-then-set ordering as
-            # _open_library_item_by_id's notes branch.
-            self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
-            self._dispatch_database_note_identity_cleared()
-            self._reset_library_note_editor_state()
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_CREATE_NOTE
-            )
-        if ingest_media:
-            # Home's ingest-jobs "Open details" control re-points here
-            # (L3b Task 6): running/queued/failed Library ingest jobs
-            # mirror into Home's Running and Needs Attention sections, and
-            # this deep link is their one-hop route back to the in-canvas
-            # ingest queue. Mirrors
-            # _select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA) -- unlike
-            # collections/note_id above, the ingest canvas reads the job
-            # registry directly on recompose, so no async data fetch (and
-            # therefore no on_mount deferral) is needed even pre-mount.
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_INGEST_MEDIA
-            )
-            # Mirrors _select_library_rail_row's reset: a cached LibraryScreen
-            # re-entered via this deep link (e.g. from Home's ingest-jobs
-            # "Open details" control) must never show a stale half-filled
-            # form left over from a previous Ingest visit.
-            self._reset_library_ingest_transient_state()
-        if note_id:
-            # Forward-compat entry point: the retired Notes tab's chat-sidebar
-            # deep link carried a note id, and this rebuilds the editor for it.
-            # No caller in the tree emits a note_id context today (the surviving
-            # open_notes_workspace route carries none, landing on the list), so
-            # this is exercised only by tests until such a producer is wired --
-            # not orphaned wiring.
-            self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
-            self._set_library_destination_with_conversation_fence(
-                LIBRARY_ROW_BROWSE_NOTES
-            )
-            if self.is_mounted:
-                self._begin_library_note_load(note_id)
-            else:
-                self._library_note_session.close_session()
-                self._selected_note_id = note_id
-                self._library_notes_view = "editor"
-                self._library_note_load_state = "loading"
-                self._library_note_load_message = ""
-                self._library_note_autosave_state = "idle"
-                self._library_note_confirming_delete = False
-                self._library_note_preview = False
-                self._library_note_editor_armed = False
-            # A deep link never owns the current blank-note GC identity.
-            self._library_note_pending_blank_gc_id = None
-            self._library_note_session_blank_id = None
-            self._library_note_title_user_edited = False
-        if open_source_type:
-            self._set_library_destination_with_conversation_fence(
-                {
-                    "media": LIBRARY_ROW_BROWSE_MEDIA,
-                    "notes": LIBRARY_ROW_BROWSE_NOTES,
-                    "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
-                    "prompt": LIBRARY_ROW_BROWSE_PROMPTS,
-                }[open_source_type]
-            )
-            if open_source_type == "media":
-                self._selected_media_id = open_source_id
-                self._library_media_view = "list"
-            elif open_source_type == "notes":
-                self._selected_note_id = open_source_id
-                self._set_library_notes_source(LIBRARY_NOTES_SOURCE_DATABASE)
-                self._library_notes_view = "list"
-            elif open_source_type == "conversations":
-                self._selected_conversation_id = open_source_id
-            elif open_source_type == "prompt":
-                try:
-                    self._prompts_state.selected_prompt_id = int(open_source_id)
-                except ValueError:
-                    self._prompts_state.selected_prompt_id = None
-                self._prompts_state.view = "list"
-        if should_open_pending_source and self.is_mounted:
-            self.run_worker(
-                self._open_pending_library_source(),
-                exclusive=True,
-                group="library_nav_open_source",
-            )
-        # F-012: a deep link can change the active canvas (e.g. mode="search")
-        # without a rail-row press -- the footer's `u` hint must follow the
-        # canvas, not just the rail switch, or the key works unadvertised.
-        self._register_footer_shortcuts()
-        if self._library_notes_workflow_active():
-            self._library_notes_stage = "notes"
-            self._library_notes_explicit_stage_intent = not self.is_mounted
-        else:
-            self._library_notes_explicit_stage_intent = False
-        if self.is_mounted:
-            if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-                self.run_worker(
-                    self._load_library_collections_capture_entry(),
-                    exclusive=True,
-                    group="library_collections_capture_entry",
-                )
-            elif recompose and not open_source_type:
-                self.refresh(recompose=True)
 
     async def _open_pending_library_source(
         self,
@@ -15470,6 +15337,7 @@ class LibraryScreen(BaseAppScreen):
             and row_id != LIBRARY_ROW_BROWSE_CONVERSATIONS
         ):
             self._invalidate_library_conversation_reader_authority()
+            self._library_unavailable_browse_scope = None
         self._library_selected_row_id = row_id
 
     def _ensure_library_conversation_reader_selection(self) -> None:
@@ -15496,6 +15364,8 @@ class LibraryScreen(BaseAppScreen):
 
 
     def _start_library_conversation_page_request(self, page: int, query: str, *, refocus_filter: bool=False, focus_after_apply: str='') -> None:
+        self._library_unavailable_browse_scope = None
+        self._conversations_state.projection = ""
         return self._conversations_controller._start_library_conversation_page_request(page, query, refocus_filter=refocus_filter, focus_after_apply=focus_after_apply)
 
 
@@ -15513,6 +15383,8 @@ class LibraryScreen(BaseAppScreen):
 
     async def _load_library_conversation_page(self, page: int, query: str, generation: int, *, _clamp_attempted: bool=False) -> None:
         return await self._conversations_controller._load_library_conversation_page(page, query, generation, _clamp_attempted=_clamp_attempted)
+
+
 
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
@@ -22647,6 +22519,7 @@ class LibraryScreen(BaseAppScreen):
             self._skills_state.filter_cursor_context = None
             self._library_skills_browse_controller.invalidate()
         self._library_navigation_context_generation += 1
+        self._library_unavailable_browse_scope = None
         if (
             self._pending_library_source_open is not None
             and self._pending_library_source_open[0] == "conversations"
@@ -36010,6 +35883,15 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Submitted, "#library-conversations-filter")
     def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:
+        if self._library_unavailable_browse_scope is not None:
+            event.stop()
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                1,
+                self._safe_text(event.value, max_length=200),
+                refocus_filter=True,
+            )
+            return
         return self._conversations_controller.handle_library_conversations_filter_submitted(event)
 
 
@@ -36035,26 +35917,75 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._conversations_state.loading:
             return
-        self._start_library_conversation_page_request(
-            1,
-            "",
-            refocus_filter=True,
-        )
+        if self._library_unavailable_browse_scope is not None:
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                1,
+                "",
+                refocus_filter=True,
+            )
+        else:
+            self._start_library_conversation_page_request(
+                1,
+                "",
+                refocus_filter=True,
+            )
 
 
 
     @on(Button.Pressed, "#library-conversations-retry")
     def handle_library_conversations_retry(self, event: Button.Pressed) -> None:
+        if self._library_unavailable_browse_scope is not None:
+            event.stop()
+            if self._conversations_state.loading:
+                return
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                self._conversations_state.requested_page,
+                self._conversations_state.requested_query,
+                focus_after_apply="#library-conversations-retry",
+            )
+            return
         return self._conversations_controller.handle_library_conversations_retry(event)
 
 
     @on(Button.Pressed, "#library-conversations-previous")
     def handle_library_conversations_previous(self, event: Button.Pressed) -> None:
+        if self._library_unavailable_browse_scope is not None:
+            event.stop()
+            if (
+                self._conversations_state.loading
+                or self._conversations_state.freshness != "fresh"
+                or self._conversations_state.page <= 1
+            ):
+                return
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                self._conversations_state.page - 1,
+                self._conversations_state.query,
+                focus_after_apply="#library-conversations-previous",
+            )
+            return
         return self._conversations_controller.handle_library_conversations_previous(event)
 
 
     @on(Button.Pressed, "#library-conversations-next")
     def handle_library_conversations_next(self, event: Button.Pressed) -> None:
+        if self._library_unavailable_browse_scope is not None:
+            event.stop()
+            if (
+                self._conversations_state.loading
+                or self._conversations_state.freshness != "fresh"
+                or not self._conversations_state.has_more
+            ):
+                return
+            self._unavailable_navigation._start_library_unavailable_conversation_page_request(
+                self,
+                self._conversations_state.page + 1,
+                self._conversations_state.query,
+                focus_after_apply="#library-conversations-next",
+            )
+            return
         return self._conversations_controller.handle_library_conversations_next(event)
 
 
@@ -36406,6 +36337,8 @@ class LibraryScreen(BaseAppScreen):
         record_id: str,
         *,
         entry_origin: bool = False,
+        required_database: Any | None = None,
+        required_authority: str = "",
     ) -> LibraryEntryReconcileResult | None:
         """Open a Library item straight to its detail surface by id.
 
@@ -36449,15 +36382,30 @@ class LibraryScreen(BaseAppScreen):
             else None
         )
 
+        def required_character_scope_is_current() -> bool:
+            if required_database is None:
+                return True
+            return getattr(
+                self.app_instance, "chachanotes_db", None
+            ) is required_database and self._unavailable_navigation._library_character_authority_is_current(
+                self,
+                required_authority
+            )
+
         def entry_is_current() -> bool:
-            return open_generation == self._library_navigation_context_generation and (
-                not entry_origin
-                or (
-                    entry_generation == self._library_snapshot_state_generation
-                    and entry_route_key == self._library_entry_route_key()
-                    and (
-                        entry_conversation_id is None
-                        or entry_conversation_id == self._selected_conversation_id
+            return (
+                required_character_scope_is_current()
+                and open_generation == self._library_navigation_context_generation
+                and (
+                    not entry_origin
+                    or (
+                        entry_generation == self._library_snapshot_state_generation
+                        and entry_route_key == self._library_entry_route_key()
+                        and (
+                            entry_conversation_id is None
+                            or entry_conversation_id
+                            == self._selected_conversation_id
+                        )
                     )
                 )
             )

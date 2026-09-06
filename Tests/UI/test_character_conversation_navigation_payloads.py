@@ -1,11 +1,61 @@
 from __future__ import annotations
 
+
+def test_library_unavailable_inspection_and_browse_payloads_are_distinct() -> None:
+    """Catch exact inspection or complete browse being serialized as repair."""
+
+    assert hasattr(navigation, "LibraryUnavailableConversationInspection")
+    assert hasattr(navigation, "LibraryUnavailableConversationsBrowse")
+    unresolved = UnresolvedConversationKey("Authority-A", "Conversation-X")
+    return_target = RoleplayReturnTarget.console_context_character()
+    inspection = navigation.LibraryUnavailableConversationInspection(
+        unresolved=unresolved,
+        return_target=return_target,
+    )
+    browse = navigation.LibraryUnavailableConversationsBrowse(
+        selected=unresolved,
+        return_target=return_target,
+    )
+
+    inspection_payload = navigation.serialize_library_unavailable_inspection(inspection)
+    browse_payload = navigation.serialize_library_unavailable_browse(browse)
+
+    assert (
+        navigation.deserialize_library_unavailable_inspection(inspection_payload)
+        == inspection
+    )
+    assert navigation.deserialize_library_unavailable_browse(browse_payload) == browse
+    assert inspection_payload == {
+        "version": 1,
+        "source": "local",
+        "data_authority_id": "Authority-A",
+        "unresolved": {
+            "version": 1,
+            "tag": "unresolved_conversation",
+            "data_authority_id": "Authority-A",
+            "conversation_id": "Conversation-X",
+        },
+        "return_target": {
+            "screen_id": "chat",
+            "focus_id": "console-context-character",
+        },
+    }
+    assert browse_payload == {
+        "version": 1,
+        "source": "local",
+        "data_authority_id": "Authority-A",
+        "selected": inspection_payload["unresolved"],
+        "return_target": inspection_payload["return_target"],
+    }
+
+
 import pytest
 
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     ResolvedLocalCharacterKey,
     UnresolvedConversationKey,
 )
+from tldw_chatbook.UI.Navigation import character_conversation_navigation as navigation
 from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
     LibraryCharacterRepairContext,
     RoleplayCharacterConversationLink,
@@ -15,6 +65,49 @@ from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
     serialize_library_character_repair_context,
     serialize_roleplay_character_conversation_link,
 )
+
+
+@pytest.mark.parametrize("kind", ["inspection", "browse"])
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "boolean_version",
+        "nested_boolean_version",
+        "extra",
+        "authority",
+        "resolved",
+        "return_extra",
+    ],
+)
+def test_unavailable_routes_preserve_strict_lazy_wire_boundary(kind, invalid):
+    key = UnresolvedConversationKey("Authority-A", "Conversation-X")
+    anchor = RoleplayReturnTarget.console_context_character()
+    if kind == "inspection":
+        payload = navigation.serialize_library_unavailable_inspection(
+            navigation.LibraryUnavailableConversationInspection(key, anchor)
+        )
+        deserialize = navigation.deserialize_library_unavailable_inspection
+        field = "unresolved"
+    else:
+        payload = navigation.serialize_library_unavailable_browse(
+            navigation.LibraryUnavailableConversationsBrowse(key, anchor)
+        )
+        deserialize = navigation.deserialize_library_unavailable_browse
+        field = "selected"
+    if invalid == "boolean_version":
+        payload["version"] = True
+    elif invalid == "nested_boolean_version":
+        payload[field]["version"] = True
+    elif invalid == "extra":
+        payload["unexpected"] = "value"
+    elif invalid == "authority":
+        payload["data_authority_id"] = "Authority-B"
+    elif invalid == "resolved":
+        payload[field]["tag"] = "resolved_local_character"
+    else:
+        payload["return_target"]["unexpected"] = "value"
+    with pytest.raises(ValueError):
+        deserialize(payload)
 
 
 def test_roleplay_payload_round_trip_preserves_exact_typed_key_and_safe_fields() -> (

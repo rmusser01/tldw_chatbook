@@ -84,3 +84,31 @@ class _LibraryRepairWire(_StrictWire):
             max_bytes=4096,
         )
         return self
+
+
+class _LibraryUnavailableInspectionWire(_StrictWire):
+    version: _Version
+    source: Literal["local"]
+    data_authority_id: _IdentityText
+    unresolved: _UnresolvedConversationWire
+    return_target: _ReturnTargetWire
+
+    @model_validator(mode="after")
+    def same_authority(self) -> Self:
+        if self.data_authority_id != self.unresolved.data_authority_id:
+            raise ValueError("inspection authority components do not match")
+        return self
+
+
+class _LibraryUnavailableBrowseWire(_StrictWire):
+    version: _Version
+    source: Literal["local"]
+    data_authority_id: _IdentityText
+    selected: _UnresolvedConversationWire
+    return_target: _ReturnTargetWire
+
+    @model_validator(mode="after")
+    def same_authority(self) -> Self:
+        if self.data_authority_id != self.selected.data_authority_id:
+            raise ValueError("browse authority components do not match")
+        return self

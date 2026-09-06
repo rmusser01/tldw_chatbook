@@ -4520,7 +4520,7 @@ assistant_markdown = true
 [chat.images]
 enabled = true
 show_attach_button = true  # Show/hide the attach file button in chat
-# show_character_avatar = true  # show the active character's avatar in the Console left rail
+# show_character_avatar = true  # show the active character image; Character navigation remains available
 # react_character_expressions = true  # swap the Console character avatar among idle/thinking/speaking/error as it generates a reply (requires per-state images on the character); set false to keep a static avatar
 default_render_mode = "auto"  # auto, pixels, regular
 max_size_mb = 10.0

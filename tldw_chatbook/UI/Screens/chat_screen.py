@@ -443,7 +443,6 @@ from ...Chat.console_rail_state import (
     CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
     console_auto_open_would_evict_context,
     CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
-    CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
     CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
     CONSOLE_RAIL_SECTION_IDS,
     CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
@@ -455,12 +454,11 @@ from ...Chat.console_rail_state import (
     coerce_console_rail_preferences,
     collect_prunable_console_rail_keys,
     console_context_reveal_preferences,
-    console_rail_left_open_explicit,
     console_rail_width_band,
     normalize_console_rail_layout_scope,
     resolve_console_rail_priority,
-    serialize_console_rail_preferences,
     serialize_console_rail_stored_preferences,
+    serialize_console_rail_updated_preferences,
 )
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -11304,6 +11302,7 @@ class ChatScreen(BaseAppScreen):
         """Route the picker result to a swap or a new character session."""
         if choice is None:
             return
+        self._character_context.invalidate_scope()
         self.run_worker(
             self._character._apply_console_character_choice_async(choice),
             exclusive=True,
@@ -12209,6 +12208,10 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=inspector_state.can_save_chatbook,
             available_columns=resolved_available_columns,
+            character_context_exists=bool(
+                self._character._current_console_rail_character_id() is not None
+                or self._character_context.state.has_context
+            ),
         )
         if self._should_open_standard_width_inspector(
             rail_state=rail_state,
@@ -12636,6 +12639,7 @@ class ChatScreen(BaseAppScreen):
             if section_id in CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS:
                 changes[f"{section_id}_open"] = bool(section_open)
         next_preferences = replace(current, **changes)
+        character_toggled = "character" in (section_updates or {})
         # TASK-2154.2 (LY-11, ADR-043): an explicit rail toggle writes
         # through even when the coerced value is unchanged. Otherwise "open
         # the left rail" below 100 cols persisted nothing -- the default is
@@ -12650,16 +12654,19 @@ class ChatScreen(BaseAppScreen):
         # distinguishable. The augmented dict goes to both the in-memory
         # config and the persisted file so the two never disagree.
         explicit_rail_toggle = left_open is not None or right_open is not None
-        if next_preferences != current or explicit_rail_toggle or target_missing:
-            serialized = serialize_console_rail_preferences(next_preferences)
-            if left_open is not None or console_rail_left_open_explicit(prior_stored):
-                serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
-            if (
-                right_open is None
-                and isinstance(prior_stored, Mapping)
-                and "right_open" not in prior_stored
-            ):
-                serialized.pop("right_open")
+        if (
+            next_preferences != current
+            or explicit_rail_toggle
+            or character_toggled
+            or target_missing
+        ):
+            serialized = serialize_console_rail_updated_preferences(
+                next_preferences,
+                prior_stored,
+                left_open=left_open,
+                right_open=right_open,
+                character_toggled=character_toggled,
+            )
             rail_state_config[preference_key.value] = serialized
             self._save_console_rail_preferences(
                 preference_key.value,
@@ -14825,7 +14832,7 @@ class ChatScreen(BaseAppScreen):
                 agent_fleet_section_state = (
                     self._agent._console_agent_fleet_section_state()
                 )
-                show_character_section = resolve_show_character_avatar(
+                show_character_avatar = resolve_show_character_avatar(
                     getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
                 )
                 # `character_avatar_widget_builder` hands `ConsoleLeftRail` a
@@ -14845,7 +14852,7 @@ class ChatScreen(BaseAppScreen):
                 character_avatar_fit_box = None
                 character_avatar_prerender_job = None
                 character_avatar_name = ""
-                if show_character_section:
+                if show_character_avatar:
 
                     def character_avatar_widget_builder(box=None, prerendered=None):
                         return self._build_character_avatar_widget(
@@ -14878,13 +14885,13 @@ class ChatScreen(BaseAppScreen):
                             available_lines,
                         )
 
-                    character_avatar_name = (
-                        sanitize_character_display_label(
-                            self._active_character_avatar_name,
-                            max_characters=180,
-                        )
-                        or "No character in this chat"
+                character_avatar_name = (
+                    sanitize_character_display_label(
+                        self._active_character_avatar_name,
+                        max_characters=180,
                     )
+                    or "Roleplay character"
+                )
 
                 left_rail = ConsoleLeftRail(
                     rail_state=rail_state,
@@ -14903,7 +14910,8 @@ class ChatScreen(BaseAppScreen):
                     agent_cancel_all_visible=(
                         self._agent._console_agent_cancel_all_visible()
                     ),
-                    show_character_section=show_character_section,
+                    show_character_section=show_character_avatar,
+                    character_context_controller=self._character_context,
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
                     character_avatar_fit_box=character_avatar_fit_box,
@@ -16932,6 +16940,12 @@ class ChatScreen(BaseAppScreen):
             # raises (see `_refresh_active_character_avatar_if_scope_changed`
             # docstring, T3).
             await self._character._refresh_active_character_avatar_if_scope_changed()
+            # TASK-31244 review: the Character browser is screen-owned and
+            # survives rail recomposition. Revalidate its complete local scope
+            # on every existing native sync seam; the stable fingerprint makes
+            # settled ticks a no-op while profile, current-character, and local
+            # conversation mutations reload and fence stale commits.
+            await self._character_context.refresh_if_scope_changed()
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
             # reuse this snapshot: `_sync_console_native_session_tabs` can
@@ -21972,6 +21986,11 @@ class ChatScreen(BaseAppScreen):
             self.run_worker(
                 self._skill._refresh_console_skill_candidates(), exclusive=False
             )
+        self.run_worker(
+            self._character_context.refresh_if_scope_changed(),
+            exclusive=True,
+            group="console-character-context-refresh",
+        )
         # Textual's MRO dispatch also invokes BaseAppScreen's shared reconciliation;
         # this handler extends that resume event with Console-owned replay work.
 
