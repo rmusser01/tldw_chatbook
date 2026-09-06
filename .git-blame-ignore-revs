@@ -247,3 +247,12 @@ d0ec95b16f17668af9e32725eed788aeeed1d991
 # 91-dependency construction site, both size-ratchet re-pins, the
 # preimport-closure suffix and the wiring pins. Zero logic changes.
 9187bd281916c79f5412838af322a3c07cbb3ff0
+
+# Wave-7 task 2 fix round 1: one more media method reverted to LibraryScreen
+# (_exit_library_media_viewer -- a callback-identity assertion compares the
+# continuation it schedules against screen._apply_library_media_list_return,
+# which a controller-bound method can never equal). 140 movers instead of
+# 141, one added late-binding dependency, both size-ratchet re-pins and the
+# wiring-tuple amendment. Still a pure move: every remaining moved body
+# re-verified TEXT- and AST-identical to its pre-move original.
+40fe1f5bcd1180ccfacfc2c94439340e941e1f43
