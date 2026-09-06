@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import ClassVar
 
 import pytest
@@ -126,6 +127,46 @@ async def test_wide_layout_retains_bounds_and_selected_detail_only() -> None:
         assert modal.region.height <= 35
         assert all("Excerpt" not in label for label in labels)
         assert "Excerpt 0" in detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(52, 20), (120, 50)])
+@pytest.mark.parametrize(
+    "excerpt",
+    ["Long ASCII excerpt " * 20, "研究🙂界隈 " * 35],
+    ids=["ascii", "wide-unicode"],
+)
+async def test_long_selected_detail_paints_timestamp_on_second_row_after_resize(
+    size, excerpt
+):
+    from Tests.UI.test_console_character_switcher import _CharacterSwitcherApp
+
+    async def loader(**_kwargs):
+        return CharacterConversationPage(
+            (replace(_rows(1)[0], selected_excerpt=excerpt),), 1, None, 5
+        )
+
+    app = _CharacterSwitcherApp(
+        character_loader=loader, initial_mode=SwitcherMode.CHARACTER_CHATS
+    )
+    async with app.run_test(size=size) as pilot:
+        other_size = (120, 50) if size == (52, 20) else (52, 20)
+        for current_size in (size, other_size, size):
+            await pilot.resize_terminal(*current_size)
+            await pilot.pause()
+            screen = app.screen
+            detail = screen.query_one("#console-switcher-selected-detail")
+            assert detail.content_region.height == 2
+            strips = screen._compositor.render_strips()
+            painted = [
+                strips[y]
+                .crop(detail.content_region.x, detail.content_region.right)
+                .text
+                for y in range(detail.content_region.y, detail.content_region.bottom)
+            ]
+            assert "Long ASCII" in painted[0] or "研究" in painted[0]
+            assert screen._entries[0].absolute_time in painted[1]
+            assert "RESUME CHAT" in painted[1]
 
 
 @pytest.mark.asyncio

@@ -532,6 +532,10 @@ class ConsoleSessionSwitcherModal(
         if activity_receipt_state is not None:
             self._activity_receipt_state = str(activity_receipt_state or "ready")
             self._update_receipt_status()
+        # Live Active data may advance, but a frozen Character open owns its
+        # query, selection, and request generation until that attempt settles.
+        if self._activation_in_flight:
+            return
         try:
             query = self.query_one("#console-switcher-query", Input).value
         except NoMatches:
@@ -562,6 +566,9 @@ class ConsoleSessionSwitcherModal(
 
     async def _refresh_results(self, query: str, *, reset_page: bool = False) -> bool:
         """Resolve one view and commit only when all captured fences match."""
+        # A reconcile worker may have been queued just before activation began.
+        if self._activation_in_flight:
+            return False
         query = self._validated_query(query)
         if query is None:
             return False
@@ -1476,6 +1483,7 @@ class ConsoleSessionSwitcherModal(
                 ),
             )
             button.tooltip = self._entry_tooltip(entry)
+        self._update_selected_detail()
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         widget = event.widget
@@ -2046,13 +2054,14 @@ class ConsoleSessionSwitcherModal(
         elif self._activation_phase is ConsoleActivationPhase.FAILURE_VISIBLE:
             state = str(self.query_one("#console-switcher-status", Static).renderable)
         first = Text(excerpt or "No matching excerpt")
-        first.truncate(max(20, self.app.size.width - 4), overflow="ellipsis")
+        width = max(1, detail.content_size.width)
+        first.truncate(width, overflow="ellipsis")
         second = Text(
             f"{entry.absolute_time} · {state}"
             if self._activation_phase is ConsoleActivationPhase.IDLE
             else state
         )
-        second.truncate(max(20, self.app.size.width - 4), overflow="ellipsis")
+        second.truncate(width, overflow="ellipsis")
         detail.update(Text.assemble(first, "\n", second))
 
     def _restore_owned_query(self) -> None:
