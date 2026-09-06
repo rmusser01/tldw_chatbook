@@ -3,7 +3,7 @@ id: TASK-31665
 title: >-
   Inspect rail critique 2026-09-05: minor batch + background banding
   investigation
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-05 07:00'
 updated_date: '2026-09-05 19:16'
