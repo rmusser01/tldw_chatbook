@@ -38,7 +38,21 @@ PaneName = Literal["library", "items"]
 
 @dataclass(frozen=True)
 class AdaptiveReaderLayoutProfile:
-    """Destination-specific list and work-pane width policy."""
+    """Destination-specific list and work-pane width policy.
+
+    ``list_grows`` is opt-in per destination (task-31633): when set, a
+    comfortable Reader shares its surplus width with the list -- up to
+    ``list_comfort_width`` -- instead of absorbing every extra cell. It
+    applies to automatic widths only; a custom width is obeyed as typed.
+    Only Media opts in today.
+
+    ``grip_width`` is the width of EACH of the two pane grips, in cells --
+    both what they paint and what the resolver holds back for them, so the
+    two can never disagree. It is opt-in per destination for the same reason
+    (task-31633 AC#2): Media's two five-column grips left ten dead columns
+    around the Items pane, so Media narrows them to one cell each while every
+    other destination keeps ``PANE_GRIP_WIDTH``.
+    """
 
     list_min_width: int = 32
     list_target_width: int = 40
@@ -46,6 +60,8 @@ class AdaptiveReaderLayoutProfile:
     list_max_width: int = 72
     work_min_width: int = 44
     work_comfort_width: int = 44
+    list_grows: bool = False
+    grip_width: int = PANE_GRIP_WIDTH
 
 
 @dataclass(frozen=True)
@@ -192,7 +208,7 @@ def resolve_adaptive_reader_layout(
         ):
             priority = inherited
 
-    grip_width = 2 * PANE_GRIP_WIDTH
+    grip_width = 2 * profile.grip_width
     work_min_width = max(profile.work_min_width, 0)
     library_open = preferences.library_open
     items_open = preferences.items_open
@@ -285,6 +301,31 @@ def resolve_adaptive_reader_layout(
             comfort_width,
             max(width - grip_width - work_min_width, items_width),
         )
+    if items_open and profile.list_grows and not preferences.custom_widths_enabled:
+        # task-31633: past this point every remaining cell used to go to the
+        # Reader, so a 235-cell terminal painted a NARROWER list than a
+        # 100-cell one. Split the Reader's surplus once it is comfortable, up
+        # to the same comfort ceiling the library-closed branch above uses.
+        #
+        # The floor is the Reader's OWN minimum, not READER_COMFORT_WIDTH: a
+        # literal 44 would leave Media's Reader on 45 cells at width 100,
+        # below the work_min_width=46 that every open/close and hysteresis
+        # decision in required_width() was computed against. It is never
+        # below READER_COMFORT_WIDTH, so the intent holds for profiles at or
+        # under 44.
+        #
+        # Custom widths are a hand-typed number in Settings: "Automatic"
+        # adapts, "Custom" obeys, so growth is off in that mode entirely.
+        reader_floor = max(work_min_width, READER_COMFORT_WIDTH)
+        surplus = width - grip_width - library_width - items_width - reader_floor
+        if surplus > 0:
+            items_width = min(
+                items_width + surplus // 2,
+                max(
+                    min(profile.list_comfort_width, profile.list_max_width),
+                    items_width,
+                ),
+            )
     return AdaptiveReaderEffectiveLayout(
         library_open=library_open,
         items_open=items_open,

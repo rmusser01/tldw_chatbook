@@ -7,6 +7,7 @@ from typing import Any
 from textual.widget import Widget
 
 from tldw_chatbook.Library.library_media_reader_state import (
+    MEDIA_READER_LAYOUT_PROFILE,
     MediaReaderEffectiveLayout,
     PaneName,
 )
@@ -31,6 +32,7 @@ class LibraryMediaPaneGrip(LibraryAdaptiveReaderPaneGrip):
             open=open,
             pane_label=pane.title(),
             extra_classes="library-media-pane-grip",
+            width=MEDIA_READER_LAYOUT_PROFILE.grip_width,
             **kwargs,
         )
 
@@ -55,6 +57,7 @@ class LibraryMediaReaderShell(LibraryAdaptiveReaderShell):
             library_label="Library",
             items_label="Items",
             grip_classes="library-media-pane-grip",
+            grip_width=MEDIA_READER_LAYOUT_PROFILE.grip_width,
             **kwargs,
         )
         self.reader = reader

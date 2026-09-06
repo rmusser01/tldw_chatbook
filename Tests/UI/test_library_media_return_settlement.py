@@ -42,6 +42,34 @@ from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
 )
 
 
+
+#: A scroll offset deep in the wide row list and reachable at BOTH sizes these
+#: return tests use. task-31633 made a wide item two painted rows instead of
+#: three, so a 20-row page's virtual height fell from 60 to 40 and the old
+#: literal ``y=42`` is now past the end everywhere (max_scroll_y is 37 at
+#: 100x20 and 33 at 80x24) -- it clamps, which is a different settlement
+#: outcome rather than a deeper scroll.
+DEEP_ROW_SCROLL_Y = 28
+
+#: The offset ``_open_scrolled_compact_media_viewer`` leaves the compact row
+#: list at when it scrolls row 15 into view at ``COMPACT_SCROLL_SIZE``. It was
+#: 42 while a wide item painted three rows; task-31633 made it two, so the same
+#: row now sits shallower. Measured, not derived -- the helper returns the real
+#: offset and the tests below compare against that; this constant keeps the
+#: absolute number pinned so a silent clamp cannot pass as a deep scroll.
+COMPACT_ROW_SCROLL_Y = 29
+
+
+def _park_row_scroll(owner) -> tuple[int, int]:
+    """Park the wide row scroller deep in the list and return its offset."""
+    owner.scroll_to(
+        y=DEEP_ROW_SCROLL_Y, animate=False, force=True, immediate=True
+    )
+    offset = (int(owner.scroll_x), int(owner.scroll_y))
+    assert offset == (0, DEEP_ROW_SCROLL_Y), offset
+    return offset
+
+
 async def _open_compact_media(host, pilot) -> LibraryScreen:
     """Enter Media after selecting the compact presentation contract."""
     screen = _active_library_screen(host)
@@ -411,7 +439,7 @@ async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
             host,
             pilot,
         )
-        assert scroll_offset == (0, 42)
+        assert scroll_offset == (0, COMPACT_ROW_SCROLL_Y)
         real_on_resize = row_scroll_type.on_resize
         monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
 
@@ -450,9 +478,9 @@ async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
             message="Current-owner geometry did not settle the viewer return.",
         )
 
-        assert (int(owner.scroll_x), int(owner.scroll_y)) == (0, 42)
+        assert (int(owner.scroll_x), int(owner.scroll_y)) == scroll_offset
         assert getattr(screen.focused, "media_id", None) == media_id
-        assert focus_observations == [(0, 42)]
+        assert focus_observations == [scroll_offset]
         settled_request, settled_revision = (
             screen._library_media_last_exact_settlement
         )
@@ -468,8 +496,8 @@ async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
             settled_request,
             settled_revision,
         )
-        assert focus_observations == [(0, 42)]
-        assert (int(owner.scroll_x), int(owner.scroll_y)) == (0, 42)
+        assert focus_observations == [scroll_offset]
+        assert (int(owner.scroll_x), int(owner.scroll_y)) == scroll_offset
 
         screen._disarm_library_list_entry_focus()
         assert screen._library_media_last_exact_settlement is None
@@ -536,7 +564,11 @@ async def test_authoritative_recompose_rearms_before_replacement_geometry(
             message="Replacement-owner geometry did not settle the return.",
         )
 
-        assert (int(owner.scroll_x), int(owner.scroll_y)) == scroll_offset == (0, 42)
+        assert (
+            (int(owner.scroll_x), int(owner.scroll_y))
+            == scroll_offset
+            == (0, COMPACT_ROW_SCROLL_Y)
+        )
         assert getattr(screen.focused, "media_id", None) == media_id
 
 
@@ -1463,9 +1495,7 @@ async def test_trash_back_exact_scroll_precedes_captured_control_focus(
         selected_id = str(selected.media_id)
         screen._selected_media_id = selected_id
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
-        owner.scroll_to(y=42, animate=False, force=True, immediate=True)
-        scroll_offset = (int(owner.scroll_x), int(owner.scroll_y))
-        assert scroll_offset == (0, 42)
+        scroll_offset = _park_row_scroll(owner)
         opener = screen.query_one("#library-media-trash-open", Button)
         opener.focus()
         opener.press()
@@ -1530,8 +1560,7 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
         selected_id = str(selected.media_id)
         screen._selected_media_id = selected_id
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
-        owner.scroll_to(y=42, animate=False, force=True, immediate=True)
-        scroll_offset = (int(owner.scroll_x), int(owner.scroll_y))
+        scroll_offset = _park_row_scroll(owner)
         opener = screen.query_one("#library-media-trash-open", Button)
         opener.focus()
         opener.press()
@@ -2410,7 +2439,7 @@ async def test_control_exact_return_requires_matching_semantic_row(
         selected_id = str(semantic_row.media_id)
         screen._selected_media_id = selected_id
         original_owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
-        original_owner.scroll_to(y=42, animate=False, force=True, immediate=True)
+        _park_row_scroll(original_owner)
         opener = screen.query_one("#library-media-trash-open", Button)
         opener.focus()
         opener.press()
@@ -2458,3 +2487,7 @@ async def test_control_exact_return_requires_matching_semantic_row(
         assert screen._library_media_last_successful_settlement is None
         assert getattr(screen.focused, "id", None) != "library-media-trash-open"
         assert scroll_commits == 0
+        # The parked offset is never handed back: with no matching semantic row
+        # there is no exact settlement to commit, so the replacement owner stays
+        # at the top instead of restoring the deep scroll.
+        assert (int(owner.scroll_x), int(owner.scroll_y)) == (0, 0)

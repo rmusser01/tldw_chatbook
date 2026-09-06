@@ -1252,6 +1252,11 @@ ConsoleRunLogModal {
     min-width: 0;
 }
 
+/* The three width declarations are a fallback only: every mounted grip sets
+   its width as an INLINE style from its destination profile's `grip_width`
+   (task-31633 AC#2), and an inline style outranks this rule -- so for Media,
+   whose grips are one cell, these three lines are dead. Keep them in step
+   with `PANE_GRIP_WIDTH` (the shared default every other reader uses). */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {
     width: 5;
     min-width: 5;
@@ -1279,11 +1284,11 @@ ConsoleRunLogModal {
     color: $ds-text-primary;
 }
 
-/* task-31276: no focus outline here. The grip is 5 columns wide and as
-   TALL AS THE SHELL, so an outline can only ever paint its top and bottom
-   rows -- and the top row sits on the Reader's identity line, where a
-   five-cell rule reads as a rendering artifact at the pane join, not as
-   focus (live: `┐─────Local Media item`, 14 captures -- and it persists,
+/* task-31276: no focus outline here. The grip is as TALL AS THE SHELL (5
+   columns wide then, one for Media since task-31633 AC#2), so an outline can
+   only ever paint its top and bottom rows -- and the top row sits on the
+   Reader's identity line, where such a rule reads as a rendering artifact at
+   the pane join, not as focus (live: `┐─────Local Media item`, 14 captures -- and it persists,
    because focus lands here after ANY Reader recompose: Escape out of the
    Find bar, a mode-tab click, More). Fourth widget bitten by an outline
    painting over content rather than around it, after TASK-1160
@@ -1808,10 +1813,12 @@ ConsoleRunLogModal {
 /* Reader toolbars can be as narrow as 50 columns while Items remains open.
    Textual Button's default 16-column minimum pushed More and Info beyond the
    painted Reader at that width even though both widgets stayed mounted. Keep
-   these two compact, label-sized rows fully reachable without changing their
-   text or focus geometry. */
+   these compact, label-sized rows fully reachable without changing their
+   text or focus geometry. task-31633 AC#3 added the More disclosure's own
+   row: its four labels only fit the narrow Reader as label-sized buttons. */
 #library-media-reader-primary-toolbar > Button,
-#library-media-reader-mode-toolbar > Button {
+#library-media-reader-mode-toolbar > Button,
+#library-media-reader-more-actions > Button {
     width: auto;
     min-width: 0;
     margin: 0;
@@ -1995,7 +2002,11 @@ ConsoleRunLogModal {
     min-width: 0;
     height: 2;
     min-height: 2;
-    margin: 0 0 1 0;
+    /* task-31633 (critique #5 P1): NO bottom margin. It bought a blank third
+       row per item, so a 52-row terminal listed eleven of fifteen seeded
+       items. The title/meta rhythm and the `▸` marker separate the items;
+       the compact override below has always been margin-free. */
+    margin: 0;
     padding: 0 1;
     text-align: left;
     content-align: left middle;
