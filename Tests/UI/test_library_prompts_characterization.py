@@ -45,7 +45,7 @@ review proved the coverage is load-bearing by MUTATION -- no-oping
 ``_reset_library_prompt_editor_state`` makes that pre-existing test fail.
 The discard test below is kept anyway because it asserts strictly MORE
 than that one does: the editor projection is torn down
-(``_library_prompt_detail`` and ``_library_prompt_block_state`` both back
+(``_prompts_state.detail`` and ``_prompts_state.block_state`` both back
 to ``None``) and the discarded edit never reached the database (the stored
 ``user_prompt`` still equals its seeded value). It is deepened coverage,
 not new coverage -- the distinction matters for anyone re-deriving this
