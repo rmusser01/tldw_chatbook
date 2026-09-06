@@ -12389,16 +12389,27 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
             return
+        self._sync_library_media_surfaces_or_recompose()
+
+    def _sync_library_media_surfaces_or_recompose(self) -> None:
+        """Patch the mounted Reader and the Items rows in place, else recompose.
+
+        The shared tail of the two Media sync seams (task-28009 review M-3).
+        A viewer-scoped sync that succeeds must repaint the Items rows beside
+        it too: the row's review-state slot moves on a done mark that loads no
+        new item (`m`, and the final `]` completion gesture). A viewer that is
+        gone, or a sync that reports nothing patched, falls back to the
+        whole-screen recompose, which rebuilds both surfaces anyway.
+        """
         viewer = self._mounted_library_media_viewer()
-        if viewer is not None and self._sync_library_media_viewer_state(viewer):
-            try:
-                canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
-            except (NoMatches, QueryError):
-                pass
-            else:
-                canvas.apply_reader_state(self._build_library_media_state())
+        if viewer is None or not self._sync_library_media_viewer_state(viewer):
+            self.refresh(recompose=True)
             return
-        self.refresh(recompose=True)
+        try:
+            canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
+        except (NoMatches, QueryError):
+            return
+        canvas.apply_reader_state(self._build_library_media_state())
 
     async def _apply_library_media_list_return(
         self,
@@ -15603,7 +15614,7 @@ class LibraryScreen(BaseAppScreen):
             return tuple(items)
         done_by_id = {item.backing_media_id: item.done for item in review_set.items}
         return tuple(
-            {**item, "reviewed": done_by_id.get(int(item["backing_media_id"]))}
+            {**item, "reviewed": done_by_id.get(item["backing_media_id"])}
             for item in items
         )
 
@@ -16282,12 +16293,11 @@ class LibraryScreen(BaseAppScreen):
         pending = self._library_media_reader_session.pending_request
         assert pending is not None
         if sync_surfaces:
-            try:
-                canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
-            except (NoMatches, QueryError):
+            # M-2: the row patch is the sync wrapper's own tail now
+            # (``_sync_library_media_surfaces_or_recompose``); only the
+            # no-canvas fallback is still this call site's to make.
+            if not self.query("#library-media-canvas"):
                 self._sync_library_media_browse_state(None)
-            else:
-                canvas.apply_reader_state(self._build_library_media_state())
             self._sync_library_media_viewer_or_recompose()
         if immediate:
             self._dispatch_library_media_detail_request(
@@ -35177,20 +35187,7 @@ class LibraryScreen(BaseAppScreen):
         # a recompose actually happens). The whole-screen fallback needs
         # nothing here -- ``LibraryScreen.refresh`` captures and restores
         # around every screen recompose (Qodo round).
-        viewer = self._mounted_library_media_viewer()
-        if viewer is None or not self._sync_library_media_viewer_state(viewer):
-            self.refresh(recompose=True)
-            return
-        # task-28009: a done mark (`m`, or the final `]`) reaches this seam
-        # WITHOUT loading another item, and the Items list stays mounted
-        # beside the Reader -- so without this the row markers stayed a
-        # gesture behind the banner that had just moved. In-place row patch,
-        # same call `_apply_library_media_active_surface` already makes.
-        try:
-            canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
-        except (NoMatches, QueryError):
-            return
-        canvas.apply_reader_state(self._build_library_media_state())
+        self._sync_library_media_surfaces_or_recompose()
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         """Disable a still-mounted edit Save while its write is unsettled."""

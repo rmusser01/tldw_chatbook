@@ -19,6 +19,7 @@ the chooser bug needs the screen's focus-on-open):
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -2548,17 +2549,17 @@ async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
 _ANALYSED_SECONDARY = "document · 5m · analysed"
 
 
-def _review_state_host(count: int = 4, analysed: int = 2):
-    """Four ``document`` items, the first ``analysed`` of them analysed.
+def _review_state_items(count: int = 4, analysed: int = 2) -> list[dict]:
+    """``count`` ``document`` items, the first ``analysed`` of them analysed.
 
     The stamp is fixed 5m30s back so every row's age label is "5m" and the
     secondary line is exactly the 24-cell ``document · 5m · analysed`` the
-    36-cell Items pane floor has to hold.
+    Items pane has to hold.
     """
     stamp = (
         datetime.now(timezone.utc) - timedelta(minutes=5, seconds=30)
     ).isoformat()
-    items = [
+    return [
         {
             "id": f"media-{index}",
             "title": f"Doc {index}",
@@ -2570,8 +2571,12 @@ def _review_state_host(count: int = 4, analysed: int = 2):
         }
         for index in range(1, count + 1)
     ]
+
+
+def _review_state_host(count: int = 4, analysed: int = 2):
+    """A production-CSS Library host over :func:`_review_state_items`."""
     app = _build_media_test_app()
-    _seed_conversations(app, _two_conversations(), media=items)
+    _seed_conversations(app, _two_conversations(), media=_review_state_items(count, analysed))
     return LibraryProductionCSSHarness(app)
 
 
@@ -2586,8 +2591,15 @@ def _painted_media_rows(host, screen) -> tuple[list[str], list[str]]:
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_media_rows_paint_analysed_only_for_analysed_items(size):
-    """task-28008: the row says which items already carry an analysis, in
-    words -- and the whole 24-cell secondary fits the Items pane floor."""
+    """task-28008: the row says which items already carry an analysis, in words.
+
+    What this pins about width: BOTH parametrized sizes resolve the Items
+    pane to 52 cells (the resolver's automatic width here), and the 24-cell
+    ``document · 5m · analysed`` paints whole in it, indented, with room to
+    spare. The narrower 36-cell FLOOR is pinned separately by
+    ``test_analysed_secondary_survives_the_36_cell_items_floor`` -- a
+    ``>= 36`` assertion here would have claimed a floor that never ran.
+    """
     host = _review_state_host()
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
@@ -2604,7 +2616,7 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size):
             "document · 5m",
             "document · 5m",
         ], secondaries
-        assert screen.query_one("#library-media-canvas").region.width >= 36
+        assert _items_pane_width(screen) == 52
 
 
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
@@ -2653,3 +2665,114 @@ async def test_select_mode_checkbox_replaces_the_review_state_slot(size):
         titles, _secondaries = _painted_media_rows(host, screen)
         assert [line[1] for line in titles] == ["☐", "☐", "☐", "☐"], titles
         assert "·" not in "".join(line[1] for line in titles), titles
+
+
+def _review_reader_host(count: int = 2):
+    """The same seeded rows, behind a gated detail service so the Reader can
+    be settled on a known row before the mark gestures are pressed."""
+    items = _review_state_items(count, analysed=1)
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=items)
+    service = ControlledDetailMediaService(items)
+    app.media_reading_scope_service = service
+    return LibraryProductionCSSHarness(app), service
+
+
+def _painted_slots(host, screen) -> list[str]:
+    """The painted one-cell state slot of each Media row, in order."""
+    titles, _secondaries = _painted_media_rows(host, screen)
+    return [line[1] for line in titles]
+
+
+@pytest.mark.asyncio
+async def test_marking_reviewed_in_the_reader_repaints_the_row_slot():
+    """task-28009: `m` and the final `]` change the MARK, not the loaded item.
+
+    Both land on the viewer-scoped sync seam without loading anything, and
+    the Items list stays mounted beside the Reader -- so unless that seam
+    repaints the rows, the slot stays a gesture behind the banner that just
+    moved. Painted on the real screen, because the row markers are exactly
+    what a state-only assertion would miss.
+    """
+    host, service = _review_reader_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        review = screen._review_set_service()
+        review.create_review_set(
+            "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+        )
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await _load_row_0(screen, service, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["·", "·"],
+            message="The active set never painted its unreviewed rows.",
+        )
+
+        await pilot.press("m")
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["✓", "·"],
+            message="`m` did not repaint the loaded row's slot as reviewed.",
+        )
+
+        # ...and it is a live read, not a one-shot: un-marking flips it back.
+        await pilot.press("m")
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["·", "·"],
+            message="A second `m` did not repaint the row as unreviewed.",
+        )
+
+        # Advancing marks the row it leaves (that path loads an item and
+        # repaints through the selection seam)...
+        await _walk_next(screen, service, pilot, expected_row=1)
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["✓", "·"],
+            message="] did not repaint the row it left as reviewed.",
+        )
+
+        # ...and the final ] on the last item is the completion gesture: it
+        # marks in place, loading nothing, so only this seam can repaint it.
+        await pilot.press("right_square_bracket")
+        await _wait_for_condition(
+            pilot,
+            lambda: _painted_slots(host, screen) == ["✓", "✓"],
+            message="The final ] did not repaint the last row as reviewed.",
+        )
+
+
+@pytest.mark.asyncio
+async def test_analysed_secondary_survives_the_36_cell_items_floor():
+    """M-1: the 24-cell secondary at the Items pane's 36-cell floor.
+
+    The automatic resolver gives Items 52 cells at both tested terminal
+    sizes, so the floor only runs when a custom Items width asks for it (a
+    custom width is obeyed as typed). 36 is ``list_min_width`` + Media's two
+    one-cell grips -- the narrowest the pane ever gets.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_media_reader_preferences = dataclasses.replace(
+            screen._library_media_reader_preferences,
+            custom_widths_enabled=True,
+            items_width=36,
+        )
+        screen._sync_library_media_reader_layout_from_shell()
+        await _wait_for_condition(
+            pilot,
+            lambda: _items_pane_width(screen) == 36,
+            message="The Items pane never reached its 36-cell floor.",
+        )
+
+        # The crop at this width clips a neighbouring pane border into the
+        # right edge, so strip that too before comparing the row's own text.
+        _titles, secondaries = _painted_media_rows(host, screen)
+        assert [line.strip(" │") for line in secondaries[:2]] == [
+            _ANALYSED_SECONDARY,
+            _ANALYSED_SECONDARY,
+        ], secondaries
+        assert "…" not in "".join(secondaries), secondaries

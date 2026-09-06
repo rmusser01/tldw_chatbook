@@ -87,7 +87,7 @@ afterwards, and items outside the set stay blank — the marks update the moment
 you mark an item reviewed in the Reader, without leaving it. Select mode
 reuses that same cell for its **☑/☐**, so a row never carries two markers.
 
-*Verified against fix/media-wave5-i — 2026-09-06 (tasks 28008/28009: four
+*Verified against fix/media-wave5-i @ 8da37ba63 — 2026-09-06 (tasks 28008/28009: four
 seeded `document` items, two of them analysed, live at 235x52 and 100x30.
 Both analysed rows painted `document · 5m · analysed` in full at the Items
 pane's 36-cell floor; "Review these" put `·` on every row, two `]` presses
