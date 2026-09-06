@@ -164,10 +164,16 @@ class InspectorSectionRow:
             without an app and produce the same value regardless of the
             live glyph-mode setting. Width/shape decisions
             (``row_fits_one_line``, the structural key) are computed on
-            this UNRESOLVED value; every marker this repo assigns a
-            fallback for happens to be a 1-for-1 character substitute
-            (``▸``→``>``, ``▾``→``v``), so that computation is never wrong
-            about a row's rendered width once ASCII mode resolves it.
+            this UNRESOLVED value, so ASCII mode can shift a row's rendered
+            width away from the width those decisions assumed. The
+            expand/collapse markers the Inspector rows carry are 1-for-1
+            substitutes (``▸``→``>``, ``▾``→``v``) and so are exact; the
+            STATUS markers in the same table are not (``✓``→``[x]``,
+            ``●``→``[*]``, ``◈``→``[s]`` -- one column becoming three), so
+            a status-prefixed row resolves up to 2 columns wider than it
+            was measured. Harmless except right at the budget edge, where
+            it can push a pair that ``row_fits_one_line`` called a fit into
+            the primary's own ``text-overflow`` ellipsis.
         secondary_text: Dimmed detail, e.g. a truncated last-step summary.
             Where it renders depends on what it is (TASK-31662): empty
             renders no line at all, a short one shares the primary's line

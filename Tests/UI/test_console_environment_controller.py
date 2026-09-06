@@ -570,8 +570,59 @@ def test_pending_ack_tiers_cleared_when_the_deferred_net_is_abandoned(monkeypatc
     assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
 
     fx.rail_open = False  # the user collapsed the Inspect rail meanwhile
+    snapshots_before = len(fx.snapshots)
     fx.run_job(0)  # local lands: the deferred net would be re-issued here
     assert fx.controller.pending_ack_tiers == frozenset()
+    # Final-review I1 sibling check: clearing the set is only half the ack --
+    # the screen clears its "Refreshing…" label from `on_snapshot`. This path
+    # is self-healing because the abandonment happens INSIDE a real landing,
+    # which falls through to `_on_snapshot` on its way out.
+    assert len(fx.snapshots) > snapshots_before
+
+
+def test_pending_ack_clear_on_a_scope_drop_still_notifies_the_screen(monkeypatch):
+    """Final review I1: clearing the pending set is only HALF the ack.
+
+    The screen's only ack-clear site is the top of
+    ``_land_console_environment``, which runs on ``on_snapshot``. The
+    stale-scope guard cleared ``_pending_ack_tiers`` but fired no snapshot,
+    so when the accessor flips to ``UNKNOWN_ROOT`` mid-refresh (the ~12s
+    measured `gh` window is long enough for a chat controller to go away and
+    come back) every landing of the in-flight refresh is scope-dropped --
+    and every LATER poll takes the UNKNOWN skip, which lands nothing while
+    ``_has_landed``. Nothing ever calls ``on_snapshot`` again, so the button
+    reads "Refreshing…" for as long as the UNKNOWN spell lasts.
+    """
+    fx = DeferredFixture(monkeypatch)
+    # Establish a landed root A first, so the UNKNOWN skip below takes the
+    # `_has_landed` arm -- the one that never lands anything of its own.
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)  # local lands for /w/repo
+    fx.run_job(1)  # net lands for /w/repo
+    assert fx.controller._has_landed is True
+
+    jobs_before = len(fx.jobs)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+    assert len(fx.jobs) == jobs_before + 2  # both tiers dispatched for real
+
+    fx.root = env_mod.UNKNOWN_ROOT  # the accessor blips during the gh window
+    snapshots_before = len(fx.snapshots)
+    for index in range(jobs_before, len(fx.jobs)):
+        fx.run_job(index)  # every one of these landings is scope-dropped
+
+    assert fx.controller.pending_ack_tiers == frozenset()
+    # The screen-side clear evidence: `_land_console_environment` only ever
+    # runs from `on_snapshot`, so an empty pending set nobody was told about
+    # leaves the label up.
+    assert len(fx.snapshots) > snapshots_before
+
+    # ...and nothing else would have supplied one: the UNKNOWN skip lands
+    # nothing while `_has_landed`, however long the blip lasts.
+    snapshots_after_drop = len(fx.snapshots)
+    for _ in range(ConsoleEnvironmentController._MAX_UNKNOWN_TICKS + 2):
+        fx.controller.poll_tick()
+    assert len(fx.snapshots) == snapshots_after_drop
 
 
 # ---------------------------------------------------------------------------

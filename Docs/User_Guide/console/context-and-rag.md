@@ -224,8 +224,10 @@ Two honesty notes worth knowing:
 carries a task id (`feat/task-3401-…`, and subtask ids like `task-3401.6`
 count) the collapsed line is that task: `task-3401 · In Progress ▸`, with
 `4/9 ACs · <title>` beside it. With no branch-linked task the section header
-carries the counts (`3 doing · 12 todo`) and the row beneath is the handle
-onto the list — **Backlog ▸**, with how many tasks it holds. Enter expands the
+carries the counts (`3 doing · 12 todo`) **while the section is collapsed** —
+expanding it hides that summary, because the rows below then say the same
+thing — and the row beneath is the handle onto the list — **Backlog ▸**, with
+how many tasks it holds. Enter expands the
 full list (its entries are inert),
 In-Progress first, capped with a "… N more" row; **+ Add task to chat** pastes
 the branch task's title and file path into the composer. The list is

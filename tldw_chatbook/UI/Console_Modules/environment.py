@@ -505,11 +505,25 @@ class ConsoleEnvironmentController:
             # TASK-31664 round-1 review I2: the scope an outstanding
             # explicit refresh targeted has moved on -- nothing will ever
             # land for it through THIS guard again, so any acknowledgment
-            # still waiting on it would otherwise wedge forever. The next
-            # legitimate landing (for the NEW scope, imminent -- a root
-            # change always triggers its own immediate refresh) will find
-            # this already empty and clear the screen's ack right away.
+            # still waiting on it would otherwise wedge forever.
+            #
+            # TASK-31665 final review I1: emptying the set is only HALF the
+            # acknowledgment. The screen clears its "Refreshing…" label from
+            # `_land_console_environment`, which only ever runs from
+            # `on_snapshot` -- so a clear nobody is told about is invisible.
+            # The comment this replaces assumed the NEW scope's landing is
+            # imminent; it is not, when the accessor flipped to
+            # `UNKNOWN_ROOT` rather than to another root. UNKNOWN is a SKIP
+            # in both `poll_tick` and `request_refresh`, and while
+            # `_has_landed` it lands nothing at all, so the label stayed up
+            # for the whole spell. Notify on the non-empty -> empty
+            # transition: repainting the CURRENT snapshot is a no-op for the
+            # sections (they diff against what they already render) and is
+            # exactly the signal the ack clear is gated on.
+            had_pending_ack = bool(self._pending_ack_tiers)
             self._pending_ack_tiers.clear()
+            if had_pending_ack:
+                self._on_snapshot(self.snapshot)
             return
         if token != self._dispatch_tokens[tier]:
             return  # stale-dispatch guard: a newer dispatch of this tier already landed/is in flight

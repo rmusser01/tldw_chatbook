@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
+from rich.cells import cell_len
+
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 
@@ -417,7 +419,7 @@ def _with_expand_marker(
         chevron matching this row's current expand state.
     """
     marker = ENV_MARKER_EXPAND_OPEN if row_id in expanded else ENV_MARKER_EXPAND_COLLAPSED
-    room = budget - len(marker) - 1
+    room = budget - cell_len(marker) - 1  # M4: cells -- see `_ellipsize`
     if room <= 0:
         return marker
     return f"{_ellipsize(label, room)} {marker}"
@@ -454,6 +456,32 @@ def _with_stale_marker(secondary_text: str, stale: bool) -> str:
     return f"{secondary_text} (stale)"
 
 
+def _head_within_cells(text: str, limit: int) -> str:
+    """Longest head of ``text`` whose RENDERED width fits ``limit`` columns.
+
+    TASK-31665 final review M4: the counterpart to measuring with
+    ``cell_len`` -- a budget in columns cannot be spent by slicing on
+    character INDEX. ``text[:limit]`` on a CJK path or an emoji-bearing
+    branch name yields up to twice ``limit`` columns, which is the same
+    over-run the ``len``-based measurement produced, just moved one step
+    later. Stops before the first character that would not fit whole (a
+    2-cell character is never split into a half column).
+    """
+    if limit <= 0:
+        return ""
+    if cell_len(text) <= limit:
+        return text
+    used = 0
+    head: list[str] = []
+    for char in text:
+        width = cell_len(char)
+        if used + width > limit:
+            break
+        head.append(char)
+        used += width
+    return "".join(head)
+
+
 def _ellipsize(text: str, limit: int) -> str:
     """Trim ``text`` to ``limit`` columns, marking the cut with a trailing "…".
 
@@ -461,20 +489,28 @@ def _ellipsize(text: str, limit: int) -> str:
     branch names lead with the identifying fragment -- ``feat/task-31450-…``
     -- so the head is what tells the branches apart.
 
+    TASK-31665 final review M4: measured (and sliced) in terminal CELLS,
+    not characters. ``row_fits_one_line`` decides a row's SHAPE with
+    ``rich.cells.cell_len``; this function decides what that shape gets
+    FILLED with, and the two disagreeing is what let a double-width label
+    be called a fit and then overflow. Branch names and changed-file paths
+    are user data, so the wide case is reachable.
+
     Args:
         text: Text to fit.
         limit: Maximum column count; ``<= 0`` yields ``""``.
 
     Returns:
-        ``text`` unchanged when it already fits, else its head plus "…".
+        ``text`` unchanged when it already fits, else its head plus "…"
+        (the ellipsis is one cell), together at most ``limit`` columns.
     """
     if limit <= 0:
         return ""
-    if len(text) <= limit:
+    if cell_len(text) <= limit:
         return text
     if limit == 1:
         return "…"
-    return text[: limit - 1] + "…"
+    return _head_within_cells(text, limit - 1) + "…"
 
 
 def environment_summary(git: GitEnvState, *, budget: int = ENV_SUMMARY_BUDGET) -> str:
@@ -496,7 +532,10 @@ def environment_summary(git: GitEnvState, *, budget: int = ENV_SUMMARY_BUDGET) -
         counts, when the counts alone already exceed it).
     """
     counts = signed_change_counts(git.adds, git.dels)
-    room = budget - len(counts) - 1  # -1 for the separating space
+    # M4: cells, not characters -- see `_ellipsize`. `counts` is ASCII
+    # today, but measuring the two halves of one budget by two different
+    # rulers is the bug, not the width of this particular half.
+    room = budget - cell_len(counts) - 1  # -1 for the separating space
     if room < 2:
         return counts
     return f"{_ellipsize(_branch_primary(git), room)} {counts}"

@@ -301,6 +301,34 @@ def test_summary_drops_the_branch_entirely_when_counts_fill_the_budget():
     assert environment_summary(huge, budget=12) == "+1.7M −278k"
 
 
+def test_summary_budget_is_spent_in_CELLS_not_characters():
+    """M4: a double-width branch name must not overrun the budget.
+
+    `row_fits_one_line` already measures with `rich.cells.cell_len`; the
+    summary measured (and SLICED) with `len`, so a CJK branch name -- two
+    terminal cells per character -- fitted on paper and painted up to twice
+    the columns it was given. Branch names are user data.
+    """
+    from rich.cells import cell_len
+
+    from tldw_chatbook.Chat.console_environment_state import _ellipsize
+
+    cjk = _git_state(branch="feat/機能-検索-結果-表示-改善", adds=10, dels=2)
+    summary = environment_summary(cjk)
+    assert cell_len(summary) <= ENV_SUMMARY_BUDGET
+    assert summary.endswith("+10 −2")  # counts still whole
+    assert summary.endswith("…", 0, summary.index(" +10"))  # branch was cut
+    # The old `len` ruler would have called this same fragment a fit: it is
+    # under the budget in CHARACTERS and over it in columns.
+    assert len(summary) < cell_len(summary)
+
+    # The cut never splits a 2-cell character into a half column: an odd
+    # budget spent on 2-cell characters comes back one column short, never
+    # one column over.
+    assert cell_len(_ellipsize("世界世界世界", 6)) == 5
+    assert _ellipsize("世界世界世界", 6) == "世界…"
+
+
 def test_detached_head_summary_is_budgeted_too():
     detached = _git_state(branch=None, detached=True, head_short="abc1234")
     assert len(environment_summary(detached)) <= ENV_SUMMARY_BUDGET
