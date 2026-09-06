@@ -673,6 +673,69 @@ def test_pending_ack_clear_on_a_scope_drop_still_notifies_the_screen(monkeypatch
     assert len(fx.snapshots) == snapshots_after_drop
 
 
+def test_a_stale_landing_does_not_clear_a_LATER_scopes_pending_ack(monkeypatch):
+    """Q5: the ack set is per-refresh, so the scope that OWNS it must match.
+
+    ``_pending_ack_tiers`` is one unkeyed set, and the stale-scope guard
+    emptied it (and, since the final-review fix above, fired ``on_snapshot``)
+    for ANY dropped landing. Sequence that breaks:
+
+    Refresh in workspace A pends {local, net} -> the user switches to B ->
+    Refresh in B repopulates the same set -> A's landing, still in flight
+    from the ~12s `gh` window, arrives and is scope-dropped -> the guard
+    clears the WHOLE set and notifies, so the screen drops "Refreshing…"
+    while B's tiers are still genuinely in flight. The user watches the
+    acknowledgment vanish seconds before the data it was acknowledging
+    arrives, on the panel they are actually looking at.
+
+    A stale landing from a scope that no longer OWNS the ack must not touch
+    it; the ack still clears normally once B's own tiers land.
+    """
+    fx = DeferredFixture(monkeypatch, root="/w/A")
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)  # local lands for /w/A
+    fx.run_job(1)  # net lands for /w/A
+    assert fx.controller._has_landed is True
+
+    # Explicit refresh in A: both tiers dispatched, both owed.
+    a_first = len(fx.jobs)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+    a_jobs = range(a_first, len(fx.jobs))
+    assert len(a_jobs) == 2
+
+    # The user switches to B and refreshes there before A's jobs land. B is a
+    # new scope, so its branch is unknown and the net tier DEFERS (C1) -- but
+    # both tiers are still owed, which is exactly what the ack is for.
+    fx.root = "/w/B"
+    b_local_index = len(fx.jobs)
+    fx.controller.request_refresh(include_net=True, force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+    assert len(fx.jobs) == b_local_index + 1  # local only; net deferred
+    assert fx.controller._net_pending is True
+
+    # A's stale landings arrive. They are correctly dropped for the paint --
+    # but they must not speak for B's outstanding acknowledgment.
+    snapshots_before = len(fx.snapshots)
+    for index in a_jobs:
+        fx.run_job(index)
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"}), (
+        "a stale landing from the abandoned scope cleared the LIVE scope's ack"
+    )
+    assert len(fx.snapshots) == snapshots_before, (
+        "a stale landing notified the screen to drop an ack it does not own"
+    )
+
+    # B's own tiers land: now, and only now, the ack clears.
+    b_net_index = len(fx.jobs)
+    fx.run_job(b_local_index)  # lands local for B, releases the deferred net
+    assert fx.controller.pending_ack_tiers == frozenset({"net"})
+    assert len(fx.jobs) == b_net_index + 1
+    fx.run_job(b_net_index)
+    assert fx.controller.pending_ack_tiers == frozenset()
+    assert len(fx.snapshots) > snapshots_before
+
+
 # ---------------------------------------------------------------------------
 # TASK-31660: root-is-None is an ANSWER (UNBOUND), not a reason to skip.
 #

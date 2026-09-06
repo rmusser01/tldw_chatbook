@@ -248,6 +248,17 @@ class ConsoleEnvironmentController:
         # tier (``gh``, up to the measured ~12s) lands -- not just the
         # fast local one.
         self._pending_ack_tiers: set[str] = set()
+        # Q5 (final review): the set above is ONE unkeyed set, so it needs to
+        # remember whose refresh it belongs to. Without this, a stale landing
+        # from an ABANDONED scope satisfied the stale-scope guard's ack clear
+        # and dropped the acknowledgment a LATER scope was still waiting on:
+        # refresh in A pends {local, net} -> user switches to B -> refresh in
+        # B repopulates the same set -> A's landing, still in flight from the
+        # measured ~12s `gh` window, arrives, and the guard cleared the whole
+        # set and notified, so the screen dropped "Refreshing…" while B's
+        # tiers were genuinely still in flight. Set beside every write to
+        # ``_pending_ack_tiers``; read only by the stale path in ``_land``.
+        self._pending_ack_scope: str | None = None
 
     # -- public API -------------------------------------------------------
 
@@ -340,6 +351,9 @@ class ConsoleEnvironmentController:
                 # post-call check of `pending_ack_tiers` correctly finds it
                 # empty and never arms an ack nothing will ever clear.
                 self._pending_ack_tiers = {_LOCAL_TIER}
+                # `_land_unbound` lands with scope `None` -- the same value
+                # the accessor just returned -- so that is who owns this ack.
+                self._pending_ack_scope = None
             self._land_unbound()
             return
         scope_root = root
@@ -358,6 +372,7 @@ class ConsoleEnvironmentController:
             if dispatch_net:
                 pending.add(_NET_TIER)
             self._pending_ack_tiers = pending
+            self._pending_ack_scope = scope_root
 
         if dispatch_local:
             self._dispatch_local(scope_root)
@@ -555,10 +570,19 @@ class ConsoleEnvironmentController:
             # transition: repainting the CURRENT snapshot is a no-op for the
             # sections (they diff against what they already render) and is
             # exactly the signal the ack clear is gated on.
-            had_pending_ack = bool(self._pending_ack_tiers)
-            self._pending_ack_tiers.clear()
-            if had_pending_ack:
-                self._on_snapshot(self.snapshot)
+            #
+            # Q5 (final review): ...and only for the scope that OWNS the ack.
+            # The set is unkeyed, so a stale landing from an ABANDONED scope
+            # used to clear (and notify for) an acknowledgment a LATER
+            # refresh had already re-armed -- see `_pending_ack_scope`. A
+            # landing that no longer speaks for the pending refresh speaks
+            # for nothing here; the owning scope's own landings, or its own
+            # stale drop, still clear it exactly as before.
+            if scope_root == self._pending_ack_scope:
+                had_pending_ack = bool(self._pending_ack_tiers)
+                self._pending_ack_tiers.clear()
+                if had_pending_ack:
+                    self._on_snapshot(self.snapshot)
             return
         if token != self._dispatch_tokens[tier]:
             return  # stale-dispatch guard: a newer dispatch of this tier already landed/is in flight

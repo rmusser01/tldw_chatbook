@@ -8468,7 +8468,7 @@ class ChatScreen(BaseAppScreen):
         """
         if not section.is_mounted:
             return
-        if self._console_environment_focus_left_the_rail():
+        if self._console_environment_focus_moved_by_user(section):
             return  # I2: a human moved focus during the recompose window
         if self._focus_console_environment_row_by_id(section, row_id):
             return
@@ -8482,8 +8482,79 @@ class ChatScreen(BaseAppScreen):
             return
         self._focus_console_environment_visible_toggle(section)  # I1 (round-2: visible chain)
 
+    def _console_environment_focus_moved_by_user(
+        self, origin_section: ConsoleInspectorSection
+    ) -> bool:
+        """Whether a HUMAN moved focus during the recompose window.
+
+        Q6 (final review). This used to be
+        `_console_environment_focus_left_the_rail`, which asked only whether
+        focus had left ``#console-inspector-rail-body``. That is the wrong
+        boundary: it treats the whole rail as one place. A user who Tabs or
+        clicks to ANOTHER row, or to any other rail control, in the window
+        between `_land_console_environment` scheduling the restore and the
+        restore running is still inside that body, so the check answered
+        "nobody moved" and the restore pulled them off the row they just
+        chose -- the same defect the composer case fixes, one step short of
+        the rail's edge.
+
+        Two signals, and the second is the new one:
+
+        1. Focus left the rail body entirely -- the original check, which
+           the composer cases rely on.
+        2. Focus is on a ``ConsoleInspectorSectionRow`` that is NOT the row
+           this restore captured. Textual's unmount reset cannot produce
+           that: it runs while the recomposing section's rows are
+           transiently gone, so it falls through to non-row chrome (a
+           collapse chevron, a "View all" button) or to ``None``. Landing
+           ON a row is therefore a human's doing.
+
+        The allowlist this replaced (``None`` / rail body / the origin
+        section's own toggle) was tried first and is WRONG: the fleet-sync
+        case (`test_fleet_section_sync_keeps_focus_on_the_same_row`) resets
+        onto ``#console-inspector-section-environment-view-all`` -- a
+        control belonging to a DIFFERENT section than the one recomposing
+        -- so the reset's landing spots are not closed by section and
+        cannot be enumerated. Hence the discriminator above, which keys on
+        the one property the reset provably cannot have.
+
+        Known residual gap, deliberately left: a user who clicks in-rail
+        CHROME (a section's chevron, "View all", Refresh) inside the
+        recompose window is still overridden, because that is exactly where
+        the reset also lands and the two are indistinguishable at this
+        seam. Moving to another ROW -- the ordinary Tab/click gesture, and
+        the case the finding was raised about -- is now honoured.
+
+        Args:
+            origin_section: The section whose focused row just vanished.
+                Unused by the checks above, kept because the caller's
+                other fallbacks are section-scoped and a future signal
+                here would be too.
+
+        Returns:
+            ``True`` when a human appears to have moved focus (so the
+            restore must not run); ``False`` when focus is where the
+            unmount reset would have left it and the restore should
+            proceed.
+        """
+        focused = self.focused
+        if focused is None:
+            return False
+        try:
+            rail_body = self.query_one("#console-inspector-rail-body")
+        except (NoMatches, QueryError):
+            return True
+        if rail_body not in focused.ancestors_with_self:
+            return True
+        return isinstance(focused, ConsoleInspectorSectionRow)
+
     def _console_environment_focus_left_the_rail(self) -> bool:
         """Whether focus is currently OUTSIDE the Inspect rail's row body.
+
+        Superseded as the restore's gate by
+        `_console_environment_focus_moved_by_user` (Q6): this answers a
+        strictly weaker question and cannot see a user move that stays
+        inside the rail. Kept as the rail-boundary predicate it always was.
 
         Round-1 review finding I2. `_focus_console_environment_row_after_
         sync` runs on a `call_next` scheduled well before `sync_state`'s own

@@ -892,7 +892,13 @@ class ConsoleInspectorRail(Vertical):
         hint.update(text, layout=False)
 
     def on_resize(self, event: Resize) -> None:
-        """Recompute fixed-child overflow on terminal grow and shrink."""
+        """Recompute fixed-child overflow on terminal grow and shrink.
+
+        Args:
+            event: The rail's resize event. Its ``size.height`` drives the
+                authority-summary density choice, so a short rail drops the
+                summary's optional lines instead of overflowing.
+        """
 
         self._sync_authority_summary_density(event.size.height)
         self.request_outer_reconcile()

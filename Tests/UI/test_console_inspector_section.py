@@ -1099,6 +1099,72 @@ def test_row_fits_one_line_charges_the_indent_against_the_budget():
     assert row_fits_one_line("abcdefgh", "xy", budget=12, indent=2) is False
 
 
+# --- Q4: the fit must measure what is actually RENDERED ---------------------
+
+#: A fleet-shaped row two cells inside the budget as Unicode, and two cells
+#: OVER it once ASCII mode expands the marker (``✓`` -> ``[x]``, 1 cell -> 3).
+_ASCII_BOUNDARY_PRIMARY = "✓ deploy-worker-agent-1"
+_ASCII_BOUNDARY_SECONDARY = "4m"
+
+
+def _boundary_row() -> InspectorSectionRow:
+    return InspectorSectionRow(
+        row_id="fleet-boundary",
+        primary_text=_ASCII_BOUNDARY_PRIMARY,
+        secondary_text=_ASCII_BOUNDARY_SECONDARY,
+    )
+
+
+def test_row_shape_measures_the_glyph_RESOLVED_text_in_ascii_mode():
+    """Q4: `row_fits_one_line` is pure over the text it is GIVEN, and the
+    widget was giving it the UNRESOLVED text while rendering the resolved
+    one. Every ASCII fallback is wider than its glyph (``✓`` -> ``[x]``,
+    ``●`` -> ``[*]``: 1 cell -> 3; ``◉`` -> ``(rec)``: 1 -> 5), so in
+    ``appearance.ascii_glyphs`` a row within 2 cells of the budget was
+    measured as a fit, mounted one-line, and then ellipsized at paint time
+    by the primary's own ``text-overflow`` -- the exact defect AC#14's
+    cell-measurement fix exists to prevent, reachable through the other
+    seam. Fixed at the widget (the projection stays pure and
+    mode-independent).
+    """
+    from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+    row = _boundary_row()
+    # Unicode: a genuine fit, and it must STAY one -- this is the control.
+    unicode_widget = ConsoleInspectorSectionRow(row, section_id="fleet", index=0)
+    assert unicode_widget._one_line is True
+
+    set_ascii_glyph_mode(True)
+    try:
+        ascii_widget = ConsoleInspectorSectionRow(row, section_id="fleet", index=0)
+        assert ascii_widget._primary_text == "[x] deploy-worker-agent-1"
+        assert ascii_widget._one_line is False, (
+            "the ASCII-expanded row was one-lined against its unresolved width"
+        )
+    finally:
+        set_ascii_glyph_mode(False)
+
+
+def test_structural_key_tracks_the_ascii_mode_row_shape():
+    """Q4, second half: the shape decision is also a RECOMPOSE key, so it has
+    to be measured the same way in both places. A key computed from the
+    unresolved text is identical in both modes, so a live ``ascii_glyphs``
+    flip would patch rows in place and leave every boundary row in the shape
+    the OTHER mode chose."""
+    from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+    rows = (_boundary_row(),)
+    unicode_key = ConsoleInspectorSection._structural_key(rows, "")
+    set_ascii_glyph_mode(True)
+    try:
+        ascii_key = ConsoleInspectorSection._structural_key(rows, "")
+    finally:
+        set_ascii_glyph_mode(False)
+    assert ascii_key != unicode_key, (
+        "the structural key ignored the mode that decides the row's shape"
+    )
+
+
 # --- TASK-31665 AC#3: expansion children are visually contained -------------
 
 

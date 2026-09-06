@@ -949,6 +949,82 @@ async def test_poll_landing_yields_to_a_one_tick_later_focus_move():
         assert screen.focused is composer
 
 
+@pytest.mark.asyncio
+async def test_poll_landing_yields_to_a_move_to_ANOTHER_ROW_in_the_same_rail():
+    """Q6: the restore must yield to a user move that stays INSIDE the rail.
+
+    The two variants above both move focus to the composer -- OUTSIDE the
+    rail body -- which is the only kind of move
+    `_console_environment_focus_left_the_rail` could ever detect, because it
+    asked exactly one question: is the focused widget a descendant of
+    ``#console-inspector-rail-body``? A user who Tabs or clicks to another
+    ROW (or any other rail control) during the recompose window is still
+    inside that body, so the check answered "nobody moved" and the restore
+    yanked focus back off their chosen row -- the same defect the variants
+    above fix, one step short of the rail's edge.
+
+    Drives the production callback directly, with the real section, the
+    real captured row_id and the real pre-sync row order -- exactly the
+    arguments `_land_console_environment` schedules it with. The two
+    variants above have to fight the recompose window to prove the
+    scheduling, which is already proven; what is under test here is only
+    what the callback does when it finds focus on a row that is NOT the one
+    it captured. (Grabbing a row widget mid-recompose does not work for
+    this: the widget you get is the pre-recompose one, already detached, so
+    the rail-body ancestor check reads "outside the rail" and the callback
+    bails for the wrong reason -- observed while writing this test.)
+
+    ``env-changes`` specifically, not just any survivor: the restore's own
+    nearest-surviving search answers ``env-branch`` for this removal, so a
+    test that moved THERE would pass on the broken code by coincidence.
+    """
+    async with _console_screen() as (pilot, screen):
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+
+        with_pr = _pr_removal_setup(with_pr=True)
+        screen._console_environment.snapshot = with_pr
+        screen._land_console_environment(with_pr)
+        await pilot.pause()
+        screen._handle_console_environment_row("environment", ENV_ROW_PR)
+        await pilot.pause()
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        previous_row_ids = tuple(row.row_id for row in section.rows)
+        assert ENV_ROW_PR_OPEN in previous_row_ids
+
+        # The structural change: the PR sub-tree goes away, `env-changes`
+        # and `env-branch` both survive it.
+        without_pr = _pr_removal_setup(with_pr=False)
+        screen._console_environment.snapshot = without_pr
+        screen._land_console_environment(without_pr)
+        await pilot.pause()
+        await pilot.pause()
+        assert ENV_ROW_PR_OPEN not in _row_ids(section)
+
+        # The user lands on another row in the same rail.
+        target_row = next(
+            widget
+            for widget in section.query(ConsoleInspectorSectionRow)
+            if widget.row_id == ENV_ROW_CHANGES
+        )
+        target_row.focus()
+        await pilot.pause()
+        assert screen.focused is target_row
+
+        # The restore callback for the vanished row now runs. It must see a
+        # row it did not capture and leave the user where they are.
+        screen._focus_console_environment_row_after_sync(
+            section, ENV_ROW_PR_OPEN, previous_row_ids
+        )
+        await pilot.pause()
+
+        assert screen.focused is target_row, (
+            "the restore overrode a user move to another row in the same rail"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Section-level messages
 # ---------------------------------------------------------------------------

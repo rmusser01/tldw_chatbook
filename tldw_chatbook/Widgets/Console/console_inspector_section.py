@@ -667,8 +667,15 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             tuple(
                 (
                     row.row_id,
+                    # Q4: the SAME measurement the row widget makes in
+                    # `__init__` -- glyph-resolved, because that is what
+                    # gets rendered. Keying on the unresolved text made
+                    # this key identical in both glyph modes, so a live
+                    # `appearance.ascii_glyphs` flip would patch rows in
+                    # place and strand every boundary-width row in the
+                    # shape the OTHER mode chose.
                     row_fits_one_line(
-                        row.primary_text,
+                        resolve_glyph_text(row.primary_text),
                         row.secondary_text,
                         indent=max(0, row.indent) * ROW_INDENT_COLUMNS,
                     ),
@@ -854,9 +861,19 @@ class ConsoleInspectorSectionRow(Vertical):
         self._primary_text = resolve_glyph_text(row.primary_text)
         self._secondary_text = row.secondary_text
         self.indent = max(0, row.indent)
+        # Q4: measure what is actually RENDERED. Every ASCII fallback is
+        # WIDER than the glyph it replaces (`✓` -> `[x]`, `●` -> `[*]`:
+        # 1 cell -> 3; `◉` -> `(rec)`: 1 -> 5), so measuring
+        # `row.primary_text` here while rendering `self._primary_text`
+        # above one-lined a boundary-width row in `appearance.ascii_glyphs`
+        # and let the primary's own `text-overflow` ellipsize it at paint
+        # time -- the defect AC#14's cell-measurement fix exists to
+        # prevent, reached through the other seam. The fit stays a pure
+        # function of the texts it is given; the RESOLUTION belongs here,
+        # at the render seam, exactly as TASK-31664 I3 put it for the text.
         self._one_line = row_fits_one_line(
-            row.primary_text,
-            row.secondary_text,
+            self._primary_text,
+            self._secondary_text,
             indent=self.indent * ROW_INDENT_COLUMNS,
         )
         self.styles.height = "auto"
@@ -916,6 +933,20 @@ class ConsoleInspectorSectionRow(Vertical):
         return secondary
 
     def compose(self) -> ComposeResult:
+        """Build the row as one line or two, per the fitter's decision.
+
+        The one-line shape mirrors the section header's own ``1fr``/``auto``
+        title-summary split, which is what pins the secondary flush against
+        the right edge. The two-line shape always yields the secondary --
+        display-suppressed when empty rather than omitted -- because
+        consumers query it by id and a missing widget is a crash, not a
+        blank.
+
+        Returns:
+            The row's child widgets: a ``Horizontal`` wrapping the primary
+            and secondary ``Static``s when the row fits one line, otherwise
+            the primary and secondary ``Static``s as separate lines.
+        """
         if self._one_line:
             line = Horizontal(classes="console-inspector-section-row-line")
             line.styles.height = 1
