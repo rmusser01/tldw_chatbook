@@ -513,3 +513,38 @@ reports eight settings/persistence/publication/user-name owners, including
 contracts still need audit. The controller now has three transient-send rollback
 calls versus the two expected by its old inventory. No classification, exclusion
 or count was changed; these are not yet established as test-only drift.
+
+## Fourth dev rebase qualification
+
+Rebased all 151 review commits onto dev
+`56376e1fc188938bf350c62d3a9f95e820b93c40`. The pushed pre-rebase checkpoint
+`1225dd839d009927063ee80a37ab1baaafb15bf3` remains at
+`codex/dev-test-review-before-fourth-rebase-20260906`. The sole conflict was in
+the testing lessons: both upstream Pixel Migu cleanup guidance and the existing
+isolated-helper lesson were retained. Range comparison accounts for all commits;
+its three changed patches differ only in lesson context. The three Watchlists/
+promotion code and test files are byte-identical to the saved repair checkpoint.
+No task IDs were changed during this rebase.
+
+Fresh checks: all **143 behavioral tests passed** in the same five complete
+Watchlists/promotion files; checked diagnostic inventory also matched the fresh
+scanner. The combined run was **144 passed / 1 stale-hash failure in 152.68s**
+(`/private/tmp/tldw-fourth-rebase-qualification.xml`). Both complete upstream
+Pixel Migu files passed **34 tests in 20.60s**
+(`/private/tmp/tldw-fourth-rebase-pixel-migu.xml`).
+
+TASK-18801's fourth-rebase reconciliation reviews exactly two upstream warnings,
+preserving all other 587 owner rows, classifications and sink topology. Only two
+fixture pins change; independent review reproduced the old and new hashes and
+found no issue. Full rationale and complete-file verification are tracked in
+`backlog/docs/diagnostic-rebase-reconciliation-2026-09-05.md`.
+
+The two complete diagnostic files now pass **327 tests in 533.19 seconds**
+(`/private/tmp/tldw-fourth-rebase-diagnostic-repaired.xml`), including unchanged
+negative controls. Their 17 existing dependency/source warnings remain recorded.
+Canonical fixture formatting, scoped repair lint/format and diff checks pass.
+TASK-18801 stays In Progress because clean origin/dev has not received the draft.
+
+Existing warnings and broader failure families, including the three fork-census
+failures and two pending task-ID decisions, remain open. No full-suite, resource-
+closure or merge-ready claim is made.

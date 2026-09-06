@@ -62,3 +62,48 @@ Independent scoped review reproduced both hashes and confirmed the unchanged
 old owner rows and upstream source identities, with no remaining findings.
 TASK-18801 stays In Progress because its clean-origin/dev criterion requires
 upstream integration; this is verified draft-branch evidence only.
+
+## Fourth dev rebase: Pixel Migu startup diagnostics
+
+Base: `56376e1fc188938bf350c62d3a9f95e820b93c40`. Saved pre-rebase
+checkpoint: `1225dd839d009927063ee80a37ab1baaafb15bf3`, retained in
+`codex/dev-test-review-before-fourth-rebase-20260906`.
+
+Fresh qualification returned 144 passed / 1 failed: all 143 behavioral tests
+passed and the checked inventory matched a fresh scanner rebuild; the remaining
+failure was the stale summarization boundary hash. Evidence:
+`/private/tmp/tldw-fourth-rebase-qualification.xml`.
+
+Scanner `--statements` against the saved checkpoint found exactly two added
+warnings and no removed or moved statements in the changed owners:
+
+- `app.py`: fixed Buddy-installation failure/retry message; no interpolated data.
+- `config.py`: fixed seed-failure event with `type(exc).__name__`; no exception
+  message or traceback capture, user content, path or URL interpolation.
+
+The owner rows change only their counts/digests: app 384 to 385
+(`43bbe53d87577c82e2a7`), config 114 to 115 (`345819bc1ea2d921cbb1`). All other
+587 owners, classifications, 12 sink files and other inventory sections remain
+unchanged. The sole derived summary delta is TASK-494 calls 7615 to 7617.
+These are upstream diagnostics; no runtime statement or policy was edited here.
+
+Independent normalization reproduced the old pinned hash
+`caa76e94acdbf3d61961e90bcfe307c21ed5c09bfc061d7c054ba497ff817684` from the saved
+inventory and produced current hash
+`0a0c4b6dbe89debeacc1d1b662d2ec6275a7e98e082fd0325ad469d345a4c7eb`.
+Only the two fixture pins were replaced. Normalization, owner boundaries,
+negative mutants and inventory generation are unchanged.
+
+ADR required: no. ADR path: N/A. This reconciles evidence against an existing
+upstream diagnostic boundary; it does not introduce a new privacy or runtime
+contract.
+
+Both complete diagnostic files passed **327 tests in 533.19 seconds**, including
+unchanged unrelated-drift, digest-schema and unreconciled-digest negative controls.
+Evidence: `/private/tmp/tldw-fourth-rebase-diagnostic-repaired.xml`. The 17 warnings
+are existing dependency/source warnings; this is not warning-free qualification.
+The fixture retains canonical JSON formatting; scoped repair lint/format and
+`git diff --check` pass. Independent review reproduced both hashes, confirmed the
+exact two-owner delta and unchanged other sections, and found no issue. TASK-18801
+remains In Progress solely for its unfulfilled clean-origin/dev integration
+criterion; this draft has not been merged.
