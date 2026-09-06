@@ -1217,3 +1217,103 @@ async def test_global_f1_shows_full_selected_unicode_title_and_action() -> None:
         rendered = app.screen.state.render_text()
         assert title in rendered
         assert "RESUME CHAT" in rendered
+
+
+@pytest.mark.asyncio
+async def test_pending_character_query_paints_busy_without_stale_detail_or_enter():
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    row = _character_row(
+        "a", "First chat", "2026-09-03T12:00:00Z", excerpt="FIRST EXCERPT"
+    )
+
+    async def loader(*, query, **_kwargs):
+        if query:
+            entered.set()
+            await release.wait()
+        return CharacterConversationPage((row,), 1, None, 4)
+
+    app = _CharacterSwitcherApp(
+        character_loader=loader, initial_mode=SwitcherMode.CHARACTER_CHATS
+    )
+    async with app.run_test(size=(52, 20)) as pilot:
+        try:
+            await pilot.pause()
+            app.screen.query_one("#console-switcher-query", Input).value = "new"
+            await asyncio.wait_for(entered.wait(), 2)
+            await pilot.pause()
+            frame = "\n".join(
+                strip.text for strip in app.screen._compositor.render_strips()
+            )
+            assert "Searching local chats" in frame
+            assert "FIRST EXCERPT" not in frame
+            assert "Enter:" not in frame
+            assert "Cancel" in frame
+        finally:
+            release.set()
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["selection", "query", "mode"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ConsoleActivationResultKind.FAILED,
+        ConsoleActivationResultKind.CHARACTER_UNAVAILABLE,
+    ],
+)
+async def test_failed_character_owner_is_released_when_selection_context_changes(
+    transition, failure
+):
+    rows = (
+        _character_row(
+            "a", "First chat", "2026-09-03T12:00:00Z", excerpt="FIRST EXCERPT"
+        ),
+        _character_row(
+            "b", "Second chat", "2026-09-02T12:00:00Z", excerpt="SECOND EXCERPT"
+        ),
+    )
+
+    async def loader(*, query, **_kwargs):
+        selected = (rows[1],) if query else rows
+        return CharacterConversationPage(selected, len(selected), None, 4)
+
+    async def activate(request, _cancellation):
+        return ConsoleConversationActivationResult(failure, request.target, False)
+
+    app = _CharacterSwitcherApp(
+        active=(_active_entry("live", "Active chat"),),
+        character_loader=loader,
+        character_activate=activate,
+        initial_mode=SwitcherMode.CHARACTER_CHATS,
+    )
+    async with app.run_test(size=(52, 20)) as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        screen = app.screen
+        recovery = screen.query_one("#console-switcher-recovery", Button)
+        assert recovery.display
+        assert "FIRST EXCERPT" in str(
+            screen.query_one("#console-switcher-selected-detail", Static).renderable
+        )
+        if transition == "selection":
+            screen.query(".console-switcher-result")[1].focus()
+        elif transition == "query":
+            screen.query_one("#console-switcher-query", Input).value = "Second"
+        else:
+            await pilot.press("f3")
+        await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.05)
+        detail = str(
+            screen.query_one("#console-switcher-selected-detail", Static).renderable
+        )
+        assert "FIRST EXCERPT" not in detail
+        if transition != "mode":
+            assert "SECOND EXCERPT" in detail
+        assert not recovery.display
+        await pilot.press("f1")
+        await pilot.pause()
+        rendered = app.screen.state.render_text()
+        assert "First chat" not in rendered
+        assert ("Active chat" if transition == "mode" else "Second chat") in rendered

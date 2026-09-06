@@ -388,6 +388,7 @@ class ConsoleSessionSwitcherModal(
         """Keep the content-sized modal inside the live terminal viewport."""
         del event
         self._sync_modal_max_height()
+        self.call_after_refresh(self._sync_candidate_labels)
 
     def _sync_modal_max_height(self) -> None:
         try:
@@ -431,6 +432,7 @@ class ConsoleSessionSwitcherModal(
     ) -> None:
         """Remove the prior generation from the action surface immediately."""
 
+        self._clear_character_failure()
         if preserve_position and not self._query_pending:
             self._pending_retained_key = self._focused_result_key()
             self._pending_retained_index = self._focused_result_index()
@@ -452,6 +454,8 @@ class ConsoleSessionSwitcherModal(
         except NoMatches:
             pass
         self._set_status(message)
+        self._update_hints(None)
+        self._update_selected_detail()
 
     def on_unmount(self) -> None:
         """Invalidate late work without remounting into a closed screen."""
@@ -908,6 +912,7 @@ class ConsoleSessionSwitcherModal(
                 focused.focus()
         self._restoring_mode = None
         self._sync_modal_max_height()
+        self.call_after_refresh(self._sync_candidate_labels)
 
     def _empty_copy(self, page: ConsoleSwitcherHistoryPage | None) -> str:
         query = self._rendered_query.strip()
@@ -1055,8 +1060,15 @@ class ConsoleSessionSwitcherModal(
     def _entry_tooltip(self, entry: ConsoleSwitcherResult) -> str:
         return escape_markup(f"{self._entry_action(entry)}: {entry.title}")
 
-    def _entry_label(self, index: int, entry: ConsoleSwitcherResult) -> Text:
-        available_width = max(20, min(70, self.app.size.width - 4))
+    def _entry_label(
+        self,
+        index: int,
+        entry: ConsoleSwitcherResult,
+        *,
+        available_width: int | None = None,
+    ) -> Text:
+        if available_width is None:
+            available_width = max(20, min(70, self.app.size.width - 4))
         marker = "▸" if index == self._candidate_index else " "
         if isinstance(entry, ConsoleSwitcherCharacterResult):
             state = self._character_state(entry)
@@ -1175,6 +1187,8 @@ class ConsoleSessionSwitcherModal(
             ConsoleActivationPhase.COMMITTING,
         }:
             self._restore_owned_query()
+            return
+        if not self._query_pending and event.value == self._rendered_query:
             return
         if self._mode is SwitcherMode.CHARACTER_CHATS:
             self._character_query = event.value
@@ -1452,7 +1466,15 @@ class ConsoleSessionSwitcherModal(
                 index == self._candidate_index,
                 "console-switcher-result-candidate",
             )
-            button.label = self._entry_label(index, entry)
+            button.label = self._entry_label(
+                index,
+                entry,
+                available_width=(
+                    max(1, button.content_size.width - 2 * button.styles.line_pad)
+                    if isinstance(entry, ConsoleSwitcherCharacterResult)
+                    else None
+                ),
+            )
             button.tooltip = self._entry_tooltip(entry)
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
@@ -1866,6 +1888,14 @@ class ConsoleSessionSwitcherModal(
         )
 
     def _update_selection_status(self, *, prefix: str = "") -> None:
+        if self._activation_phase is ConsoleActivationPhase.FAILURE_VISIBLE:
+            owner = self._committed_character_result
+            if owner is not None and owner.stable_result_key == self._candidate_key():
+                self._update_hints(owner)
+                self._update_selected_detail()
+                return
+            self._clear_character_failure()
+            self._sync_candidate_labels()
         if self._selection_feedback:
             self._set_status(self._selection_feedback)
             return
@@ -1917,7 +1947,9 @@ class ConsoleSessionSwitcherModal(
             primary = "Enter:open"
         else:
             primary = "No result selected"
-        if self._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE:
+        if self._query_pending:
+            hints.update("Waiting for results · Esc:close")
+        elif self._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE:
             hints.update("Opening…  ·  Esc: cancel")
         elif self._activation_phase is ConsoleActivationPhase.COMMITTING:
             hints.update("Finishing…")
@@ -1931,8 +1963,10 @@ class ConsoleSessionSwitcherModal(
     async def action_show_workbench_help(self) -> None:
         """Expose full selected identity without shadowing app-global F1."""
 
-        entry: ConsoleSwitcherResult | None = self._committed_character_result
-        if entry is None and self._entries:
+        entry: ConsoleSwitcherResult | None = (
+            self._committed_character_result if self._activation_in_flight else None
+        )
+        if entry is None and self._entries and not self._query_pending:
             index = min(self._candidate_index, len(self._entries) - 1)
             entry = self._entries[index]
         selected = (
@@ -1978,6 +2012,9 @@ class ConsoleSessionSwitcherModal(
             detail = self.query_one("#console-switcher-selected-detail", Static)
         except NoMatches:
             return
+        if self._query_pending:
+            detail.update("")
+            return
         if self._mode is SwitcherMode.CHARACTER_CHATS and self._character_search_error:
             detail.update(
                 f"{self._character_search_error}\nRefresh results · This profile · Local chats"
@@ -1986,7 +2023,7 @@ class ConsoleSessionSwitcherModal(
         if self._mode is not SwitcherMode.CHARACTER_CHATS or not self._entries:
             detail.update("")
             return
-        entry = self._committed_character_result
+        entry = self._committed_character_result if self._activation_in_flight else None
         if entry is None:
             index = min(self._candidate_index, len(self._entries) - 1)
             candidate = self._entries[index]
@@ -2159,6 +2196,18 @@ class ConsoleSessionSwitcherModal(
         self._update_hints(self._committed_character_result)
         self._update_selected_detail()
 
+    def _clear_character_failure(self) -> None:
+        """Retire recovery when its selected query/row context is left."""
+        if self._activation_phase is not ConsoleActivationPhase.FAILURE_VISIBLE:
+            return
+        self._activation_phase = ConsoleActivationPhase.IDLE
+        self._activation_failure_kind = None
+        self._committed_character_result = None
+        try:
+            self.query_one("#console-switcher-recovery", Button).display = False
+        except NoMatches:
+            pass
+
     def _set_activation_controls_disabled(self, disabled: bool) -> None:
         try:
             self.query_one("#console-switcher-query", Input).disabled = disabled
@@ -2279,7 +2328,8 @@ class ConsoleSessionSwitcherModal(
             scope.update("This profile · Local chats")
             self.query_one("#console-switcher-divider", Static).update(
                 message
-                if self._activation_phase is not ConsoleActivationPhase.IDLE
+                if self._query_pending
+                or self._activation_phase is not ConsoleActivationPhase.IDLE
                 else "─" * 48
             )
         else:
