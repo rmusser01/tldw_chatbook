@@ -40,6 +40,16 @@ def test_reconcile_maps_final_to_live_by_nearest_centroid():
 def test_reconcile_with_no_live_clusters_returns_empty():
     assert reconcile({}, [("F0", _v(1, 0, 0))]) == {}
 
+def test_reconcile_never_gives_two_final_clusters_the_same_live_id():
+    # Qodo Q11 completion: the Stop pass separated two speakers the live pass
+    # had merged into one cluster. Mapping each final id to its nearest live
+    # id independently handed BOTH of them "S1" and undid the correction.
+    live = {"S1": _v(1, 0, 0)}
+    final = [("F0", _v(0.99, 0.01, 0)), ("F1", _v(0.9, 0.1, 0))]
+    mapping = reconcile(live, final)
+    assert mapping == {"F0": "S1"}                 # the closest match wins it
+    assert "F1" not in mapping                     # ... the other is left to be minted
+
 
 # ---- spec §4/§8: many-to-one merge keeps both names and flags --------------
 

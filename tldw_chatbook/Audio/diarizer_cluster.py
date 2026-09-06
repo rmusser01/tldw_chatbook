@@ -1,5 +1,6 @@
 """Incremental speaker clustering over voice embeddings (pure numpy, no torch)."""
 from __future__ import annotations
+
 import numpy as np
 
 def _cos(a: np.ndarray, b: np.ndarray) -> float:
@@ -105,25 +106,43 @@ class OnlineClusterer:
 
 def reconcile(live_centroids: dict[str, np.ndarray],
               final: list[tuple[str, np.ndarray]]) -> dict[str, str]:
-    """Map each final cluster id to the nearest live cluster id by cosine.
+    """Match final cluster ids to live cluster ids by cosine, one-to-one.
+
+    Best-first greedy matching: the closest (final, live) pair anywhere wins,
+    then both are taken out of the running. The pairing MUST be injective --
+    a live cluster is one person, so two distinct final clusters can never
+    both be it. Mapping each final id independently to its nearest live id
+    (Qodo Q11) quietly re-collapsed everything the authoritative batch pass
+    had just separated: with one live cluster and two real speakers, both
+    final clusters mapped back to "S1". The caller mints a fresh live-style
+    id for whatever stays unmatched.
 
     Args:
         live_centroids: Dict mapping live cluster ID to centroid vector.
         final: List of (cluster_id, centroid) tuples from a batch pass.
 
     Returns:
-        Dict mapping final cluster ID to the nearest live cluster ID.
-        Skips final clusters with no live centroids to match.
+        Dict mapping final cluster ID to its matched live cluster ID. Final
+        clusters left over (more final clusters than live ones, or no live
+        centroids at all) are absent.
     """
+    pairs = [
+        (
+            -_cos(np.asarray(fcen, np.float32), np.asarray(lcen, np.float32)),
+            fid,
+            lid,
+        )
+        for fid, fcen in final
+        for lid, lcen in live_centroids.items()
+    ]
+    pairs.sort()  # most similar first; ids break ties deterministically
     out: dict[str, str] = {}
-    for fid, fcen in final:
-        best_id, best_sim = None, -1.0
-        for lid, lcen in live_centroids.items():
-            sim = _cos(np.asarray(fcen, np.float32), np.asarray(lcen, np.float32))
-            if sim > best_sim:
-                best_id, best_sim = lid, sim
-        if best_id is not None:
-            out[fid] = best_id
+    taken: set[str] = set()
+    for _neg_sim, fid, lid in pairs:
+        if fid in out or lid in taken:
+            continue
+        out[fid] = lid
+        taken.add(lid)
     return out
 
 

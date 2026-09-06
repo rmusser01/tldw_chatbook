@@ -6,8 +6,9 @@ run as ``python -m tldw_chatbook.Audio.diarizer_worker`` by
 
     stdin :  one JSON control line per command; an "assign" line is followed
              by exactly ``n`` bytes of raw PCM16 (16 kHz mono).
-    stdout:  one ``{"id": ...}`` line per assign; ``{"segments": [...]}`` for
-             a diarize.
+    stdout:  one ``{"id": ..., "seq": ...}`` line per assign (the ``seq`` is
+             echoed so the app can discard a reply whose window already gave
+             up); ``{"segments": [...]}`` for a diarize.
     stderr:  ``READY`` once the ECAPA model is warm; ``ERROR <type>`` on a
              per-command failure. Never PCM, text, names, or paths.
 
@@ -41,13 +42,25 @@ def _read_exactly(stream, n: int) -> bytes:
 def _load_encoder():
     from pathlib import Path
 
-    from tldw_chatbook.Local_Ingestion.diarization_service import _lazy_import_speechbrain
+    from tldw_chatbook.Local_Ingestion.diarization_service import (
+        DiarizationService,
+        _lazy_import_speechbrain,
+    )
 
     EncoderClassifier = _lazy_import_speechbrain()
     if EncoderClassifier is None:
         raise RuntimeError("SpeechBrain EncoderClassifier unavailable")
+    # Qodo Q13: the Stop pass loads and embeds the WHOLE recording under a
+    # parent timeout, so an accelerator is worth having. Reuse the project's
+    # own selection (`[diarization] embedding_device`, "auto" -> CUDA when
+    # present) rather than hard-coding CPU here. Constructing the service is
+    # cheap: it loads config only, never a model.
+    try:
+        device = DiarizationService()._get_device()
+    except Exception:  # noqa: BLE001 - a config problem must not lose the pass
+        device = "cpu"
     savedir = Path("pretrained_models") / "spkrec-ecapa-voxceleb"
-    return EncoderClassifier.from_hparams(source=MODEL, savedir=str(savedir), run_opts={"device": "cpu"})
+    return EncoderClassifier.from_hparams(source=MODEL, savedir=str(savedir), run_opts={"device": device})
 
 
 def _embed(encoder, torch, np, pcm: bytes):
@@ -59,20 +72,29 @@ def _embed(encoder, torch, np, pcm: bytes):
     return np.asarray(emb.squeeze().detach().cpu().numpy(), dtype=np.float32)
 
 
-def _reconcile_windows(spans, embeddings, live_centroids, max_speakers, cluster_fn):
+def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn):
     """Pure (no torch): cluster window embeddings, reconcile to live ids.
 
     The authoritative Stop pass. ``cluster_fn(embeddings, num_speakers)`` is the
     project's batch agglomerative pass -- its labels can differ from (and so
     correct) the greedy live labels, which is the whole point of reconciliation.
 
+    The batch speaker count is decided by ``cluster_fn`` ITSELF (called with
+    ``None``), which runs the service's single-speaker check and silhouette
+    estimate bounded by its configured ``min_speakers``/``max_speakers``.
+    Deriving it from ``len(live_centroids)`` instead (Qodo Q11) capped the
+    authoritative pass at the best-effort live count, so a backpressured live
+    pass that found one speaker forced the whole recording into one cluster --
+    the exact gap this pass exists to fill (spec §6.3).
+
     Args:
         spans: One ``(start_s, end_s)`` per window, in file order.
         embeddings: One embedding per window (same order/length as ``spans``).
-        live_centroids: The live cluster centroids held during the meeting.
-        max_speakers: Cap on the batch speaker count.
-        cluster_fn: ``(np.ndarray[n,d], int) -> labels[n]``; skipped when one
-            speaker or fewer than two windows.
+        live_centroids: The live cluster centroids held during the meeting;
+            used ONLY to map final clusters back to live ids, never to bound
+            the count.
+        cluster_fn: ``(np.ndarray[n,d], int | None) -> labels[n]``; skipped
+            when there are fewer than two windows to cluster.
 
     Returns:
         Segment dicts (``start_s``/``end_s``/``speaker``), speaker = reconciled
@@ -84,11 +106,10 @@ def _reconcile_windows(spans, embeddings, live_centroids, max_speakers, cluster_
 
     if not embeddings:
         return []
-    num_speakers = max(1, min(len(live_centroids), max_speakers, len(embeddings)))
-    if num_speakers == 1 or len(embeddings) < 2:
+    if len(embeddings) < 2:
         labels = [0] * len(embeddings)
     else:
-        labels = [int(x) for x in cluster_fn(np.asarray(embeddings, dtype=np.float32), num_speakers)]
+        labels = [int(x) for x in cluster_fn(np.asarray(embeddings, dtype=np.float32), None)]
 
     grouped: dict[str, list] = {}
     for label, emb in zip(labels, embeddings):
@@ -112,9 +133,17 @@ def _reconcile_windows(spans, embeddings, live_centroids, max_speakers, cluster_
 
 def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float, max_speakers: int):
     """Embed the whole file (torch), then cluster + reconcile to live ids."""
-    import torchaudio
+    from tldw_chatbook.Local_Ingestion.diarization_service import (
+        ClusteringMethod,
+        DiarizationService,
+        _lazy_import_torchaudio,
+    )
 
-    from tldw_chatbook.Local_Ingestion.diarization_service import ClusteringMethod, DiarizationService
+    # Qodo Q4: torchaudio is part of the optional `diarization` extra; go
+    # through the project's centralized loader, not a bare import.
+    torchaudio = _lazy_import_torchaudio()
+    if torchaudio is None:
+        raise RuntimeError("torchaudio unavailable")
 
     wav, sr = torchaudio.load(wav_path)  # (channels, samples)
     if wav.shape[0] > 1:
@@ -140,12 +169,14 @@ def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float
         embeddings.append(np.asarray(emb, dtype=np.float32))
 
     # Cheap: __init__ loads no models; only _cluster_speakers (sklearn) runs.
+    # These bounds ARE the [1, max_speakers] bound on the batch speaker count
+    # `_reconcile_windows` relies on (Q11).
     svc = DiarizationService(config={
         "max_speakers": max_speakers,
         "min_speakers": 1,
         "clustering_method": ClusteringMethod.AGGLOMERATIVE.value,
     })
-    return _reconcile_windows(spans, embeddings, live.centroids(), max_speakers, svc._cluster_speakers)
+    return _reconcile_windows(spans, embeddings, live.centroids(), svc._cluster_speakers)
 
 
 def _write(stdout, obj) -> None:
@@ -194,7 +225,7 @@ def main() -> int:
                 sys.stderr.write(f"ERROR assign {type(exc).__name__}\n")
                 sys.stderr.flush()
                 sid = None
-            _write(stdout, {"id": sid})
+            _write(stdout, {"id": sid, "seq": cmd.get("seq")})
         elif op == "diarize":
             try:
                 segs = _batch(

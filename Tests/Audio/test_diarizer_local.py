@@ -7,8 +7,19 @@ everywhere. The real worker is exercised only by the opt-in
 from __future__ import annotations
 
 import json
+import threading
+import time
+from pathlib import Path
 
-from tldw_chatbook.Audio.diarizer_local import SpeechBrainDiarizer
+from tldw_chatbook.Audio.diarizer_local import (
+    DIARIZE_BUDGET_CEILING_S,
+    DIARIZE_BUDGET_FLOOR_S,
+    SpeechBrainDiarizer,
+    diarize_budget_s,
+)
+
+_PCM = b"\x00\x00" * 1600
+_SEGMENTS_REPLY = json.dumps({"segments": [{"start_s": 0.0, "end_s": 1.5, "speaker": "S1"}]}) + "\n"
 
 
 class _Pipe:
@@ -44,6 +55,21 @@ class _Lines:
         return line
 
 
+class _GatedStderr:
+    """A stderr double whose ``READY`` only arrives once `gate` is set."""
+
+    def __init__(self, gate: threading.Event) -> None:
+        self._gate = gate
+        self._sent = False
+
+    def readline(self) -> bytes:
+        if self._sent:
+            return b""
+        self._gate.wait()
+        self._sent = True
+        return b"READY\n"
+
+
 class FakeProc:
     """A subprocess double: one JSON line on stdout per ``assign``.
 
@@ -57,6 +83,7 @@ class FakeProc:
         self.stderr = _Lines(["READY\n"] if ready else [])
         self._alive = True
         self.terminated = False
+        self.killed = False
 
     def poll(self):
         return None if self._alive else 0
@@ -65,24 +92,67 @@ class FakeProc:
         self.terminated = True
         self._alive = False
 
+    def kill(self) -> None:
+        self.killed = True
+        self._alive = False
+
     def wait(self, timeout=None) -> int:
         self._alive = False
         return 0
 
 
+def _ready(diarizer: SpeechBrainDiarizer) -> SpeechBrainDiarizer:
+    """Warm-up is asynchronous now (C1); tests that need a warm worker wait."""
+    assert diarizer.wait_ready(2.0) is True
+    return diarizer
+
+
 # --- the two required cases (verbatim from the brief) ----------------------
 
 def test_assign_parses_worker_reply():
-    d = SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc(['{"id": "S1"}\n']))
-    assert d.assign(b"\x00\x00" * 1600, 16000, 0) == "S1"
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc(['{"id": "S1"}\n'])))
+    assert d.assign(_PCM, 16000, 0) == "S1"
 
 
 def test_crash_then_coarse_returns_none_for_the_rest():
     proc = FakeProc([])  # dies immediately
-    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc)
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
     proc._alive = False
-    assert d.assign(b"\x00\x00" * 1600, 16000, 0) is None  # crash -> coarse
-    assert d.assign(b"\x00\x00" * 1600, 16000, 1) is None  # stays coarse
+    assert d.assign(_PCM, 16000, 0) is None  # crash -> coarse
+    assert d.assign(_PCM, 16000, 1) is None  # stays coarse
+
+
+# --- C1: construction must never block on the cold model download ----------
+
+def test_construction_is_non_blocking_and_assign_is_coarse_until_ready():
+    """Fix C1: `build_diarizer` runs inside the owner lock just before
+    `session.start()`, so a blocking warm-up meant Start recorded nothing for
+    up to READY_TIMEOUT_S. Construction returns at once; the first windows are
+    coarse; once READY lands, ids flow."""
+    gate = threading.Event()
+    proc = FakeProc(['{"id": "S1"}\n'])
+    proc.stderr = _GatedStderr(gate)
+
+    t0 = time.monotonic()
+    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc)
+    assert time.monotonic() - t0 < 0.5          # returned without waiting
+    assert d.wait_ready(0.05) is False          # ... and it really is not warm
+    assert d.assign(_PCM, 16000, 0) is None     # warming -> coarse, no wait
+
+    gate.set()
+    assert d.wait_ready(2.0) is True
+    assert d.assign(_PCM, 16000, 1) == "S1"
+
+
+def test_diarize_waits_for_a_late_ready():
+    """The Stop pass is the only caller allowed to wait for warm-up."""
+    gate = threading.Event()
+    proc = FakeProc([_SEGMENTS_REPLY])
+    proc.stderr = _GatedStderr(gate)
+    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc)
+    threading.Timer(0.05, gate.set).start()
+    segs = d.diarize(Path("mixed.wav"), 0.0, 3.0)
+    assert [s.speaker for s in segs] == ["S1"]
 
 
 # --- the state machine the crash rule turns on -----------------------------
@@ -90,18 +160,22 @@ def test_crash_then_coarse_returns_none_for_the_rest():
 def test_null_id_is_coarse_for_the_window_but_worker_stays_up():
     # A healthy worker that could not place one window returns {"id": null};
     # that is coarse for THAT window only, not a permanent degrade.
-    d = SpeechBrainDiarizer(
+    d = _ready(SpeechBrainDiarizer(
         spawn=lambda *a, **k: FakeProc(['{"id": null}\n', '{"id": "S1"}\n'])
-    )
-    assert d.assign(b"\x00\x00" * 1600, 16000, 0) is None
-    assert d.assign(b"\x00\x00" * 1600, 16000, 1) == "S1"
+    ))
+    assert d.assign(_PCM, 16000, 0) is None
+    assert d.assign(_PCM, 16000, 1) == "S1"
     assert d._degraded is False
 
 
-def test_restart_happens_exactly_once():
+def test_restart_happens_once_and_live_labels_stay_coarse_after_it():
+    """Qodo Q10: the restarted worker's clusterer starts at `_n=0`, so its
+    "S1" is a DIFFERENT person than the first worker's "S1" -- and would
+    inherit that speaker's user-assigned name. Spec §7: the rest of the
+    meeting is coarse; the restart exists only so the Stop pass survives."""
     procs = iter([
-        FakeProc([]),                       # dies after start
-        FakeProc(['{"id": "S1"}\n']),       # the single restart, healthy
+        FakeProc([]),                  # dies after start
+        FakeProc([_SEGMENTS_REPLY]),   # the single restart, healthy
     ])
     made: list[FakeProc] = []
 
@@ -110,29 +184,80 @@ def test_restart_happens_exactly_once():
         made.append(p)
         return p
 
-    d = SpeechBrainDiarizer(spawn=_spawn)
-    made[0]._alive = False                  # first worker crashes
-    assert d.assign(b"\x00\x00" * 1600, 16000, 0) is None   # detects, restarts
-    assert d.assign(b"\x00\x00" * 1600, 16000, 1) == "S1"   # restart worked
-    made[1]._alive = False                  # second worker crashes too
-    assert d.assign(b"\x00\x00" * 1600, 16000, 2) is None   # no 2nd restart
-    assert d._degraded is True
-    assert len(made) == 2                   # exactly one restart spawned
+    d = _ready(SpeechBrainDiarizer(spawn=_spawn))
+    made[0]._alive = False                                  # first worker crashes
+    assert d.assign(_PCM, 16000, 0) is None                 # detects, restarts
+    assert len(made) == 2                                   # exactly one restart
+    assert d.wait_ready(2.0) is True
+    assert d.assign(_PCM, 16000, 1) is None                 # coarse for the rest
+    assert d.coarse_reason == "backend crashed"
+    # ... but the authoritative Stop pass still runs on the restarted worker.
+    segs = d.diarize(Path("mixed.wav"), 0.0, 3.0)
+    assert [s.speaker for s in segs] == ["S1"]
 
 
-def test_read_timeout_returns_none():
-    class _Blocks:
-        def readline(self):
-            import threading
-            threading.Event().wait()  # never returns
+def test_assign_timeout_is_a_skip_not_a_crash():
+    """Fix I1: one slow reply used to call `_fail()`, burning the restart
+    budget and blocking the transcript thread behind a fresh warm-up. Spec
+    §6.3 makes it backpressure: coarse window, worker untouched."""
+    slow = threading.Event()
+
+    class _SlowThenAnswers:
+        def __init__(self):
+            self._i = 0
+
+        def readline(self) -> bytes:
+            self._i += 1
+            if self._i == 1:
+                slow.wait(2.0)              # the first window's reply is late
+                return b'{"id": "S1", "seq": 0}\n'
+            if self._i == 2:
+                return b'{"id": "S2", "seq": 1}\n'
             return b""
 
-    proc = FakeProc([])
-    proc.stdout = _Blocks()
-    # A tiny budget so the test does not actually wait; restart yields the
-    # same blocked proc, which then degrades.
-    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc, assign_budget_s=0.05)
-    assert d.assign(b"\x00\x00" * 1600, 16000, 0) is None
+    made: list[FakeProc] = []
+
+    def _spawn(*a, **k):
+        p = FakeProc([])
+        p.stdout = _SlowThenAnswers()
+        made.append(p)
+        return p
+
+    d = _ready(SpeechBrainDiarizer(spawn=_spawn, assign_budget_s=0.05))
+    assert d.assign(_PCM, 16000, 0) is None     # over budget -> coarse window
+    assert len(made) == 1                       # no restart
+    assert d._degraded is False and d._coarse_only is False
+    slow.set()
+    # The late reply for seq 0 must not be handed to seq 1 (it is discarded
+    # by seq), and the worker keeps serving.
+    assert d.assign(_PCM, 16000, 1) == "S2"
+
+
+def test_kill_escalates_to_sigkill(monkeypatch):
+    """Qodo Q14: a worker that ignores terminate() must not survive with its
+    model (and accelerator memory) while `_fail` spawns a replacement."""
+
+    class _Stubborn(FakeProc):
+        def terminate(self) -> None:
+            self.terminated = True          # ... and keeps running
+
+        def wait(self, timeout=None):
+            if not self.killed:
+                raise TimeoutError("still alive")
+            return 0
+
+    proc = _Stubborn([])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    d._kill(proc)
+    assert proc.terminated is True and proc.killed is True
+
+
+def test_diarize_budget_scales_with_the_recording():
+    """Qodo Q13: a fixed 60 s silently lost the Stop pass on long meetings."""
+    assert diarize_budget_s(5.0) == DIARIZE_BUDGET_FLOOR_S       # short -> floor
+    assert diarize_budget_s(300.0) == 300.0                      # ~1s per second
+    assert diarize_budget_s(99999.0) == DIARIZE_BUDGET_CEILING_S  # bounded
+    assert diarize_budget_s(None) == DIARIZE_BUDGET_FLOOR_S       # junk -> floor
 
 
 def test_diarize_parses_segments():
@@ -140,14 +265,13 @@ def test_diarize_parses_segments():
         {"start_s": 0.0, "end_s": 1.5, "speaker": "S1"},
         {"start_s": 1.5, "end_s": 3.0, "speaker": "S2"},
     ]}) + "\n"
-    d = SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([reply]))
-    from pathlib import Path
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: FakeProc([reply])))
     segs = d.diarize(Path("/tmp/mixed.wav"), 0.0, 3.0)
     assert [s.speaker for s in segs] == ["S1", "S2"]
     assert segs[0].start_s == 0.0 and segs[1].end_s == 3.0
 
 
-def test_batch_uses_agglomerative_pass_with_live_count_and_reconciles():
+def test_batch_lets_the_clusterer_choose_the_speaker_count():
     # The torch-free Stop-pass seam: cluster window embeddings with the
     # injected agglomerative pass, then reconcile final labels -> live ids.
     import numpy as np
@@ -167,30 +291,40 @@ def test_batch_uses_agglomerative_pass_with_live_count_and_reconciles():
         seen["rows"] = x.shape[0]
         return np.array([0, 1, 0, 1])  # two final clusters
 
-    out = _reconcile_windows(spans, embs, live, 8, fake_cluster)
-    assert seen["n"] == 2       # min(len(live)=2, max_speakers=8, len(embs)=4)
+    out = _reconcile_windows(spans, embs, live, fake_cluster)
+    assert seen["n"] is None    # the service estimates it, bounded by its config
     assert seen["rows"] == 4
     # final label 0 (near S1) -> S1; final label 1 (near S2) -> S2
     assert [s["speaker"] for s in out] == ["S1", "S2", "S1", "S2"]
 
 
-def test_batch_skips_clustering_for_a_single_live_speaker():
+def test_batch_can_find_speakers_the_live_pass_missed():
+    """Qodo Q11: the batch count used to be capped at `len(live_centroids)`,
+    so a live pass that clustered one speaker (or was backpressured into
+    finding none) forced the WHOLE recording into one cluster -- exactly the
+    under-clustering the authoritative Stop pass exists to correct."""
     import numpy as np
 
     from tldw_chatbook.Audio.diarizer_worker import _reconcile_windows
 
-    live = {"S1": np.array([1.0, 0.0], np.float32)}
-    embs = [np.array([1.0, 0.0], np.float32), np.array([0.9, 0.1], np.float32)]
-    spans = [(0.0, 1.5), (1.5, 3.0)]
-    called = {"v": False}
+    live = {"S1": np.array([1.0, 0.0], np.float32)}          # only one live cluster
+    embs = [
+        np.array([1.0, 0.0], np.float32), np.array([0.0, 1.0], np.float32),
+        np.array([0.95, 0.05], np.float32), np.array([0.05, 0.95], np.float32),
+    ]
+    spans = [(0.0, 1.5), (1.5, 3.0), (3.0, 4.5), (4.5, 6.0)]
+    called = {"n": "unset"}
 
     def fake_cluster(x, n):
-        called["v"] = True
-        return np.zeros(len(x))
+        called["n"] = n
+        return np.array([0, 1, 0, 1])  # the batch really finds two speakers
 
-    out = _reconcile_windows(spans, embs, live, 8, fake_cluster)
-    assert called["v"] is False                       # 1 speaker -> no clustering
-    assert [s["speaker"] for s in out] == ["S1", "S1"]
+    out = _reconcile_windows(spans, embs, live, fake_cluster)
+    assert called["n"] is None                       # clustering was NOT skipped
+    speakers = [s["speaker"] for s in out]
+    assert speakers[0] == "S1"                       # matched to the live cluster
+    assert len(set(speakers)) == 2                   # ... and the missed one is kept
+    assert "S2" in speakers                          # minted as a live-style id
 
 
 def test_batch_mints_a_live_style_id_when_there_are_no_live_clusters():
@@ -203,14 +337,14 @@ def test_batch_mints_a_live_style_id_when_there_are_no_live_clusters():
 
     embs = [np.array([1.0, 0.0], np.float32), np.array([0.9, 0.1], np.float32)]
     spans = [(0.0, 1.5), (1.5, 3.0)]
-    out = _reconcile_windows(spans, embs, {}, 8, lambda x, n: np.zeros(len(x)))
+    out = _reconcile_windows(spans, embs, {}, lambda x, n: np.zeros(len(x)))
     assert [s["speaker"] for s in out] == ["S1", "S1"]
     assert not any(s["speaker"].startswith("F") for s in out)
 
 
 def test_close_is_best_effort_and_idempotent():
     proc = FakeProc(['{"id": "S1"}\n'])
-    d = SpeechBrainDiarizer(spawn=lambda *a, **k: proc)
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
     d.close()
     d.close()  # second call must not raise
-    assert d.assign(b"\x00\x00" * 1600, 16000, 0) is None  # closed -> coarse
+    assert d.assign(_PCM, 16000, 0) is None  # closed -> coarse

@@ -12,11 +12,21 @@ protocol to it (spec §3.4):
                              assign; ``{"segments": [...]}`` for a diarize.
     stderr (worker -> app):  ``READY`` once, when the ECAPA model is warm.
 
-Crash rule (spec §3.6): on any worker death / broken pipe / read timeout the
-backend attempts exactly ONE restart; a second failure marks it permanently
-degraded and every later ``assign`` returns ``None`` -- coarse labels for the
-rest of the meeting. Best-effort throughout: a worker problem never raises
-into the session.
+Crash rule (spec §7): a DEAD worker (exited process / broken pipe / stdout
+EOF) sends the rest of the meeting to coarse labels -- cluster ids cannot
+survive a restart, so a fresh worker's ``S1`` would inherit the first
+meeting's ``S1`` name. Exactly ONE restart is still attempted so the
+authoritative Stop pass survives a transient failure; a second death marks
+the backend permanently degraded. A *slow* reply is NOT a crash: it is
+backpressure (spec §6.3) -- the window keeps its coarse label and the worker
+keeps its restart budget. Best-effort throughout: a worker problem never
+raises into the session.
+
+Warm-up (spec §7): construction NEVER blocks. The first run downloads the
+ECAPA model, so ``READY`` can be minutes away; the recording must start
+anyway. ``assign`` checks readiness without waiting (coarse until warm) and
+only ``diarize`` -- the Stop pass, already off the UI thread -- waits, bounded
+by its own budget.
 
 Privacy: only PCM and cluster ids cross the pipe. Transcript text and speaker
 names never reach the worker, and nothing here logs PCM, text, names, or
@@ -30,6 +40,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -41,16 +52,41 @@ WORKER_MODULE = "tldw_chatbook.Audio.diarizer_worker"
 #: A single assign must reply within this; a slower reply is treated as a
 #: read timeout (the window falls back to a coarse label).
 ASSIGN_BUDGET_S = 2.0
-#: The Stop-pass batch clusters the whole recording -- allow longer than an
-#: assign, but bound it: this runs on the stop worker thread, so a wedged
-#: worker delays meeting finalize/ingest by exactly this long. 60 s is ample
-#: for a meeting-sized recording (final whole-branch review M3); a genuinely
-#: hung worker is caught here instead of stalling the stop for 5 minutes.
-DIARIZE_BUDGET_S = 60.0
-#: First run downloads the ECAPA model; warm-up can take a while.
+#: The Stop-pass batch clusters the whole recording, so its budget scales with
+#: the recording (Qodo Q13: a fixed 60 s silently lost the final diarization of
+#: anything long). Floor: a short meeting still gets a usable budget. Ceiling:
+#: this runs on the stop worker thread, so a wedged worker delays meeting
+#: finalize/ingest by exactly this long -- 10 minutes, not forever.
+DIARIZE_BUDGET_FLOOR_S = 60.0
+DIARIZE_BUDGET_CEILING_S = 600.0
+#: First run downloads the ECAPA model; warm-up can take a while. Nothing
+#: blocks on it -- see the module docstring.
 READY_TIMEOUT_S = 120.0
 
+#: Static, user-safe reasons for the "speaker labels unavailable" footer copy
+#: (spec §7). Never a path, a name, or transcript text.
+COARSE_UNAVAILABLE = "backend unavailable"
+COARSE_CRASHED = "backend crashed"
+
 _SENTINEL = object()  # placed on the reply queue when the worker's stdout EOFs
+
+
+def diarize_budget_s(duration_s: float) -> float:
+    """Seconds to allow the Stop pass for a recording of `duration_s`.
+
+    Args:
+        duration_s: The recording's length in seconds; junk values (negative,
+            NaN-ish, None-shaped) collapse to the floor.
+
+    Returns:
+        Roughly one second of budget per second of audio, clamped to
+        ``[DIARIZE_BUDGET_FLOOR_S, DIARIZE_BUDGET_CEILING_S]``.
+    """
+    try:
+        wanted = float(duration_s)
+    except (TypeError, ValueError):
+        wanted = 0.0
+    return min(DIARIZE_BUDGET_CEILING_S, max(DIARIZE_BUDGET_FLOOR_S, wanted))
 
 
 class SpeechBrainDiarizer:
@@ -68,13 +104,21 @@ class SpeechBrainDiarizer:
         self._budget = assign_budget_s
         self._proc: Any | None = None
         self._q: "queue.Queue[Any]" = queue.Queue()
+        self._ready = threading.Event()
+        self._ready_ok = False
         self._degraded = False
+        #: Live labelling is over for this meeting (a crash), even though the
+        #: restarted worker still serves the Stop pass (Qodo Q10).
+        self._coarse_only = False
         self._restarted = False
+        #: Static reason the meeting is on coarse labels, for the footer.
+        self.coarse_reason: str | None = None
         self._lock = threading.Lock()
-        # Spawn eagerly: build_diarizer (Task 6) only constructs this once a
-        # meeting with live diarization begins, so warm-up cost is expected.
+        # Spawn and return: the READY handshake runs on its own thread so
+        # Start is never held behind a cold model download (fix C1).
         if not self._start():
             self._degraded = True
+            self._mark_coarse(COARSE_UNAVAILABLE)
 
     # ---- process lifecycle ------------------------------------------------
     def _command(self) -> list[str]:
@@ -91,8 +135,14 @@ class SpeechBrainDiarizer:
             logger.warning("diarizer: live diarization unsupported in frozen build; coarse labels only")
         return [sys.executable, "-m", WORKER_MODULE]
 
+    def _mark_coarse(self, reason: str) -> None:
+        """Live labelling is over; keep the FIRST reason (the root cause)."""
+        self._coarse_only = True
+        if self.coarse_reason is None:
+            self.coarse_reason = reason
+
     def _start(self) -> bool:
-        """Spawn the worker and wait for ``READY``. False -> caller degrades."""
+        """Spawn the worker; READY is awaited on a thread. False -> degrade."""
         try:
             env = {**os.environ, "TLDW_DIARIZER_MAX_SPEAKERS": str(self._max)}
             self._proc = self._spawn(
@@ -110,35 +160,52 @@ class SpeechBrainDiarizer:
         if proc.poll() is not None:
             logger.warning("diarizer: worker exited before READY")
             return False
-        if not self._await_ready(proc):
-            logger.warning("diarizer: worker never reported READY")
-            self._kill(proc)
-            return False
-        # Fresh reply queue per worker session: a previous (dead) worker's
-        # EOF sentinel must never be read as this worker's crash.
+        # Fresh reply queue and READY gate per worker session: a previous
+        # (dead) worker's EOF sentinel must never be read as this worker's
+        # crash, nor its handshake as this worker's readiness.
         self._q = queue.Queue()
+        self._ready = threading.Event()
+        self._ready_ok = False
         threading.Thread(target=self._read_stdout, args=(proc, self._q), daemon=True, name="diarizer-stdout").start()
-        threading.Thread(target=self._drain_stderr, args=(proc,), daemon=True, name="diarizer-stderr").start()
+        threading.Thread(
+            target=self._watch_stderr, args=(proc, self._ready), daemon=True, name="diarizer-stderr"
+        ).start()
         return True
 
-    def _await_ready(self, proc: Any) -> bool:
-        """Block (bounded) until the worker prints READY on stderr."""
-        result: dict[str, bool] = {}
+    def _watch_stderr(self, proc: Any, ready: threading.Event) -> None:
+        """Open the READY gate, then keep the pipe drained for this worker.
 
-        def _read() -> None:
-            try:
-                for raw in iter(proc.stderr.readline, b""):
-                    if b"READY" in raw:
-                        result["ok"] = True
-                        return
-                result["ok"] = False  # EOF without READY
-            except Exception:  # noqa: BLE001
-                result["ok"] = False
+        One thread does both jobs: nobody joins it, so the constructor never
+        waits (C1), and a chatty worker can never block on a full stderr.
+        Contents are worker diagnostics (types only) and are not logged here.
+        """
+        try:
+            for raw in iter(proc.stderr.readline, b""):
+                if not ready.is_set() and b"READY" in raw:
+                    self._ready_ok = True
+                    ready.set()
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            if not ready.is_set():
+                logger.warning("diarizer: worker never reported READY")
+                self._mark_coarse(COARSE_UNAVAILABLE)
+            ready.set()  # unblock `wait_ready` -- `_ready_ok` says whether it worked
 
-        t = threading.Thread(target=_read, daemon=True, name="diarizer-ready")
-        t.start()
-        t.join(READY_TIMEOUT_S)
-        return result.get("ok", False)
+    def wait_ready(self, timeout: float) -> bool:
+        """Block up to `timeout` seconds for the worker's warm-up handshake.
+
+        Only the Stop pass (and tests) may call this; `assign` checks
+        `_ready` without waiting so a cold model never stalls the transcript
+        thread.
+
+        Args:
+            timeout: Seconds to wait at most.
+
+        Returns:
+            True when the worker reported READY within `timeout`.
+        """
+        return self._ready.wait(timeout) and self._ready_ok
 
     def _read_stdout(self, proc: Any, q: "queue.Queue[Any]") -> None:
         try:
@@ -149,16 +216,10 @@ class SpeechBrainDiarizer:
         finally:
             q.put(_SENTINEL)
 
-    def _drain_stderr(self, proc: Any) -> None:
-        # Keep the pipe empty so a chatty worker never blocks; contents are
-        # worker diagnostics (types only) and are not logged here.
-        try:
-            for _ in iter(proc.stderr.readline, b""):
-                pass
-        except Exception:  # noqa: BLE001
-            pass
-
     def _kill(self, proc: Any) -> None:
+        """Terminate, then force-kill (Qodo Q14): a worker that ignores
+        SIGTERM must not survive with its model and accelerator memory while
+        `_fail` spawns its replacement."""
         try:
             if getattr(proc, "stdin", None):
                 proc.stdin.close()
@@ -167,11 +228,25 @@ class SpeechBrainDiarizer:
         try:
             proc.terminate()
             proc.wait(timeout=1.0)
+            return
         except Exception:  # noqa: BLE001
             pass
+        try:
+            proc.kill()
+            proc.wait(timeout=1.0)
+        except Exception:  # noqa: BLE001
+            logger.warning("diarizer: worker did not exit after kill")
 
     def _fail(self) -> None:
-        """One restart, else permanently degraded. Caller returns None."""
+        """A DEAD worker: coarse for the rest of the meeting, one restart.
+
+        Cluster ids cannot survive a restart (the centroids live in the
+        worker), so a fresh worker's "S1" would inherit the first worker's
+        S1 name -- spec §7 sends the REST of the meeting to coarse labels and
+        keeps the restarted worker only for the authoritative Stop pass.
+        A second death degrades the backend permanently.
+        """
+        self._mark_coarse(COARSE_CRASHED)
         proc, self._proc = self._proc, None
         if proc is not None:
             self._kill(proc)
@@ -179,15 +254,26 @@ class SpeechBrainDiarizer:
             self._degraded = True
             return
         self._restarted = True
-        logger.warning("diarizer: worker lost; restarting once")
+        logger.warning("diarizer: worker lost; restarting once, live labels stay coarse")
         if not self._start():
             self._degraded = True
 
     # ---- Diarizer protocol ------------------------------------------------
     def assign(self, pcm: bytes, sample_rate: int, seq: int) -> str | None:
-        """Return a live cluster id for this PCM window, or None (coarse)."""
+        """Return a live cluster id for this PCM window, or None (coarse).
+
+        Never waits for warm-up and never raises: a not-yet-READY worker, a
+        crashed one, or one that is simply too slow all return None and the
+        window keeps its coarse label.
+        """
+        if self._degraded or self._coarse_only:
+            return None
+        # Non-blocking readiness check (C1): the model may still be
+        # downloading, and the transcript thread cannot wait for it.
+        if not (self._ready.is_set() and self._ready_ok):
+            return None
         with self._lock:
-            if self._degraded:
+            if self._degraded or self._coarse_only:
                 return None
             proc = self._proc
             if proc is None or proc.poll() is not None:
@@ -195,24 +281,55 @@ class SpeechBrainDiarizer:
                 return None
             try:
                 self._send(proc, {"cmd": "assign", "sr": sample_rate, "seq": seq, "n": len(pcm)}, pcm)
-                raw = self._q.get(timeout=self._budget)
-            except (queue.Empty, OSError, ValueError):
+            except (OSError, ValueError):
                 self._fail()
+                return None
+            return self._await_reply(seq)
+
+    def _await_reply(self, seq: int) -> str | None:
+        """Read this assign's reply within the budget; None means coarse.
+
+        A budget overrun is BACKPRESSURE, not a crash (spec §6.3): it returns
+        None, leaves the restart budget alone, and lets the worker keep
+        going. The reply it eventually writes is discarded here by `seq`, so
+        one slow window can never shift every later window's answer by one.
+        """
+        deadline = time.monotonic() + self._budget
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            try:
+                raw = self._q.get(timeout=remaining)
+            except queue.Empty:
                 return None
             if raw is _SENTINEL:
                 self._fail()
                 return None
             try:
-                return json.loads(raw).get("id")
-            except Exception:  # noqa: BLE001
-                return None
+                reply = json.loads(raw)
+            except Exception:  # noqa: BLE001 - a garbled line is not an answer
+                continue
+            if not isinstance(reply, dict) or "id" not in reply:
+                continue
+            reply_seq = reply.get("seq")
+            if reply_seq is not None and reply_seq != seq:
+                continue  # a late reply from a window that already gave up
+            return reply.get("id")
 
     def diarize(self, wav_path: Path, start_s: float, end_s: float) -> list[SpeakerSegment]:
         """Batch Stop pass: reconciled live ids for the whole recording.
 
-        Best-effort: any trouble returns ``[]`` and the session keeps the
-        near-live labels ``assign`` already placed.
+        The only call that WAITS on warm-up (bounded by the same budget), so
+        a meeting whose model finished downloading mid-recording still gets
+        an authoritative pass. Best-effort: any trouble returns ``[]`` and
+        the session keeps the near-live labels ``assign`` already placed.
         """
+        budget = diarize_budget_s(end_s - start_s)
+        if self._degraded:
+            return []
+        if not self.wait_ready(budget):
+            return []
         with self._lock:
             if self._degraded:
                 return []
@@ -221,18 +338,36 @@ class SpeechBrainDiarizer:
                 return []
             try:
                 self._send(proc, {"cmd": "diarize", "wav": str(wav_path), "start": start_s, "end": end_s})
-                raw = self._q.get(timeout=DIARIZE_BUDGET_S)
-            except (queue.Empty, OSError, ValueError):
+            except (OSError, ValueError):
                 self._fail()
+                return []
+            segs = self._await_segments(budget)
+        try:
+            return [SpeakerSegment(start_s=s["start_s"], end_s=s["end_s"], speaker=s["speaker"]) for s in segs]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _await_segments(self, budget: float) -> list[dict]:
+        """Read the batch reply within `budget`; an overrun is a skip (Q13)."""
+        deadline = time.monotonic() + budget
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning("diarizer: stop pass exceeded its budget; keeping near-live labels")
+                return []
+            try:
+                raw = self._q.get(timeout=remaining)
+            except queue.Empty:
                 return []
             if raw is _SENTINEL:
                 self._fail()
                 return []
-        try:
-            segs = json.loads(raw).get("segments", [])
-            return [SpeakerSegment(start_s=s["start_s"], end_s=s["end_s"], speaker=s["speaker"]) for s in segs]
-        except Exception:  # noqa: BLE001
-            return []
+            try:
+                reply = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(reply, dict) and "segments" in reply:
+                return list(reply.get("segments") or [])
 
     def centroids(self) -> dict[str, Any]:
         # The live centroids live in the worker (voice embeddings never cross
