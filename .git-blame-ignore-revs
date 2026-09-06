@@ -256,3 +256,18 @@ d0ec95b16f17668af9e32725eed788aeeed1d991
 # wiring-tuple amendment. Still a pure move: every remaining moved body
 # re-verified TEXT- and AST-identical to its pre-move original.
 40fe1f5bcd1180ccfacfc2c94439340e941e1f43
+
+# Wave-7 task 3: media cleanup (media series 3/3). The generated media-state
+# shim block (82 properties, two prefix families) deleted; 456 screen-side
+# `self._library_media_<field>`/`self._selected_media_id` occurrences
+# retargeted to `self._media_state.<field>`, plus 9 `getattr` receiver fixes
+# and 6 dotted dynamic-dispatch string values; 1,182 test-side code retargets
+# across 32 files in five roots, including 37 SimpleNamespace fixtures whose
+# 136 flat kwargs became a nested `_media_state=SimpleNamespace(...)`; 22 of
+# the 140 screen delegators deleted on a zero-external-reference census; 10
+# dead imports removed; the shared `_apply_library_row_toggle` dispatcher's
+# COMPUTED attribute name given a media dotted branch; both size-ratchet
+# re-pins and the wiring-test absence flip. Mechanical receiver swaps and
+# removals only -- zero assertion values changed, proven by an AST-level
+# comparison of each file against the same transform applied to its parent.
+5dd2e71cfe2401ad26d8df38c8ec3fa4badad471
