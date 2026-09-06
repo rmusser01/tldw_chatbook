@@ -74,6 +74,14 @@ class PersonasConversationTranscriptWidget(Container):
             str(title or "Conversation")
         )
 
+    def set_compact(self, compact: bool) -> None:
+        """Keep the preview limit readable without displacing narrow body rows."""
+        self.query_one("#personas-transcript-preview-note", Static).update(
+            "Preview: up to 200 messages."
+            if compact
+            else "Preview shows up to 200 messages. Resume opens the saved chat in Console."
+        )
+
     async def show_loading(self, render_attempt: object | None = None) -> bool:
         """Replace the transcript with a loading placeholder.
 
@@ -110,6 +118,22 @@ class PersonasConversationTranscriptWidget(Container):
                 Static(
                     "Couldn't load this preview. You can still resume the saved chat.",
                     id="personas-transcript-error",
+                )
+            ],
+            token,
+        )
+
+    async def show_unavailable(
+        self, render_attempt: object | None = None
+    ) -> bool:
+        """Hide transcript content after its authority or revision changes."""
+
+        token = self._standalone_or_existing_attempt(render_attempt)
+        return await self._replace_scroll_contents(
+            [
+                Static(
+                    "This conversation changed or moved. Refresh conversations to retry.",
+                    id="personas-transcript-unavailable",
                 )
             ],
             token,

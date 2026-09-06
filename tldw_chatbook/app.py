@@ -12264,6 +12264,314 @@ class TldwCli(
             self._reusable_screen_instances = cache
         cache[current_tab_value] = (runtime_identity, screen)
 
+    async def activate_character_conversation_from_roleplay(
+        self,
+        request: object,
+        cancellation: asyncio.Event,
+        phase_changed: Callable[[str], None],
+    ) -> object:
+        """Own an exact Roleplay-to-Console activation without losing its caller.
+
+        The reusable Console workspace performs cancellable preflight while
+        Roleplay remains the current screen. Once that check settles, the
+        operation enters its non-cancellable finishing phase and mounts Console
+        for the final atomic revalidation/hydration.  Failure restores the exact
+        mounted Roleplay caller; only ``OPENED`` replaces it.
+        """
+
+        from tldw_chatbook.Chat.console_conversation_activation import (
+            CharacterConversationActivationRequest,
+            ConsoleActivationResultKind,
+            ConsoleConversationActivationResult,
+        )
+
+        if not isinstance(request, CharacterConversationActivationRequest):
+            raise TypeError("request must be a character activation request")
+        cancelled_result = ConsoleConversationActivationResult(
+            ConsoleActivationResultKind.CANCELLED_PRECOMMIT,
+            request.target,
+            False,
+        )
+        if cancellation.is_set():
+            return cancelled_result
+        runtime = getattr(self, "console_runtime", None)
+        lane = getattr(runtime, "character_conversation_activation_lock", None)
+        if not isinstance(lane, asyncio.Lock):
+            raise RuntimeError("Console activation lane is unavailable")  # noqa: TRY004 - unavailable runtime ownership, not a public input type check
+        admission: asyncio.Task[bool] | None = None
+        cancelled: asyncio.Task[bool] | None = None
+        preflight: asyncio.Task[Any] | None = None
+        lane_acquired = False
+        commit_started = False
+        candidate = None
+        try:
+            # These children are owned from creation: cancellation of this
+            # outer worker must never leave an orphan that later acquires the
+            # app-lifetime lane.
+            admission = asyncio.create_task(lane.acquire())
+            cancelled = asyncio.create_task(cancellation.wait())
+            done, _pending = await asyncio.wait(
+                {admission, cancelled}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancelled in done and cancellation.is_set():
+                return cancelled_result
+            lane_acquired = bool(await admission)
+            if cancellation.is_set():
+                return cancelled_result
+
+            _, _, screen_class = self._resolve_screen_navigation_target(TAB_CHAT)
+            if screen_class is None:
+                return ConsoleConversationActivationResult(
+                    ConsoleActivationResultKind.FAILED, request.target, False
+                )
+            runtime_identity = self._current_runtime_identity()
+            candidate = self._reusable_navigation_screen(TAB_CHAT, runtime_identity)
+            if candidate is None:
+                candidate = self._create_navigation_screen(TAB_CHAT, screen_class)
+            preflight = asyncio.create_task(
+                candidate._workspace.preflight_character_conversation_activation(
+                    request
+                )
+            )
+            if cancelled is not None and not cancelled.done():
+                cancelled.cancel()
+                await asyncio.gather(cancelled, return_exceptions=True)
+            cancelled = asyncio.create_task(cancellation.wait())
+            done, _pending = await asyncio.wait(
+                {preflight, cancelled}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancelled in done and cancellation.is_set():
+                preflight.cancel()
+                await asyncio.gather(preflight, return_exceptions=True)
+                return cancelled_result
+            cancelled.cancel()
+            await asyncio.gather(cancelled, return_exceptions=True)
+            preflight_result = await preflight
+            if preflight_result is not None:
+                return ConsoleConversationActivationResult(
+                    preflight_result, request.target, False
+                )
+            if cancellation.is_set():
+                return cancelled_result
+
+            # The app-wide lane and final revalidation are both owned here.
+            # Publishing Finishing is the atomic commit acknowledgement; only
+            # after it is visible does the surviving Console touch the stack.
+            phase_changed("finishing")
+            commit_started = True
+            caller = self.screen
+            post_commit = asyncio.create_task(
+                TldwCli._complete_character_conversation_post_commit(
+                    self, candidate, caller, request, runtime_identity
+                ),
+                name="character_conversation_post_commit",
+            )
+            return await TldwCli._await_character_conversation_post_commit(
+                post_commit
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - admission failures return typed outcomes and drain owned tasks
+            logger.opt(exception=True).warning(
+                "Roleplay character-conversation activation failed"
+            )
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.FAILED,
+                request.target,
+                commit_started,
+            )
+        finally:
+            children = tuple(
+                task
+                for task in (admission, cancelled, preflight)
+                if task is not None
+            )
+            for child in children:
+                if not child.done():
+                    child.cancel()
+            child_results = (
+                await asyncio.gather(*children, return_exceptions=True)
+                if children
+                else ()
+            )
+            if not lane_acquired and admission is not None:
+                admission_index = children.index(admission)
+                lane_acquired = child_results[admission_index] is True
+            if lane_acquired:
+                lane.release()
+
+    @staticmethod
+    async def _await_character_conversation_post_commit(
+        operation: asyncio.Task[Any],
+    ) -> Any:
+        """Delay caller cancellation until app-owned commit work settles."""
+
+        cancellation: asyncio.CancelledError | None = None
+        while True:
+            try:
+                result = await asyncio.shield(operation)
+            except asyncio.CancelledError as error:
+                if operation.cancelled():
+                    raise
+                cancellation = cancellation or error
+                continue
+            break
+        if cancellation is not None:
+            raise cancellation
+        return result
+
+    async def _complete_character_conversation_post_commit(
+        self,
+        candidate: Any,
+        caller: Any,
+        request: Any,
+        runtime_identity: Any,
+    ) -> Any:
+        """Mount, hydrate, transfer, or roll back one committed activation."""
+
+        from tldw_chatbook.Chat.console_conversation_activation import (
+            ConsoleActivationResultKind,
+            ConsoleConversationActivationResult,
+        )
+
+        transferred = False
+
+        async def finalize_visible() -> None:
+            nonlocal transferred
+            await TldwCli._transfer_pushed_console_to_content(
+                self, candidate, caller
+            )
+            transferred = True
+
+        # A cached Console resumes instead of mounting. Its ordinary registry
+        # reconciliation must not compete with this exact target's transaction.
+        prior_resume_gate = getattr(
+            candidate, "_resume_navigation_startup_in_progress", False
+        )
+        candidate._resume_navigation_startup_in_progress = True
+        try:
+            await self.push_screen(candidate)
+            result = (
+                await candidate._workspace.activate_character_conversation_after_commit(
+                    request,
+                    finalize_visible=finalize_visible,
+                )
+            )
+            if result.kind is ConsoleActivationResultKind.OPENED and transferred:
+                if not self.is_screen_installed(candidate):
+                    self._retain_reusable_navigation_screen(
+                        TAB_CHAT, runtime_identity, candidate
+                    )
+                self.current_tab = TAB_CHAT
+                return result
+            if getattr(self, "screen", None) is candidate:
+                await self.pop_screen()
+            if result.kind is ConsoleActivationResultKind.OPENED:
+                return ConsoleConversationActivationResult(
+                    ConsoleActivationResultKind.FAILED, request.target, True
+                )
+            return result
+        except Exception:  # noqa: BLE001 - restore caller after any committed mount or transfer failure
+            logger.bind(
+                operation_id=id(request), candidate_token=id(candidate),
+                caller_token=id(caller), stage="commit_screen",
+            ).opt(exception=True).warning(
+                "Committed Roleplay character-conversation activation failed"
+            )
+            if getattr(self, "screen", None) is candidate:
+                try:
+                    await self.pop_screen()
+                except Exception:  # noqa: BLE001 - report caller restoration without losing typed outcome
+                    logger.bind(
+                        operation_id=id(request), candidate_token=id(candidate),
+                        caller_token=id(caller), stage="restore_caller",
+                    ).opt(exception=True).error(
+                        "Could not restore Roleplay after Console mount failure"
+                    )
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.FAILED, request.target, True
+            )
+        finally:
+            candidate._resume_navigation_startup_in_progress = prior_resume_gate
+
+    async def _transfer_pushed_console_to_content(
+        self,
+        candidate: Any,
+        caller: Any,
+    ) -> None:
+        """Promote the proved pushed Console while replacing its Roleplay caller."""
+
+        stack = self._screen_stack
+        if (
+            len(stack) < 2
+            or stack[-1] is not candidate
+            or stack[-2] is not caller
+        ):
+            raise RuntimeError("Console activation stack ownership changed")
+
+        original_stack = tuple(stack)
+        candidate_callbacks = tuple(candidate._result_callbacks)
+        caller_callbacks = tuple(caller._result_callbacks)
+
+        # The proved candidate is already current, mounted, and owns its push
+        # callback. Remove only the caller beneath it; unlike switch_screen,
+        # this never exposes a state where Textual has popped both screens.
+        try:
+            stack.pop(-2)
+            caller._pop_result_callback()
+            await self._remove_promoted_screen_caller(caller)
+        except BaseException:
+            # Restore exact membership/callback ownership even if the removal
+            # seam failed after changing the current stack. A normal pop then
+            # resumes Roleplay and unmounts the attempt-owned candidate.
+            stack[:] = original_stack
+            candidate._result_callbacks[:] = candidate_callbacks
+            caller._result_callbacks[:] = caller_callbacks
+            try:
+                if not caller.is_running:
+                    restored_caller, await_mount = self._get_screen(caller)
+                    if restored_caller is not caller:
+                        raise RuntimeError("Roleplay screen identity changed during restore")
+                    await await_mount
+                await self.pop_screen()
+            except BaseException:  # noqa: BLE001 - fallback restores ownership even when cleanup is cancelled
+                logger.bind(
+                    candidate_token=id(candidate), caller_token=id(caller),
+                    stage="restore_caller",
+                ).opt(exception=True).error(
+                    "Could not atomically restore Roleplay after Console promotion"
+                )
+                stack[:] = original_stack[:-1]
+                caller._result_callbacks[:] = caller_callbacks
+                candidate._result_callbacks[:] = candidate_callbacks[:-1]
+                try:
+                    if not caller.is_running:
+                        restored_caller, await_mount = self._get_screen(caller)
+                        if restored_caller is not caller:
+                            raise RuntimeError(
+                                "Roleplay screen identity changed during fallback restore"
+                            )
+                        await await_mount
+                    if (
+                        candidate.is_running
+                        and candidate.parent is self
+                        and not self.is_screen_installed(candidate)
+                    ):
+                        await candidate.remove()
+                except BaseException:  # noqa: BLE001 - final attempt-owned cleanup must not replace original failure
+                    logger.bind(
+                        candidate_token=id(candidate), caller_token=id(caller),
+                        stage="cleanup_candidate",
+                    ).opt(exception=True).error(
+                        "Could not clean failed Console promotion candidate"
+                    )
+            raise
+
+    async def _remove_promoted_screen_caller(self, caller: Any) -> None:
+        """Unmount the former content screen after its stack slot is removed."""
+
+        await caller.remove()
+
     def prepare_personal_context_interview_request(
         self,
         *,

@@ -476,6 +476,8 @@ from ...Library.library_rag_state import (
     library_rag_profile_top_k,
 )
 from ...Constants import (
+    CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
+    CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET,
     CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
@@ -675,6 +677,7 @@ FeedbackRequested = ConsoleSelectionFeedbackRequested
 NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
+    from ...Chat.console_conversation_activation import CharacterConversationActivationRequest
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
         ConsoleEnvironmentController,
@@ -3473,6 +3476,10 @@ class ChatScreen(BaseAppScreen):
     def apply_navigation_context(self, context: Mapping[str, object]) -> None:
         """Capture a saved-chat resume or claim a typed Settings return."""
 
+        if (CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET in context
+                or CHARACTER_NAV_CONTEXT_RETURN_FOCUS in context):
+            self._workspace.apply_character_navigation_context(context)
+
         resume_value = context.get(CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID)
         if isinstance(resume_value, str):
             conversation_id = resume_value.strip()
@@ -4486,6 +4493,7 @@ class ChatScreen(BaseAppScreen):
             return False
         self._console_appearance_refresh_generation = generation
         self._last_native_transcript_refresh_key = None
+        self._last_native_transcript_session_id = None
         if self.is_mounted:
             try:
                 transcript = self.query_one(
@@ -6726,6 +6734,9 @@ class ChatScreen(BaseAppScreen):
     #: (several Console tests construct one without running ``__init__``).
     _console_mount_visit_refreshed: bool = False
     _pending_resume_local_conversation_id: str | None = None
+    _pending_character_conversation_target: "CharacterConversationActivationRequest | None" = None
+    _failed_character_conversation_target: "CharacterConversationActivationRequest | None" = None
+    _pending_character_return_focus_id: str | None = None
     _resume_navigation_startup_in_progress: bool = False
     _pending_conversation_settings_return_claim: (
         HandoffClaim[ConversationSettingsReturnIntent] | None
@@ -6962,6 +6973,7 @@ class ChatScreen(BaseAppScreen):
         self._last_native_transcript_refresh_key: tuple[int, tuple[Any, ...]] | None = (
             None
         )
+        self._last_native_transcript_session_id: str | None = None
         self._last_console_workbench_focus_id: str | None = None
         self._last_console_control_state: ConsoleControlState | None = None
         self._last_console_workbench_state: Any | None = None
@@ -15189,7 +15201,10 @@ class ChatScreen(BaseAppScreen):
         self._apply_focus_chrome()
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
-        ordered_resume_pending = self._pending_resume_local_conversation_id is not None
+        ordered_resume_pending = bool(
+            self._pending_resume_local_conversation_id is not None
+            or self._pending_character_conversation_target is not None
+        )
         self._resume_navigation_startup_in_progress = ordered_resume_pending
         # This handoff is session/config only and does not need mounted DOM.
         # Consume it before ordinary UI restoration can create a competing
@@ -15239,6 +15254,8 @@ class ChatScreen(BaseAppScreen):
                 0.15,
                 self._fleet.consume_pending_console_fleet_completion,
             )
+        if self._pending_character_return_focus_id is not None:
+            self.set_timer(0.2, self._workspace.restore_character_navigation_focus)
         # PR3a-2 Task 4 (task-15664): mount hedge for the survivor tick --
         # the primary arming point is the transcript poll's self-stop
         # edge, but a controller wired at mount with survivors already
@@ -15285,10 +15302,12 @@ class ChatScreen(BaseAppScreen):
     async def _consume_resume_navigation_startup(self) -> None:
         """Consume older Console intents before the explicit resume target."""
         target = self._pending_resume_local_conversation_id
+        typed_target = self._pending_character_conversation_target
         self._pending_resume_local_conversation_id = None
+        self._pending_character_conversation_target = None
         opened: bool | None = None
         try:
-            if target is None:
+            if target is None and typed_target is None:
                 return
             self._session.consume_pending_console_first_chat_intent(
                 defer_presentation=True,
@@ -15302,7 +15321,10 @@ class ChatScreen(BaseAppScreen):
             fleet_result = self._fleet.consume_pending_console_fleet_completion()
             if inspect.isawaitable(fleet_result):
                 await fleet_result
-            opened = await self._workspace.open_console_workspace_conversation(target)
+            if typed_target is not None:
+                opened = await self._workspace.open_character_navigation_target(typed_target)
+            else:
+                opened = await self._workspace.open_console_workspace_conversation(target)
         finally:
             self._resume_navigation_startup_in_progress = False
         if opened is True:
@@ -15744,6 +15766,7 @@ class ChatScreen(BaseAppScreen):
         self._adopt_console_pending_attachments(store)
         self._console_visible_draft_session_id = None
         self._last_native_transcript_refresh_key = None
+        self._last_native_transcript_session_id = None
 
         image_state, cache = self._ensure_console_image_view()
         image_state.restore(payload.get("image_view_modes"))
@@ -16712,6 +16735,9 @@ class ChatScreen(BaseAppScreen):
                 await transcript.refresh_messages()
                 self._last_native_transcript_refresh_key = refresh_key
             self._sync_console_transcript_guidance()
+            self._last_native_transcript_session_id = (
+                self._ensure_console_chat_store().active_session_id
+            )
             return
 
     def _clear_native_console_message_selection(self) -> None:
@@ -21375,6 +21401,8 @@ class ChatScreen(BaseAppScreen):
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
+        if self._pending_character_return_focus_id is not None:
+            self.call_after_refresh(self._workspace.restore_character_navigation_focus)
         logger.debug("Chat screen resuming")
         # task-17652: a Settings change to the status-row position must land
         # on this cached screen without a recompose.
