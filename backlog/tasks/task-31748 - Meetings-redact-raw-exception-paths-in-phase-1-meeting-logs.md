@@ -1,7 +1,7 @@
 ---
 id: TASK-31748
 title: 'Meetings: redact raw exception paths in phase-1 meeting logs'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-06 07:41'
 labels:
@@ -17,5 +17,9 @@ The phase-2 diarization review found the same privacy-leak pattern in PHASE-1 co
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No meeting logger call interpolates a raw exception/path into a persistent sink; redaction is regression-tested
+- [x] #1 No meeting logger call interpolates a raw exception/path into a persistent sink; redaction is regression-tested
 <!-- AC:END -->
+
+## Implementation Notes
+
+Five phase-1 meeting logger calls that interpolated a raw exception (which can embed a filesystem path via OSError) now log the exception type or a path-redacted message; regression tests use a real loguru sink and force a path-bearing OSError (`Tests/Audio/test_meeting_log_privacy.py`), plus the two phase-2 rename-failure sites. Diagnostic inventory re-pinned. Landed in PR #2471 (commit b7466ce24c).
