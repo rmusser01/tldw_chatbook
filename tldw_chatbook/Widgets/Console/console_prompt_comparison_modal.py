@@ -132,10 +132,13 @@ class ConsolePromptComparisonModal(
     def on_mount(self) -> None:
         """Focus the non-destructive keep action after mounting.
 
+        No super().on_mount(): the dispatcher already invokes
+        SafeModalDismissMixin.on_mount separately for this Mount event
+        (TASK-31822).
+
         Returns:
             None: The modal is focused in place.
         """
-        super().on_mount()
         self.query_one("#console-prompt-comparison-keep", Button).focus()
 
     @on(Button.Pressed, "#console-prompt-comparison-keep")

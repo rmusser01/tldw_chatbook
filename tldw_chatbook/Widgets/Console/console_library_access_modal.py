@@ -148,8 +148,12 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
         self._dirty = False
 
     def on_mount(self) -> None:
-        """Capture opener focus, then focus the first usable policy choice."""
-        super().on_mount()
+        """Focus the first usable policy choice.
+
+        No super().on_mount(): the dispatcher already invokes
+        SafeModalDismissMixin.on_mount (which captures the opener's focus)
+        separately for this Mount event (TASK-31822).
+        """
         self.call_after_refresh(self._focus_initial_control)
 
     def _focus_initial_control(self) -> None:
