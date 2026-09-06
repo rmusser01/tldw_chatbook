@@ -294,8 +294,17 @@ still spans the pane.
 | "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
-| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. |
+| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
 | "Move to trash" | Two-step, title-specific confirmation. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+*Verified against fix/media-wave5-h @ 4aa577bc0 — 2026-09-06 (task-31633
+AC#3: More opened live at 235x52 and at 100x30 over a seeded document.
+At 235x52 the four actions paint on one row and the "Read" tab row moves
+down exactly one line; at 100x30 they wrap to two rows and the body moves
+two. Before this change the disclosure was a full-height Vertical that
+displaced the tab row and body by 19 rows behind ~16 blank ones. The
+button paints "More ▴" while open and "More" once closed, and focus stays
+on it across both toggles.)*
 
 ### Review sets
 
