@@ -125,3 +125,65 @@ def reconcile(live_centroids: dict[str, np.ndarray],
         if best_id is not None:
             out[fid] = best_id
     return out
+
+
+def merged_speaker_names(
+    transitions: list[tuple[str | None, str]],
+    names: dict[str, str],
+) -> tuple[dict[str, str], list[str]]:
+    """Spec §4: when the authoritative Stop pass folds two *differently
+    user-named* live clusters into one, keep BOTH names on the surviving
+    cluster ("Alice / Bob") and flag it for the user to resolve -- never
+    silently drop one.
+
+    Pure Python (no numpy): it works off the per-segment id transitions the
+    session's Stop overlay already produces, because speaker *names* never
+    cross the diarizer pipe (privacy, spec §3.4) and so can only be reconciled
+    where the name map lives -- the app process, not the worker that holds the
+    centroids `reconcile` compares.
+
+    Args:
+        transitions: one ``(old_id, new_id)`` per meeting segment the Stop
+            pass covered -- the near-live cluster id it carried and the
+            reconciled id it took. ``old_id`` is None for a segment never
+            labelled live.
+        names: the meeting's ``cluster_id -> user name`` map. Only
+            user-assigned names are present; generic "Speaker N" ids are
+            absent.
+
+    Returns:
+        ``(merged_names, flagged)``:
+          - ``merged_names``: ``{survivor_id: "Alice / Bob"}`` to merge into
+            the name map, one entry per collision.
+          - ``flagged``: survivor ids, in first-seen order.
+    """
+    targets: dict[str, set[str]] = {}
+    order: list[str] = []
+    seen_new: set[str] = set()
+    for old, new in transitions:
+        if new not in seen_new:
+            seen_new.add(new)
+            order.append(new)
+        if old:
+            targets.setdefault(old, set()).add(new)
+    merged_names: dict[str, str] = {}
+    flagged: list[str] = []
+    for survivor in order:
+        # Named live clusters folded ENTIRELY into `survivor` (kept none of
+        # their own segments -- a cluster that still owns some of its segments
+        # is not a merge and its name is not at risk).
+        absorbed = [
+            old for old, news in targets.items()
+            if old != survivor and news == {survivor} and old in names
+        ]
+        if not absorbed:
+            continue
+        parts: list[str] = []
+        for candidate in ([survivor] if survivor in names else []) + absorbed:
+            label = names[candidate]
+            if label not in parts:      # duplicate names are not a collision
+                parts.append(label)
+        if len(parts) >= 2:
+            merged_names[survivor] = " / ".join(parts)
+            flagged.append(survivor)
+    return merged_names, flagged

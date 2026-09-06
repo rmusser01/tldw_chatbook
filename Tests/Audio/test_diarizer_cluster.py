@@ -1,5 +1,9 @@
 import numpy as np
-from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer, reconcile
+from tldw_chatbook.Audio.diarizer_cluster import (
+    OnlineClusterer,
+    merged_speaker_names,
+    reconcile,
+)
 
 def _v(*xs): return np.array(xs, dtype=np.float32)
 
@@ -35,3 +39,34 @@ def test_reconcile_maps_final_to_live_by_nearest_centroid():
 
 def test_reconcile_with_no_live_clusters_returns_empty():
     assert reconcile({}, [("F0", _v(1, 0, 0))]) == {}
+
+
+# ---- spec §4/§8: many-to-one merge keeps both names and flags --------------
+
+def test_merge_of_two_named_clusters_keeps_both_names_and_flags():
+    # The Stop pass folded S2's segments entirely into S1; both were named.
+    transitions = [("S1", "S1"), ("S2", "S1")]
+    merged, flagged = merged_speaker_names(transitions, {"S1": "Alice", "S2": "Bob"})
+    assert merged == {"S1": "Alice / Bob"} and flagged == ["S1"]
+
+def test_merge_into_an_unnamed_survivor_still_keeps_both_names():
+    # S3 (unnamed) absorbed both named clusters -> combine onto S3.
+    transitions = [("S1", "S3"), ("S2", "S3")]
+    merged, flagged = merged_speaker_names(transitions, {"S1": "Alice", "S2": "Bob"})
+    assert merged == {"S3": "Alice / Bob"} and flagged == ["S3"]
+
+def test_no_flag_when_an_absorbed_cluster_keeps_some_of_its_own_segments():
+    # S2 kept one segment, so it was not fully merged -> its name is not at risk.
+    transitions = [("S1", "S1"), ("S2", "S1"), ("S2", "S2")]
+    merged, flagged = merged_speaker_names(transitions, {"S1": "Alice", "S2": "Bob"})
+    assert merged == {} and flagged == []
+
+def test_same_name_on_both_clusters_is_not_a_collision():
+    transitions = [("S1", "S1"), ("S2", "S1")]
+    merged, flagged = merged_speaker_names(transitions, {"S1": "Alice", "S2": "Alice"})
+    assert merged == {} and flagged == []
+
+def test_merge_of_unnamed_clusters_is_not_flagged():
+    transitions = [("S1", "S1"), ("S2", "S1")]
+    merged, flagged = merged_speaker_names(transitions, {})
+    assert merged == {} and flagged == []
