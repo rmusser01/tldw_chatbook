@@ -814,7 +814,8 @@ class SchedulesWorkbench(BaseAppScreen):
         if self._results_pull_debounce_timer is not None:
             self._results_pull_debounce_timer.stop()
             self._results_pull_debounce_timer = None
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
 
     def _start_server_notification_observer(self) -> None:
         """Start the SSE notification observer (schedules-handoff PR-6

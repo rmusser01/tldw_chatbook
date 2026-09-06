@@ -125,7 +125,8 @@ class MeetingsScreen(BaseAppScreen):
         self._detach()
         if self._level_timer is not None:
             self._level_timer.stop()
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
 
     def _attach_if_running(self) -> None:
         owner = self._owner

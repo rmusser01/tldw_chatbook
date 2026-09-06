@@ -1918,7 +1918,8 @@ class PersonasScreen(BaseAppScreen):
         self._character_tts_snapshot = None
         self._clear_character_tts_profile_suggestion()
         await self._drain_actor_pack_creation()
-        super().on_unmount()
+        # No super().on_unmount(): the dispatcher already invokes
+        # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
         self._cancel_search_debounce()
         await self.preview.close_gateway()
 

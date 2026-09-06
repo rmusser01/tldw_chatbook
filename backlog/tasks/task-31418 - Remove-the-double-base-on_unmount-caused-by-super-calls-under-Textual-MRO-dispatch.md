@@ -30,9 +30,60 @@ This is a convention fix, not a bug fix: pick one discipline and make it uniform
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A base screen's on_unmount body runs exactly once per unmount for every screen that overrides it
-- [ ] #2 A regression test pins the count directly, so a future re-introduction fails rather than staying invisible
-- [ ] #3 One convention is chosen and applied to every site (either no explicit super call, or a base whose body is not itself a handler), and the choice is recorded where the next author will read it
-- [ ] #4 The audit covers every super().on_unmount() and the same MRO question for on_mount and on_screen_resume, and records which are affected
-- [ ] #5 The lessons-textual entry documents the mechanism with the probe result, not just the rule
+- [x] #1 A base screen's on_unmount body runs exactly once per unmount for every screen that overrides it
+- [x] #2 A regression test pins the count directly, so a future re-introduction fails rather than staying invisible
+- [x] #3 One convention is chosen and applied to every site (either no explicit super call, or a base whose body is not itself a handler), and the choice is recorded where the next author will read it
+- [x] #4 The audit covers every super().on_unmount() and the same MRO question for on_mount and on_screen_resume, and records which are affected
+- [x] #5 The lessons-textual entry documents the mechanism with the probe result, not just the rule
 <!-- AC:END -->
+
+## Implementation Notes
+
+**Approach:** Applied the repo's existing lifecycle convention (already in force
+for `on_mount` from prior work) to `on_unmount`: a subclass handler for an
+MRO-dispatched lifecycle event does NOT call `super().on_*()`, because Textual's
+`_get_dispatch_methods` walks the MRO and invokes the base handler itself — an
+explicit `super()` call runs the base body a second time.
+
+**Probe (Textual 8.2.8):** a two-level `Screen` subclass appending its name in
+each `on_unmount` yields `['child', 'base', 'base']` with an explicit
+`super().on_unmount()`, and `['child', 'base']` without it. The same double-fire
+reproduced for `on_mount` and `on_screen_resume` — all three MRO-dispatched
+handlers are affected (AC#4).
+
+**Sites:** removed the redundant `super().on_unmount()` from every subclass that
+carried it — `BaseAppScreen` subclasses (`chat_screen`, `library_screen`,
+`personas_screen`, `artifacts_screen`, `logs_screen`, `meetings_screen`,
+`watchlists_collections_screen`, `schedules_workbench`) and the two
+`SafeModalDismissMixin` Console modals (`console_workspace_files_modal`,
+`console_session_switcher_modal`), each replaced with a `# No super().on_unmount()`
+comment naming the base whose handler Textual dispatches separately. Zero
+`super().on_unmount()` calls remain in the package.
+
+**Load-bearing exception preserved:** a `super().on_*()` whose base target is NOT
+a dispatched handler (reachable only via the explicit call — e.g.
+`change_review_screen.py`'s `super().on_mount()`, "mandatory, not politeness")
+was left untouched. Each site was classified redundant-vs-load-bearing before
+editing; `SafeModalDismissMixin.on_unmount` (an MRO-dispatched handler) confirms
+both Console modals' removals are safe.
+
+**Guard (AC#2):** `Tests/UI/test_on_unmount_mro_convention.py` — a runtime count
+test pins the base `on_unmount` firing exactly once under the no-super
+convention (revert-checked: it fires twice with `super()`), plus an AST scan
+that fails if any `on_unmount` re-introduces a `super().on_unmount()` call.
+
+**Docs (AC#3/#5):** the mechanism, the probe result, the convention, and the
+load-bearing exception are recorded in `BaseAppScreen`'s docstring and in a new
+`backlog/docs/lessons-textual.md` section.
+
+**Verification:** guard tests pass (2 passed); all 11 touched modules import
+cleanly; the console-modal suites pass except 6 tests in
+`test_console_modal_dismissal.py` that fail identically at the pre-Task-4 base
+`564e34cbc` (pre-existing branch debt, unrelated to this change — verified in a
+throwaway worktree).
+
+**Modified/added files:** `UI/Navigation/base_app_screen.py`,
+`UI/Screens/{chat,library,personas,artifacts,logs,meetings,watchlists_collections}_screen.py`,
+`UI/Screens/scheduling/schedules_workbench.py`,
+`Widgets/Console/{console_workspace_files_modal,console_session_switcher_modal}.py`,
+`backlog/docs/lessons-textual.md`, `Tests/UI/test_on_unmount_mro_convention.py` (new).
