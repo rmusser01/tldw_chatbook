@@ -93,7 +93,7 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "wait_agents",
         "check_agents",
         # Current worktree/managed-skill tools and Console commands caught
-        # by the same four-source drift guard (TASK-31748).
+        # by the same four-source drift guard (TASK-31911).
         "discard_agent_worktree",
         "merge_agent_worktree",
         "prepare_managed_skill_promotion",

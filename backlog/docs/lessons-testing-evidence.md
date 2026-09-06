@@ -11659,7 +11659,7 @@ session FD warning by splitting test files, classifying descriptors with
 `lsof`, and inspecting live owners after finalizers; GC or a higher threshold
 cannot establish ownership or fix a registered worker handle.
 
-**TASK-31737, 2026-09-05.** The complete agent-swap file retained 205
+**TASK-31903, 2026-09-05.** The complete agent-swap file retained 205
 descriptors. An own-process `F_GETPATH` probe attributed five per real send to
 ChaChaNotes (two database handles, two WAL handles, one SHM handle). Explicit
 controller shutdown followed by exact-file quiescence reduced that case to zero;
@@ -11671,7 +11671,7 @@ after explicit cleanup. Assert `registered_connection_count() == 0` before the
 existing pass, so GC cannot conceal the database defect. No additional GC call or
 threshold change was needed; all 47 agent-swap tests passed without the FD warning.
 
-**TASK-31812 / TASK-31814, 2026-09-06.** The rewind, durable/recovery and
+**TASK-31923 / TASK-31814, 2026-09-06.** The rewind, durable/recovery and
 first-send boundary selections reproduced 209, 378 and 234 surviving descriptors
 respectively even though every test body passed. Explicitly imported owner
 tracking, controller shutdown and same-file quiescence eliminated the native
@@ -11691,7 +11691,7 @@ zero retained SQLite descriptor evidence. Preserve cancellation, do not swallow 
 
 ## A deliberately short failure deadline must not also time unrelated setup
 
-**TASK-31813 / TASK-31815, 2026-09-06.** Qwen's retry probe intended two 50ms
+**TASK-31924 / TASK-31925, 2026-09-06.** Qwen's retry probe intended two 50ms
 read timeouts but used a scalar requests timeout that also constrained connect.
 A real ConnectTimeout consumed one attempt before the scripted server action,
 so the three-attempt budget never reached success. Splitting the test-only
@@ -12156,7 +12156,7 @@ replacement; a safe opener cannot inspect path components it never receives.
 
 ## A guarded setter does not cover its caller's remaining publication
 
-**TASK-31798, 2026-09-06 dev review.** The fork census flagged the combined
+**TASK-31917, 2026-09-06 dev review.** The fork census flagged the combined
 Console settings commit even though its generation-settings setter already
 entered the canonical fork transition. A regression attempted real fork
 eligibility and fence issuance after that setter returned but before the
@@ -12169,7 +12169,7 @@ make a multi-component publication atomic.
 
 ## Detached-plan cleanup belongs to task completion, not an await scope
 
-**TASK-31800, 2026-09-06 dev review.** Retaining fork ownership during the
+**TASK-31919, 2026-09-06 dev review.** Retaining fork ownership during the
 settings display-name write exposed leaks on stale results, exceptions, and
 cancellation before the coroutine started. A coroutine-local `finally` cannot
 run in that last case; an outer `gather` `finally` can run too early if a sibling
@@ -12182,7 +12182,7 @@ cleanup. Test the lifetime of the actual writer, not just the awaiting caller.
 
 ## AST binding checks must include captures and alternative assignment syntax
 
-**TASK-31808, 2026-09-06 dev review.** Narrowing a false-positive fork mutation
+**TASK-31921, 2026-09-06 dev review.** Narrowing a false-positive fork mutation
 to a verified pending-work carrier initially passed 44 census tests. Review
 showed that an annotated alias could poison its lifecycle, while a `match`
 capture could bind the carrier name directly to a live session. Four additional
@@ -12194,7 +12194,7 @@ exercise the actual classifier with poisoned bindings before trusting a pass.
 
 ## A descriptor probe must detect a known open file on the host platform
 
-**TASK-31821, 2026-09-06 dev review.** A Linux-shaped probe silently skipped
+**TASK-31927, 2026-09-06 dev review.** A Linux-shaped probe silently skipped
 every failed `readlink(/dev/fd/N)` on macOS and reported zero growth for 25
 passing thinking/regeneration tests. Darwin `F_GETPATH` instead found retained
 SQLite/WAL/SHM handles in 12 thinking cases. A known-open-file control confirms
@@ -12205,7 +12205,7 @@ an empty snapshot is not evidence of successful cleanup.
 
 ## Forced scrolling can conceal a production action-width regression
 
-**TASK-31822, 2026-09-06 dev review.** A Stop regression passed after pre-focusing
+**TASK-31928, 2026-09-06 dev review.** A Stop regression passed after pre-focusing
 Stop and forcing ancestor scrolling. Review removed the force and found the
 button outside the 160-column viewport despite all production CSS being loaded.
 The hidden-overflow action row still budgeted 37 cells after a 10-cell Redirect
@@ -12221,7 +12221,7 @@ at that state transition stabilized the real click without pre-focusing Stop.
 
 ## A claimed handoff is not an acknowledged handoff
 
-**TASK-31823, 2026-09-06 warm-Console repair.** A new real navigation regression
+**TASK-31929, 2026-09-06 warm-Console repair.** A new real navigation regression
 created the right session, observed `has_pending() == False`, and saw another
 `claim()` return None. Review showed that all three also hold if acknowledgement
 does nothing: the first claim stays in flight and blocks another claim. Capture

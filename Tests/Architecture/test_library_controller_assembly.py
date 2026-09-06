@@ -97,10 +97,17 @@ def test_assembly_stays_between_state_creation_and_preference_loading() -> None:
     assert len(positions) == 1
     position = positions[0]
     previous, following = statements[position - 1], statements[position + 1]
-    assert ast.unparse(previous.targets[0]) == "self._skills_state"
+    assert ast.unparse(statements[position - 2].targets[0]) == "self._skills_state"
+    assert ast.unparse(previous.targets[0]) == "self._prompts_state"
     assert ast.unparse(following.targets[0]) == "self._ingest_controller"
     assert ast.unparse(following.value.func) == "LibraryIngestController"
     assert (
-        ast.unparse(statements[position + 2].value.func)
+        ast.unparse(statements[position + 2].targets[0]) == "self._prompts_controller"
+    )
+    assert (
+        ast.unparse(statements[position + 2].value.func) == "LibraryPromptsController"
+    )
+    assert (
+        ast.unparse(statements[position + 3].value.func)
         == "self._load_library_reader_preference_snapshot"
     )

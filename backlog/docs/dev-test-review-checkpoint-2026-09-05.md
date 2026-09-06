@@ -189,10 +189,10 @@ The remaining observed families are tracked explicitly:
 
 - Three summarization diagnostic-boundary fixtures: TASK-18801; reconcile only
   after final reviewed controller movement.
-- Atomic promotion context-policy ownership: TASK-31744; real SQLite probes show
+- Atomic promotion context-policy ownership: TASK-31907; real SQLite probes show
   false save conflicts for staged and inherited policies.
-- Inert legacy Notes timer residue: TASK-31746; AST guard and lifecycle coverage.
-- Library Skills reserved-name drift: TASK-31748; fifteen missing runtime/command
+- Inert legacy Notes timer residue: TASK-31909; AST guard and lifecycle coverage.
+- Library Skills reserved-name drift: TASK-31911; fifteen missing runtime/command
   names, with the four-source guard retained.
 - Two MCP stdio cases: wire-tool inventory and legacy-client startup.
 - Three fork-transition census cases: audit the new settings mutation/fence paths
@@ -211,16 +211,16 @@ merge-ready and no full-suite green result is asserted.
 
 ### Subsequent verified repairs
 
-- TASK-31744: **63 passed** for promotion/settings persistence. Public-flow real
+- TASK-31907: **63 passed** for promotion/settings persistence. Public-flow real
   SQLite regressions cover staged post-promotion saves, failed-save retry, and
   inherited fork policies retaining revision ownership. A further 386 behavioral
   tests passed; the three fork-census failures reproduced against the unchanged
   HEAD source. The aggregate run's descriptor-growth warning remains unqualified.
-- TASK-31745: **96 passed**. Environment worker forwarding now names its existing
+- TASK-31908: **96 passed**. Environment worker forwarding now names its existing
   group/thread/exclusive arguments explicitly; scheduling choices are unchanged.
-- TASK-31746: **32 passed** for retired Notes sync and live lifecycle coverage.
+- TASK-31909: **32 passed** for retired Notes sync and live lifecycle coverage.
   The inert timer field is removed; Library's ceiling tightened to 41,302 lines.
-- TASK-31747: **12 passed**, including enforcing error-state contrast checks for
+- TASK-31910: **12 passed**, including enforcing error-state contrast checks for
   all 72 shipped themes at both wide and narrow sizes. The minimum measured Save
   failed contrast is 5.070:1; the 4.5:1 requirement and Git error style are unchanged.
 - TASK-31752: **126 passed** in the recovery/checkpoint selection, including all
@@ -248,11 +248,11 @@ families, and remaining unexecuted review selections are not yet resolved.
   pre-dispatch callback now retains the accepted owner for retry instead of
   being classified as a completed provider failure. Aggregate descriptor warnings
   remain separately qualified.
-- TASK-31748 and TASK-31751: **53 passed** in the complete Skills state/trust
+- TASK-31911 and TASK-31751: **53 passed** in the complete Skills state/trust
   selection, plus **7** exact browse-controller and **37** Library architecture
   checks. Items refresh independently of the live Work editor. Reserved-name
   coverage retains the fixed four-source guard. Library is 41,301 lines.
-- TASK-31756: **67 passed** for MCP stdio and Library tools. Manifest fixtures
+- TASK-31913: **67 passed** for MCP stdio and Library tools. Manifest fixtures
   reflect the 21 current tools; the legacy connection fixture explicitly accepts
   the current server-request dispatcher contract.
 - Fifth partial non-UI sweep: **2,284 passed, 38 failed, 68 skipped**, stopped at
@@ -485,14 +485,14 @@ decisions are still open. This remains a draft, not full-suite qualification.
 
 ## Watchlists off-loop evidence and atomic project-context promotion
 
-TASK-31796 replaces the obsolete post-insert getter spy with real batch,
+TASK-31915 replaces the obsolete post-insert getter spy with real batch,
 transaction and result-materialization thread observations for creation and
 exact-source reuse. Positive work assertions and actual durable source data are
 checked; a process-local inline-offload mutation failed both variants. The test
 owns its function-scoped loop and drains executor threads before verifying all
 database handles closed. Production Watchlists code is unchanged.
 
-TASK-31797 removes a redundant project-context write after temporary-chat
+TASK-31916 removes a redundant project-context write after temporary-chat
 promotion. The same state already commits in the atomic bundle; the original
 transaction assertion reproduced `[True, False]` and now remains exactly
 `[True]`, with durable reopen verification added. Ordinary first persistence,
@@ -551,7 +551,7 @@ closure or merge-ready claim is made.
 
 ## Combined settings fork publication and route census
 
-TASK-31798 fixes a real partial-publication gap: the nested generation-settings
+TASK-31917 fixes a real partial-publication gap: the nested generation-settings
 guard ended before context-policy publication. Both regression variants first
 admitted a real fork in that gap (`/private/tmp/tldw-settings-fork-red.xml`). One
 outer existing transition now covers the whole publication block. Exact-origin
@@ -563,7 +563,7 @@ stale-fence rejection. Six complete affected settings/fork/first-send files pass
 review pass. The diagnostic statement scanner confirms all 81 store diagnostics
 unchanged; no diagnostic pin was edited.
 
-TASK-31799 reconciles the three existing guarded endpoint/settings rollback
+TASK-31918 reconciles the three existing guarded endpoint/settings rollback
 owners and the controller's three exact optimistic-echo rollback calls. Its
 count-only assertion now also checks the qualified store receiver, session and
 message owners, and prior title/conversation arguments. Process-local missing,
@@ -592,7 +592,7 @@ task-ID decisions remain open.
 
 ## Display-name fork lifetime
 
-TASK-31800 closes the live and detached display-name gap. The original real-
+TASK-31919 closes the live and detached display-name gap. The original real-
 SQLite regression observed an eligible fork inside materialization (1 failed /
 3 passed, `/private/tmp/tldw-name-lifetime-red.xml`). An ordinary transition now
 protects live changes and plan construction, and the existing roleplay token
@@ -630,7 +630,7 @@ or merge-readiness claim is made.
 
 ## Conversation-binding fork publication
 
-TASK-31801 protects both public conversation-binding publishers with the existing
+TASK-31920 protects both public conversation-binding publishers with the existing
 session-transition decorator. The corrected regression run first returned
 **4 failed / 4 passed**: both success and injected-error variants admitted a
 fork during publication (`/private/tmp/tldw-binding-publication-red.xml`). The
@@ -665,7 +665,7 @@ remain open; this is not a full-suite or merge-readiness claim.
 
 ## Remaining fork-census classifications resolved
 
-TASK-31808 resolves the four remaining routes without runtime changes. The
+TASK-31921 resolves the four remaining routes without runtime changes. The
 scanner recognizes only the plain pending-drain policy assignment after checking
 its exact lifecycle initializer and local drain bindings. The method is not
 exempted, so live writes and new mutating callees still reach the recursive census.
@@ -696,7 +696,7 @@ merge-readiness claim is made.
 
 ## Terminal exchange and temporary-session repair
 
-TASK-31809 restores two runtime contracts at the common terminal persistence
+TASK-31922 restores two runtime contracts at the common terminal persistence
 owner: successful paired-generation writes flush attached legacy exchange
 captures, and temporary sessions finish without requiring a durable projection.
 Existing durable version checks, trace settlement and best-effort sidecar
@@ -957,7 +957,7 @@ launch-wake cases) without another failure-count cutoff. This is not a new
 repository-wide sweep; the new aggregate warning is separate from the diagnosed
 and repaired resource groups below.
 
-### Reproduced SQLite retention and verified repair: TASK-31812 / TASK-31814
+### Reproduced SQLite retention and verified repair: TASK-31923 / TASK-31814
 
 Before repair, complete selections passed behaviorally but retained exact fixture
 SQLite handles after finalizers: rewind/parent **78 passed, +209 descriptors**;
@@ -993,7 +993,7 @@ three dependency warnings, no retained SQLite descriptors and no FD-growth warni
 (`/private/tmp/tldw-owned-console-resources-cancellation-final.xml`). Independent
 review findings are addressed; scoped lint/format/diff checks pass.
 
-### Real-transport retry and real-child reaping: TASK-31813 / TASK-31815
+### Real-transport retry and real-child reaping: TASK-31924 / TASK-31925
 
 Qwen's combined retry test used a 50ms scalar timeout for both connection setup
 and intentionally stalled reads. The reproduced failure spent one of its three
@@ -1046,7 +1046,7 @@ TASK-31750 remains open for inventory tail and architecture qualification.
 The new 475-FD inventory warning is still under attribution. A 12-file Chat split
 passed **479 tests in 71.77s** with no aggregate warning, but the native per-test
 probe still found retained handles in 14 controller and 14 hydration cases.
-TASK-31816 tracks their exact ChaChaNotes, Workspace/AgentRuns and test-app database
+TASK-31926 tracks their exact ChaChaNotes, Workspace/AgentRuns and test-app database
 owners. Passing below a warning threshold is not resource closure.
 
 The wider non-UI inventory is explicitly historical: reconstructed saved reports
@@ -1088,7 +1088,7 @@ lazy Console sheet, instead of incorrectly requiring moved rules in the boot bun
 Complete file: **26 passed in 45.14s**, three dependency warnings
 (`/private/tmp/tldw-inventory-system-prompt-final.xml`). No CSS/runtime was changed.
 
-### TASK-31816: newly attributed controller/hydration resources
+### TASK-31926: newly attributed controller/hydration resources
 
 Shared owner cleanup removed ChaChaNotes retention, but an interim **314 passed**
 run still retained auxiliary handles in eight cases. The fixture now yields a
@@ -1102,7 +1102,7 @@ including errors and cancellation.
 Final root verification of every shared importing file: **563 passed in 185.03s**,
 three dependency warnings, **no retained SQLite descriptor lines or FD-growth
 warning** (`/private/tmp/tldw-all-owned-resource-importers-final.xml`). Independent
-review and scoped static checks pass. TASK-31816 is Done; no new ADR is needed for
+review and scoped static checks pass. TASK-31926 is Done; no new ADR is needed for
 this test-only use of existing lifecycle APIs.
 
 TASK-31817 records the separately reproduced runtime dictation bug: its retry
@@ -1164,7 +1164,7 @@ Additional completed verification:
 - Final newly cleaned inventory cohort: **93 passed / 1 failed in 100.36s**,
   three dependency warnings, no retained SQLite lines or FD-growth warning
   (`/private/tmp/tldw-31821-resource-final.xml`, matching `.log`). The sole failure
-  is the preserved Stop regression. TASK-31821 remains In Progress because its
+  is the preserved Stop regression. TASK-31927 remains In Progress because its
   full-file passing criterion depends on that separately tracked production fix.
 
 The final current failure ledger is concrete:
@@ -1172,10 +1172,10 @@ The final current failure ledger is concrete:
 | Scope | Confirmed cause / next bounded change | Tracking |
 | --- | --- | --- |
 | Two Parakeet retry tests | Owned confirmation suspends Console, discards retry audio, and leaves stale mic projection; preserve only the owned-dialog lifetime. | TASK-31817 |
-| Stop click | Production action row reserves 37 cells for 47 cells of controls; account for Redirect without forced scrolling. Synthetic Send setup must also establish ordinary composer focus. | TASK-31822 |
-| Character first-run UAT | Cached Console resume omits CHAT from its tracked handoff timers; add the existing claimant under the ordinary-resume guard. | TASK-31823 |
-| Navigation-storm teardown race | Queued ContentsRebuilt reads self.screen after stack teardown; guard the handler before dereference. Isolated navigation can pass, but the exact empty-stack call fails deterministically. | TASK-31824 |
-| Downstream UAT failure, exposed only by scratch resume probe | Synthesized leading system row gets ACTIVE_REQUEST instead of RENDERED_SYSTEM provenance; preserve saved ownership and classify only the leading system slice. Scratch correction makes the whole UAT pass. | TASK-31825 |
+| Stop click | Production action row reserves 37 cells for 47 cells of controls; account for Redirect without forced scrolling. Synthetic Send setup must also establish ordinary composer focus. | TASK-31928 |
+| Character first-run UAT | Cached Console resume omits CHAT from its tracked handoff timers; add the existing claimant under the ordinary-resume guard. | TASK-31929 |
+| Navigation-storm teardown race | Queued ContentsRebuilt reads self.screen after stack teardown; guard the handler before dereference. Isolated navigation can pass, but the exact empty-stack call fails deterministically. | TASK-31930 |
+| Downstream UAT failure, exposed only by scratch resume probe | Synthesized leading system row gets ACTIVE_REQUEST instead of RENDERED_SYSTEM provenance; preserve saved ownership and classify only the leading system slice. Scratch correction makes the whole UAT pass. | TASK-31931 |
 | Separate existing size ratchet | Console is 16,900 lines / 508 methods against 16,818 / 505; fresh guard file is 4 passed / 1 failed. No limits changed. | TASK-31750 |
 
 The brainstorming skill requires approval before the proposed production
@@ -1207,7 +1207,7 @@ opt-in, merge, resource-threshold change or screen-size ceiling increase occurre
   not Console; a private dialog's undecided-suspend hook now abandons its exact
   session. Real Confirm/Escape decisions remain distinct. The complete file passes
   **21 in 57.47s** (`/private/tmp/tldw-31817-reviewed-full.xml`).
-- **TASK-31822:** budget Redirect's 10 cells only while active. The fixed +10
+- **TASK-31928:** budget Redirect's 10 cells only while active. The fixed +10
   experiment regressed idle narrow layouts and was rejected. Reuse deferred draft
   reflow on run-state changes: before that correction, focusing Stop moved it
   between mouse-down and mouse-up. Bound the optional filename to remaining space,
@@ -1216,7 +1216,7 @@ opt-in, merge, resource-threshold change or screen-size ceiling increase occurre
   Stop pre-focus. Final click/width **14 pass**; complete attachment/width **35 pass**
   with no retained SQLite; command **104 pass**; streaming/width **102 pass**.
   Evidence: `/private/tmp/tldw-31822-{final-green,attachments-width-full,command-full,responsive-green}.{xml,log}`.
-- **TASK-31823:** ordinary cached-screen resume registers CHAT in the existing
+- **TASK-31929:** ordinary cached-screen resume registers CHAT in the existing
   tracked timer list. Real navigation tests preserve the prior conversation,
   create the intended character session/greeting, require the exact handoff
   revision to become **settled**, and stop delivery if hidden again. A no-op
@@ -1224,11 +1224,11 @@ opt-in, merge, resource-threshold change or screen-size ceiling increase occurre
   timer makes the final fixture fail (`tldw-31823-final-fixture-red.xml`). Complete
   handoff/UAT/reuse/ordered-resume files pass **36 in 83.13s**
   (`tldw-approved-resume-complete.xml`).
-- **TASK-31824:** empty-stack guard precedes current-screen access; real matching
+- **TASK-31930:** empty-stack guard precedes current-screen access; real matching
   and stale-screen controls remain intact. Full buddy/parallel/live-handoff files
   pass **134 in 146.97s**, no retained SQLite or FD-growth warning
   (`/private/tmp/tldw-approved-buddy-handoffs-final.xml` and `.log`).
-- **TASK-31825:** only unsaved contiguous leading system artifacts become
+- **TASK-31931:** only unsaved contiguous leading system artifacts become
   RENDERED_SYSTEM; saved revision descriptors and later ACTIVE_REQUEST artifacts
   are unchanged. Real provider dispatch and native SQLite capture readback remain
   enabled. Complete durable/prepared/provenance files pass **91**; adding the
@@ -1240,7 +1240,7 @@ The UAT originally retained owned auxiliary databases. Importing the existing
 exact builder/controller/DB fixtures closes them: **8 passed in 26.45s**, zero
 native retained SQLite lines (`/private/tmp/tldw-31823-resource-retry.xml`). The
 same observer exposed additional adjacent reuse/dictation/command fixture owners;
-their test-only adapters are tracked under TASK-31821. Shared cleanup internals
+their test-only adapters are tracked under TASK-31927. Shared cleanup internals
 and production resource lifecycles are unchanged.
 
 The final seven-file fixture cohort is **253 passed in 374.99s**, five
@@ -1253,10 +1253,10 @@ controls plus complete handoff/UAT/attachment/width files pass **56 in 71.95s**,
 three dependency warnings, native attribution clean
 (`/private/tmp/tldw-approved-integration-final.xml`). These completed runs replace
 the earlier adjacent-fixture resource qualifications, not their behavioral gates.
-The exact original TASK-31821 five-file cohort, previously **93 passed / 1 Stop
+The exact original TASK-31927 five-file cohort, previously **93 passed / 1 Stop
 failure**, now passes **94 in 105.93s**, three dependency warnings, native
 attribution clean (`/private/tmp/tldw-31821-original-cohort-complete.xml` and
-`.log`). TASK-31821 is Done alongside the five approved production repairs.
+`.log`). TASK-31927 is Done alongside the five approved production repairs.
 
 Current qualified limitations, not folded into passing counts:
 

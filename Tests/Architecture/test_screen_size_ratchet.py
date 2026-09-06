@@ -564,7 +564,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # AST method-name set on `LibraryScreen` is identical at the merge-base
     # and at `origin/dev` (measured, not assumed -- both directions of the set
     # difference are empty), so dev's extraction added and removed no name.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37537, 1282),
+    # 2026-09-06, TASK-31932: combined Prompts + Media/Reader/assembly moves,
+    # measured after rebase onto c4d45c0926; retain both waves' reduction.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36109, 1260),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

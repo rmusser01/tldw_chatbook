@@ -675,7 +675,7 @@ async def test_durable_capture_on_system_prompt_reaches_provider_and_trace(
     from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
     from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
-    db = CharactersRAGDB(tmp_path / "system-capture.sqlite", client_id="task31825")
+    db = CharactersRAGDB(tmp_path / "system-capture.sqlite", client_id="task31931")
     factory = ConsoleTraceBoundaryFactory(db)
     requests, provider_calls = [], []
 

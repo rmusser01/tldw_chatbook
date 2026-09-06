@@ -26,7 +26,7 @@ The complete launch-wake file passes behaviorally but retains roughly 357 descri
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no. ADR path: N/A. Reason: test-only lifecycle cleanup using existing APIs. 1. Preserve the complete launch-wake 11-test descriptor baseline and native attribution. 2. Reuse TASK31816 exact app/runtime/database cleanup, extracting the local hydration fixture into an explicitly imported shared fixture only if required to avoid duplicate teardown. Bind capture to the importing test module and exact builder-created apps. 3. Preserve all wake/reuse/late-owner assertions and existing error/cancellation cleanup ordering. 4. Run complete launch-wake, hydration and resource-control files with native attribution, then every affected importer, lint/format/review and checkpoint.
+ADR required: no. ADR path: N/A. Reason: test-only lifecycle cleanup using existing APIs. 1. Preserve the complete launch-wake 11-test descriptor baseline and native attribution. 2. Reuse TASK31926 exact app/runtime/database cleanup, extracting the local hydration fixture into an explicitly imported shared fixture only if required to avoid duplicate teardown. Bind capture to the importing test module and exact builder-created apps. 3. Preserve all wake/reuse/late-owner assertions and existing error/cancellation cleanup ordering. 4. Run complete launch-wake, hydration and resource-control files with native attribution, then every affected importer, lint/format/review and checkpoint.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

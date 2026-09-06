@@ -144,7 +144,7 @@ The retained exclusions are `_ensure_console_agent_bridge` (documented screen-le
 
 ## Measured size estimate (read-only simulation)
 
-Baseline after TASK31745: **17266 lines /571 direct methods**, ceiling **16873/559** (393/12 deficit). The64 eligible bodies total353 lines (not counting separators); deleting them and retargeting screen references in memory yields16913 raw lines while retaining surrounding blank lines. Formatting both baseline and candidate for comparison gives17265→16894; this is not a claim that blank-line pruning closes the deficit. The two pure policy bodies add51 lines plus decorators, before their screen imports/callbacks are retired. Final actual counts, including longer direct-call wrapping and deferred hooks, must pass the unchanged caps; stop and report if this exact scope does not suffice.
+Baseline after TASK31908: **17266 lines /571 direct methods**, ceiling **16873/559** (393/12 deficit). The64 eligible bodies total353 lines (not counting separators); deleting them and retargeting screen references in memory yields16913 raw lines while retaining surrounding blank lines. Formatting both baseline and candidate for comparison gives17265→16894; this is not a claim that blank-line pruning closes the deficit. The two pure policy bodies add51 lines plus decorators, before their screen imports/callbacks are retired. Final actual counts, including longer direct-call wrapping and deferred hooks, must pass the unchanged caps; stop and report if this exact scope does not suffice.
 
 ## Implementation sequence after approval
 
