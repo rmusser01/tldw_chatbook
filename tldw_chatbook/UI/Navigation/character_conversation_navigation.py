@@ -17,9 +17,9 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     ResolvedLocalCharacterKey,
     UnresolvedConversationKey,
-    deserialize_character_conversation_key,
     serialize_character_conversation_key,
 )
+from tldw_chatbook.Constants import TAB_CHAT, TAB_PERSONAS
 
 _PAYLOAD_VERSION = 1
 _ID_MAX_BYTES = 256
@@ -28,9 +28,9 @@ _SNAPSHOT_MAX_CHARS = 1024
 _FOCUS_ID = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,127}\Z")
 _RETURN_TARGETS = frozenset(
     {
-        ("chat", "console-context-character"),
-        ("personas", "personas-conversations-list"),
-        ("personas", "personas-filter"),
+        (TAB_CHAT, "console-context-character"),
+        (TAB_PERSONAS, "personas-conversations-list"),
+        (TAB_PERSONAS, "personas-filter"),
     }
 )
 
@@ -43,11 +43,6 @@ def _canonical_text(value: object, name: str, *, max_bytes: int = _ID_MAX_BYTES)
     if len(value.encode("utf-8")) > max_bytes:
         raise ValueError(f"{name} is too long")
     return value
-
-
-def _exact_keys(payload: Mapping[str, Any], expected: set[str], name: str) -> None:
-    if set(payload) != expected:
-        raise ValueError(f"invalid {name} fields")
 
 
 @dataclass(frozen=True)
@@ -66,21 +61,33 @@ class RoleplayReturnTarget:
 
     @classmethod
     def console_context_character(cls) -> RoleplayReturnTarget:
-        """Return the sole Console origin supported by this flow."""
+        """Return the sole Console origin supported by this flow.
 
-        return cls("chat", "console-context-character")
+        Returns:
+            The Console Context character anchor.
+        """
+
+        return cls(TAB_CHAT, "console-context-character")
 
     @classmethod
     def personas_conversations(cls) -> RoleplayReturnTarget:
-        """Return to Roleplay's stable conversations list anchor."""
+        """Return to Roleplay's stable conversations list anchor.
 
-        return cls("personas", "personas-conversations-list")
+        Returns:
+            The Roleplay conversations list anchor.
+        """
+
+        return cls(TAB_PERSONAS, "personas-conversations-list")
 
     @classmethod
     def personas_filter(cls) -> RoleplayReturnTarget:
-        """Return to Roleplay's stable filter anchor."""
+        """Return to Roleplay's stable filter anchor.
 
-        return cls("personas", "personas-filter")
+        Returns:
+            The Roleplay character filter anchor.
+        """
+
+        return cls(TAB_PERSONAS, "personas-filter")
 
 
 @dataclass(frozen=True)
@@ -271,16 +278,6 @@ def _serialize_return_target(target: RoleplayReturnTarget) -> dict[str, str]:
     return {"screen_id": target.screen_id, "focus_id": target.focus_id}
 
 
-def _deserialize_return_target(payload: object) -> RoleplayReturnTarget:
-    if not isinstance(payload, Mapping):
-        raise TypeError("return_target must be a mapping")
-    _exact_keys(payload, {"screen_id", "focus_id"}, "return target")
-    return RoleplayReturnTarget(
-        screen_id=payload.get("screen_id"),  # type: ignore[arg-type]
-        focus_id=payload.get("focus_id"),  # type: ignore[arg-type]
-    )
-
-
 def serialize_roleplay_character_conversation_link(
     link: RoleplayCharacterConversationLink,
 ) -> dict[str, object]:
@@ -308,44 +305,21 @@ def deserialize_roleplay_character_conversation_link(
 ) -> RoleplayCharacterConversationLink:
     """Validate and deserialize one supported local Roleplay deep link."""
 
-    _exact_keys(
-        payload,
-        {
-            "version",
-            "source",
-            "character",
-            "conversation_id",
-            "query",
-            "data_revision",
-            "return_target",
-        },
-        "Roleplay link",
-    )
-    if payload.get("version") != _PAYLOAD_VERSION:
-        raise ValueError("unsupported Roleplay link version")
-    if payload.get("source") != "local":
-        raise ValueError("Roleplay link source must be local")
-    character_payload = payload.get("character")
-    if not isinstance(character_payload, Mapping):
-        raise TypeError("character must be a mapping")
-    character = deserialize_character_conversation_key(character_payload)
-    if not isinstance(character, ResolvedLocalCharacterKey):
-        raise TypeError("Roleplay link requires a resolved local character")
-    conversation_id = payload.get("conversation_id")
-    if conversation_id is not None:
-        conversation_id = _canonical_text(conversation_id, "conversation_id")
-    query = payload.get("query")
-    if not isinstance(query, str):
-        raise TypeError("query must be text")
-    return_payload = payload.get("return_target")
+    from ._character_conversation_wire import _RoleplayLinkWire
+
+    wire = _RoleplayLinkWire.model_validate(payload)
     return RoleplayCharacterConversationLink(
-        character=character,
-        conversation_id=conversation_id,
-        query=query,
-        data_revision=payload.get("data_revision"),  # type: ignore[arg-type]
+        character=ResolvedLocalCharacterKey(
+            wire.character.data_authority_id, wire.character.character_id
+        ),
+        conversation_id=wire.conversation_id,
+        query=wire.query,
+        data_revision=wire.data_revision,
         return_target=(
-            _deserialize_return_target(return_payload)
-            if return_payload is not None
+            RoleplayReturnTarget(
+                wire.return_target.screen_id, wire.return_target.focus_id
+            )
+            if wire.return_target is not None
             else None
         ),
     )
@@ -374,35 +348,16 @@ def deserialize_library_character_repair_context(
 ) -> LibraryCharacterRepairContext:
     """Validate and deserialize one Library-owned repair context."""
 
-    _exact_keys(
-        payload,
-        {
-            "version",
-            "source",
-            "data_authority_id",
-            "unresolved",
-            "expected_conversation_version",
-            "historical_display_snapshot",
-            "return_target",
-        },
-        "Library repair context",
-    )
-    if payload.get("version") != _PAYLOAD_VERSION:
-        raise ValueError("unsupported Library repair context version")
-    if payload.get("source") != "local":
-        raise ValueError("Library repair source must be local")
-    unresolved_payload = payload.get("unresolved")
-    if not isinstance(unresolved_payload, Mapping):
-        raise TypeError("unresolved must be a mapping")
-    unresolved = deserialize_character_conversation_key(unresolved_payload)
-    if not isinstance(unresolved, UnresolvedConversationKey):
-        raise TypeError("Library repair requires an unresolved conversation")
-    authority = _canonical_text(payload.get("data_authority_id"), "data_authority_id")
-    if authority != unresolved.data_authority_id:
-        raise ValueError("repair authority components do not match")
+    from ._character_conversation_wire import _LibraryRepairWire
+
+    wire = _LibraryRepairWire.model_validate(payload)
     return LibraryCharacterRepairContext(
-        unresolved=unresolved,
-        expected_conversation_version=payload.get("expected_conversation_version"),  # type: ignore[arg-type]
-        historical_display_snapshot=payload.get("historical_display_snapshot"),  # type: ignore[arg-type]
-        return_target=_deserialize_return_target(payload.get("return_target")),
+        unresolved=UnresolvedConversationKey(
+            wire.unresolved.data_authority_id, wire.unresolved.conversation_id
+        ),
+        expected_conversation_version=wire.expected_conversation_version,
+        historical_display_snapshot=wire.historical_display_snapshot,
+        return_target=RoleplayReturnTarget(
+            wire.return_target.screen_id, wire.return_target.focus_id
+        ),
     )

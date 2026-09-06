@@ -150,7 +150,7 @@ def test_payloads_reject_unexpected_nested_identity_fields(
         if payload_name == "roleplay"
         else deserialize_library_character_repair_context
     )
-    with pytest.raises(ValueError, match="identity fields"):
+    with pytest.raises(ValueError, match="extra_forbidden"):
         parser(payload)
 
 
@@ -175,3 +175,90 @@ def test_exact_conversation_link_requires_captured_query_revision() -> None:
             ResolvedLocalCharacterKey("authority", 1),
             conversation_id="conversation",
         )
+
+
+@pytest.mark.parametrize("version", [True, 1.0])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("kind", ["roleplay", "repair"])
+def test_wire_versions_reject_integer_coercion(kind, nested, version) -> None:
+    if kind == "roleplay":
+        payload = serialize_roleplay_character_conversation_link(
+            RoleplayCharacterConversationLink(ResolvedLocalCharacterKey("authority", 1))
+        )
+        parse = deserialize_roleplay_character_conversation_link
+        identity = "character"
+    else:
+        payload = serialize_library_character_repair_context(
+            LibraryCharacterRepairContext(
+                UnresolvedConversationKey("authority", "conversation"),
+                1,
+                "Historical",
+                RoleplayReturnTarget.personas_filter(),
+            )
+        )
+        parse = deserialize_library_character_repair_context
+        identity = "unresolved"
+    (payload[identity] if nested else payload)["version"] = version
+    with pytest.raises(ValueError, match="version"):
+        parse(payload)
+
+
+@pytest.mark.parametrize("kind", ("roleplay", "repair"))
+def test_strict_wire_requires_every_field_and_rejects_extra_fields_at_each_level(kind):
+    from copy import deepcopy
+
+    if kind == "roleplay":
+        payload = serialize_roleplay_character_conversation_link(
+            RoleplayCharacterConversationLink(
+                ResolvedLocalCharacterKey("authority", 1),
+                "conversation",
+                "",
+                1,
+                RoleplayReturnTarget.personas_filter(),
+            )
+        )
+        parse = deserialize_roleplay_character_conversation_link
+        identity = "character"
+    else:
+        payload = serialize_library_character_repair_context(
+            LibraryCharacterRepairContext(
+                UnresolvedConversationKey("authority", "conversation"),
+                1,
+                "Historical",
+                RoleplayReturnTarget.personas_filter(),
+            )
+        )
+        parse = deserialize_library_character_repair_context
+        identity = "unresolved"
+    for scope in (None, identity, "return_target"):
+        fields = payload if scope is None else payload[scope]
+        for field in (*fields, "unexpected"):
+            changed = deepcopy(payload)
+            destination = changed if scope is None else changed[scope]
+            if field == "unexpected":
+                destination[field] = "private-payload-must-not-appear"
+            else:
+                destination.pop(field)
+            with pytest.raises(ValueError) as caught:
+                parse(changed)
+            assert "private-payload-must-not-appear" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    (
+        ("character_id", True),
+        ("character_id", "1"),
+        ("character_id", 1.0),
+        ("character_id", 2**63),
+        ("data_authority_id", " authority"),
+        ("data_authority_id", "é" * 129),
+    ),
+)
+def test_strict_wire_rejects_identity_coercion_and_noncanonical_bounds(field, value):
+    payload = serialize_roleplay_character_conversation_link(
+        RoleplayCharacterConversationLink(ResolvedLocalCharacterKey("authority", 1))
+    )
+    payload["character"][field] = value
+    with pytest.raises(ValueError):
+        deserialize_roleplay_character_conversation_link(payload)
