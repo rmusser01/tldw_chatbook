@@ -152,13 +152,25 @@ async def test_missing_inspection_does_not_replace_existing_selection(library):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("warm", [False, True])
-@pytest.mark.parametrize("cancel", [False, True, "replace-visit", "commit-false"])
+@pytest.mark.parametrize(
+    "cancel",
+    [
+        False,
+        True,
+        "replace-visit",
+        "commit-false",
+        "projection-accept",
+        "projection-cancel",
+        "projection-authority",
+    ],
+)
 async def test_switcher_waits_for_real_library_admission_and_cancellation(
     library, monkeypatch, warm, cancel
 ):
     from types import SimpleNamespace
     from typing import ClassVar
 
+    from textual.containers import VerticalScroll
     from textual.screen import Screen
     from textual.widgets import Button, Input
 
@@ -173,6 +185,7 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
     from tldw_chatbook.Chat.console_switcher_state import SwitcherMode
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
+        ACTIVE_PROJECTION_POLL_SECONDS,
         ConsoleSessionSwitcherModal,
     )
 
@@ -224,6 +237,18 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
     )
     entered, release = asyncio.Event(), asyncio.Event()
     calls = 0
+    projection = {"generation": 0, "receipt": "ready", "profile": ""}
+
+    def active_projection():
+        return (
+            (),
+            projection["profile"],
+            "",
+            projection["generation"],
+            projection["receipt"],
+        )
+
+    accepts = cancel in (False, "projection-accept")
     service = owner.chat_conversation_scope_service
     locate = service.locate_conversation_page
 
@@ -263,11 +288,16 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
             character_open_library=recover,
             initial_mode=SwitcherMode.CHARACTER_CHATS,
             initial_character_query="needle",
+            active_projection_loader=active_projection
+            if str(cancel).startswith("projection-")
+            else None,
         )
         await app.push_screen(modal)
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
+        committed = modal._committed_character_result
+        scroll_y = modal.query_one("#console-switcher-results", VerticalScroll).scroll_y
         modal.query_one("#console-switcher-recovery", Button).press()
         try:
             await asyncio.wait_for(entered.wait(), 3)
@@ -277,7 +307,14 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
                 modal._committed_character_result.unresolved.conversation_id == "exact"
             )
             assert modal.query_one("#console-switcher-query", Input).disabled
-            if cancel is True:
+            if str(cancel).startswith("projection-"):
+                projection.update(generation=1, receipt="degraded")
+                if cancel == "projection-authority":
+                    projection["profile"] = "changed-profile"
+                await pilot.pause(ACTIVE_PROJECTION_POLL_SECONDS + 0.1)
+                if cancel != "projection-authority":
+                    assert modal._active_projection_generation == 1
+            if cancel in (True, "projection-cancel"):
                 await pilot.press("escape")
                 assert app.screen is modal
             elif cancel == "replace-visit":
@@ -293,27 +330,39 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
             release.set()
         for _ in range(60):
             await pilot.pause(0.05)
-            if cancel == "replace-visit":
+            if cancel in ("replace-visit", "projection-authority"):
                 if modal._activation_task.done():
                     break
                 continue
             if (
-                cancel
+                not accepts
                 and modal.query_one("#console-switcher-recovery", Button).display
                 and not modal._activation_in_flight
             ):
                 break
             if (
-                not cancel
+                accepts
                 and isinstance(app.screen, LibraryScreen)
                 and app.screen._selected_conversation_id == "exact"
             ):
                 break
-        if cancel == "replace-visit":
+        if cancel == "projection-authority":
+            assert app.screen is not modal
+            assert not isinstance(app.screen, LibraryScreen)
+            assert target._selected_conversation_id != "exact"
+        elif cancel == "replace-visit":
             assert app.screen is replacement
             assert target._selected_conversation_id != "exact"
-        elif cancel:
+        elif not accepts:
             assert app.screen is modal
+            assert modal._activation_task.done()
+            assert not modal._activation_in_flight
+            assert not modal.query_one("#console-switcher-query", Input).disabled
+            assert modal._committed_character_result is committed
+            assert (
+                modal.query_one("#console-switcher-results", VerticalScroll).scroll_y
+                == scroll_y
+            )
             assert modal.query_one("#console-switcher-query", Input).value == "needle"
             assert (
                 modal._committed_character_result.unresolved.conversation_id == "exact"
@@ -325,6 +374,9 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
             assert app.screen._conversations_state.reader_state.selected_id == "exact"
             assert app.screen._pending_library_character_navigation is None
         assert calls == 1
+        if cancel == "projection-cancel":
+            await pilot.press("escape")
+            assert app.screen is not modal
 
 
 @pytest.mark.asyncio
