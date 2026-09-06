@@ -179,7 +179,7 @@ async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None
         row.focus()
         await pilot.pause()
         initial_scope = controller.applied_scope
-        initial_selection = screen._library_media_row_selection.ids
+        initial_selection = screen._media_state.row_selection.ids
         initial_calls = (len(service.search_calls), len(service.type_calls))
 
         await pilot.resize_terminal(*WIDE_SIZE)
@@ -198,7 +198,7 @@ async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None
         assert scroll.scroll_y >= 0
         assert 0 <= scroll.scroll_y <= scroll.max_scroll_y
         assert controller.applied_scope == initial_scope
-        assert screen._library_media_row_selection.ids == initial_selection
+        assert screen._media_state.row_selection.ids == initial_selection
         assert (len(service.search_calls), len(service.type_calls)) == initial_calls
 
 
@@ -231,7 +231,7 @@ async def test_media_row_focus_moves_to_items_grip_when_resize_hides_items() -> 
                 "Resize did not transfer hidden Items focus to a visible role: "
                 f"focused={screen.focused!r}, focused_display="
                 f"{getattr(screen.focused, 'display', None)!r}, layout="
-                f"{screen._library_media_reader_layout!r}."
+                f"{screen._media_state.reader_layout!r}."
             ),
         )
         assert screen.query_one("#library-canvas").display is False
@@ -369,7 +369,7 @@ async def test_compact_media_viewer_back_survives_authoritative_recompose() -> N
                 f"focused={screen.focused!r}, pending="
                 f"{screen._library_pending_list_entry_focus!r}, return="
                 f"{screen._library_pending_list_entry_media_return!r}, layout="
-                f"{screen._library_media_reader_layout!r}."
+                f"{screen._media_state.reader_layout!r}."
             ),
         )
         scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
@@ -556,7 +556,7 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
                 f"focused_media={getattr(screen.focused, 'media_id', None)!r}, "
                 f"pending={screen._library_pending_list_entry_focus!r}, return="
                 f"{screen._library_pending_list_entry_media_return!r}, layout="
-                f"{screen._library_media_reader_layout!r}."
+                f"{screen._media_state.reader_layout!r}."
             ),
         )
         assert len(service.search_calls) == reads_before_back == 1
@@ -801,7 +801,7 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
         await pilot.press("enter")
         await _wait_for_condition(
             pilot,
-            lambda: not screen._library_media_reader_layout.library_open,
+            lambda: not screen._media_state.reader_layout.library_open,
             message="Library grip did not collapse the Library pane.",
         )
         assert items.region.width > initial_width
@@ -817,14 +817,14 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             ),
             message="Trash filter refresh never settled.",
         )
-        assert screen._library_media_reader_layout.library_open is False
+        assert screen._media_state.reader_layout.library_open is False
 
         library_grip = screen.query_one("#library-media-library-grip", Button)
         library_grip.focus()
         await pilot.press("enter")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_layout.library_open,
+            lambda: screen._media_state.reader_layout.library_open,
             message="Library grip did not reopen the Library pane.",
         )
 
@@ -833,7 +833,7 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
         await pilot.press("enter")
         await _wait_for_condition(
             pilot,
-            lambda: not screen._library_media_reader_layout.items_open,
+            lambda: not screen._media_state.reader_layout.items_open,
             message="Items grip did not collapse the Items pane.",
         )
         screen._request_library_media_trash_page(
@@ -848,7 +848,7 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             ),
             message="Hidden Items page refresh never settled.",
         )
-        assert screen._library_media_reader_layout.items_open is False
+        assert screen._media_state.reader_layout.items_open is False
 
 
 @pytest.mark.asyncio
@@ -874,16 +874,16 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
         screen = await _open_media_list(host, pilot)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_layout.reader_width > 0,
+            lambda: screen._media_state.reader_layout.reader_width > 0,
             message="Compact Media layout never settled.",
         )
-        if not screen._library_media_reader_layout.items_open:
+        if not screen._media_state.reader_layout.items_open:
             items_grip = screen.query_one("#library-media-items-grip", Button)
             items_grip.focus()
             await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_reader_layout.items_open,
+                lambda: screen._media_state.reader_layout.items_open,
                 message="Compact Items pane never opened.",
             )
         await pilot.pause()
@@ -903,15 +903,15 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_reader_layout.library_open
-                and not screen._library_media_reader_layout.items_open
+                screen._media_state.reader_layout.library_open
+                and not screen._media_state.reader_layout.items_open
             ),
             message="Compact Library pane did not become the explicit priority.",
         )
         screen._sync_library_media_reader_layout_from_shell()
         await pilot.pause()
-        assert screen._library_media_reader_layout.library_open is True
-        assert screen._library_media_reader_layout.items_open is False
+        assert screen._media_state.reader_layout.library_open is True
+        assert screen._media_state.reader_layout.items_open is False
         screen._request_library_media_trash_page(
             2, focus_identity="#library-media-trash-next"
         )
@@ -923,8 +923,8 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
             ),
             message="Compact page refresh never settled.",
         )
-        assert screen._library_media_reader_layout.library_open is True
-        assert screen._library_media_reader_layout.items_open is False
+        assert screen._media_state.reader_layout.library_open is True
+        assert screen._media_state.reader_layout.items_open is False
 
         items_grip = screen.query_one("#library-media-items-grip", Button)
         items_grip.focus()
@@ -932,8 +932,8 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_media_reader_layout.items_open
-                and not screen._library_media_reader_layout.library_open
+                screen._media_state.reader_layout.items_open
+                and not screen._media_state.reader_layout.library_open
             ),
             message="Compact Items pane did not become the explicit priority.",
         )
@@ -949,8 +949,8 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
             ),
             message="Compact filter refresh never settled.",
         )
-        assert screen._library_media_reader_layout.items_open is True
-        assert screen._library_media_reader_layout.library_open is False
+        assert screen._media_state.reader_layout.items_open is True
+        assert screen._media_state.reader_layout.library_open is False
 
 
 # ---------------------------------------------------------------------------
@@ -992,7 +992,7 @@ async def _assert_keyboard_traversal_and_viewer_entry(size):
         await pilot.pause()
         await pilot.press("enter")
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
-        assert screen._library_media_view == "viewer"
+        assert screen._media_state.view == "viewer"
         assert row_0.is_mounted
         title = str(
             screen.query_one("#library-media-viewer-title", Static).renderable
@@ -1203,7 +1203,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
             assert len(screen.query(".library-media-row")) == 20
             assert not screen.query_one("#library-media-retry", Button).disabled
 
-            screen._library_media_delete_receipt_ids = ("local:media:1",)
+            screen._media_state.delete_receipt_ids = ("local:media:1",)
             app.media_reading_scope_service = DoubleShrinkLibraryMediaScopeService(
                 media
             )
@@ -1273,7 +1273,7 @@ async def test_compact_media_pager_receipt_and_empty_states_remain_contained() -
         )
         assert canvas.region.contains_region(pager.region)
 
-        screen._library_media_delete_receipt_ids = ("local:media:1",)
+        screen._media_state.delete_receipt_ids = ("local:media:1",)
         screen._sync_library_media_browse_state(None)
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-bulk-delete-receipt"
@@ -1359,9 +1359,9 @@ async def test_full_success_bulk_delete_focuses_undo_and_enter_restores() -> Non
         await _wait_for_condition(
             pilot,
             lambda: (
-                not screen._library_media_bulk_delete_in_flight
+                not screen._media_state.bulk_delete_in_flight
                 and bool(screen.query("#library-media-bulk-delete-undo"))
-                and not screen._library_media_select_mode
+                and not screen._media_state.select_mode
             ),
             message="Full-success bulk delete never settled on its receipt.",
         )
@@ -1392,14 +1392,14 @@ async def test_full_success_bulk_delete_focuses_undo_and_enter_restores() -> Non
         await _wait_for_condition(
             pilot,
             lambda: (
-                not screen._library_media_bulk_delete_in_flight
+                not screen._media_state.bulk_delete_in_flight
                 and not screen.query("#library-media-bulk-delete-receipt")
                 and len(screen.query(".library-media-row")) == 2
             ),
             message="Enter on the focused Undo never restored the deleted row.",
         )
         assert service.trashed == {}
-        assert screen._library_media_delete_receipt_ids == ()
+        assert screen._media_state.delete_receipt_ids == ()
 
 
 @pytest.mark.asyncio
@@ -1413,8 +1413,8 @@ async def test_receipt_dismiss_clears_the_failed_undo_copy_too() -> None:
 
     async with host.run_test(size=NARROW_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._library_media_delete_receipt_ids = ("local:media:1",)
-        screen._library_media_delete_receipt_undo_failure = "1 of 1 · database is locked"
+        screen._media_state.delete_receipt_ids = ("local:media:1",)
+        screen._media_state.delete_receipt_undo_failure = "1 of 1 · database is locked"
         screen._sync_library_media_browse_state(None)
         receipt_copy = await _wait_for_selector(
             screen, pilot, "#library-media-bulk-delete-receipt-copy"
@@ -1429,8 +1429,8 @@ async def test_receipt_dismiss_clears_the_failed_undo_copy_too() -> None:
             lambda: not screen.query("#library-media-bulk-delete-receipt"),
             message="Dismiss never retired the failed-undo receipt.",
         )
-        assert screen._library_media_delete_receipt_ids == ()
-        assert screen._library_media_delete_receipt_undo_failure == ""
+        assert screen._media_state.delete_receipt_ids == ()
+        assert screen._media_state.delete_receipt_undo_failure == ""
 
 
 @pytest.mark.asyncio

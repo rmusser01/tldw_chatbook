@@ -139,7 +139,7 @@ async def _load_row_with_document(screen, pilot, service, index: int, content: s
     service.release(backing_id)
     await _wait_for_condition(
         pilot,
-        lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+        lambda: screen._media_state.reader_session.loaded_id == canonical_id,
         message=f"Row {index} never settled its detail.",
     )
     return canonical_id, backing_id, title
@@ -163,7 +163,7 @@ async def _traverse_to_row(screen, pilot, service, *, from_index: int, to_index:
     service.release(backing_id)
     await _wait_for_condition(
         pilot,
-        lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+        lambda: screen._media_state.reader_session.loaded_id == canonical_id,
         message=f"Row {to_index} never settled after traversal.",
     )
     await pilot.pause()
@@ -349,7 +349,7 @@ async def test_a_new_document_rescans_for_the_same_query():
         assert _status_text(screen) == "Match 1 of 50 matches"
 
         await _traverse_to_row(screen, pilot, service, from_index=0, to_index=1)
-        assert screen._library_media_content_query == NEEDLE
+        assert screen._media_state.content_query == NEEDLE
         screen.query_one("#library-media-content-search-next", Button).press()
         await pilot.pause()
 
@@ -381,7 +381,7 @@ async def test_clearing_the_search_mid_navigation_drops_every_highlight():
 
         await _submit_query(screen, pilot, "")
 
-        assert screen._library_media_content_query == ""
+        assert screen._media_state.content_query == ""
         # task-28002: the status child persists display-gated (tearing it
         # down recomposed away the focused Input), so "gone" means hidden.
         assert not screen.query_one("#library-media-content-search-status").display
@@ -416,12 +416,12 @@ async def test_a_cleared_detail_releases_the_cached_match_list():
         screen = await _open_media_list(host, pilot)
         await _load_row_with_document(screen, pilot, service, 0, _document())
         await _submit_query(screen, pilot, NEEDLE)
-        assert screen._library_media_content_match_memo is not None
+        assert screen._media_state.content_match_memo is not None
 
-        screen._library_media_detail = None
+        screen._media_state.detail = None
 
         assert screen._library_media_content_matches() == ()
-        assert screen._library_media_content_match_memo is None
+        assert screen._media_state.content_match_memo is None
         # And a stray navigation against no open item is a no-op, not a crash.
         screen._advance_library_media_content_match(1)
         await pilot.pause()

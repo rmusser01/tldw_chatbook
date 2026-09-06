@@ -97,7 +97,7 @@ async def _load_row_with_document(screen, pilot, service, index: int, content: s
     service.release(backing_id)
     await _wait_for_condition(
         pilot,
-        lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+        lambda: screen._media_state.reader_session.loaded_id == canonical_id,
         message=f"Row {index} never settled its detail.",
     )
     return canonical_id, backing_id, title
@@ -208,10 +208,10 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
         service.release(backing_id)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+            lambda: screen._media_state.reader_session.loaded_id == canonical_id,
             message="Row never settled its detail.",
         )
-        assert screen._library_media_content_mode == "rendered", (
+        assert screen._media_state.content_mode == "rendered", (
             "Fixture must default to Rendered for the round-trip to mean anything."
         )
 
@@ -280,10 +280,10 @@ async def test_capture_progress_resolves_the_real_scroller_and_snapshots_its_off
         await pilot.pause()
         assert body.scroller.scroll_y > 0, "Fixture scroll did not move -- test setup is broken."
 
-        screen._library_media_read_scroll_by_id.clear()
+        screen._media_state.read_scroll_by_id.clear()
         screen._capture_library_media_loaded_progress()
 
-        assert screen._library_media_read_scroll_by_id.get(canonical_id) == (
+        assert screen._media_state.read_scroll_by_id.get(canonical_id) == (
             int(body.scroller.scroll_x),
             int(body.scroller.scroll_y),
         )
@@ -310,7 +310,7 @@ async def test_restore_progress_resolves_the_real_scroller_and_applies_the_saved
         body = await _open_raw_view_ready(screen, pilot)
         assert body.scroller.scroll_y == 0, "Fixture must start unscrolled."
 
-        screen._library_media_read_scroll_by_id[canonical_id] = (0, 41)
+        screen._media_state.read_scroll_by_id[canonical_id] = (0, 41)
         screen._restore_library_media_loaded_progress(canonical_id)
         await pilot.pause()
 

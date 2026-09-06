@@ -339,7 +339,7 @@ async def test_export_selected_media_opens_export_canvas_scoped_to_the_selection
         expected_id = selected_row.media_id
         selected_row.press()
         await pilot.pause()
-        assert screen._library_media_row_selection.is_selected(expected_id)
+        assert screen._media_state.row_selection.is_selected(expected_id)
 
         export_selected = screen.query_one("#library-media-export-selected", Button)
         assert export_selected.disabled is False

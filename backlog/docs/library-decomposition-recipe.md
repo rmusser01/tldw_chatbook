@@ -571,6 +571,34 @@ its 22 exclusions, so nothing changed — a clean result from a census that
 was actually run, not a census that was skipped because the obvious
 spelling came back empty.
 
+**A FIFTH spelling, found by the media series (wave-7 task 3): the name that
+is never spelled at all — a COMPUTED attribute name in a shared dispatcher.**
+The four spellings above all assume the flat name appears somewhere in the
+source, as an attribute, a bare quoted string, a kwarg, or a table row. This
+one does not. `canvas_sync.py:209` builds `f"_library_{kind}_row_selection"`
+and resolves it with `operator.attrgetter`, so `_library_media_row_selection`
+occurs NOWHERE in that file and every spelling above scores it zero. The
+conversations series had already special-cased its own dotted path there
+(`"_conversations_state.row_selection" if kind == "conversations" else ...`)
+and left a comment predicting that future extractions would hit the same
+shape; media is the second, and notes will be the third.
+
+Missing it is a silent PRODUCTION defect, not a test-only one: the computed
+name stops resolving, and `_apply_library_row_toggle`'s own `try`/`except`
+swallows the failure into a full-screen recompose — the exact fallback the
+targeted-sync performance work exists to avoid — with no exception and no red
+test anywhere.
+
+**The census:** walk `ast.JoinedStr` nodes (and any `%`/`+`/`.format()`
+string building, though only f-strings have appeared) over `tldw_chatbook/`
+and all of `Tests/`, and keep those whose literal fragments could compose one
+of the subsystem's flat names. Media's run returned exactly two hits — the
+production one above, and one in a test
+(`test_library_media_return_settlement.py:1745` builds
+`f"_library_media_{signature_kind}_signature"`, a METHOD name whose two
+possible values were both exclusions, so it needed nothing). Two hits is a
+tractable read; zero hits is a real answer only if the sweep was run.
+
 **A cleanup-PR census this section did NOT previously require: the deleted
 FIELD names' own prose sweep.** Every cleanup PR to date censused the
 PRUNED METHOD names for stale prose. None censused the DELETED FIELD
@@ -1330,7 +1358,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 | 3 | **skills** — **complete** (wave-4 Tasks 1–3) | 15 | 36 fields moved to `LibrarySkillsState` (a three-way prefix split: 26 `_library_skill_*` singular + 9 `_library_skills_*` plural + 1 bare `_selected_skill_name`, resolved by a single `skill_state_shim_attr()` function rather than two independent frozensets); 86 of 127 "skill"-named method candidates moved to ONE `LibrarySkillsController` (41 excluded: 6 merely-delegate-to-existing-controller properties, 27 unbound-fake-self, 1 instance-attribute monkeypatch, 1 module-globals coupling, 6 bare-self-as-identity-argument hazard — plus 1 CRITICAL unbound-attribute-escape (`getattr(self, "focused", None)` with no corresponding property) found by post-landing review rather than the pre-landing battery, fixed with a fail-without/pass-with covering test); 16 of 86 screen delegators pruned at cleanup. This series' own two battery-caught regressions (§3's sixth bypass shape) and the review-found seventh instance widened that bypass catalogue for every subsequent subsystem. See §19 for the series' actual, as-landed numbers |
 | 3 | **ingest** — **complete** (wave-5 Tasks 1–3) | 23 | 20 fields moved to `LibraryIngestState` (single `_library_ingest_` prefix, no plural variant); 56 of 78 "ingest"-named method candidates moved to ONE `LibraryIngestController` (22 excluded: 4 `@work` framework-decorator hazard, 3 module-globals-coupling, 9 unbound-fake-self/`object.__new__`-bypass, 6 instance-attribute-monkeypatch); 6 of 56 screen delegators pruned at cleanup. This series' own state PR found the "seventh bypass shape" (an `object.__new__`-bypassed fixture's flat-name seed breaking the instant the state shim installs, not deferrable to cleanup) — a review-found CRITICAL: 2 tests left RED at HEAD in `Tests/UI/test_parakeet_v2_install_ui.py`, the one file whose filename and test names contain neither "ingest" nor "library" and which the task's own `-k`-filtered sweep therefore could not see, a no-red-ships violation (the same task's separate 24-vs-27-site count error in its own report was a distinct Important finding, not this CRITICAL) — and its controller PR's post-landing review found a SECOND review-found CRITICAL, the "eighth" bypass shape (a moved body's bare module global patched at the OLD module path by a green-but-vacuous test, `_resolve_ingest_source`) — both widened the bypass catalogue for every subsequent subsystem. See §20 for the series' actual, as-landed numbers, and §20's own "Wave-5 close" subsection for the wave-level pin trajectory, verification battery, and lessons |
 | 4 | **prompts** — **complete** (wave-6 Tasks 1–3) | 41 | 43 fields moved to `LibraryPromptsState` (a three-way prefix split, the skills precedent: 31 `_library_prompt_*` singular + 11 `_library_prompts_*` plural + 1 bare `_selected_prompt_id`, resolved by a single `prompt_state_shim_attr()`; 3 further prompt-named `__init__` attributes are WIRING — live `LibraryPromptHistoryController`/`LibraryPromptBrowseController`/`LibraryPromptCollectionsController` instances — and stayed on the screen); 139 of 161 "prompt"-named method candidates moved to ONE `LibraryPromptsController`, the largest single move of this program (22 excluded: 14 unbound-fake-self, 3 instance-attribute-monkeypatch, 2 screen-identity, 2 module-globals-coupling, 1 merely-delegate-to-existing-controller property); 39 of 139 screen delegators pruned at cleanup (~28%). This series' cleanup found a genuinely NEW delegator-prune hazard the prior five did not: Textual's `on_<Message>` NAME-dispatched handlers (`MessagePump._get_dispatch_methods` resolves them off `Message.handler_name`, not off `@on`), which a reference-count census reports as zero-referenced and whose deletion would silently unhook the screen from six messages — folded into §4's transform whitelist as its THIRD member, since media and notes both almost certainly own name-dispatched handlers too. See §21 for the series' actual, as-landed numbers, and §21's own "Wave-6 close" subsection for the wave-level pin trajectory, verification battery, sweep evidence and lessons |
-| 4 | media | 55 | |
+| 4 | **media** — **complete** (wave-7 Tasks 1–3) | 55 | 82 of 85 media-named attributes moved to `LibraryMediaState` (TWO prefix families, not three: `_library_media_*` for 81 + the bare `_selected_media_id`; "media" is already singular and plural, so no plural constant exists. The other 3 are 2 WIRING — live `LibraryMediaBrowseController`/`LibraryMediaTrashBrowseController` instances — and 1 BLOCKED, `_library_pending_list_entry_media_return`, a member of a four-field shell family whose writers span Media/Notes/Prompts/Skills); 140 of 251 media-named method candidates moved to ONE `LibraryMediaController` (**111 exclusions**, the largest exclusion set of this program: 73 unbound-fake-self, 16 instance-attribute-monkeypatch, 8 `inspect.getsource` source-census, 4 module-globals-coupling, 3 screen-identity in a MEMBERSHIP form — `self in <widget>.ancestors`, which §3's own `is`/`is not` census cannot see — 2 class-monkeypatch, 2 bypassed-construction lifecycle, 1 callback-identity, 1 shared shell helper, 1 generic dispatcher); 22 of 140 screen delegators pruned at cleanup (15.71%). Media owns ZERO `on_<message>` name-dispatched handlers, so §4's third whitelist member is inert here. Its cleanup is the largest of the program — 1,214 boundary-matched test occurrences across 36 files in five roots — and added a FIFTH census spelling to §3: a COMPUTED attribute name (`ast.JoinedStr`) in a shared dispatcher, invisible to all four prior spellings and a silent production defect if missed. See §22 for the series' actual, as-landed numbers |
 | 4 | notes | 72 | most scarred; its sync controller (`canvas_sync.py`) already lives in `UI/Library_Modules/` from PR 0a |
 | 5 | final shell pass | — | residual focus/lifecycle plumbing, delegator table tidy, `compose_content` reduced to the region-yielding skeleton |
 
@@ -5232,3 +5260,216 @@ instead of by reading diffs.
    mount/node growth each of them attributed to "ordinary Media/Notes churn
    on dev" is now MEASURED, because the wave-6 base tree already reads the
    higher counts.
+
+## 22. The media series, as landed — the seventh rehearsal, and the largest cleanup of this program
+
+Wave-7 Tasks 1–3 (`.superpowers/sdd/2026-09-06-library-decomposition-wave7-media`)
+extracted the Media subsystem. At **251** media-named `FunctionDef`s and **85**
+media-named `__init__`/class-body attributes it is the biggest cluster the
+recipe has processed — prompts' 161/46 was the prior high — and its cleanup
+task retargeted **1,214** boundary-matched test occurrences across **36 files
+in five roots**, against prompts' 465 across 11.
+
+### Fields/methods moved, per task
+
+| Task | PR | What moved | Screen delta |
+|---|---|---|---|
+| 1 | State | 82 of 85 media-named attributes → `LibraryMediaState`; TWO prefix families, not three (`_library_media_*` for 81 + the bare `_selected_media_id`), because "media" is already both singular and plural, so no plural constant exists. The other 3: 2 WIRING (live `LibraryMediaBrowseController`/`LibraryMediaTrashBrowseController` instances) and 1 BLOCKED (`_library_pending_list_entry_media_return`, one of four members of a shell family whose writers span Media/Notes/Prompts/Skills). 4 fields keep their ORIGINAL `__init__` line (the forced-early-construction group); 3 more become CONSTRUCTOR ARGUMENTS | 37537 → 37333 lines, 1282 methods |
+| 2 | Controller | 140 of 251 candidates → `LibraryMediaController` (48 `@on` + 5 `action_*` + 3 `@staticmethod` + 84 plain; **111 exclusions** — 73 unbound-fake-self, 16 instance-attribute-monkeypatch, 8 `inspect.getsource` source-census, 4 module-globals-coupling, 3 screen-identity in a MEMBERSHIP form, 2 class-monkeypatch, 2 bypassed-construction lifecycle, 1 callback-identity, 1 shared shell helper, 1 generic dispatcher). Single controller; a connected-components analysis over all 251 found no clean seam. **ZERO `on_<message>` name-dispatched handlers**, so §4's third whitelist member is inert for media (it will still matter for notes) | 37333 → 34754 lines, 1282 methods (unchanged). Controller born-governed at 4461, review fix round → 4496 |
+| 3 | Cleanup | Shim block (82 properties, two prefix families) deleted; **456** screen-side literal `self.<flat>` retargets to `self._media_state.<field>`, plus **9** `getattr(self, "<flat>", ...)` RECEIVER fixes and **6** dynamic-dispatch string values dotted; **1,182** test-side code retargets across 32 files (1,214 counting prose, across 36 files, per the boundary-matched census), including **37 `SimpleNamespace` fixture restructurings (136 flat kwargs → nested `_media_state=SimpleNamespace(...)`) plus one added empty `_media_state` seed**; **22 of 140** screen delegators pruned (15.71%); **10** dead imports removed (3 further candidates SAVED); the shared `_apply_library_row_toggle` dispatcher's computed name given a media DOTTED branch | 34754 → 34669 lines, 1282 → 1260 methods (exactly the 22 pruned delegators) |
+
+**Pin trajectory** (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`
+in `Tests/Architecture/test_screen_size_ratchet.py`):
+`37537/1282 → 37333/1282 → 34754/1282 → 34669/1260` (final).
+
+**Controller-file governance pin** (§17): `library_media_controller.py`
+born-governed the moment it existed (Task 2): `4461 → 4496` (Task 2's own
+review fix round). **Untouched by the cleanup** — unlike the prompts series,
+whose cleanup added comment lines to its controller, media's cleanup edits no
+controller body at all, so no re-pin was involved.
+
+### The dynamic-dispatch census found a shape no prior series' census could see: a COMPUTED attribute name in a SHARED dispatcher
+
+Every prior series ran §3's four census spellings (attribute, quoted-string,
+bare-assignment/kwarg, patch-target table) and that was enough. Media needed a
+FIFTH: an `ast.JoinedStr` whose literal fragments compose a flat attribute
+name at runtime.
+
+`canvas_sync.py:209` builds `f"_library_{kind}_row_selection"` and resolves it
+with `operator.attrgetter`. **No spelling in §3's catalogue can see that
+string** — the name `_library_media_row_selection` appears nowhere in the
+file, as an attribute, a constant, a kwarg or a quoted literal. The
+conversations series had already added the dotted special case beside it
+(`"_conversations_state.row_selection" if kind == "conversations" else ...`)
+and left a comment saying "future subsystem extractions hit this exact same
+shape" — which is exactly what happened: media is the second kind to need the
+dotted form, and the *only* reason the cleanup found it was a deliberate
+JoinedStr sweep run because that comment existed.
+
+**The rule this adds to §3's census list:** walk `ast.JoinedStr` nodes whose
+literal fragments could compose one of the subsystem's flat names, over
+`tldw_chatbook/` and all of `Tests/`. Media's sweep returned exactly two hits
+— this one (a real production defect if missed: the selection object would
+silently stop resolving, and `_apply_library_row_toggle`'s own `try/except`
+would swallow it into a full recompose, degrading a performance fix into
+silence with no red test) and one in a test
+(`test_library_media_return_settlement.py:1745` builds
+`f"_library_media_{signature_kind}_signature"`, a METHOD name, and both
+methods it can name are among the 16 instance-monkeypatch exclusions, so it
+needed nothing).
+
+### Delegator census — 118 KEEP, 22 PRUNED (15.71%)
+
+Of the 140 moved names, **53 KEEP unconditionally** per §4's whitelist (48
+`@on` + 5 `action_*`; media owns zero `on_<message>` handlers). Of the
+remaining 87, **65 have a genuine external caller** and **22 have none**.
+
+Every verdict came from an `ast`-based census — never a call-shaped regex —
+over `tldw_chatbook/` + every `Tests/` root + `Docs/` + `scripts/` +
+`Helper_Scripts/`, excluding only the controller module, each name's own
+delegator body, and the wiring test's own literal pin tuple. **The AST census
+subsumes the "broad pass" prior series had to run as a second, separate
+sweep**: a bare callable passed as an argument
+(`self.call_after_refresh(self._name)`) is an `ast.Attribute` like any other,
+which is precisely the shape a `<name>\s*\(` regex scores as zero — the blind
+spot that would have mis-pruned three prompts names.
+
+Three verdicts turned on a spelling other than a plain attribute access, and
+each would have been a wrong PRUNE without the full spelling set:
+
+- `request_library_media_layout_refresh` — its ONLY reference anywhere is
+  `getattr(screen, "request_library_media_layout_refresh", None)` in
+  `settings_screen.py`, a quoted string in a DIFFERENT screen's module.
+- `_cancel_library_media_selection_settlement` and
+  `_select_library_media_reader_row` — each referenced only as
+  `getattr(self, "<name>", None)` inside `library_screen.py` itself, both
+  inside methods that never moved.
+
+One near-miss in the other direction: `_open_library_external_media_detail`
+has a same-named `@property` in `library_ingest_controller.py` that calls
+itself. That is a `def` in a DIFFERENT class — §4's own "a same-named `def` is
+evidence of NOTHING" rule — and the screen delegator is genuinely
+externally-referenced for an unrelated reason, so nothing turned on it; but it
+is the exact coincidence the `on_<Message>` incident was built from.
+
+Prune fraction 22/140 = **15.71%**, between ingest (10.71%) and skills
+(18.60%): export 4.55% < ingest 10.71% < **media 15.71%** < skills 18.60% <
+collections 21.88% < prompts 28.06% < search+RAG 28.57% < conversations
+29.51%.
+
+### Import verification — 13 dead, 3 saved, and a save the `_SURFACE` check alone would have missed
+
+13 imports were left dead in `library_screen.py` by this wave, derived as a
+DIFFERENCE (AST-unused at the wave-start commit `83e17323e` vs. at this
+commit): 43 names are unused at BOTH ends and belong to prior series or to
+`__future__`/`_SURFACE` bookkeeping.
+
+**2 came back `_SURFACE`-pinned** by exact-name lookup:
+`LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS` and `LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT`.
+Both spell the subsystem word UPPERCASE — the exact case-sensitivity trap the
+prompts series recorded after a lowercase `prompt` grep returned zero against
+five `PROMPT`-spelling names.
+
+**A third was saved by a check the `_SURFACE` contract does not perform.**
+`set_mode` is not in `_SURFACE`, is unused inside `library_screen.py`, and
+would have been deleted on the `_SURFACE` check alone — but
+`Tests/UI/test_library_entry_compose_once.py:1835` calls
+`library_screen_module.set_mode(...)`, consuming it as a live RE-EXPORT.
+**The rule: after the `_SURFACE` check, grep each remaining candidate for
+every alias a test imports `library_screen` AS (`library_screen`,
+`library_screen_module`, `library_module`, `screen_module`, …) followed by the
+name.** `_SURFACE` pins the names a test asserts ABOUT; this catches the ones
+a test actually CALLS. The remaining 10 were each independently confirmed live
+inside the controller.
+
+### The ADR-055 interlock guard, and why a cleanup PR must read its own guards' source-text assertions
+
+`test_every_media_mutation_claims_the_interlock_at_one_audited_seam`
+(`test_library_multiselect_media.py`) asserts, over
+`inspect.getsource(library_screen_module)`, that the string
+`_library_media_bulk_delete_in_flight = True` occurs EXACTLY ONCE — ADR-055's
+one-flag rule made structural. A receiver retarget rewrites that assignment to
+`self._media_state.bulk_delete_in_flight = True`, so the guard's own regex
+matches ZERO and the test fails LOUDLY (unlike a monkeypatch bypass, which
+would have stayed green). Both the regex and the companion exact-substring
+assertion were retargeted in the same commit, preserving the invariant — the
+count is still exactly one, still inside `_claim_library_media_mutation`,
+which is one of the 8 source-census EXCLUSIONS and never moved.
+
+**The general point:** a cleanup PR's receiver retarget changes SOURCE TEXT,
+and any guard that asserts on source text (`inspect.getsource`, an AST census
+over a named file, a `re.findall` over a module) is a first-class retarget
+target, not collateral. It is also the friendliest class of guard to have,
+because it fails at the exact commit that breaks it.
+
+### Test retarget — 38 fixture restructurings, and the one that must be added rather than rewritten
+
+136 flat kwargs across 37 `SimpleNamespace` fixtures became nested
+`_media_state=SimpleNamespace(...)` blocks. 33 were mechanical (the media
+kwargs sat contiguously) and one more was a single-line fixture expanded by
+hand; 4 in `test_library_media_trash.py` interleaved a
+WIRING attribute (`_library_media_trash_browse_controller`, which stays flat —
+it is not a state field) or a shell attribute
+(`_library_notes_focus_intent_generation`) inside the media run, and were
+hand-reordered so the media block became contiguous before nesting.
+
+**A fixture class the kwarg census cannot find at all:** a fake built with NO
+media kwargs that later receives `fake._library_media_<field> = ...` as a
+post-construction assignment. Retargeting that assignment to
+`fake._media_state.<field> = ...` requires `fake._media_state` to EXIST, and
+nothing in the construction creates it. `test_review_set_walker.py`'s
+`_entry_fake` (and the three factories built on it) is the worked example: 19
+of its 59 tests failed with `AttributeError: 'types.SimpleNamespace' object
+has no attribute '_media_state'` until one `_media_state=SimpleNamespace(),`
+line was added to the factory. **Census for it directly: every receiver with a
+Store-context flat-name attribute assignment, resolved back to its binding
+site.**
+
+**Zero assertion VALUES changed, proven mechanically rather than asserted.**
+The same transform (attribute rewrite + contiguous-kwarg nesting) was applied
+to each file's HEAD AST in memory and `ast.dump`-compared against the current
+file: **24 of 40 changed files match EXACTLY**, including
+`test_library_shell.py` (146 retargets) and
+`test_library_media_return_settlement.py` (204). The 16 that differ each carry
+one reviewed hand edit, and for those a second guard compared the multiset of
+non-docstring `ast.Constant` values before and after: every delta is a
+name-string retarget or new assertion-message text.
+
+### Wiring test finalization
+
+`Tests/Architecture/test_library_media_wiring.py`:
+`test_state_object_fields_match_the_shim_surface` narrowed to
+`test_state_object_declares_the_censused_field_count`;
+`test_every_shim_reads_and_writes_its_own_state_field` **re-aimed at the
+controller** (the prompts precedent — it is the only test that catches the
+generated-loop closure-binding trap, and the controller's loop carries the
+identical trap);
+`test_the_screen_no_longer_carries_a_media_state_shim` added, asserting
+ABSENCE; `_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED` filled with the 22 names.
+12 tests, all green.
+
+### The 7 deferred move candidates, re-evaluated and DECLINED
+
+Task 2 recorded that 7 of its 16 instance-attribute-monkeypatch exclusions
+(`_analyze_one_library_media_item`, `_exit_library_media_select_mode`,
+`_focus_library_media_grip_if_current`, `_library_media_unanalyzed_ids`,
+`_notify_library_media_analysis_warning`, `_request_library_media_type`,
+`_start_library_media_analyze`) have zero MOVER callers today, so they are
+held by §3's conservative opening rule rather than by a demonstrated bypass —
+i.e. they become movable the moment their fixtures retarget.
+
+**They were re-checked at this cleanup and all 7 STAY EXCLUDED.** A cleanup
+PR's retargets are FIELD retargets; none of them touches a method
+monkeypatch, so every one of the 7 still carries live
+`screen.<name> = <stub>` / `monkeypatch.setattr(screen, "<name>", ...)` /
+`fake.<name> = types.MethodType(...)` sites (re-derived at this tree:
+`test_library_ingest_analyze_skipped.py`, `test_library_media_render_fixes.py`,
+`test_library_media_side_by_side.py`, `test_library_shell.py`,
+`test_library_media_trash.py`, `test_library_multiselect_media.py`). **The
+generalizable point: "movable once the fixtures retarget" is not a prediction
+that a cleanup PR will make it so.** Retargeting method-patch fixtures is a
+different transform from retargeting field paths, it is not on §4's
+whitelist, and doing it would make the cleanup PR's own diff no longer purely
+mechanical. A later, separately-motivated PR is the right home; recording the
+verdict (rather than silently leaving the observation open) is the cleanup
+PR's actual obligation.

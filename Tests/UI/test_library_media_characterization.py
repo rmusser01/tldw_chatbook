@@ -224,12 +224,12 @@ async def test_media_review_selected_orders_exactly_the_selected_ids() -> None:
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_row_selection.count == 1,
+            lambda: screen._media_state.row_selection.count == 1,
             message="A Select-mode row press never landed in the selection.",
         )
         selected = sorted(
             int(str(row_id).rsplit(":", 1)[-1])
-            for row_id in screen._library_media_row_selection.ids
+            for row_id in screen._media_state.row_selection.ids
         )
 
         await _wait_for_selector(screen, pilot, "#library-media-review-selected")
@@ -271,10 +271,10 @@ async def test_media_open_original_opens_the_stored_url(
         await _wait_for_selector(screen, pilot, "#library-media-reader-more")
         await _wait_for_condition(
             pilot,
-            lambda: bool(screen._library_media_detail),
+            lambda: bool(screen._media_state.detail),
             message="The media viewer never received its detail.",
         )
-        expected = str(screen._library_media_detail.get("url"))
+        expected = str(screen._media_state.detail.get("url"))
         assert expected.startswith("https://")
 
         screen.query_one("#library-media-reader-more", Button).press()

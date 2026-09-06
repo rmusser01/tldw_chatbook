@@ -637,7 +637,35 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # controller-ratchet comment is the binding SURFACE, i.e. hand-written
     # properties, and the two are different numbers on purpose).
     # -3166 + 343 - 12 + 4 + 3 + 249 = -2579.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 34754, 1282),
+    #
+    # Wave-7 task 3 (media series 3/3, CLEANUP PR). Fresh `_measure()`:
+    # 34754/1282 -> 34669/1260. The METHOD count drops by exactly the 22
+    # pruned screen delegators (1282 - 22 = 1260) -- the same one-for-one
+    # relationship every prior cleanup PR's row carries, and the reason a
+    # method-count change here is readable rather than mysterious.
+    # Line delta -85, each term measured rather than estimated:
+    #   -9   the generated media-state shim block (19 lines, sentinel
+    #        comments included) replaced by the 10-line "this block was
+    #        deleted, and why" comment every prior series left in its place;
+    #   -66  the 22 pruned delegators (3 lines each -- `def`, forwarding
+    #        `return`, and the blank separator line that followed; NONE of
+    #        the 22 is decorated, which the prune script asserts rather than
+    #        assumes, because an `@on`/`action_*` name is an unconditional
+    #        KEEP under recipe §4's whitelist);
+    #   -10  dead imports (13 names went unused across this wave, derived as
+    #        a DIFFERENCE against the wave-start commit `83e17323e` rather
+    #        than as an absolute unused-name list; 3 were KEPT -- two are
+    #        `_SURFACE`-pinned by exact name, `LIBRARY_MEDIA_HANDOFF_EXCERPT_
+    #        CHARS` and `LIBRARY_MEDIA_PREVIEW_CACHE_LIMIT` (both spell
+    #        "MEDIA" uppercase, the exact case-sensitivity trap that nearly
+    #        cost the prompts series its own 5 saves), and one, `set_mode`,
+    #        has a LIVE re-export consumer at
+    #        `Tests/UI/test_library_entry_compose_once.py:1835`, which reads
+    #        it as `library_screen_module.set_mode(...)`).
+    # -9 - 66 - 10 = -85. The 456 `self.<flat>` -> `self._media_state.<field>`
+    # retargets, the 9 `getattr(self, "<flat>", ...)` receiver fixes and the
+    # 6 dynamic-dispatch string values are all line-neutral by construction.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 34669, 1260),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

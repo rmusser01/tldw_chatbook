@@ -1115,9 +1115,11 @@ def test_local_service_persists_reading_highlights(memory_db_factory):
 def test_scope_service_local_highlight_seam_persists_against_real_db(memory_db_factory):
     """Real-backend regression for the Library media viewer's highlights seam.
 
-    The Library viewer (``LibraryScreen._add_library_media_highlight`` /
-    ``_fetch_library_media_highlights`` / ``_delete_library_media_highlight``)
-    calls ``media_reading_scope_service.create_highlight``/``list_highlights``/
+    The Library viewer (``LibraryMediaController._add_library_media_highlight``
+    / ``_fetch_library_media_highlights`` /
+    ``_delete_library_media_highlight``; wave-7 moved all three off
+    ``LibraryScreen``) calls
+    ``media_reading_scope_service.create_highlight``/``list_highlights``/
     ``delete_highlight`` with ``mode="local"`` -- the unprefixed scope
     methods, distinct from the ``reading_``-prefixed scope methods the Media
     hub uses (those historically dispatched leaf names only

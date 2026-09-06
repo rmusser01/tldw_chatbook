@@ -5,7 +5,8 @@ conversions happen at all). This file pins the three things a canvas-scoped
 sync silently STOPS doing, because they live in ``LibraryScreen.refresh`` --
 the override a targeted sync deliberately bypasses:
 
-* the resolved media selection is mirrored back into ``_selected_media_id``
+* the resolved media selection is mirrored back into
+  ``_media_state.selected_media_id``
   (otherwise the chooser highlights one row and "Open in viewer" opens
   another);
 * portable Notes focus is restored, so DOM focus never escapes the canvas;
@@ -168,8 +169,8 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
     """CRITICAL: the media sync branch must mirror the resolved selection.
 
     ``compose_content`` and ``_replace_library_browse_canvas`` both write
-    ``self._selected_media_id = media_state.selected_id`` after building the
-    state, because ``build_library_media_canvas_state`` RESOLVES the
+    ``self._media_state.selected_media_id = media_state.selected_id`` after
+    building the state, because ``build_library_media_canvas_state`` RESOLVES the
     selection: a requested id that the active type filter no longer renders
     falls back to the first row. The targeted sync skipped that mirror, so
     filtering the selected item out left the canvas highlighting row 0 while
@@ -199,13 +200,13 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         video_id = "local:media:4"
         video_row.press()
         await pilot.pause()
-        assert screen._selected_media_id == video_id
+        assert screen._media_state.selected_media_id == video_id
         # Back to the list -- the selection survives the round trip, which is
         # how the browse canvas ends up pointing at a non-first row.
         screen.action_library_media_viewer_back()
         await _wait_for_selector(screen, pilot, "#library-media-type-filter")
         await pilot.pause()
-        assert screen._selected_media_id == video_id
+        assert screen._media_state.selected_media_id == video_id
 
         screen.query_one("#library-media-type-filter", Button).focus()
         await pilot.pause()
@@ -226,11 +227,11 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         canvas_state = screen._build_library_media_state()
         assert canvas_state.selected_id != video_id  # the filter dropped it
         # The screen's own pointer must agree with what the canvas renders.
-        assert screen._selected_media_id == canvas_state.selected_id
+        assert screen._media_state.selected_media_id == canvas_state.selected_id
         # ...and the primary action must therefore open the visible item.
-        screen._open_library_media_viewer(screen._selected_media_id)
+        screen._open_library_media_viewer(screen._media_state.selected_media_id)
         await pilot.pause()
-        assert screen._selected_media_id == canvas_state.selected_id
+        assert screen._media_state.selected_media_id == canvas_state.selected_id
 
 
 @pytest.mark.asyncio

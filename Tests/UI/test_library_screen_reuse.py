@@ -97,15 +97,13 @@ async def test_library_reuse_and_suspend_timer_quiescence(
         )
 
         # Arm a debounce timer the way a mid-keystroke filter would.
-        library._library_media_filter_timer = library.set_timer(
+        library._media_state.filter_timer = library.set_timer(
             60.0, lambda: None
         )
 
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
         assert library._library_screen_suspended is True
         for attr in (
-            "_library_media_filter_timer",
-            "_library_media_selection_timer",
             "_library_notes_autosave_timer",
             "_library_source_snapshot_timeout_timer",
             "_library_list_entry_focus_timer",
@@ -114,6 +112,18 @@ async def test_library_reuse_and_suspend_timer_quiescence(
                 f"{attr} still armed on the suspended screen -- Textual "
                 "does not auto-cancel a suspended installed screen's "
                 "timers, so suspend must"
+            )
+        # (wave-7 task 3) The two media debounce timers are
+        # `LibraryMediaState` fields, not flat screen attributes -- the
+        # screen's generated shim block was deleted in the media cleanup PR,
+        # so a `getattr` on either old flat name passes VACUOUSLY. They leave
+        # the string loop above for the same explicit block the ingest and
+        # prompts timers already use.
+        for media_timer_field in ("filter_timer", "selection_timer"):
+            assert getattr(library._media_state, media_timer_field) is None, (
+                f"the media {media_timer_field} is still armed on the "
+                "suspended screen -- Textual does not auto-cancel a suspended "
+                "installed screen's timers, so suspend must"
             )
         # (wave-5 merge) The ingest path-debounce timer is a
         # `LibraryIngestState` field, not a flat screen attribute -- the
@@ -223,13 +233,12 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     )
 
     screen = LibraryScreen.__new__(LibraryScreen)
-    # (wave-7 task 1) Every `_library_media_*` name below -- the two timer
-    # attrs in the table, and three of the five settlement fields the
-    # focus-disarm helper resets -- is now a generated property over `_media_state`, so a
-    # `setattr` on this `__new__`-bypassed screen would reach a state object
-    # `__init__` never built (recipe section 3's SEVENTH bypass shape). Seeded
-    # here, exactly like the `_ingest_state`/`_prompts_state` seeds below;
-    # zero assertions touched.
+    # (wave-7 task 1, retargeted by task 3) Every media name this test seeds
+    # -- the two debounce timers, and three of the five settlement fields the
+    # focus-disarm helper resets -- lives on `_media_state`. An
+    # `object.__new__`/`__new__` screen skips `__init__`'s state
+    # construction, hence the explicit seed, exactly like the
+    # `_ingest_state`/`_prompts_state` seeds below.
     screen._media_state = LibraryMediaState()
     # (wave-6 task 3) The prompts search-debounce timer is a
     # `LibraryPromptsState` field, not a flat screen attribute -- the
@@ -242,8 +251,6 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     screen._prompts_state.debounce_timer = prompts_timer
     timer_attrs = (
         "_library_list_entry_focus_timer",
-        "_library_media_selection_timer",
-        "_library_media_filter_timer",
         "_library_notes_autosave_timer",
         "_library_source_snapshot_timeout_timer",
     )
@@ -251,6 +258,15 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     for attr in timer_attrs:
         timers[attr] = _RecordingTimer()
         setattr(screen, attr, timers[attr])
+    # (wave-7 task 3) The two media debounce timers are `LibraryMediaState`
+    # fields, not flat screen attributes -- the screen's generated shim block
+    # was deleted in the media cleanup PR, so `setattr`/`getattr` on the old
+    # flat names would arm and assert fields the hook never reads. Same
+    # explicit-block treatment as the ingest and prompts timers below.
+    media_timers = {}
+    for media_timer_field in ("selection_timer", "filter_timer"):
+        media_timers[media_timer_field] = _RecordingTimer()
+        setattr(screen._media_state, media_timer_field, media_timers[media_timer_field])
     # (wave-5 merge) The ingest path-debounce timer is a
     # `LibraryIngestState` field, not a flat screen attribute -- the
     # screen's generated shim block was
@@ -267,9 +283,9 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     screen._library_pending_list_entry_focus = False
     screen._library_pending_list_entry_media_return = None
     screen._library_pending_list_entry_focus_anchor = None
-    screen._library_media_return_settlement = None
-    screen._library_media_last_exact_settlement = None
-    screen._library_media_last_successful_settlement = None
+    screen._media_state.return_settlement = None
+    screen._media_state.last_exact_settlement = None
+    screen._media_state.last_successful_settlement = None
 
     LibraryScreen.on_screen_suspend(screen)
 
@@ -277,6 +293,11 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     for attr in timer_attrs:
         assert timers[attr].stopped, f"{attr} was not stopped"
         assert getattr(screen, attr) is None, f"{attr} was not cleared"
+    for media_timer_field, media_timer in media_timers.items():
+        assert media_timer.stopped, f"the media {media_timer_field} was not stopped"
+        assert getattr(screen._media_state, media_timer_field) is None, (
+            f"the media {media_timer_field} was not cleared"
+        )
     assert ingest_timer.stopped, "the ingest path-debounce timer was not stopped"
     assert screen._ingest_state.path_debounce_timer is None, (
         "the ingest path-debounce timer was not cleared"

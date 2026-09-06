@@ -49,7 +49,9 @@ def _walker_fake(
         _select_library_media_reader_row=(
             lambda media_id, title, **_kwargs: calls.append((media_id, title))
         ),
-        _library_media_reader_session=SimpleNamespace(loaded_backing_id=loaded),
+        _media_state=SimpleNamespace(
+            reader_session=SimpleNamespace(loaded_backing_id=loaded),
+        ),
         _notify_review_set=(
             lambda message, severity="information": notices.append(
                 (message, severity)
@@ -320,7 +322,7 @@ def test_toggle_reviewed_marks_and_unmarks_the_loaded_item(tmp_path):
     fake = _walker_fake(service)
     fake._library_media_item_traversal_active = lambda: True
     fake._sync_library_media_viewer_or_recompose = lambda: None
-    fake._library_media_reader_session = SimpleNamespace(loaded_backing_id=10)
+    fake._media_state.reader_session = SimpleNamespace(loaded_backing_id=10)
 
     LibraryScreen.action_library_media_toggle_reviewed(fake)
     assert service.get_review_set(set_id).items[0].done is True
@@ -368,6 +370,10 @@ def _entry_fake(service):
     opened: list[str] = []
     notices: list[tuple[str, str]] = []
     fake = SimpleNamespace(
+        # wave-7 task 3: the media fields these handlers read/write live on
+        # `screen._media_state` now, so a fake screen needs the nested object
+        # (a flat `_library_media_*` attribute is no longer read by anything).
+        _media_state=SimpleNamespace(),
         _review_set_service=lambda: service,
         _open_library_media_viewer=lambda media_id: opened.append(media_id),
         app_instance=SimpleNamespace(
@@ -497,7 +503,7 @@ def test_create_from_selection_exits_select_mode_before_landing(
 
     service = _service(tmp_path)
     fake = _entry_fake(service)
-    fake._library_media_select_mode = True
+    fake._media_state.select_mode = True
     events: list[object] = []
     fake._exit_library_media_select_mode = (
         lambda *, announce_discard: events.append(("exit", announce_discard))
@@ -735,7 +741,7 @@ async def test_picker_worker_dismiss_soft_deletes_and_arms_the_undo_receipt(
     # task-31236: the confirmation is the undo receipt, not a toast -- a
     # one-click dismissal of a mid-walk set must be recoverable in place.
     # (set_id, name, was_active) so Undo can restore the activation too.
-    assert fake._library_media_review_dismiss_receipt == (set_id, "X", True)
+    assert fake._media_state.review_dismiss_receipt == (set_id, "X", True)
     # Dismissing the ACTIVE set must refresh the Reader chrome -- the footer
     # kept advertising "] next in set · 1 of 3" after a live dismissal
     # (live-verified 2026-09-02). The CANVAS sync is separate and required:
@@ -767,14 +773,14 @@ async def test_dismiss_undo_worker_restores_the_set(tmp_path, monkeypatch):
         LibraryScreen._review_dismiss_undo_worker, fake
     )
     await fake._review_dismiss_undo_worker(
-        fake._library_media_review_dismiss_receipt
+        fake._media_state.review_dismiss_receipt
     )
 
     restored = service.get_active_review_set()
     assert restored is not None and restored.set_id == set_id
     assert restored.cursor == 1
     assert [item.done for item in restored.items] == [True, False]
-    assert fake._library_media_review_dismiss_receipt is None
+    assert fake._media_state.review_dismiss_receipt is None
     assert fake._syncs == [True, True]  # chrome refreshed after the restore
 
 
@@ -788,7 +794,9 @@ def test_dismiss_undo_and_receipt_close_cannot_race(tmp_path):
     """
     scheduled: list = []
     fake = SimpleNamespace(
-        _library_media_review_dismiss_receipt=("set-1", "X", True),
+        _media_state=SimpleNamespace(
+            review_dismiss_receipt=("set-1", "X", True),
+        ),
         _review_dismiss_undo_in_flight=False,
         run_worker=lambda coro, **_kw: (scheduled.append(coro), coro.close()),
         _review_dismiss_undo_worker=lambda receipt: (None for _ in ()),
@@ -807,7 +815,7 @@ def test_dismiss_undo_and_receipt_close_cannot_race(tmp_path):
     LibraryScreen.handle_library_media_review_dismiss_receipt_close(
         fake, event
     )
-    assert fake._library_media_review_dismiss_receipt == ("set-1", "X", True)
+    assert fake._media_state.review_dismiss_receipt == ("set-1", "X", True)
 
 
 @pytest.mark.asyncio
@@ -827,7 +835,7 @@ async def test_dismiss_undo_worker_clears_the_in_flight_flag(
     fake._review_dismiss_undo_worker = MethodType(
         LibraryScreen._review_dismiss_undo_worker, fake
     )
-    fake._library_media_review_dismiss_receipt = (set_id, "X", True)
+    fake._media_state.review_dismiss_receipt = (set_id, "X", True)
 
     await fake._review_dismiss_undo_worker((set_id, "X", True))
     assert fake._review_dismiss_undo_in_flight is False
@@ -1131,7 +1139,7 @@ def _auto_resume_fake(service, *, live_ids=None):
 
     fake._run_library_service_call = run_call
     fake._library_selected_row_id = "browse-media"
-    fake._library_media_view = "list"
+    fake._media_state.view = "list"
     fake.is_current = True
     for name in (
         "_auto_resume_review_set_worker",
@@ -1220,7 +1228,7 @@ async def test_auto_resume_aborts_when_the_user_moved_away(tmp_path):
     service = _service(tmp_path)
     service.create_review_set("X", origin="browse", items=[(10, "A")])
     fake = _auto_resume_fake(service)
-    fake._library_media_view = "viewer"
+    fake._media_state.view = "viewer"
 
     await fake._auto_resume_review_set_worker()
     assert fake._opened == []

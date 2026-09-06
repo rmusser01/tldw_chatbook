@@ -1110,7 +1110,11 @@ async def test_row_toggle_patcher_rebuilds_marker_label_both_directions():
 
     app = _SelectModeApp(0)
     async with app.run_test() as pilot:
-        app._library_media_row_selection = RowSelection("media")
+        # wave-7 task 3: `row_selection` is a `LibraryMediaState` field now,
+        # and `_apply_library_row_toggle` resolves media through the DOTTED
+        # `_media_state.row_selection` path (the conversations precedent), so
+        # this duck-typed screen stand-in carries the nested object.
+        app._media_state = SimpleNamespace(row_selection=RowSelection("media"))
         row_button = pilot.app.query_one("#library-media-row-0", Button)
         export_btn = pilot.app.query_one("#library-media-export-selected", Button)
         delete_btn = pilot.app.query_one("#library-media-delete-selected", Button)
@@ -1119,7 +1123,7 @@ async def test_row_toggle_patcher_rebuilds_marker_label_both_directions():
         )
 
         # 0 -> 1 selected through the real patch path.
-        app._library_media_row_selection.toggle("m0")
+        app._media_state.row_selection.toggle("m0")
         _apply_library_row_toggle(app, "media", row_button, "m0")
         await pilot.pause()
         assert export_btn.disabled is False
@@ -1129,7 +1133,7 @@ async def test_row_toggle_patcher_rebuilds_marker_label_both_directions():
         assert str(row_button.label).startswith("☑")
 
         # 1 -> 0: the marker must come back with `disabled`.
-        app._library_media_row_selection.toggle("m0")
+        app._media_state.row_selection.toggle("m0")
         _apply_library_row_toggle(app, "media", row_button, "m0")
         await pilot.pause()
         assert export_btn.disabled is True

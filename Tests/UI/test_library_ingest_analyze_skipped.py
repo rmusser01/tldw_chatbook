@@ -185,7 +185,7 @@ async def test_analyze_skipped_run_paints_per_item_outcomes_on_their_own_rows(
 
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_analyze_running is False,
+            lambda: screen._media_state.analyze_running is False,
             message="the run never settled",
         )
         await pilot.pause()
@@ -257,7 +257,7 @@ async def test_second_analyze_skipped_press_while_running_gets_the_existing_noti
         await _wait_for_condition(
             pilot, entered.is_set, message="the first run never started"
         )
-        assert screen._library_media_analyze_running is True
+        assert screen._media_state.analyze_running is True
         button_after_first_press = screen.query_one(
             "#library-ingest-analyze-skipped", Button
         )
@@ -282,7 +282,7 @@ async def test_second_analyze_skipped_press_while_running_gets_the_existing_noti
         await pilot.pause()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_analyze_running is False,
+            lambda: screen._media_state.analyze_running is False,
             message="the first run never settled",
         )
 
@@ -300,7 +300,7 @@ async def test_pressing_analyze_skipped_does_not_toggle_media_select_mode(
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _ingest_screen(host, pilot)
         _ready_provider(monkeypatch)
-        assert screen._library_media_select_mode is False
+        assert screen._media_state.select_mode is False
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
 
@@ -315,10 +315,10 @@ async def test_pressing_analyze_skipped_does_not_toggle_media_select_mode(
         await pilot.pause()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_analyze_running is False,
+            lambda: screen._media_state.analyze_running is False,
             message="the run never settled",
         )
-        assert screen._library_media_select_mode is False
+        assert screen._media_state.select_mode is False
         # Still on the Import canvas -- the Media canvas's own select-mode
         # exit path was never exercised into an unrelated screen state.
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
@@ -376,13 +376,13 @@ async def test_press_over_a_mixed_set_auto_skips_already_analysed_and_notifies(
         await pilot.pause()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_analyze_running is False,
+            lambda: screen._media_state.analyze_running is False,
             message="the run never settled",
         )
         await pilot.pause()
 
         assert analyzed == ["9"], "must run exactly the still-unanalysed id"
-        assert screen._library_media_analyze_choice is None, (
+        assert screen._media_state.analyze_choice is None, (
             "the Media canvas's Skip/Overwrite choice must never arm here"
         )
         assert not screen.query("#library-media-analyze-skip")
@@ -431,7 +431,7 @@ async def test_press_over_an_entirely_already_analysed_set_notifies_and_runs_not
         await pilot.pause()
 
         assert analyzed == []
-        assert screen._library_media_analyze_choice is None
+        assert screen._media_state.analyze_choice is None
         assert not screen.query("#library-media-analyze-skip")
         assert any(message == "Nothing left to analyze" for message, _ in notices), (
             notices
@@ -475,7 +475,7 @@ async def test_analyze_outcome_reports_a_raised_exceptions_own_message(monkeypat
         await pilot.pause()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_analyze_running is False,
+            lambda: screen._media_state.analyze_running is False,
             message="the run never settled",
         )
         await pilot.pause()
@@ -579,7 +579,7 @@ async def test_a_structural_change_during_a_no_fallback_repaint_still_repaints(
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _ingest_screen(host, pilot)
         _ready_provider(monkeypatch)
-        screen._library_media_analyze_running = True
+        screen._media_state.analyze_running = True
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
         button = await _wait_for_selector(
@@ -589,7 +589,7 @@ async def test_a_structural_change_during_a_no_fallback_repaint_still_repaints(
 
         # Exactly what the run's ``finally`` does -- except a structural
         # change (``unavailable_line``) landed in the same window.
-        screen._library_media_analyze_running = False
+        screen._media_state.analyze_running = False
         app.media_db = None
         screen._update_library_ingest_dynamic_regions(allow_screen_fallback=False)
         await pilot.pause()
@@ -718,7 +718,7 @@ async def test_auto_skipped_ids_are_resolved_not_left_actionable_forever(
         await pilot.pause()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_analyze_running is False,
+            lambda: screen._media_state.analyze_running is False,
             message="the run never settled",
         )
         await pilot.pause()

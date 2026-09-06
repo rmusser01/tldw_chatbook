@@ -757,7 +757,7 @@ async def test_media_trash_focus_initial_success_and_empty_fallback(
             ),
             message="Initial Trash focus did not settle on its mounted fallback.",
         )
-        assert screen._library_media_view == "trash"
+        assert screen._media_state.view == "trash"
         assert len(feed.calls) == 1
 
 
@@ -802,7 +802,7 @@ async def test_media_trash_initial_entry_failure_sets_retry_focus_intent():
         assert controller.state.applied_result is None
         assert controller.state.failed_scope == MediaTrashScope()
         assert (
-            screen._library_media_trash_focus_identity == "#library-media-trash-retry"
+            screen._media_state.trash_focus_identity == "#library-media-trash-retry"
         )
         status = await _wait_for_selector(screen, pilot, "#library-media-trash-status")
         assert status.renderable == "Could not load Trash · Retry"
@@ -949,7 +949,7 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         assert controller.state.applied_result.scope == MediaTrashScope()
         assert controller.state.failed_scope is None
         assert (
-            screen._library_media_trash_focus_identity == "#library-media-trash-search"
+            screen._media_state.trash_focus_identity == "#library-media-trash-search"
         )
         assert (
             screen.query_one("#library-media-trash-status", Static).renderable
@@ -983,7 +983,7 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         assert len(feed.calls) == calls_before_failed_bound
         assert controller.state.failed_scope == MediaTrashScope(query="failed")
         assert (
-            screen._library_media_trash_focus_identity == "#library-media-trash-search"
+            screen._media_state.trash_focus_identity == "#library-media-trash-search"
         )
         assert (
             screen.query_one("#library-media-trash-status", Static).renderable
@@ -1335,7 +1335,7 @@ async def test_media_trash_render_retry_matches_recoverable_browse_authority():
             copy="Could not restore this media item.",
         )
         controller.state = mutation_error
-        screen._library_media_trash_focus_identity = "#library-media-trash-restore"
+        screen._media_state.trash_focus_identity = "#library-media-trash-restore"
         screen._sync_library_media_trash_state(None)
         await pilot.pause()
         assert (
@@ -1344,7 +1344,7 @@ async def test_media_trash_render_retry_matches_recoverable_browse_authority():
         )
         assert not screen.query("#library-media-trash-retry")
         assert (
-            screen._library_media_trash_focus_identity == "#library-media-trash-restore"
+            screen._media_state.trash_focus_identity == "#library-media-trash-restore"
         )
 
         stale_loading = dataclasses.replace(
@@ -1358,7 +1358,7 @@ async def test_media_trash_render_retry_matches_recoverable_browse_authority():
             failed_origin=None,
         )
         controller.state = stale_loading
-        screen._library_media_trash_focus_identity = "#library-media-trash-row-0"
+        screen._media_state.trash_focus_identity = "#library-media-trash-row-0"
         screen._sync_library_media_trash_state(None)
         await pilot.pause()
         loading_status = str(
@@ -1367,7 +1367,7 @@ async def test_media_trash_render_retry_matches_recoverable_browse_authority():
         assert "Retry" not in loading_status
         assert not screen.query("#library-media-trash-retry")
         assert (
-            screen._library_media_trash_focus_identity != "#library-media-trash-retry"
+            screen._media_state.trash_focus_identity != "#library-media-trash-retry"
         )
 
         stale_failure = fail_media_trash_request(
@@ -1384,7 +1384,7 @@ async def test_media_trash_render_retry_matches_recoverable_browse_authority():
         )
         assert len(list(screen.query("#library-media-trash-retry"))) == 1
         assert (
-            screen._library_media_trash_focus_identity == "#library-media-trash-retry"
+            screen._media_state.trash_focus_identity == "#library-media-trash-retry"
         )
 
 
@@ -1447,7 +1447,7 @@ async def test_media_trash_filter_draft_survives_background_recompose():
             )
             search_after = screen.query_one("#library-media-trash-search", Input)
             assert search_after.value == "draft"
-            assert screen._library_media_trash_query_draft == "draft"
+            assert screen._media_state.trash_query_draft == "draft"
             assert controller.state.applied_result.scope == MediaTrashScope()
             await _wait_for_condition(
                 pilot,
@@ -1489,16 +1489,16 @@ async def test_media_trash_compact_status_folds_after_two_readable_rows():
         await _wait_for_selector(screen, pilot, "#library-media-trash-open")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_layout.reader_width > 0,
+            lambda: screen._media_state.reader_layout.reader_width > 0,
             message="Compact Media layout never settled.",
         )
-        if not screen._library_media_reader_layout.items_open:
+        if not screen._media_state.reader_layout.items_open:
             grip = screen.query_one("#library-media-items-grip", Button)
             grip.focus()
             await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_reader_layout.items_open,
+                lambda: screen._media_state.reader_layout.items_open,
                 message="Compact Items pane never opened.",
             )
         opener = screen.query_one("#library-media-trash-open", Button)
@@ -1654,7 +1654,7 @@ async def test_media_trash_disabled_browse_controls_name_mutation_interlock():
             failed_scope,
             copy="Filter not applied — showing All Trash.",
         )
-        screen._library_media_bulk_delete_in_flight = True
+        screen._media_state.bulk_delete_in_flight = True
         screen._sync_library_media_trash_state(None)
         await pilot.pause()
 
@@ -1673,7 +1673,7 @@ async def test_media_trash_disabled_browse_controls_name_mutation_interlock():
             assert control.disabled is True
             assert str(control.label) == label
             assert control.tooltip == reason
-        screen._library_media_bulk_delete_in_flight = False
+        screen._media_state.bulk_delete_in_flight = False
 
 
 @pytest.mark.asyncio
@@ -1834,7 +1834,7 @@ async def test_media_trash_restore_refreshes_normal_page_without_forging_rank():
         retained_applied = normal.applied_result
         retained_items = normal.retained_items
         retained_requested_scope = normal.requested_scope
-        retained_selected_id = screen._selected_media_id
+        retained_selected_id = screen._media_state.selected_media_id
 
         await _wait_for_selector(screen, pilot, "#library-media-trash-open")
         screen.query_one("#library-media-trash-open", Button).press()
@@ -1867,7 +1867,7 @@ async def test_media_trash_restore_refreshes_normal_page_without_forging_rank():
         assert normal.retained_items == retained_items
         assert normal.requested_scope == retained_requested_scope
         # A refresh the user never asked for must not move their selection.
-        assert screen._selected_media_id == retained_selected_id
+        assert screen._media_state.selected_media_id == retained_selected_id
         assert normal.pager.title_count is not None
         assert normal.pager.retry_visible is False
         assert trash.state.freshness == "fresh"
@@ -1947,7 +1947,7 @@ async def test_media_trash_commit_unknown_blocks_back_but_refresh_can_be_abandon
             )
 
             assert controller.state.mutation_pending is True
-            assert screen._library_media_bulk_delete_in_flight is True
+            assert screen._media_state.bulk_delete_in_flight is True
             back = screen.query_one("#library-media-trash-back", Button)
             assert back.disabled is True
             assert back.tooltip == "Finishing this action…"
@@ -1957,7 +1957,7 @@ async def test_media_trash_commit_unknown_blocks_back_but_refresh_can_be_abandon
             )
             assert screen.check_action("library_media_trash_back", ()) is False
             screen.action_library_media_trash_back()
-            assert screen._library_media_view == "trash"
+            assert screen._media_state.view == "trash"
 
             release_commit.set()
             await _wait_for_condition(
@@ -1967,7 +1967,7 @@ async def test_media_trash_commit_unknown_blocks_back_but_refresh_can_be_abandon
             )
             assert controller.state.mutation_pending is False
             assert controller.state.loading is True
-            assert screen._library_media_bulk_delete_in_flight is False
+            assert screen._media_state.bulk_delete_in_flight is False
             back = screen.query_one("#library-media-trash-back", Button)
             assert back.disabled is False
             assert screen.check_action("library_media_trash_back", ()) is True
@@ -1975,12 +1975,12 @@ async def test_media_trash_commit_unknown_blocks_back_but_refresh_can_be_abandon
             await pilot.press("escape")
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_view == "list",
+                lambda: screen._media_state.view == "list",
                 message="Post-commit refresh could not be abandoned.",
             )
             release_refresh.set()
             await pilot.pause()
-            assert screen._library_media_view == "list"
+            assert screen._media_state.view == "list"
     finally:
         release_commit.set()
         release_refresh.set()
@@ -2081,7 +2081,7 @@ async def test_media_trash_precommit_failure_releases_mounted_controls_without_r
         def settled_with_enabled_controls() -> bool:
             if (
                 controller.state.mutation_pending
-                or screen._library_media_bulk_delete_in_flight
+                or screen._media_state.bulk_delete_in_flight
                 or controller.state.error_copy != error_copy
             ):
                 return False
@@ -2233,7 +2233,7 @@ async def test_media_trash_malformed_mutation_results_fail_closed(
             pilot,
             lambda: (
                 not controller.state.mutation_pending
-                and not screen._library_media_bulk_delete_in_flight
+                and not screen._media_state.bulk_delete_in_flight
             ),
             message="Malformed mutation response did not settle.",
         )
@@ -2433,17 +2433,17 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
         await _wait_for_selector(screen, pilot, "#library-media-trash-open")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_reader_layout.reader_width > 0,
+            lambda: screen._media_state.reader_layout.reader_width > 0,
             message="Media reader allocation never settled for geometry inspection.",
         )
-        if not screen._library_media_reader_layout.items_open:
+        if not screen._media_state.reader_layout.items_open:
             items_grip = screen.query_one("#library-media-items-grip", Button)
             items_grip.focus()
             await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_media_reader_layout.items_open
+                    screen._media_state.reader_layout.items_open
                     and screen.query_one("#library-canvas").region.area > 0
                 ),
                 message="Items pane never opened for compact Trash inspection.",
@@ -2523,7 +2523,7 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                 f"filters={filters.region!r}, status={status.region!r}, "
                 f"list={trash_list.region!r}, pager={pager.region!r}, "
                 f"actions={action_region.region!r}, "
-                f"layout={screen._library_media_reader_layout!r}, "
+                f"layout={screen._media_state.reader_layout!r}, "
                 f"items_display={items_pane.display!r}, "
                 f"items={items_pane.region!r}, "
                 "canvas="
@@ -2672,7 +2672,7 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
             message="Media page 2 never applied.",
         )
         selected_id = str(controller.retained_items[4]["id"])
-        screen._selected_media_id = selected_id
+        screen._media_state.selected_media_id = selected_id
         row_scroll = screen.query_one("#library-media-row-scroll")
         row_scroll.scroll_to(y=4, animate=False, force=True, immediate=True)
         await pilot.pause()
@@ -2680,7 +2680,7 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
         assert scroll_offset[1] > 0
 
         viewer_receipt = ("viewer-sentinel", (0, 1))
-        screen._library_media_viewer_return = viewer_receipt
+        screen._media_state.viewer_return = viewer_receipt
         opener = screen.query_one("#library-media-trash-open", Button)
         opener.focus()
         await pilot.press("enter")
@@ -2727,7 +2727,7 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
             back.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_view == "list",
+            lambda: screen._media_state.view == "list",
             message=f"Trash {exit_key} exit never reached normal Media.",
         )
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
@@ -2738,8 +2738,8 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
         )
 
         assert controller.applied_scope == MediaBrowseScope(page=2)
-        assert screen._selected_media_id == selected_id
-        assert screen._library_media_viewer_return == viewer_receipt
+        assert screen._media_state.selected_media_id == selected_id
+        assert screen._media_state.viewer_return == viewer_receipt
         restored_scroll = screen.query_one("#library-media-row-scroll")
         assert (int(restored_scroll.scroll_x), int(restored_scroll.scroll_y)) == (
             scroll_offset
@@ -2786,11 +2786,11 @@ async def test_media_trash_back_generation_fences_late_reactivated_completion():
             # Model the same retained Screen becoming Trash-active again before
             # any new request generation starts. Only Back's explicit
             # invalidation can fence the first session in this interval.
-            screen._library_media_view = "trash"
+            screen._media_state.view = "trash"
             feed.release.set()
             await pilot.pause()
             await pilot.pause()
-            screen._library_media_view = "list"
+            screen._media_state.view = "list"
 
             assert trash_controller.state.applied_result is None
             assert screen.query("#library-media-canvas")
@@ -2848,7 +2848,7 @@ async def test_media_trash_unmount_generation_fences_late_completion():
                 # Match the Back inverse: make the retained predicates active
                 # again so only the explicit generation fence can reject the
                 # first session's completion.
-                screen._library_media_view = "trash"
+                screen._media_state.view = "trash"
                 feed.release.set()
                 await asyncio.sleep(0)
 
@@ -2955,11 +2955,11 @@ async def test_media_trash_unmount_fences_inflight_restore_completion():
 
             screen.refresh = record_refresh
             screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-            screen._library_media_view = "trash"
+            screen._media_state.view = "trash"
             restore_gate.release.set()
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._library_media_bulk_delete_in_flight,
+                lambda: not screen._media_state.bulk_delete_in_flight,
                 message="Stale restore did not release the shared interlock.",
             )
 
@@ -3113,11 +3113,11 @@ def _bind_trash_mutation_seams(fake):
         ),
         request_facets=lambda **kwargs: events.append(("facets", kwargs)),
     )
-    fake._library_media_mutation_scope = None
-    fake._library_media_mutation_authority = None
-    fake._library_media_lifecycle_generation = 0
+    fake._media_state.mutation_scope = None
+    fake._media_state.mutation_authority = None
+    fake._media_state.lifecycle_generation = 0
     fake._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    fake._library_media_type_choices_visible = False
+    fake._media_state.type_choices_visible = False
     fake._sync_library_media_browse_state = lambda *_args: events.append(("sync",))
     fake._sync_library_media_viewer_mutation_gate = lambda: None
     fake._begin_library_media_mutation = types.MethodType(
@@ -3140,7 +3140,7 @@ def _bind_trash_mutation_seams(fake):
     fake._complete_library_media_mutation = types.MethodType(
         LibraryScreen._complete_library_media_mutation, fake
     )
-    if fake._library_media_bulk_delete_in_flight:
+    if fake._media_state.bulk_delete_in_flight:
         fake._begin_library_media_mutation()
     return fake
 
@@ -3187,19 +3187,24 @@ def _trash_view_fake(
         ),
     )
     fake = SimpleNamespace(
-        _library_media_select_mode=False,
-        _library_media_row_selection=RowSelection("media"),
-        _library_media_confirming_bulk_delete=False,
-        _library_media_bulk_delete_in_flight=in_flight,
-        _library_media_delete_receipt_ids=("stale-receipt-id",),
-        _library_media_view=view,
+        _media_state=SimpleNamespace(
+            select_mode=False,
+            row_selection=RowSelection("media"),
+            confirming_bulk_delete=False,
+            bulk_delete_in_flight=in_flight,
+            delete_receipt_ids=("stale-receipt-id",),
+            view=view,
+            trash_query_draft="",
+            trash_input_error="",
+            trash_type_choices_visible=False,
+            trash_focus_identity="#library-media-trash-row-0",
+            trash_return=None,
+        ),
+        # WIRING (a live prior-extracted controller instance) and shell
+        # state -- neither is a `LibraryMediaState` field, so both stay flat
+        # and move below the block wave-7 task 3 nests under `_media_state`.
         _library_media_trash_browse_controller=trash_controller,
-        _library_media_trash_query_draft="",
-        _library_media_trash_input_error="",
-        _library_media_trash_type_choices_visible=False,
-        _library_media_trash_focus_identity="#library-media-trash-row-0",
         _library_notes_focus_intent_generation=0,
-        _library_media_trash_return=None,
         _trash_controller_calls=trash_controller_calls,
         app_instance=SimpleNamespace(notify=lambda msg, **k: notified.append((msg, k))),
         _notified=notified,
@@ -3262,10 +3267,13 @@ def _failed_trash_restore_screen_fake():
     )
     fake = SimpleNamespace(
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
-        _library_media_view="trash",
+        _media_state=SimpleNamespace(
+            view="trash",
+            trash_input_error="",
+            trash_focus_identity="#library-media-trash-restore",
+        ),
+        # WIRING, not state -- stays flat (see the note in `_trash_view_fake`).
         _library_media_trash_browse_controller=SimpleNamespace(state=state),
-        _library_media_trash_input_error="",
-        _library_media_trash_focus_identity="#library-media-trash-restore",
         _focus_library_media_trash_intent=lambda: None,
     )
     fake._library_media_trash_retry_visible = types.MethodType(
@@ -3298,7 +3306,7 @@ def test_media_trash_restore_failure_preserves_restore_focus_not_retry(monkeypat
 
     LibraryScreen._sync_library_media_trash_state(fake, None)
 
-    assert fake._library_media_trash_focus_identity == "#library-media-trash-restore"
+    assert fake._media_state.trash_focus_identity == "#library-media-trash-restore"
     assert len(sync_calls) == 1
 
 
@@ -3338,7 +3346,9 @@ def test_media_trash_committed_refresh_failure_keeps_success_notice_and_retry():
     )
     fake = SimpleNamespace(
         _library_media_trash_browse_controller=SimpleNamespace(state=failed),
-        _library_media_trash_input_error="",
+        _media_state=SimpleNamespace(
+            trash_input_error="",
+        ),
     )
     fake._library_media_trash_retry_visible = types.MethodType(
         LibraryScreen._library_media_trash_retry_visible, fake
@@ -3381,11 +3391,11 @@ def test_trash_open_enters_view_resets_state_and_kicks_fetch():
 
     LibraryScreen.handle_library_media_trash_open(fake, event)
 
-    assert fake._library_media_view == "trash"
-    assert fake._library_media_delete_receipt_ids == ()
+    assert fake._media_state.view == "trash"
+    assert fake._media_state.delete_receipt_ids == ()
     assert fake._library_media_trash_browse_controller.state == MediaTrashBrowseState()
-    assert fake._library_media_trash_query_draft == ""
-    assert fake._library_media_trash_input_error == ""
+    assert fake._media_state.trash_query_draft == ""
+    assert fake._media_state.trash_input_error == ""
     assert fake._refresh_calls == [{"recompose": True}]
     assert fake._trash_controller_calls == [
         ("invalidate",),
@@ -3422,14 +3432,17 @@ def test_trash_back_returns_to_list_and_drops_session_state():
         invalidate=lambda: events.append("invalidate"),
     )
     fake = SimpleNamespace(
-        _library_media_bulk_delete_in_flight=False,
+        _media_state=SimpleNamespace(
+            bulk_delete_in_flight=False,
+            view="trash",
+            trash_query_draft="old",
+            trash_input_error="old error",
+            trash_type_choices_visible=True,
+            trash_focus_identity="#old-focus",
+            trash_return=None,
+        ),
+        # WIRING, not state -- stays flat.
         _library_media_trash_browse_controller=controller,
-        _library_media_view="trash",
-        _library_media_trash_query_draft="old",
-        _library_media_trash_input_error="old error",
-        _library_media_trash_type_choices_visible=True,
-        _library_media_trash_focus_identity="#old-focus",
-        _library_media_trash_return=None,
         _apply_library_media_list_return=LibraryScreen._apply_library_media_list_return,
         call_next=lambda callback, receipt: events.append(
             ("return", callback, receipt)
@@ -3445,11 +3458,11 @@ def test_trash_back_returns_to_list_and_drops_session_state():
 
     LibraryScreen.handle_library_media_trash_back(fake, event)
 
-    assert fake._library_media_view == "list"
+    assert fake._media_state.view == "list"
     assert controller.state.requested_scope == MediaTrashScope()
-    assert fake._library_media_trash_query_draft == ""
-    assert fake._library_media_trash_input_error == ""
-    assert fake._library_media_trash_type_choices_visible is False
+    assert fake._media_state.trash_query_draft == ""
+    assert fake._media_state.trash_input_error == ""
+    assert fake._media_state.trash_type_choices_visible is False
     assert events[0] == "invalidate"
     assert events[1][0] == "return"
     assert events[1][1] == LibraryScreen._apply_library_media_list_return
@@ -3476,7 +3489,7 @@ def test_trash_restore_reads_resolved_selection_and_claims_shared_flag():
 
     LibraryScreen.handle_library_media_trash_restore(fake, event)
 
-    assert fake._library_media_bulk_delete_in_flight is True
+    assert fake._media_state.bulk_delete_in_flight is True
     assert len(fake._worker_calls) == 1
     coro, kwargs = fake._worker_calls[0]
     assert kwargs.get("exclusive") is True
@@ -3502,7 +3515,7 @@ def test_trash_restore_refused_while_delete_or_undo_in_flight():
 
     LibraryScreen.handle_library_media_trash_restore(fake, event)
 
-    assert fake._library_media_bulk_delete_in_flight is True
+    assert fake._media_state.bulk_delete_in_flight is True
 
 
 def test_trash_restore_noop_when_trash_empty():
@@ -3512,7 +3525,7 @@ def test_trash_restore_noop_when_trash_empty():
 
     LibraryScreen.handle_library_media_trash_restore(fake, event)
 
-    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._media_state.bulk_delete_in_flight is False
 
 
 def test_media_trash_completion_refreshes_the_page_it_fenced():
@@ -3529,11 +3542,11 @@ def test_media_trash_completion_refreshes_the_page_it_fenced():
         total=1,
         in_flight=True,
     )
-    restore._selected_media_id = "local:media:22"
+    restore._media_state.selected_media_id = "local:media:22"
     restore._library_media_focus_identity = "#library-media-row-1"
     restore._library_media_scroll_offset = (0, 7)
     retained_presentation = (
-        restore._selected_media_id,
+        restore._media_state.selected_media_id,
         restore._library_media_focus_identity,
         restore._library_media_scroll_offset,
     )
@@ -3552,11 +3565,11 @@ def test_media_trash_completion_refreshes_the_page_it_fenced():
     )
 
     assert (
-        restore._selected_media_id,
+        restore._media_state.selected_media_id,
         restore._library_media_focus_identity,
         restore._library_media_scroll_offset,
     ) == retained_presentation
-    assert restore._library_media_bulk_delete_in_flight is False
+    assert restore._media_state.bulk_delete_in_flight is False
     assert not any(event[0] == "mark-stale" for event in restore._mutation_events)
     assert (
         "reconcile",
@@ -3572,7 +3585,7 @@ def test_media_trash_completion_refreshes_the_page_it_fenced():
     )
     LibraryScreen._complete_library_media_mutation(permanent, committed=True)
 
-    assert permanent._library_media_bulk_delete_in_flight is False
+    assert permanent._media_state.bulk_delete_in_flight is False
     assert not any(event[0] == "mark-stale" for event in permanent._mutation_events)
     assert (
         "reconcile",
@@ -3601,8 +3614,8 @@ def test_media_trash_delete_opener_is_consumed_and_only_opens_confirmation():
     assert stopped == [True]
     assert calls == [("open", "5")]
     assert fake._worker_calls == []
-    assert fake._library_media_bulk_delete_in_flight is False
-    assert fake._library_media_trash_focus_identity == (
+    assert fake._media_state.bulk_delete_in_flight is False
+    assert fake._media_state.trash_focus_identity == (
         "#library-media-trash-delete-cancel"
     )
 
@@ -3633,7 +3646,7 @@ def test_media_trash_permanent_confirm_double_press_schedules_one_shared_worker(
     LibraryScreen.handle_library_media_trash_delete_confirm(fake, event)
 
     assert claims == ["5"]
-    assert fake._library_media_bulk_delete_in_flight is True
+    assert fake._media_state.bulk_delete_in_flight is True
     assert len(fake._worker_calls) == 1
     coroutine, worker_kwargs = fake._worker_calls[0]
     assert worker_kwargs == {
@@ -3684,10 +3697,12 @@ async def test_media_trash_permanent_delete_uses_only_scope_service_target_seam(
                 ("trash-request", kwargs)
             ),
         ),
-        _library_media_bulk_delete_in_flight=True,
-        _library_media_mutation_scope=MediaBrowseScope(page=2),
-        _library_media_mutation_authority=7,
-        _library_media_lifecycle_generation=7,
+        _media_state=SimpleNamespace(
+            bulk_delete_in_flight=True,
+            mutation_scope=MediaBrowseScope(page=2),
+            mutation_authority=7,
+            lifecycle_generation=7,
+        ),
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_browse_controller=SimpleNamespace(
             mutation_refresh_scope=MediaBrowseScope(page=2),
@@ -3726,7 +3741,7 @@ async def test_media_trash_permanent_delete_uses_only_scope_service_target_seam(
     assert ("reconcile", {"remove_ids": (), "upsert_items": ()}) in events
     assert any(event[0] == "media-request" for event in events)
     assert any(event[0] == "facets" for event in events)
-    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._media_state.bulk_delete_in_flight is False
 
 
 @pytest.mark.asyncio
@@ -3782,10 +3797,12 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
             notify=lambda message, **_kwargs: events.append(("notify", message)),
         ),
         _library_media_trash_browse_controller=controller,
-        _library_media_bulk_delete_in_flight=True,
-        _library_media_mutation_scope=MediaBrowseScope(),
-        _library_media_mutation_authority=2,
-        _library_media_lifecycle_generation=2,
+        _media_state=SimpleNamespace(
+            bulk_delete_in_flight=True,
+            mutation_scope=MediaBrowseScope(),
+            mutation_authority=2,
+            lifecycle_generation=2,
+        ),
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_browse_controller=SimpleNamespace(
             mutation_refresh_scope=MediaBrowseScope(),
@@ -3822,7 +3839,7 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
         in {"trash-request", "media-request", "facets", "reconcile", "mark-stale"}
         for event in events
     )
-    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._media_state.bulk_delete_in_flight is False
 
 
 async def _trash_screen_over_a_real_controller(
@@ -3877,9 +3894,12 @@ async def _trash_screen_over_a_real_controller(
         pytest.fail("no worker may start on a refused claim")
 
     fake = SimpleNamespace(
-        _library_media_bulk_delete_in_flight=False,
+        _media_state=SimpleNamespace(
+            bulk_delete_in_flight=False,
+            trash_focus_identity="#library-media-trash-row-0",
+        ),
+        # WIRING and shell state -- neither is a `LibraryMediaState` field.
         _library_media_trash_browse_controller=controller,
-        _library_media_trash_focus_identity="#library-media-trash-row-0",
         _library_notes_focus_intent_generation=0,
         is_mounted=False,
         refresh=lambda **_kwargs: None,
@@ -3936,7 +3956,7 @@ async def test_trash_claim_is_rolled_back_when_the_mutation_never_reaches_a_work
         handler(fake, event)
 
     assert controller.state.mutation_pending is False
-    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._media_state.bulk_delete_in_flight is False
     # The row survives an attempt that never touched the database, and the
     # surface says so rather than sitting silently disabled.
     assert controller.state.retained_items == (_canonical_trash_items(1)[0],)
@@ -3955,8 +3975,10 @@ def test_escape_gate_only_passes_in_trash_view():
 
     in_trash = SimpleNamespace(
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
-        _library_media_view="trash",
-        _library_media_bulk_delete_in_flight=False,
+        _media_state=SimpleNamespace(
+            view="trash",
+            bulk_delete_in_flight=False,
+        ),
     )
     assert LibraryScreen.check_action(in_trash, "library_media_trash_back", ()) is True
     assert (
@@ -3965,13 +3987,17 @@ def test_escape_gate_only_passes_in_trash_view():
 
     in_list = SimpleNamespace(
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
-        _library_media_view="list",
+        _media_state=SimpleNamespace(
+            view="list",
+        ),
     )
     assert LibraryScreen.check_action(in_list, "library_media_trash_back", ()) is False
 
     other_row = SimpleNamespace(
         _library_selected_row_id="browse-notes",
-        _library_media_view="trash",
+        _media_state=SimpleNamespace(
+            view="trash",
+        ),
     )
     assert (
         LibraryScreen.check_action(other_row, "library_media_trash_back", ()) is False
@@ -4019,7 +4045,9 @@ def _restore_fake(*, db, trash_records, media_records, media_count):
         _local_source_counts={"media": media_count},
         # The real caller (``handle_library_media_trash_restore``) claims
         # the shared flag BEFORE scheduling this coroutine.
-        _library_media_bulk_delete_in_flight=True,
+        _media_state=SimpleNamespace(
+            bulk_delete_in_flight=True,
+        ),
         is_mounted=True,
         refresh=lambda **k: refresh_calls.append(k),
         call_after_refresh=lambda fn, *a: after_refresh.append(fn),
@@ -4096,7 +4124,7 @@ async def test_restore_via_real_db_moves_item_back_and_updates_counts(tmp_path):
     assert any(event[0] == "request" for event in fake._trash_controller_events)
     assert fake._notified == []
     assert fake._refresh_calls == [{"recompose": True}]
-    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._media_state.bulk_delete_in_flight is False
     assert fake._mutation_events[0] == ("begin",)
     # task-31275: the app's own restore reconciles the page it fenced and
     # re-reads it, instead of leaving a Retry the user has to press.
@@ -4208,7 +4236,7 @@ async def test_restore_failure_warns_keeps_row_and_clears_flag(tmp_path):
     assert ("failure", target, "Could not restore this media item.") in (
         fake._trash_controller_events
     )
-    assert fake._library_media_bulk_delete_in_flight is False
+    assert fake._media_state.bulk_delete_in_flight is False
 
     db.close_connection()
 
@@ -4379,7 +4407,7 @@ async def test_restore_from_trash_returns_a_fresh_media_list(tmp_path):
             await _wait_for_condition(
                 pilot,
                 lambda: (
-                    screen._library_media_view == "list"
+                    screen._media_state.view == "list"
                     and not normal.loading
                     and bool(screen.query("#library-media-canvas"))
                 ),
@@ -4575,13 +4603,13 @@ async def test_trash_list_cap_follows_a_resize():
 
         await pilot.resize_terminal(100, 30)
         await pilot.pause()
-        if not screen._library_media_reader_layout.items_open:
+        if not screen._media_state.reader_layout.items_open:
             grip = screen.query_one("#library-media-items-grip", Button)
             grip.focus()
             await pilot.press("enter")
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_reader_layout.items_open,
+                lambda: screen._media_state.reader_layout.items_open,
                 message="Items pane never reopened after the resize.",
             )
         trash_list = screen.query_one("#library-media-trash-list")

@@ -38,7 +38,9 @@ def _banner_fake(service, *, loaded=None) -> SimpleNamespace:
     fake = SimpleNamespace(
         _review_set_service=lambda: service,
         _review_set_live_ids=lambda ids: {int(i) for i in ids},
-        _library_media_reader_session=SimpleNamespace(loaded_backing_id=loaded),
+        _media_state=SimpleNamespace(
+            reader_session=SimpleNamespace(loaded_backing_id=loaded),
+        ),
     )
     fake._active_review_set_banner = MethodType(
         LibraryScreen._active_review_set_banner, fake

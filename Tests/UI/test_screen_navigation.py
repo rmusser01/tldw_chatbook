@@ -2391,11 +2391,11 @@ def test_check_action_gates_media_viewer_back_to_active_viewer():
 
     # Media selected but showing the LIST, not the viewer -- inactive.
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "list"
+    screen._media_state.view = "list"
     assert screen.check_action("library_media_viewer_back", ()) is False
 
     # Media viewer genuinely open -- active.
-    screen._library_media_view = "viewer"
+    screen._media_state.view = "viewer"
     assert screen.check_action("library_media_viewer_back", ()) is True
 
     # A different row selected (stale view flag) -- inactive.
@@ -2424,14 +2424,14 @@ def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_s
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "viewer"
+    screen._media_state.view = "viewer"
 
     # Plain read-only viewer -- no sub-state active -- Escape genuinely
     # goes straight to the list, so "back" is true here (task-31272
     # shortened the vocabulary to four words).
-    screen._library_media_editing = False
-    screen._library_media_confirming_delete = False
-    screen._library_media_editing_analysis = False
+    screen._media_state.editing = False
+    screen._media_state.confirming_delete = False
+    screen._media_state.editing_analysis = False
     screen._register_footer_shortcuts()
     _source, plain_shortcuts = screen._footer_shortcut_registration
     assert dict(plain_shortcuts)["esc"] == "back"
@@ -2439,21 +2439,21 @@ def test_register_footer_shortcuts_distinguishes_plain_viewer_from_a_media_sub_s
     # Mid-edit sub-state active -- Escape only steps back to the plain
     # viewer (see action_library_media_viewer_back's staged exit), so the
     # footer must NOT repeat "back to list" here.
-    screen._library_media_editing = True
+    screen._media_state.editing = True
     screen._register_footer_shortcuts()
     _source, edit_shortcuts = screen._footer_shortcut_registration
     assert dict(edit_shortcuts)["esc"] == "close"
     assert edit_shortcuts != plain_shortcuts
 
     # Same for the delete-confirm and analysis-edit sub-states.
-    screen._library_media_editing = False
-    screen._library_media_confirming_delete = True
+    screen._media_state.editing = False
+    screen._media_state.confirming_delete = True
     screen._register_footer_shortcuts()
     _source, delete_shortcuts = screen._footer_shortcut_registration
     assert dict(delete_shortcuts)["esc"] == "close"
 
-    screen._library_media_confirming_delete = False
-    screen._library_media_editing_analysis = True
+    screen._media_state.confirming_delete = False
+    screen._media_state.editing_analysis = True
     screen._register_footer_shortcuts()
     _source, analysis_shortcuts = screen._footer_shortcut_registration
     assert dict(analysis_shortcuts)["esc"] == "close"
@@ -2601,9 +2601,9 @@ def test_check_action_gates_list_focus_rail_to_showing_list():
     assert screen.check_action("library_list_focus_rail", ()) is False
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "list"
+    screen._media_state.view = "list"
     assert screen.check_action("library_list_focus_rail", ()) is True
-    screen._library_media_view = "viewer"
+    screen._media_state.view = "viewer"
     assert screen.check_action("library_list_focus_rail", ()) is False
 
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
@@ -2648,8 +2648,8 @@ def test_check_action_gates_media_bulk_delete_cancel_to_armed_confirm():
 
     # Media list, Select mode active, but no confirmation armed -- inactive.
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "list"
-    screen._library_media_select_mode = True
+    screen._media_state.view = "list"
+    screen._media_state.select_mode = True
     assert screen.check_action("library_media_bulk_delete_cancel", ()) is False
 
     # The confirmation is armed -- active. Note ``library_list_focus_rail``
@@ -2657,12 +2657,12 @@ def test_check_action_gates_media_bulk_delete_cancel_to_armed_confirm():
     # showing) -- see ``test_library_media_bulk_delete_cancel_binding_
     # precedes_focus_rail`` for the ordering guarantee that keeps only
     # ONE of the two from ever actually firing.
-    screen._library_media_confirming_bulk_delete = True
+    screen._media_state.confirming_bulk_delete = True
     assert screen.check_action("library_media_bulk_delete_cancel", ()) is True
     assert screen.check_action("library_list_focus_rail", ()) is True
 
     # Cancelling (or completing) the confirmation drops it again.
-    screen._library_media_confirming_bulk_delete = False
+    screen._media_state.confirming_bulk_delete = False
     assert screen.check_action("library_media_bulk_delete_cancel", ()) is False
 
     # Unrelated actions are untouched by the new gate.
@@ -2713,16 +2713,16 @@ def test_action_library_media_bulk_delete_cancel_dismisses_confirmation():
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "list"
-    screen._library_media_select_mode = True
-    screen._library_media_confirming_bulk_delete = True
+    screen._media_state.view = "list"
+    screen._media_state.select_mode = True
+    screen._media_state.confirming_bulk_delete = True
 
     refresh_calls = []
     screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
 
     screen.action_library_media_bulk_delete_cancel()
 
-    assert screen._library_media_confirming_bulk_delete is False
+    assert screen._media_state.confirming_bulk_delete is False
     # ``_sync_library_canvas`` fails closed to a full recompose here (no
     # ``#library-media-canvas`` mounted on this bare screen) -- the same
     # fallback the button handler's own test relies on.
@@ -2741,9 +2741,9 @@ def test_register_footer_shortcuts_advertises_cancel_while_bulk_delete_confirm_a
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "list"
-    screen._library_media_select_mode = True
-    screen._library_media_confirming_bulk_delete = True
+    screen._media_state.view = "list"
+    screen._media_state.select_mode = True
+    screen._media_state.confirming_bulk_delete = True
 
     screen._register_footer_shortcuts()
     _source, shortcuts = screen._footer_shortcut_registration
@@ -2873,11 +2873,11 @@ def test_action_show_workbench_help_lists_reader_action_keys(monkeypatch):
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "viewer"
+    screen._media_state.view = "viewer"
     # A settled Reader (loaded == selected, no pending request) so the l/c/t
     # accelerators are genuinely active (task-28027 / Qodo #2317).
-    screen._selected_media_id = "local:media:1"
-    screen._library_media_reader_session = LibraryMediaReaderSessionState(
+    screen._media_state.selected_media_id = "local:media:1"
+    screen._media_state.reader_session = LibraryMediaReaderSessionState(
         selected_id="local:media:1",
         selected_backing_id=1,
         loaded_id="local:media:1",
@@ -2919,7 +2919,7 @@ def test_action_show_workbench_help_filters_bindings_by_check_action(monkeypatch
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "list"
+    screen._media_state.view = "list"
 
     pushed = []
 
@@ -3042,10 +3042,10 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "viewer"
-    screen._library_media_editing = False
-    screen._library_media_confirming_delete = False
-    screen._library_media_editing_analysis = False
+    screen._media_state.view = "viewer"
+    screen._media_state.editing = False
+    screen._media_state.confirming_delete = False
+    screen._media_state.editing_analysis = False
     # The Escape-from-viewer flow this test pins starts from a BROWSED
     # list: the user loaded a Media page, opened an item, and Escape
     # returns to that same applied page. Seed the browse controller with
@@ -3101,7 +3101,7 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
 
     screen.action_library_media_viewer_back()
 
-    assert screen._library_media_view == "list"
+    assert screen._media_state.view == "list"
     # task-21116: no whole-screen recompose at click time -- the exit is a
     # scheduled canvas-child swap plus the entry-focus arm.
     assert refresh_calls == []
@@ -3129,9 +3129,13 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
 @pytest.mark.parametrize(
     "sub_state_flag",
     [
-        "_library_media_editing",
-        "_library_media_confirming_delete",
-        "_library_media_editing_analysis",
+        # wave-7 task 3: `LibraryMediaState` field names -- the flat
+        # `_library_media_*` screen shims were deleted with the state block,
+        # and a plain `setattr`/`getattr` cannot follow a dotted path, so the
+        # RECEIVER moves to `screen._media_state` instead (skills precedent).
+        "editing",
+        "confirming_delete",
+        "editing_analysis",
     ],
 )
 def test_action_library_media_viewer_back_steps_out_of_a_sub_state_first(
@@ -3150,11 +3154,11 @@ def test_action_library_media_viewer_back_steps_out_of_a_sub_state_first(
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_view = "viewer"
-    screen._library_media_editing = False
-    screen._library_media_confirming_delete = False
-    screen._library_media_editing_analysis = False
-    setattr(screen, sub_state_flag, True)
+    screen._media_state.view = "viewer"
+    screen._media_state.editing = False
+    screen._media_state.confirming_delete = False
+    screen._media_state.editing_analysis = False
+    setattr(screen._media_state, sub_state_flag, True)
 
     refresh_calls = []
     focus_calls = []
@@ -3165,8 +3169,8 @@ def test_action_library_media_viewer_back_steps_out_of_a_sub_state_first(
     screen.action_library_media_viewer_back()
 
     # Still on the viewer -- Escape did NOT jump to the list.
-    assert screen._library_media_view == "viewer"
-    assert getattr(screen, sub_state_flag) is False
+    assert screen._media_state.view == "viewer"
+    assert getattr(screen._media_state, sub_state_flag) is False
     assert refresh_calls == [True]
     # No entry-focus request armed -- the list was never re-entered.
     assert focus_calls == []
@@ -3523,8 +3527,8 @@ def test_focus_library_list_entry_prefers_still_checked_row_in_select_mode():
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-    screen._library_media_select_mode = True
-    screen._library_media_row_selection = selection
+    screen._media_state.select_mode = True
+    screen._media_state.row_selection = selection
     screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b, row_c])
 
     screen._focus_library_list_entry()
@@ -3550,8 +3554,8 @@ def test_focus_library_list_entry_falls_back_to_first_row_outside_active_selecti
     # Outside Select mode entirely.
     row_a = _FakeMediaRowButton("1")
     row_b = _FakeMediaRowButton("2")
-    screen._library_media_select_mode = False
-    screen._library_media_row_selection = RowSelection("media")
+    screen._media_state.select_mode = False
+    screen._media_state.row_selection = RowSelection("media")
     screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b])
     screen.set_focus = lambda target, **_kwargs: target.focus()
     screen._focus_library_list_entry()
@@ -3562,8 +3566,8 @@ def test_focus_library_list_entry_falls_back_to_first_row_outside_active_selecti
     # delete already cleared the selection before arming this).
     row_c = _FakeMediaRowButton("3")
     row_d = _FakeMediaRowButton("4")
-    screen._library_media_select_mode = True
-    screen._library_media_row_selection = RowSelection("media")
+    screen._media_state.select_mode = True
+    screen._media_state.row_selection = RowSelection("media")
     screen.query = lambda selector: _FakeMediaRowQuery([row_c, row_d])
     screen._focus_library_list_entry()
     assert row_c.focused is True
@@ -3584,7 +3588,7 @@ def test_focus_library_list_entry_checked_row_preference_is_media_only():
     screen._library_notes_source = "database"
     screen._library_notes_view = "list"
     # Deliberately True/non-empty -- MUST be ignored for a non-Media list.
-    screen._library_media_select_mode = True
+    screen._media_state.select_mode = True
 
     row_a = _FakeMediaRowButton("n1")
     row_b = _FakeMediaRowButton("n2")

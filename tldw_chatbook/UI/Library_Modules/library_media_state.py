@@ -8,10 +8,15 @@ closely, since Media also has an entangled reader-preferences group and a
 bare-underscore third-prefix field). Every field here was moved verbatim out
 of ``LibraryScreen.__init__`` (one out of the class body -- see
 ``arrival_note`` below) in ``tldw_chatbook/UI/Screens/library_screen.py`` --
-same default, same type, same comment. The state PR keeps every original
+same default, same type, same comment. The state PR kept every original
 ``_library_media_<field>``/``_selected_media_id`` attribute name alive as a
 generated getter/setter ``@property`` shim on ``LibraryScreen``, between
-sentinel comments, so no method body had to be edited.
+sentinel comments, so no method body had to be edited; task 3 (the cleanup
+PR) retargeted every one of those references to ``self._media_state.<field>``
+and DELETED that screen block. The identical generated loop lives on
+permanently one layer down, in ``LibraryMediaController``, because the
+byte-for-byte canon forbids editing the moved bodies that still spell the
+flat names.
 
 **Note on the two ``library_media_state`` modules (basename collision).**
 This file (``tldw_chatbook/UI/Library_Modules/library_media_state.py``) is the
@@ -95,7 +100,7 @@ recipe's own caveat that the script's tags are name-based, not body-based):
   surfaces``, ...). The sixteenth, ``_record_library_notes_focus_
   interaction``, is Notes-named and uses a read-only route guard
   (``self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA and
-  self._library_media_view == "list"``) -- it consults where Media is before
+  self._media_state.view == "list"``) -- it consults where Media is before
   deciding whether a Notes focus interaction applies, exactly as the thirteen
   shell guards do. This matches the prompts series' already-landed precedent
   for ``_library_prompts_mutation_in_flight``, which three Notes-named
@@ -165,8 +170,11 @@ are deleted outright:
 - ``preview_factory`` / ``preview_factory_injected`` read the
   ``preview_widget_factory`` keyword parameter of ``LibraryScreen.__init__``.
 - ``analyze_origin`` reads the module constant ``_ANALYZE_ORIGIN_MEDIA``,
-  which stays in ``library_screen.py`` (``Tests/UI/test_library_ingest_
-  analyze_skipped.py`` pins it at that module path). Passing it keeps the
+  which task 2 relocated to ``Library_Modules/screen_constants.py`` and
+  ``library_screen.py`` imports BACK, so it still RESOLVES at the
+  ``library_screen`` module path (``Tests/UI/test_library_ingest_
+  analyze_skipped.py`` pins that attribute, not the definition site).
+  Passing it keeps the
   single-source-of-truth that constant's own comment demands rather than
   re-spelling ``"media"`` here.
 

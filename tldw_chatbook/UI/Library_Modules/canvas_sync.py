@@ -169,7 +169,9 @@ def _apply_library_row_toggle(
             ``#library-<kind>-export-selected`` action-strip ids, plus the
             row-selection object: for "conversations" that is the dotted
             path ``screen._conversations_state.row_selection`` (extracted
-            to ``LibraryConversationsState``, task 6/9); for every other,
+            to ``LibraryConversationsState``, task 6/9) and for "media" the
+            dotted path ``screen._media_state.row_selection`` (extracted to
+            ``LibraryMediaState``, wave-7); for every other,
             not-yet-extracted kind it is still the flat attribute
             ``screen._library_<kind>_row_selection``. ``operator.attrgetter``
             resolves both shapes identically -- see the dispatch comment in
@@ -183,7 +185,8 @@ def _apply_library_row_toggle(
         row_id: The row's id, already toggled into/out of the same
             row-selection object described under ``kind`` above (dotted
             ``screen._conversations_state.row_selection`` for
-            conversations, flat ``screen._library_<kind>_row_selection``
+            conversations, dotted ``screen._media_state.row_selection`` for
+            media, flat ``screen._library_<kind>_row_selection``
             for every other kind) by the caller -- read back here (single
             source of truth) rather than inferred by flipping the old
             marker text.
@@ -203,9 +206,16 @@ def _apply_library_row_toggle(
         # not-yet-extracted, kind. Future subsystem extractions hit this
         # exact same shape (see `_assign_library_reader_preferences_attribute`
         # in `library_screen.py` for the read+write sibling of this fix).
+        # (wave-7 task 3) Media is the second kind to need the dotted form:
+        # its `row_selection` field now lives on `screen._media_state`, and
+        # the f-string spelling below can no longer reach it -- the exact
+        # "computed name silently stops resolving" shape this dispatch
+        # comment exists to warn about.
         row_selection_attribute = (
             "_conversations_state.row_selection"
             if kind == "conversations"
+            else "_media_state.row_selection"
+            if kind == "media"
             else f"_library_{kind}_row_selection"
         )
         selection = operator.attrgetter(row_selection_attribute)(screen)
@@ -416,7 +426,7 @@ def _sync_library_canvas(
             # filtering the selected item out left the canvas highlighting
             # row 0 while "Open in viewer" still opened the filtered-out
             # item (task-15457 review round 1, Critical 1).
-            screen._selected_media_id = media_state.selected_id
+            screen._media_state.selected_media_id = media_state.selected_id
             sync_args = (media_state,)
             sync_kwargs = screen._library_media_canvas_presentation()
         elif kind == "media-trash":
