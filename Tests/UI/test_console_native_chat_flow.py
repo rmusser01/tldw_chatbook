@@ -21,10 +21,13 @@ from textual.pilot import OutOfBounds
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from Tests.fixtures.required_doubles import exploding_double
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.console_controller_stubs import stub_image_controller
-from Tests.UI.app_factory import _build_test_app as _build_production_app
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -1405,7 +1408,7 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
         "persist_provider_settings_atomic",
         lambda *_args, **_kwargs: ConfigMutationResult(True, True, None),
     )
-    app = _build_production_app(configured_default="chat")
+    app = _build_test_app(configured_default="chat")
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-5"
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
@@ -1605,7 +1608,7 @@ async def test_conversation_settings_return_real_router_unmount_after_transfer_d
 ):
     """Forced dismissal after modal transfer cannot turn A back into pending work."""
 
-    app = _build_production_app(configured_default="chat")
+    app = _build_test_app(configured_default="chat")
     _configure_native_ready_console(app)
     notices: list[str] = []
     status_started = asyncio.Event()
@@ -1996,7 +1999,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
 ):
     """A covered mounted modal commits A before cancellation can release it."""
 
-    app = _build_production_app(configured_default="chat")
+    app = _build_test_app(configured_default="chat")
     _configure_native_ready_console(app)
     notices: list[str] = []
     modal_covered = asyncio.Event()
@@ -2227,7 +2230,7 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
     """A force-dismissed discard dialog must not orphan the pending return."""
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    app = _build_production_app(configured_default="chat")
+    app = _build_test_app(configured_default="chat")
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-5"
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-5"}
@@ -2378,7 +2381,7 @@ async def test_conversation_settings_return_router_failure_before_mount_keeps_ha
 ):
     """Applying context to an unmounted target must not acquire its handoff."""
 
-    app = _build_production_app(configured_default="chat")
+    app = _build_test_app(configured_default="chat")
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(100, 30)) as pilot:
@@ -2448,7 +2451,7 @@ async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_
 ):
     """A newly mounted Console can leave before its deferred consumer runs."""
 
-    app = _build_production_app(configured_default="chat")
+    app = _build_test_app(configured_default="chat")
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(100, 30)) as pilot:
@@ -2512,7 +2515,7 @@ async def test_conversation_settings_return_suspend_releases_claim_and_unmount_c
 ):
     """Suspend releases the claim; real unmount cancels the uncooperative restore."""
 
-    app = _build_production_app(configured_default="chat")
+    app = _build_test_app(configured_default="chat")
     _configure_native_ready_console(app)
     restore_started = asyncio.Event()
     restore_cancelled = asyncio.Event()
@@ -5522,7 +5525,8 @@ async def test_console_one_token_generation_test_has_fixed_isolated_policy(monke
                 thinking_budget_tokens=selection.settings.thinking_budget_tokens,
             )
 
-        async def complete_auxiliary(self, request):
+        async def complete_auxiliary(self, request, *, route):
+            assert route is None
             self.requests.append(request)
             return AuxiliaryCompletionResult("openai", "gpt-4.1", "yes", None)
 
@@ -5613,7 +5617,8 @@ async def test_console_generation_test_failure_is_bounded_and_sanitized() -> Non
                 execution_key="openai",
             )
 
-        async def complete_auxiliary(self, _request):
+        async def complete_auxiliary(self, _request, *, route):
+            assert route is None
             raise RuntimeError(secret)
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -5677,7 +5682,8 @@ async def test_console_generation_test_preserves_bounded_transport_category(
                 execution_key="llama_cpp",
             )
 
-        async def complete_auxiliary(self, _request):
+        async def complete_auxiliary(self, _request, *, route):
+            assert route is None
             from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 
             raise ChatProviderError(

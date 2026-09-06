@@ -1287,3 +1287,61 @@ exactly (133/27); the other three edited production files have zero lint finding
 New/edited test lint and changed-region formatting pass. Impeccable's layout scan
 is empty; its dense inline-row guidance kept this to control reachability and
 responsive budgeting, not a redesign.
+
+## Approved remaining qualifications (2026-09-06)
+
+The user approved the three concrete repairs listed above. TASK-31750.1 moves
+only citation signature, repository readiness and modal currentness into the
+existing message controller. DOM, workers, caches and logger patch points remain
+screen-owned. The formatted screen is **16,811 lines / 505 methods**, and the
+line ratchet is lowered from 16,818 to 16,811. Live store/repository replacement
+was characterized before and after extraction. Final citation/size/private-owner
+files pass **127 in 13.57s**, with two dependency warnings and no retained SQLite
+handles (`/private/tmp/tldw-31750-1-formatted-final.{xml,log}`).
+
+TASK-31750.3 corrects Retry Speech's unready fixture: the setup backdrop had
+intercepted its click at 90x30. The target now uses durable provider readiness
+and production CSS, checks actual containment and compositor hit target, and
+requires the real click to succeed. Retry-once/resume-never assertions remain.
+The stronger test failed on the unready baseline. Complete narrow layout plus
+paused retry coverage passes **27 in 39.63s**, with three dependency warnings
+and no retained SQLite handles (`/private/tmp/tldw-31750-3-green-full.{xml,log}`).
+The combined citation/narrow/ownership selection passes **153 in 54.05s**.
+
+TASK-31750.2 makes manual and automatic summary routes explicit through the
+shared capture-off auxiliary service, marks the Settings probe explicitly
+excluded, and reconciles both census tables with actual call ownership. The
+strict exhaustive/explicit-route/unique-owner guards remain; corruption controls
+exercise missing/new calls, missing route keywords and duplicate ownership.
+All ordinary conversation and agent routes remain forbidden at auxiliary entry.
+This follows the existing memory and semantic trace ADRs, not a new capture policy.
+
+The first complete auxiliary run passed functionally but exposed an unchanged
+restart test retaining its reopened SQLite database and WAL/SHM descriptors.
+The exact baseline body reproduced that retention; a finally block now closes
+only the reopened handle. The unchanged native probe then reported no retention.
+Root's final complete provider/compaction/census selection passes **593 in 36.41s**,
+five dependency/syntax warnings, with no retained SQLite handles or descriptor
+growth warning (`/private/tmp/tldw-31750-auxiliary-final.{xml,log}`).
+
+Independent read-only reviews found no issues in either the citation/Retry
+repairs or the auxiliary/census/resource repair. Scoped lint and changed-region
+formatting pass; unrelated pre-existing whole-file formatting drift is not
+rewritten. No new dependency, UI redesign, relaxed resource threshold or raised
+size ceiling was introduced. The complete native Console flow file first passed
+**349 in 470.25s**, but attributed retained app/SQLite handles to 34 older cases.
+The module now imports the existing exact-owner cleanup fixtures. Its seven
+calls through a redundant factory alias use the identical canonical builder so
+the existing module-local owner sees every constructed app. Arguments and test
+assertions are unchanged; no shared fixture implementation was modified.
+All **34 attributed cases pass in 56.38s with no retained SQLite handles**
+(`/private/tmp/tldw-31750-2-native-fd-green.{xml,log}`); all **13** existing
+cleanup-owner failure/isolation controls also pass. Independent review found
+no issues in this fixture wiring. The complete native rerun remains in progress
+at this checkpoint; this is not a new full-repository sweep.
+
+The publication Backlog guard separately reports duplicate IDs **31714, 31737,
+and 31758**. All six conflicting filenames are already present in `d09868e74b`
+(the commit before this patch); none of these files changed here. The three new
+31750 subtasks are unique. This existing task-history limitation is recorded,
+not repaired by silently renumbering either historical owner.

@@ -1042,8 +1042,13 @@ async def test_llamacpp_fallback_reserves_and_authorizes_a_distinct_call() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route",
+    [None, ConsoleRequestRoute.AUTO_COMPACTION, ConsoleRequestRoute.MANUAL_SUMMARY],
+)
 async def test_auxiliary_always_uses_explicit_capture_off_admission(
     monkeypatch: pytest.MonkeyPatch,
+    route,
 ) -> None:
     calls = 0
     admissions: list[ConsoleTraceCaptureMode] = []
@@ -1053,7 +1058,14 @@ async def test_auxiliary_always_uses_explicit_capture_off_admission(
         calls += 1
         return {"choices": [{"message": {"content": "ok"}}]}
 
-    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    def forbidden_capture(*_args):
+        pytest.fail("auxiliary admission must not create a trace or shadow")
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=forbidden_capture,
+        trace_shadow_sink=forbidden_capture,
+    )
     original = gateway._enter_provider_adapter
 
     def observe(admission, adapter_call, *args, **kwargs):
@@ -1061,19 +1073,32 @@ async def test_auxiliary_always_uses_explicit_capture_off_admission(
         return original(admission, adapter_call, *args, **kwargs)
 
     monkeypatch.setattr(gateway, "_enter_provider_adapter", observe)
-    assert (await gateway.complete_auxiliary(_auxiliary_request())).text == "ok"
-    assert calls == 1
-
     result = await gateway.complete_auxiliary(
         _auxiliary_request(),
-        route=ConsoleRequestRoute.AUTO_COMPACTION,
+        route=route,
     )
     assert result.text == "ok"
-    assert calls == 2
-    assert admissions == [
-        ConsoleTraceCaptureMode.CAPTURE_OFF,
-        ConsoleTraceCaptureMode.CAPTURE_OFF,
-    ]
+    assert calls == 1
+    assert admissions == [ConsoleTraceCaptureMode.CAPTURE_OFF]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route",
+    [
+        route
+        for route in ConsoleRequestRoute
+        if route
+        not in {ConsoleRequestRoute.AUTO_COMPACTION, ConsoleRequestRoute.MANUAL_SUMMARY}
+    ],
+)
+async def test_auxiliary_rejects_conversation_routes_before_adapter(route) -> None:
+    def forbidden_adapter(**_kwargs):
+        pytest.fail("conversation route reached auxiliary adapter")
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=forbidden_adapter)
+    with pytest.raises(TraceProvenanceAlignmentError, match="not capture-off"):
+        await gateway.complete_auxiliary(_auxiliary_request(), route=route)
 
 
 def test_runtime_keeps_trace_boundary_factory_hard_off_unless_supplied() -> None:

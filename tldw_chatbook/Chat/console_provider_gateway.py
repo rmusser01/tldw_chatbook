@@ -3829,7 +3829,11 @@ class ConsoleProviderGateway:
 
         if not isinstance(request, AuxiliaryCompletionRequest):
             raise TypeError("request must be an AuxiliaryCompletionRequest")
-        if route not in {None, ConsoleRequestRoute.AUTO_COMPACTION}:
+        if route not in {
+            None,
+            ConsoleRequestRoute.AUTO_COMPACTION,
+            ConsoleRequestRoute.MANUAL_SUMMARY,
+        }:
             raise TraceProvenanceAlignmentError(
                 "auxiliary completion route is not capture-off"
             )
