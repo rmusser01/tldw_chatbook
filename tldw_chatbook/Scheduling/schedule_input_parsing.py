@@ -27,7 +27,7 @@ security-critical paths depend on, for no safety gain.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 #: Forgiving local datetime formats (naive -> system local zone).
@@ -59,7 +59,7 @@ def parse_forgiving_datetime(raw: str) -> tuple[datetime | None, bool]:
     """Parse a run-at datetime, accepting forgiving local forms.
 
     Returns ``(parsed, assumed_local)``: full ISO-8601 keeps its offset
-    (``assumed_local`` False); a naive form such as ``2026-08-28 09:00``
+    (``assumed_local`` False); a naive form such as ``YYYY-MM-DD HH:MM``
     is interpreted in the system's local timezone (``assumed_local``
     True). ``(None, False)`` when nothing parses.
 
@@ -91,3 +91,27 @@ def parse_forgiving_datetime(raw: str) -> tuple[datetime | None, bool]:
     if parsed.tzinfo is None:
         return parsed.astimezone(), True
     return parsed, False
+
+
+def example_run_at_text(*, days_ahead: int = 7) -> str:
+    """A never-in-the-past example run-at string, for placeholder/hint/
+    error copy across the reminder and automation forms and detail panes.
+
+    task-31711 AC#4: a hard-coded example date (12 sites) drifts into the
+    past as real time passes -- "type a date like <a date that already
+    happened>" reads as broken advice, not help.
+    Computed fresh relative to "now" each call instead, in the same
+    forgiving ``YYYY-MM-DD HH:MM`` shape :func:`parse_forgiving_datetime`
+    accepts, so every caller's placeholder/hint/error text stays valid.
+
+    Args:
+        days_ahead: How many days past today the example date lands.
+            Callers share the default so the shown example is identical
+            everywhere; a few days out is comfortably future regardless
+            of what hour "now" happens to be.
+
+    Returns:
+        A ``"YYYY-MM-DD 09:00"`` string, ``days_ahead`` days from today.
+    """
+    example_date = (datetime.now() + timedelta(days=days_ahead)).date()
+    return f"{example_date.isoformat()} 09:00"

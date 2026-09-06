@@ -70,7 +70,10 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
-from ....Scheduling.schedule_input_parsing import parse_forgiving_datetime
+from ....Scheduling.schedule_input_parsing import (
+    example_run_at_text,
+    parse_forgiving_datetime,
+)
 from ....Scheduling.events import (
     DefinitionFieldEditRequested,
     DefinitionLifecycleToggleRequested,
@@ -604,12 +607,17 @@ class DefinitionDetail(Vertical):
             The static children; value rows are mounted per definition.
         """
         yield Static(
-            "Definition Detail",
+            # task-31710 AC#1: matches this primitive's own form title
+            # ("New/Edit Recurring Question", automation_definition_form.py)
+            # and the Create chooser's "Recurring question…" button --
+            # "Definition"/"Automation" were two more names for the same
+            # thing.
+            "Recurring Question Detail",
             id="scheduling-automation-detail-header",
             classes="scheduling-column-title",
         )
         yield Static(
-            "Select an automation to see its details.",
+            "Select a recurring question to see its details.",
             id="scheduling-automation-detail-empty-state",
         )
         with Vertical(id="scheduling-automation-detail-body"):
@@ -1263,7 +1271,7 @@ class DefinitionDetail(Vertical):
                 return
             initial = str(schedule.get(field) or "")
             placeholder = (
-                "2026-08-28 09:00" if field == "run_at" else DEFAULT_TIME_OF_DAY
+                example_run_at_text() if field == "run_at" else DEFAULT_TIME_OF_DAY
             )
             row.begin_edit(
                 Input(
@@ -1603,7 +1611,9 @@ class DefinitionDetail(Vertical):
                 return
             parsed, _assumed_local = parse_forgiving_datetime(raw)
             if parsed is None:
-                row.show_error("Run at must be a date and time like 2026-08-28 09:00.")
+                row.show_error(
+                    f"Run at must be a date and time like {example_run_at_text()}."
+                )
                 return
             new_value: Any = parsed.isoformat()
         else:

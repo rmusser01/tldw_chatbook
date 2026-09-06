@@ -38,7 +38,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
 from tldw_chatbook.Scheduling.models import PreviewStatus, ScheduleKind
-from tldw_chatbook.Scheduling.schedule_input_parsing import parse_forgiving_datetime
+from tldw_chatbook.Scheduling.schedule_input_parsing import (
+    example_run_at_text,
+    parse_forgiving_datetime,
+)
 
 from ..task_detail import definition_cron_expression
 
@@ -336,10 +339,11 @@ class AutomationDefinitionForm(ModalScreen):
             yield Static("", id="automation-schedule-error", classes="error-text")
 
             with Vertical(id="automation-run-at-group"):
+                run_at_example = example_run_at_text()
                 yield Label("Run at:", classes="form-label")
-                yield Input(placeholder="2026-08-28 09:00", id="automation-run-at")
+                yield Input(placeholder=run_at_example, id="automation-run-at")
                 yield Static(
-                    "A local time like 2026-08-28 09:00, or full ISO-8601 with offset.",
+                    f"A local time like {run_at_example}, or full ISO-8601 with offset.",
                     classes="form-helper",
                 )
 
@@ -793,7 +797,7 @@ class AutomationDefinitionForm(ModalScreen):
                 return "Run at is required for one-time automations."
             parsed, _assumed_local = parse_forgiving_datetime(raw)
             if parsed is None:
-                return "Run at must be a date and time like 2026-08-28 09:00."
+                return f"Run at must be a date and time like {example_run_at_text()}."
             return None
 
         preset = self._selected_preset()

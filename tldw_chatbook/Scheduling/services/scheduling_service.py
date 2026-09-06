@@ -778,6 +778,7 @@ class SchedulingService:
         # module level would also be safe; left function-local anyway for
         # a minimal diff against Task 2's shape.
         from tldw_chatbook.Scheduling.schedule_input_parsing import (
+            example_run_at_text,
             is_valid_zone,
             parse_forgiving_datetime,
         )
@@ -791,7 +792,7 @@ class SchedulingService:
                     field_error(
                         "run_at",
                         "invalid_datetime",
-                        "Run At must be a date and time like 2026-08-28 09:00.",
+                        f"Run At must be a date and time like {example_run_at_text()}.",
                     )
                 )
             else:

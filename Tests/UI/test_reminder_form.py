@@ -218,7 +218,12 @@ async def test_reminder_form_submits_when_valid_one_time():
         assert app.submitted["schedule_kind"] == "one_time"
         assert app.submitted["run_at"] == datetime(2030, 7, 20, 14, 0, tzinfo=timezone.utc)
         assert app.submitted["cron"] is None
-        assert app.submitted["timezone"] is None
+        # task-31711 AC#2: a one-time reminder captures the machine's
+        # detected zone (matching the recurring form's own Select
+        # default) instead of storing `None`, which later round-tripped
+        # through the DB and displayed back as a bare "UTC".
+        assert app.submitted["timezone"] == system_timezone_name()
+        assert app.submitted["timezone"] is not None
 
 
 @pytest.mark.asyncio

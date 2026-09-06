@@ -914,8 +914,10 @@ async def test_edit_save_reports_updated_not_created():
         await pilot.pause()
 
         notifications = list(pilot.app._notifications)
-        assert any(n.message == "Automation updated." for n in notifications)
-        assert not any(n.message == "Automation created." for n in notifications)
+        assert any(n.message == "Recurring question updated." for n in notifications)
+        assert not any(
+            n.message == "Recurring question created." for n in notifications
+        )
 
 
 # --- Definitions detail pane (schedules-redesign PR-1, Task 4) ------------

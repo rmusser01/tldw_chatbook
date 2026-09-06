@@ -89,6 +89,7 @@ from .task_detail import (
     TaskInspector,
     _format_next_run,
     _format_relative,
+    _format_timezone,
     _managed_elsewhere_notice,
     _queue_owner_suffix,
     _transfer_row_suffix,
@@ -291,11 +292,14 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
     """Queue-row subtitle: schedule summary + relative next-run (spec S4).
 
     A reminder row reuses `_format_next_run` verbatim (the exact text the
-    pre-redesign Next-Run column showed). A definition row has no
-    existing per-row relative-time formatter to reuse (`_format_next_run`
-    is typed for `ReminderTask | ScheduledTask`), so this derives the
-    same "absolute (relative)" shape from `UnifiedRow`'s own
-    already-normalized `next_run_at` + `bucket`.
+    pre-redesign Next-Run column showed; `compact=True` deliberately
+    drops that path's own timezone token, task-23111). A definition row
+    has no existing per-row relative-time formatter to reuse
+    (`_format_next_run` is typed for `ReminderTask | ScheduledTask`), so
+    this derives the same "absolute (relative)" shape from `UnifiedRow`'s
+    own already-normalized `next_run_at` + `bucket` -- task-31711 AC#1:
+    unlike the reminder path, this one never had a timezone token, so a
+    UTC value read as a bare, unlabeled `YYYY-MM-DD HH:MM`.
     """
     if row.kind == "reminder":
         next_text = _format_next_run(row.source_row, now=now, compact=True)
@@ -305,7 +309,8 @@ def _row_subtitle(row: UnifiedRow, now: datetime) -> str:
         next_text = "-"
     else:
         absolute = row.next_run_at.strftime("%Y-%m-%d %H:%M")
-        next_text = f"{absolute} ({_format_relative(row.next_run_at, now)})"
+        tz_label = _format_timezone(row.next_run_at)
+        next_text = f"{absolute} {tz_label} ({_format_relative(row.next_run_at, now)})"
     return f"{row.schedule_summary} · {next_text}"
 
 
@@ -581,7 +586,16 @@ class SchedulesWorkbench(BaseAppScreen):
         yield DestinationHeader(
             WorkbenchHeaderState(
                 title="Schedules",
-                subtitle="When jobs, watchlists, and workflows run.",
+                # task-31710 AC#2: named what the Queue actually lists
+                # (scheduled tasks + recurring questions) -- watchlists and
+                # workflows never appear here (watchlist/briefing
+                # projections are explicitly out of scope, RowKind is
+                # `Literal["reminder", "definition"]`), so the old wording
+                # described a different screen. "scheduled task", not
+                # "reminder": task-23106's locked noun for this primitive
+                # in this module (`Tests/UI/test_schedules_terminology.py`
+                # is the standing AST guard for it).
+                subtitle="When scheduled tasks fire and recurring questions run.",
                 status="loading",
                 status_label="Checking sync status…",
             ),
@@ -2241,7 +2255,7 @@ class SchedulesWorkbench(BaseAppScreen):
             lines.append("")
             lines.append(
                 "It keeps running on this device until the server accepts "
-                "the transfer -- nothing goes dark while this is only "
+                "the transfer — nothing goes dark while this is only "
                 "queued."
             )
         return ConfirmationDialog(
@@ -2257,11 +2271,11 @@ class SchedulesWorkbench(BaseAppScreen):
         the reminder and definition transfer flows."""
         if direction == "to_server":
             return (
-                f"'{name}' is queued to move to the server -- it still "
+                f"'{name}' is queued to move to the server — it still "
                 "runs on this device until the server accepts it."
             )
         return (
-            f"'{name}' is queued to move to this device -- a dormant copy "
+            f"'{name}' is queued to move to this device — a dormant copy "
             "is ready and will arm once the server releases it."
         )
 
@@ -2645,13 +2659,16 @@ class SchedulesWorkbench(BaseAppScreen):
         self._definitions_stale = True
         status = getattr(outcome, "status", None)
         verb = "updated" if was_edit else "created"
+        # task-31710 AC#1: "Recurring question", not "Automation" -- the
+        # noun the chooser button and this primitive's own form title
+        # ("New/Edit Recurring Question") already use.
         if status == "saved":
             self.app_instance.notify(
-                f"Automation {verb}.", severity="information"
+                f"Recurring question {verb}.", severity="information"
             )
         elif status == "queued":
             self.app_instance.notify(
-                f"Automation {verb} locally — it will sync to the server.",
+                f"Recurring question {verb} locally — it will sync to the server.",
                 severity="information",
             )
         # Full refresh (definitions included): `_definitions_stale` is set
@@ -3577,7 +3594,7 @@ class SchedulesWorkbench(BaseAppScreen):
         if is_server_scoped_owner(getattr(task, "owner_id", None)):
             self.app_instance.notify(
                 f"'{task.title}' is server-scheduled: the server runs it and "
-                "delivers the notification -- it cannot be run from here.",
+                "delivers the notification — it cannot be run from here.",
                 severity="warning",
             )
             return
@@ -3589,7 +3606,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 result = await service.run_reminder_now(task.id, loop=loop)
                 if result is None:
                     self.app_instance.notify(
-                        f"'{task.title}' did not run -- it is missing, the "
+                        f"'{task.title}' did not run — it is missing, the "
                         "handler for it is unavailable, or its handler "
                         "failed (the task's status shows which).",
                         severity="warning",
@@ -4441,7 +4458,16 @@ class SchedulesWorkbench(BaseAppScreen):
         header.sync_state(
             WorkbenchHeaderState(
                 title="Schedules",
-                subtitle="When jobs, watchlists, and workflows run.",
+                # task-31710 AC#2: named what the Queue actually lists
+                # (scheduled tasks + recurring questions) -- watchlists and
+                # workflows never appear here (watchlist/briefing
+                # projections are explicitly out of scope, RowKind is
+                # `Literal["reminder", "definition"]`), so the old wording
+                # described a different screen. "scheduled task", not
+                # "reminder": task-23106's locked noun for this primitive
+                # in this module (`Tests/UI/test_schedules_terminology.py`
+                # is the standing AST guard for it).
+                subtitle="When scheduled tasks fire and recurring questions run.",
                 status=status,
                 status_label=label,
             )

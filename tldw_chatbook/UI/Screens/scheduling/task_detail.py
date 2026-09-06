@@ -185,7 +185,7 @@ def _format_next_run(
 
     A disabled reminder will not run at its stored ``next_run_at``, so a
     concrete future time would be a false promise (task-23101). The
-    detail pane uses the full form ("2026-08-28 09:00 UTC (in 14h)");
+    detail pane uses the full form ("YYYY-MM-DD HH:MM UTC (in 14h)");
     the queue column passes ``compact=True`` to drop the timezone token
     and keep the column width sane (task-23111). ``now`` is injectable
     for deterministic tests.

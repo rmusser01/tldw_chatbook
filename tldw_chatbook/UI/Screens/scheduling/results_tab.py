@@ -515,7 +515,7 @@ class ResultsTab(Vertical):
             reviewed_by = escape_markup(str(result.get("reviewed_by") or "?"))
             review_line += f" ({reviewed_by} at {result['reviewed_at']})"
         if result.get("review_note"):
-            review_line += f" -- {escape_markup(str(result['review_note']))}"
+            review_line += f" — {escape_markup(str(result['review_note']))}"
         lines.append(review_line)
 
         if result.get("kind") == "finding":

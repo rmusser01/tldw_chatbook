@@ -123,7 +123,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "schedules",
         "Schedules",
         "schedules",
-        "When jobs, watchlists, and workflows run.",
+        "When scheduled tasks fire and recurring questions run.",
         "Manage run timing, triggers, and recovery.",
     ),
     ShellDestination(

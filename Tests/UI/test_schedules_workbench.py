@@ -54,7 +54,9 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     NEXT_RUN_REFRESH_SECONDS,
     SCHEDULER_LIVENESS_REFRESH_SECONDS,
     SchedulesWorkbench,
+    _row_subtitle,
 )
+from tldw_chatbook.UI.Screens.scheduling.unified_rows import UnifiedRow
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     TaskDetail,
@@ -79,6 +81,33 @@ from Tests.UI.schedules_test_helpers import (
     rendered_row_cells,
     settle_schedules_workbench,
 )
+
+
+# task-31711 AC#1: a definition row's absolute next-run timestamp must
+# carry an explicit timezone label, never a bare "YYYY-MM-DD HH:MM"
+# (`_row_subtitle`'s definition branch had none -- unlike the reminder
+# branch, which deliberately drops it via `_format_next_run(compact=True)`,
+# task-23111).
+def test_definition_row_subtitle_carries_a_timezone_label() -> None:
+    now = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
+    row = UnifiedRow(
+        kind="definition",
+        row_id="definition:def-1",
+        title="Digest",
+        schedule_summary="Daily at 09:00 UTC",
+        next_run_at=datetime(2026, 9, 6, 9, 0, tzinfo=timezone.utc),
+        owner_id="local",
+        owner_label="Local",
+        transfer_state=None,
+        bucket="active",
+        glyph="●",
+        unread_count=0,
+        search_blob="digest",
+        source_row={},
+    )
+    subtitle = _row_subtitle(row, now)
+    assert "2026-09-06 09:00 UTC" in subtitle
+    assert subtitle == "Daily at 09:00 UTC · 2026-09-06 09:00 UTC (in 21h)"
 
 
 class WorkbenchTestApp(ConsolidatedCSSApp):
