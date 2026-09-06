@@ -552,6 +552,22 @@ def test_rename_persists_to_meeting_json(meetings_screen_with_session):
     assert read_meeting_json(screen._session.meta.folder)["speaker_names"] == {"S1": "Alice"}
 
 
+def test_rename_persist_failure_log_carries_no_path(meetings_screen_with_session, monkeypatch, captured_lines):
+    """TASK-31748: `update_meeting_json` failures are usually filesystem
+    errors whose `str()` embeds the meeting folder path -- the persist-
+    failure log must redact it."""
+    import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
+
+    def boom(*a, **k):
+        raise OSError("/Users/alice/meeting.json: denied")
+
+    monkeypatch.setattr(meetings_screen_module, "update_meeting_json", boom)
+    screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
+    screen._apply_rename("S1", "Alice")  # must not raise
+    joined = "\n".join(captured_lines)
+    assert "/Users/alice" not in joined and "alice" not in joined
+
+
 def test_empty_rename_removes_the_map_entry(meetings_screen_with_session):
     screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
     screen._apply_rename("S1", "Alice")

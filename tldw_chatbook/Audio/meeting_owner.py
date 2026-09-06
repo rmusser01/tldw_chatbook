@@ -436,7 +436,9 @@ class MeetingSessionOwner:
             probe_recorder = self._mic_factory(use_vad=False, retain_audio=False, chunk_size=320)
             devices = tuple(str(d.get("name", "")) for d in probe_recorder.get_audio_devices() if d.get("name"))
         except Exception as exc:  # noqa: BLE001 - no backend: pickers stay empty
-            logger.info("meeting device enumeration unavailable: {}", exc)
+            # task-31748: `str(exc)` can embed a filesystem path (a missing
+            # backend module's path, say) -- redact it.
+            logger.info("meeting device enumeration unavailable: {}", redact_user_paths(str(exc)))
             capture_error = _missing_recorder_message(exc)
         self.prepared = PrepareResult(
             tap_mode=tap_mode, provider=provider, model=model or "",

@@ -170,14 +170,14 @@
     },
     {
       "call_count": 5,
-      "diagnostic_digest": "37343ec1648761f9360f",
+      "diagnostic_digest": "e587513f1e4290fa14e8",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/meeting_owner.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"
     },
     {
       "call_count": 10,
-      "diagnostic_digest": "6e631714c032f112595b",
+      "diagnostic_digest": "4e68aa3d00c8f330d447",
       "owner": "TASK-31551",
       "path": "tldw_chatbook/Audio/meeting_session.py",
       "reason": "meeting transcription (Audio capture/session/owner + Meetings screen)"

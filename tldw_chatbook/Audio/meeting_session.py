@@ -340,12 +340,15 @@ class MeetingSession:
                 listener(kind, payload)
             except Exception as exc:  # noqa: BLE001
                 # `kind` and the listener's identity only: the payload is
-                # meeting content (transcript text) and never reaches a log.
+                # meeting content (transcript text) and never reaches a log
+                # (Q10). `str(exc)` can still embed a filesystem path though
+                # (task-31748) -- redact it, same treatment as this module's
+                # other failure logs that keep the exception's message.
                 logger.error(
                     "meeting listener error on {} from {}: {}",
                     kind,
                     getattr(listener, "__qualname__", repr(type(listener))),
-                    exc,
+                    redact_user_paths(str(exc)),
                 )
 
     def _set_state(self, state: str) -> None:
@@ -358,7 +361,10 @@ class MeetingSession:
                 try:
                     getattr(sink, method)(*args)
                 except Exception as exc:  # noqa: BLE001
-                    logger.error("meeting sink {} failed: {}", method, exc)
+                    # Sinks are caller-supplied (`MeetingSession(sinks=...)`),
+                    # so an exception's message is as unpredictable as the
+                    # payload it may embed -- type name only (task-31748).
+                    logger.error("meeting sink {} failed ({})", method, type(exc).__name__)
 
     # ---- lifecycle --------------------------------------------------------
     def start(self) -> bool:
@@ -430,7 +436,10 @@ class MeetingSession:
                 outcome = self.service.stop_dictation()
                 complete = bool(getattr(outcome, "transcription_complete", True))
             except Exception as exc:  # noqa: BLE001
-                logger.error("stop_dictation failed: {}", exc)
+                # task-31748: `str(exc)` can embed a filesystem path (e.g. a
+                # missing model file) -- redact it, same treatment as this
+                # module's other internal-operation failure logs.
+                logger.error("stop_dictation failed: {}", redact_user_paths(str(exc)))
                 complete = False
         with self._lock:
             self._closing = True
@@ -438,7 +447,9 @@ class MeetingSession:
         try:
             self.capture.stop_recording()
         except Exception as exc:  # noqa: BLE001
-            logger.error("capture stop failed: {}", exc)
+            # task-31748: `str(exc)` can embed a filesystem path (closing a
+            # WAV file, say) -- redact it.
+            logger.error("capture stop failed: {}", redact_user_paths(str(exc)))
         flagged_speakers: list[str] = []
         speaker_labels_reason: str | None = None
         if self._diarizer is not None:

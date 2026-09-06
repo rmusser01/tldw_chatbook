@@ -145,6 +145,57 @@ async def test_speaker_legend_submit_renames_and_refreshes_preview(
     assert "Alice:" in updated["content"]
 
 
+@pytest.mark.asyncio
+async def test_rename_failure_log_carries_no_path(
+    tmp_media_db, meeting_folder_media_item, monkeypatch, captured_lines
+):
+    """TASK-31748: `rename_meeting_speaker` reads/writes `meeting.json`, and
+    a filesystem failure's `str()` embeds the meeting folder path -- the
+    canvas's rename-failure log must redact it."""
+    import tldw_chatbook.Widgets.Library.library_media_canvas as canvas_module
+    from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
+    from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState, LibraryMediaRow
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
+    def boom(*a, **k):
+        raise OSError("/Users/alice/meeting.json: denied")
+
+    monkeypatch.setattr(canvas_module, "update_meeting_json", boom)
+
+    media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hello")])
+    row = tmp_media_db.get_media_by_id(media_id)
+    state = LibraryMediaCanvasState(
+        rows=(
+            LibraryMediaRow(
+                media_id=str(media_id), title="Meeting", media_type="audio",
+                secondary="audio · today", selected=True,
+            ),
+        ),
+        type_options=(None, "audio"), active_type=None, status_copy="",
+        empty_copy="", selected_id=str(media_id),
+        preview_lines=tuple(row["content"].splitlines()), count=1,
+    )
+
+    class _App(ConsolidatedCSSApp):
+        def compose(self):
+            yield LibraryMediaCanvas(
+                canvas=state, can_rename_speakers=True, media_db=tmp_media_db,
+                speaker_rename_media_id=media_id, id="canvas",
+            )
+
+    app = _App()
+    async with app.run_test(size=(60, 30)) as pilot:
+        await pilot.pause()
+        input_widget = app.query_one("#library-media-speaker-input-S1", Input)
+        input_widget.post_message(Input.Submitted(input_widget, "Alice"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    joined = "\n".join(captured_lines)
+    assert "/Users/alice" not in joined and "alice" not in joined
+
+
 # ---- C2: never replace ingest-produced Library content ---------------------
 
 def test_rename_refuses_when_the_library_content_is_not_the_meeting_render(

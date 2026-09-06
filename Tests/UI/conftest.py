@@ -466,6 +466,31 @@ def mock_app_with_notes(mock_notes_service):
 
 
 @pytest.fixture
+def captured_lines():
+    """Collect every loguru message emitted during the test.
+
+    `caplog` does not see loguru's own sink (loguru does not propagate to
+    stdlib `logging`) -- mirrors `Tests/Audio/test_meeting_diarization_session.py`'s
+    fixture of the same name. Adds a sink and removes only that sink id: a
+    bare `logger.remove()` would tear down the sink `tldw_chatbook/__init__.py`
+    installs and leak that teardown into unrelated tests.
+    """
+    from loguru import logger as loguru_logger
+
+    lines: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: lines.append(message.record["message"]),
+        level="TRACE",
+        format="{message}",
+        diagnose=False,
+    )
+    try:
+        yield lines
+    finally:
+        loguru_logger.remove(sink_id)
+
+
+@pytest.fixture
 def tmp_media_db(tmp_path):
     """A real, on-disk, per-test `MediaDatabase` (repo convention: real
     SQLite, never a mock, for DB tests -- Task 8, meeting speaker rename)."""
