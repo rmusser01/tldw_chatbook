@@ -4892,6 +4892,16 @@ keep_raw_tracks = true
 post_transcribe = true
 # Ask that offline pass for speaker diarization (needs torch + speechbrain).
 post_diarize = true
+# Assign speaker ids while recording instead of only in the offline pass
+# (feeds the live Speakers legend). Needs the same packages as post_diarize,
+# installed via the "diarization" extra: pip install -e ".[diarization]"
+live_diarization = false
+# Which live diarizer to build when live_diarization is on. Only "local"
+# (in-process, no server round trip) is implemented today.
+diarizer_backend = "local"
+# Upper bound the local live diarizer uses when clustering voices into
+# speaker ids.
+max_speakers = 8
 
 [transcription]
 # Default transcription provider
