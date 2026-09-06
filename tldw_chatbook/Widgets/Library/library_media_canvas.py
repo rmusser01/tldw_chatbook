@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from rich.markup import escape as escape_markup
-from textual import events
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -15,6 +19,18 @@ from textual.message import Message
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from tldw_chatbook.Audio.meeting_session import (
+    MEETING_JSON,
+    TRANSCRIPT_JSONL,
+    MeetingSegment,
+    format_clock,
+    is_widget_safe_cluster_id,
+    normalize_speaker_name,
+    read_meeting_json,
+    render_label,
+    update_meeting_json,
+)
+from tldw_chatbook.DB.Client_Media_DB_v2 import ConflictError, InputError, dispatch_media_post_ingest
 from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
 from tldw_chatbook.Library.library_media_state import (
     LibraryMediaCanvasState,
@@ -34,12 +50,291 @@ from tldw_chatbook.Library.library_shell_state import (
     library_choice_tooltip,
     library_disabled_action_label,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
+
+# ---- Task 8 (meeting diarization spec): rename speakers after the meeting --
+# A finished meeting is an ordinary Library Media item; its recording folder
+# (holding `meeting.json`'s name map and `transcript.jsonl`'s per-segment
+# records) is reachable for free as `Media.url`'s parent directory (`url` is
+# the `mixed.wav` path). Both survive raw-track cleanup.
+_MEETING_USER_DISPLAY_NAME = "You"  # mirrors meetings_screen.py's LABELS["you"]
+
+
+def can_rename_meeting_speakers(db: Any, media_id: int) -> bool:
+    """True only while `media_id`'s meeting folder still holds a `meeting.json`.
+
+    False (never an exception) when the media item is gone, has no URL, or
+    the folder has since been cleaned up.
+
+    Reads ONLY the `url` column, never the row: this runs on the UI thread
+    for every media selection, filter and page change (`_library_media_
+    canvas_presentation`), and `get_media_by_id`'s `SELECT *` dragged the
+    whole `content` blob of every non-meeting item across with it (fix I3).
+    """
+    try:
+        cursor = db.execute_query(
+            "SELECT url FROM Media WHERE id = ? AND deleted = 0 AND is_trash = 0", (media_id,)
+        )
+        row = cursor.fetchone()
+    except Exception:  # noqa: BLE001 - a lookup failure just means "can't tell, so no"
+        return False
+    url = row["url"] if row else None
+    if not url:
+        return False
+    return (Path(url).parent / MEETING_JSON).exists()
+
+
+def _read_meeting_transcript_segments(folder: Path) -> list[MeetingSegment]:
+    """Parse the folder's `transcript.jsonl` into `MeetingSegment`s, in order."""
+    path = folder / TRANSCRIPT_JSONL
+    if not path.exists():
+        return []
+    segments = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            segments.append(MeetingSegment(**json.loads(line)))
+    return segments
+
+
+def _render_meeting_transcript(segments: list[MeetingSegment], names: dict[str, str]) -> str:
+    """Render `segments` as the same "[hh:mm:ss] Label: text" lines the live
+    meeting screen shows, using the CURRENT name map (task 2's `render_label`)."""
+    lines = []
+    for segment in segments:
+        stamp = f"[{format_clock(segment.t_audio_start)}]"
+        label = render_label(segment, names, _MEETING_USER_DISPLAY_NAME)
+        lines.append(f"{stamp} {label}: {segment.text}" if label else f"{stamp} {segment.text}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _write_meeting_transcript_row(
+    db: Any,
+    conn: Any,
+    media_id: int,
+    whisper_model: str | None,
+    transcription: str,
+    now: str,
+    client_id: str,
+) -> None:
+    """Insert or version-bump this media's `Transcripts` row (same connection
+    and transaction as the `Media` rewrite below).
+
+    No public "add/update a Transcripts row" method exists anywhere on
+    `MediaDatabase` -- ingestion never writes this table in this codebase
+    today (only reads/deletes are exposed) -- so this mirrors the sync
+    contract every other write in `Client_Media_DB_v2.py` follows by hand:
+    an optimistic-locked, version-incrementing UPDATE (or a fresh INSERT
+    when there's no prior row), each followed by a `_log_sync_event` on the
+    SAME connection/transaction as the `Media` write.
+    """
+    cur = conn.cursor()
+    whisper_model = whisper_model or "meeting"
+    # Match regardless of `deleted` (final whole-branch review M2): the table's
+    # UNIQUE(media_id, whisper_model) counts soft-deleted rows too, so a prior
+    # soft-deleted row that a `deleted = 0` filter skips would collide the
+    # INSERT below (a caught IntegrityError that silently dropped the rename).
+    # Reuse the row instead -- the UPDATE path resurrects it (deleted=0).
+    # ponytail: keys on `media_id` alone, not `(media_id, whisper_model)` --
+    # fine today because no ASR pipeline in this codebase writes a Transcripts
+    # row for a meeting item, so at most one row per media_id ever exists here.
+    cur.execute(
+        "SELECT id, uuid, version, deleted FROM Transcripts WHERE media_id = ? ORDER BY id DESC LIMIT 1",
+        (media_id,),
+    )
+    existing = cur.fetchone()
+    if existing is None:
+        transcript_uuid = db._generate_uuid()
+        cur.execute(
+            "INSERT INTO Transcripts (media_id, whisper_model, transcription, created_at, uuid, "
+            "last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 0)",
+            (media_id, whisper_model, transcription, now, transcript_uuid, now, client_id),
+        )
+        db._log_sync_event(
+            conn, "Transcripts", transcript_uuid, "create", 1,
+            {
+                "media_id": media_id, "whisper_model": whisper_model, "transcription": transcription,
+                "last_modified": now, "version": 1, "client_id": client_id,
+            },
+        )
+    else:
+        new_version = existing["version"] + 1
+        # deleted=0 resurrects a soft-deleted prior row (M2) -- a no-op when the
+        # row was already live.
+        cur.execute(
+            "UPDATE Transcripts SET transcription=?, last_modified=?, version=?, client_id=?, prev_version=?, deleted=0 "
+            "WHERE id=? AND version=?",
+            (transcription, now, new_version, client_id, existing["version"], existing["id"], existing["version"]),
+        )
+        if cur.rowcount == 0:
+            raise ConflictError(f"Transcripts rename conflict for id={existing['id']}", existing["id"])
+        db._log_sync_event(
+            conn, "Transcripts", existing["uuid"], "update", new_version,
+            {"transcription": transcription, "last_modified": now, "version": new_version, "client_id": client_id},
+        )
+
+
+@dataclass(frozen=True)
+class SpeakerRenameResult:
+    """Outcome of `rename_meeting_speaker`: did it write, and if not, why.
+
+    `reason` is static, user-safe copy (never a path, a name, or transcript
+    text) so the canvas can show it verbatim.
+    """
+
+    ok: bool
+    reason: str = ""
+
+
+#: A refusal leaves BOTH authorities untouched (fix C2 / Qodo Q16).
+RENAME_REFUSED_NOT_MEETING_CONTENT = (
+    "this item's Library transcript wasn't produced by the meeting recording"
+)
+RENAME_REFUSED_EMPTY_TRANSCRIPT = "this meeting's local transcript is missing or empty"
+
+
+def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -> SpeakerRenameResult:
+    """Rename `cluster_id` to `name` on a finished meeting's Library item.
+
+    Updates the meeting folder's `meeting.json` name map (an empty `name`
+    removes the entry), re-renders every `transcript.jsonl` segment's text
+    via `render_label`, and rewrites `Media.content` -- the field the media
+    canvas displays and `media_fts` indexes -- in ONE DB transaction that
+    also writes a new versioned `Transcripts` row.
+
+    `add_media_with_keywords` (the usual "update an existing Media row"
+    entrypoint, `Client_Media_DB_v2.py` Case A.1.b) is deliberately NOT
+    reused here: nested inside this function's own transaction it would
+    fire the post-ingest hook (RAG re-indexing) before the outer commit
+    lands, and its full-row payload would need every untouched column
+    (author, ingestion_date, transcription provenance...) round-tripped
+    just to avoid clobbering them with defaults. Scoping the UPDATE to only
+    `content`/`content_hash` -- the same technique `rollback_to_version`
+    already uses -- sidesteps both problems while still going through the
+    DB's own sync-log (`_log_sync_event`) and FTS (`_update_fts_media`)
+    machinery, never a bare hand-written UPDATE that bypasses them. The
+    post-ingest hook is still dispatched, just AFTER this transaction
+    commits, matching its documented "post-commit" contract.
+
+    This rewrite REPLACES whatever `Media.content` holds, so it first proves
+    that content is the meeting's own render (fix C2): with the shipped
+    `post_transcribe` default the Library item's content is the ingest's
+    offline transcription of `mixed.wav`, which a rename would otherwise
+    silently destroy. Re-rendering the transcript with the CURRENT (pre-
+    rename) name map and comparing is that proof; an empty render (a missing
+    or emptied `transcript.jsonl`, Qodo Q16) is refused for the same reason.
+    A refusal touches neither the DB nor `meeting.json`.
+
+    Args:
+        db: The `MediaDatabase`.
+        media_id: The meeting recording's Library media id.
+        cluster_id: The speaker cluster to rename.
+        name: The new name; empty removes the entry (back to "Speaker N").
+
+    Returns:
+        `SpeakerRenameResult(ok=True)` when both authorities were rewritten,
+        or `ok=False` with static copy naming why nothing was touched.
+
+    Raises:
+        InputError: `media_id` does not name a live media item.
+        ConflictError: The row's optimistic-lock version changed
+            concurrently (Media or Transcripts).
+    """
+    row = db.get_media_by_id(media_id)
+    if row is None:
+        raise InputError(f"Media item {media_id} not found")
+    folder = Path(row["url"]).parent
+
+    meeting = read_meeting_json(folder)
+    names = dict(meeting.get("speaker_names") or {})
+    segments = _read_meeting_transcript_segments(folder)
+    current_content = _render_meeting_transcript(segments, names)
+    if not current_content.strip():
+        return SpeakerRenameResult(False, RENAME_REFUSED_EMPTY_TRANSCRIPT)
+    if (row["content"] or "").strip() != current_content.strip():
+        return SpeakerRenameResult(False, RENAME_REFUSED_NOT_MEETING_CONTENT)
+
+    name = normalize_speaker_name(name)
+    if name:
+        names[cluster_id] = name
+    else:
+        names.pop(cluster_id, None)
+    update_meeting_json(folder, speaker_names=names)
+
+    new_content = _render_meeting_transcript(segments, names)
+    new_hash = hashlib.sha256(new_content.encode()).hexdigest()
+
+    media_uuid = row["uuid"]
+    current_version = row["version"]
+    new_version = current_version + 1
+    now = db._get_current_utc_timestamp_str()
+    client_id = db.client_id
+
+    with db.transaction() as conn:
+        cur = conn.cursor()
+        # Make the swap reversible (C2): `rollback_to_version` restores a
+        # DocumentVersions row's content into `Media`, but refuses the LATEST
+        # version number -- so the state being replaced has to be seeded
+        # before the new one is appended, or the very first rename would be
+        # unrecoverable. Seed once per item; later renames just append.
+        cur.execute("SELECT 1 FROM DocumentVersions WHERE media_id = ? LIMIT 1", (media_id,))
+        if cur.fetchone() is None:
+            db.create_document_version(media_id=media_id, content=row["content"] or "")
+        cur.execute(
+            "UPDATE Media SET content=?, content_hash=?, last_modified=?, version=?, client_id=? "
+            "WHERE id=? AND version=?",
+            (new_content, new_hash, now, new_version, client_id, media_id, current_version),
+        )
+        if cur.rowcount == 0:
+            raise ConflictError(f"Media rename conflict for id={media_id}", media_id)
+        db._log_sync_event(
+            conn, "Media", media_uuid, "update", new_version,
+            {"last_modified": now, "version": new_version, "client_id": client_id, "content": new_content},
+        )
+        db._update_fts_media(conn, media_id, row["title"], new_content)
+        _write_meeting_transcript_row(
+            db, conn, media_id, row.get("transcription_model"), new_content, now, client_id,
+        )
+        db.create_document_version(media_id=media_id, content=new_content)
+
+    dispatch_media_post_ingest(db, media_id, media_uuid)
+    return SpeakerRenameResult(True)
+
+
+def _meeting_speaker_legend_rows(db: Any, media_id: int) -> list[tuple[str, str]]:
+    """Return `(cluster_id, display_label)` for every speaker in
+    `media_id`'s meeting folder, in first-seen `transcript.jsonl` order --
+    the same population the live Meetings screen's Task 7 legend tracks via
+    `_note_speaker`, applied here to the whole transcript at once since the
+    meeting has already finished."""
+    row = db.get_media_by_id(media_id)
+    if row is None:
+        return []
+    folder = Path(row["url"]).parent
+    names = dict(read_meeting_json(folder).get("speaker_names") or {})
+    segments = _read_meeting_transcript_segments(folder)
+    seen: list[str] = []
+    for segment in segments:
+        # A hand-edited transcript.jsonl can carry a speaker_id that is not a
+        # legal Textual widget id ("S 1", "S#1"); interpolating it below would
+        # raise out of compose() and take the screen down. Skip the row.
+        if not is_widget_safe_cluster_id(segment.speaker_id or ""):
+            continue
+        if segment.speaker_id not in seen:
+            seen.append(segment.speaker_id)
+    rows = []
+    for cluster_id in seen:
+        placeholder = MeetingSegment(0, 0.0, 0.0, 0.0, 0.0, "others", "", speaker_id=cluster_id)
+        label = render_label(placeholder, names, _MEETING_USER_DISPLAY_NAME) or cluster_id
+        rows.append((cluster_id, label))
+    return rows
 
 
 _MEDIA_ROW_COMPACT_HEIGHT = 1
@@ -183,6 +478,20 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         width: 100%;
         height: auto;
     }
+    /* Task 8: same trap as #library-media-filter above -- Input defaults to
+     * width 100%, which inside a row Horizontal would blow the label off
+     * to the side. */
+    .library-media-speaker-row {
+        width: 100%;
+        height: auto;
+    }
+    .library-media-speaker-row Static {
+        width: auto;
+        min-width: 0;
+    }
+    .library-media-speaker-row Input {
+        width: 1fr;
+    }
     """
 
     def __init__(
@@ -197,6 +506,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         load_failure: DestinationRecoveryState | None = None,
         compact: bool = False,
         show_preview: bool = True,
+        can_rename_speakers: bool = False,
+        media_db: Any = None,
+        speaker_rename_media_id: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -211,6 +523,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.load_failure = load_failure
         self.compact = compact
         self.show_preview = show_preview
+        # Task 8 (meeting diarization spec): True only when the selected
+        # item's meeting folder still holds a `meeting.json`
+        # (`can_rename_meeting_speakers`, computed by the caller). `media_db`
+        # + `speaker_rename_media_id` are the real `MediaDatabase` and the
+        # selected item's backing id -- needed here (breaking this canvas's
+        # otherwise pure-state design on purpose) so the legend below can
+        # read the meeting folder and actually call `rename_meeting_speaker`
+        # rather than just showing an inert control. Absent, not merely
+        # disabled, when False/None -- there is nothing to rename.
+        self.can_rename_speakers = can_rename_speakers
+        self.media_db = media_db
+        self.speaker_rename_media_id = speaker_rename_media_id
         # Fill the (already 13fr) canvas host, not an independent 13fr --
         # ``LibraryMediaViewer`` documented this trap first: an `fr` width
         # here resolves against the HOST's content width per fraction, so
@@ -240,6 +564,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         load_failure: DestinationRecoveryState | None = None,
         compact: bool = False,
         show_preview: bool = True,
+        can_rename_speakers: bool = False,
+        media_db: Any = None,
+        speaker_rename_media_id: int | None = None,
     ) -> None:
         """Refresh the canvas from new state.
 
@@ -260,7 +587,91 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.load_failure = load_failure
         self.compact = compact
         self.show_preview = show_preview
+        self.can_rename_speakers = can_rename_speakers
+        self.media_db = media_db
+        self.speaker_rename_media_id = speaker_rename_media_id
         self.refresh(recompose=True)
+
+    # ---- Task 8 (meeting diarization spec): inline speaker rename ---------
+    _SPEAKER_INPUT_PREFIX = "library-media-speaker-input-"
+
+    @on(Input.Submitted, "#library-media-speaker-legend Input")
+    def _handle_speaker_rename_submitted(self, event: Input.Submitted) -> None:
+        """Rename the submitted row's speaker and refresh the shown transcript.
+
+        Mirrors the live Meetings screen's Task 7 `_apply_rename`: the
+        rename itself is unconditional (a submit racing teardown should
+        still persist), and only the widget refresh afterwards is
+        `is_mounted`-guarded.
+        """
+        event.stop()
+        widget_id = event.input.id or ""
+        if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
+            return
+        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
+        name = normalize_speaker_name(event.value)
+        event.input.value = ""
+        if self.media_db is None or self.speaker_rename_media_id is None:
+            return
+        # Qodo Q3: the rename reads the transcript file, runs several DB
+        # writes, FTS maintenance and a post-ingest dispatch -- all of which
+        # would freeze the UI on a large transcript or a busy database.
+        self.run_worker(
+            lambda: self._rename_speaker_off_thread(cluster_id, name),
+            group="library-media-speaker-rename",
+            thread=True,
+            exit_on_error=False,
+        )
+
+    def _rename_speaker_off_thread(self, cluster_id: str, name: str) -> None:
+        """Persist one rename on a worker thread, then refresh on the UI one."""
+        try:
+            outcome = rename_meeting_speaker(
+                self.media_db, self.speaker_rename_media_id, cluster_id, name
+            )
+        except Exception as exc:  # noqa: BLE001 - a rename must not crash the canvas
+            # `rename_meeting_speaker` reads/writes `meeting.json`; a
+            # filesystem failure's `str()` embeds the meeting folder path
+            # (task-9 diagnostic inventory review) -- redact it, mirroring
+            # `meetings_screen.py`'s own rename-persist failure log.
+            logger.warning("Library media speaker rename failed: {}", redact_user_paths(str(exc)))
+            outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
+        self.app.call_from_thread(self._apply_speaker_rename_outcome, cluster_id, outcome)
+
+    def _apply_speaker_rename_outcome(
+        self, cluster_id: str, outcome: SpeakerRenameResult
+    ) -> None:
+        """Report a refused/failed rename, or repaint after a successful one.
+
+        Qodo Q15: a rename that changed nothing used to leave only a debug
+        log, so the user saw the old name and no explanation.
+        """
+        if not outcome.ok:
+            self.app.notify(f"Couldn't rename this speaker: {outcome.reason}.", severity="warning")
+            return
+        if not self.is_mounted:
+            return
+        self._refresh_after_speaker_rename(cluster_id)
+
+    def _refresh_after_speaker_rename(self, cluster_id: str) -> None:
+        """Re-read the rewritten `Media.content` and patch the preview text
+        plus the just-renamed row's own legend label in place."""
+        row = self.media_db.get_media_by_id(self.speaker_rename_media_id)
+        content = row["content"] if row else ""
+        try:
+            self.query_one("#library-media-preview-lines", Static).update(content)
+        except NoMatches:
+            pass
+        try:
+            speaker_rows = dict(
+                _meeting_speaker_legend_rows(self.media_db, self.speaker_rename_media_id)
+            )
+            label_widget = self.query_one(
+                f"#library-media-speaker-label-{cluster_id}", Static
+            )
+            label_widget.update(speaker_rows.get(cluster_id, cluster_id))
+        except Exception:  # noqa: BLE001 - legend label refresh is best-effort
+            pass
 
     def apply_compact_presentation(self, compact: bool) -> None:
         """Patch mounted Media density and preview participation in place."""
@@ -1298,6 +1709,46 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     )
                     open_viewer.can_focus = self.show_preview and not self.compact
                     yield self._gate_stale_action(open_viewer, "Open in viewer")
+
+                # Task 8 (meeting diarization spec): a finished meeting
+                # recording's speakers can still be renamed after the fact --
+                # one legend row per speaker (mirroring the live Meetings
+                # screen's Task 7 legend), surfaced ONLY while the caller's
+                # `can_rename_meeting_speakers` says the meeting folder is
+                # still there (absent, not disabled, otherwise: a non-meeting
+                # item has nothing to rename).
+                # ... and only while the pane is actually visible: building
+                # the rows parses the whole transcript.jsonl, which is pure
+                # waste on a hidden pane (final review, MINOR).
+                if (
+                    self.can_rename_speakers
+                    and has_preview
+                    and not self.compact
+                    and self.media_db is not None
+                    and self.speaker_rename_media_id is not None
+                ):
+                    try:
+                        speaker_rows = _meeting_speaker_legend_rows(
+                            self.media_db, self.speaker_rename_media_id
+                        )
+                    except Exception:  # noqa: BLE001 - a bad read just means no legend
+                        speaker_rows = []
+                    if speaker_rows:
+                        legend = Vertical(id="library-media-speaker-legend")
+                        with legend:
+                            for cluster_id, label in speaker_rows:
+                                yield Horizontal(
+                                    Static(
+                                        label,
+                                        id=f"library-media-speaker-label-{cluster_id}",
+                                        markup=False,
+                                    ),
+                                    Input(
+                                        placeholder="Rename…",
+                                        id=f"library-media-speaker-input-{cluster_id}",
+                                    ),
+                                    classes="library-media-speaker-row",
+                                )
 
             # task-14900: the wide split's detail half never sits blank --
             # when the preview is hidden (Select mode, or an empty list) a

@@ -145,6 +145,87 @@ def test_prepare_reports_tap_provider_and_diarization(tmp_path, monkeypatch):
     assert owner.prepared is prepared and owner._facade.name == "facade"
 
 
+def test_build_diarizer_server_backend_returns_none_without_raising(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    settings = _settings(tmp_path, live_diarization=True, diarizer_backend="server")
+    assert mo.build_diarizer(settings) is None
+
+
+def test_build_diarizer_construction_failure_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", boom)
+    settings = _settings(tmp_path, live_diarization=True, diarizer_backend="local")
+    assert mo.build_diarizer(settings) is None
+
+
+def test_live_diarization_active_false_for_server_backend(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    owner, _, _ = _owner(tmp_path, live_diarization=True, diarizer_backend="server")
+    prepared = owner.prepare()
+    assert prepared.live_diarization_active is False
+
+
+def test_live_diarization_active_true_for_local_backend_with_deps(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    owner, _, _ = _owner(tmp_path, live_diarization=True, diarizer_backend="local")
+    prepared = owner.prepare()
+    assert prepared.live_diarization_active is True
+
+
+def test_no_diarizer_built_when_live_off(tmp_path, monkeypatch):
+    owner, _, _ = _owner(tmp_path, live_diarization=False)
+    owner.prepare(); session = owner.start()
+    assert session._diarizer is None
+
+
+def test_diarizer_built_when_live_on_and_deps_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    built = {}
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings: built.setdefault("d", object()))
+    owner, _, _ = _owner(tmp_path, live_diarization=True)
+    owner.prepare(); session = owner.start()
+    assert session._diarizer is built["d"]
+
+
+def test_max_speakers_must_be_at_least_one(tmp_path):
+    """Qodo Q7: 0/negative silently disabled the Stop pass instead of failing
+    at the settings boundary like every other unusable config value."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        _settings(tmp_path, max_speakers=0)
+    with pytest.raises(pydantic.ValidationError):
+        _settings(tmp_path, max_speakers=-3)
+    assert _settings(tmp_path, max_speakers=1).max_speakers == 1
+
+
+def test_a_live_diarizer_does_not_force_the_offline_ingest_pass(tmp_path, monkeypatch):
+    """Qodo Q12: `post_diarize` only asks Library ingest for a SECOND, offline
+    diarization of mixed.wav that knows nothing of the live ids or renames.
+    The live backend's own Stop pass is driven by the session's `_diarizer`,
+    so building one must not override an explicit `post_diarize = false`."""
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings: object())
+    owner, _, _ = _owner(tmp_path, live_diarization=True, post_diarize=False)
+    owner.prepare()
+    session = owner.start()
+    assert owner.local_sink.post_diarize is False   # the user's setting stands
+    assert session._diarizer is not None            # ... the Stop pass still runs
+    owner.stop()
+
+
+def test_live_on_missing_deps_falls_back_to_coarse(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ("torch",))
+    owner, _, _ = _owner(tmp_path, live_diarization=True)
+    owner.prepare(); session = owner.start()
+    assert session._diarizer is None
+
+
 def test_start_creates_folder_writers_and_session_in_room_mode_when_tap_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)
