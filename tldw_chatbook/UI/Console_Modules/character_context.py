@@ -13,6 +13,7 @@ from ...Character_Chat.character_conversation_navigation import (
     CharacterConversationGroup,
     CharacterConversationKey,
     CharacterConversationNavigationService,
+    CharacterConversationPage,
     CharacterConversationRow,
     CharacterKeywordIndexStatus,
     LocalCharacterConversationTarget,
@@ -20,6 +21,7 @@ from ...Character_Chat.character_conversation_navigation import (
     UnavailableCharacterReason,
     UnresolvedConversationKey,
 )
+from ...Utils.input_validation import validate_console_character_query
 
 if TYPE_CHECKING:
     from ...Chat.console_conversation_activation import (
@@ -135,7 +137,8 @@ class ConsoleCharacterQueryHandoff:
     query: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.query, str) or not self.query.strip():
+        query = validate_console_character_query(self.query)
+        if not query.strip():
             raise ValueError("query handoff requires nonblank text")
 
 
@@ -678,6 +681,64 @@ class ConsoleCharacterContextController:
         rows = tuple(replace(row, selected_excerpt="") for row in page.rows)
         return rows, page.keyword_status or status
 
+    def _keyword_page_sync(
+        self,
+        database: Any,
+        fingerprint: ConsoleCharacterScopeFingerprint,
+        query: str,
+        offset: int,
+        limit: int,
+    ) -> CharacterConversationPage:
+        current = (
+            ResolvedLocalCharacterKey(
+                fingerprint.data_authority_id,
+                fingerprint.current_character_id,
+            )
+            if fingerprint.current_character_id is not None
+            else None
+        )
+        service = self._service_factory(database, current_character=current)
+        status = service.ensure_keyword_index()
+        page = service.keyword_search(query, offset=offset, limit=limit)
+        return (
+            page
+            if page.keyword_status is not None
+            else replace(page, keyword_status=status)
+        )
+
+    async def keyword_page(
+        self, *, query: str, offset: int, limit: int
+    ) -> CharacterConversationPage:
+        """Load one authority-fenced Keyword page for the installed switcher."""
+
+        query = validate_console_character_query(query)
+        for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
+            try:
+                snapshot = await self._capture_scope()
+            except _ConsoleCharacterScopeChanged:
+                continue
+            except _ConsoleCharacterScopeReadError:
+                return CharacterConversationPage(
+                    (), 0, None, 0, CharacterKeywordIndexStatus.ABSENT
+                )
+            if snapshot.database is None:
+                return CharacterConversationPage(
+                    (), 0, None, 0, CharacterKeywordIndexStatus.ABSENT
+                )
+            page = await asyncio.to_thread(
+                self._keyword_page_sync,
+                snapshot.database,
+                snapshot.fingerprint,
+                query,
+                offset,
+                limit,
+            )
+            if await self._scope_is_current(snapshot):
+                return page
+        return CharacterConversationPage(
+            (), 0, None, 0, CharacterKeywordIndexStatus.ABSENT
+        )
+
     async def search(self, query: str) -> None:
         """Search at most eight local rows and restore semantic browse state.
 
@@ -1185,6 +1246,11 @@ class ConsoleCharacterContextController:
     def open_roleplay_home(self) -> None:
         self._navigate_roleplay_home()
 
+    def open_library_home(self) -> None:
+        """Open Library for generic unavailable-character recovery."""
+
+        self._navigate_library_home()
+
     async def start_current(self, group: CharacterConversationGroup) -> None:
         if isinstance(group.key, ResolvedLocalCharacterKey):
             generation = self._generation
@@ -1220,7 +1286,12 @@ class ConsoleCharacterContextController:
 
         if not self._query_handoff_capability.available or self._query_handoff is None:
             return False
-        self._query_handoff(ConsoleCharacterQueryHandoff(query.strip()))
+        try:
+            handoff = ConsoleCharacterQueryHandoff(query)
+        except ValueError as exc:
+            self._publish(replace(self.state, error=str(exc)))
+            return False
+        self._query_handoff(handoff)
         return True
 
     @property

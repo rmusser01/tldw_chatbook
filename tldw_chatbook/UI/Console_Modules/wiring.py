@@ -91,6 +91,7 @@ from .character import ConsoleCharacterController
 from .character_context import (
     ConsoleCharacterContextController,
     ConsoleCharacterContextState,
+    ConsoleCharacterQueryHandoffCapability,
 )
 from .console_spend_projection import ConsoleDraftSpendRefresh
 from .dictation import ConsoleDictationController
@@ -128,7 +129,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = ["build_console_controllers"]
 
 
-def _navigate_character_context(screen: Any, context_key: str, target: Any) -> None:
+def _navigate_character_context(
+    screen: Any,
+    context_key: str,
+    target: Any,
+    *,
+    on_completion: Callable[[bool], None] | None = None,
+) -> None:
     """Serialize exact navigation only when the user leaves the Character browser."""
     from ..Navigation.character_conversation_navigation import (
         serialize_library_character_repair_context,
@@ -155,7 +162,11 @@ def _navigate_character_context(screen: Any, context_key: str, target: Any) -> N
             serialize_library_unavailable_browse,
         ),
     }[context_key]
-    screen.post_message(NavigateToScreen(route, {context_key: serialize(target)}))
+    message = NavigateToScreen(
+        route, {context_key: serialize(target)}, on_completion=on_completion
+    )
+    if not screen.post_message(message):
+        message.report_completion(False)
 
 
 async def _start_character_context_chat(
@@ -1082,6 +1093,14 @@ def build_console_controllers(
         ),
         state_changed=lambda state: _sync_character_context_presentation(
             screen, state
+        ),
+        query_handoff_capability=ConsoleCharacterQueryHandoffCapability(
+            available=screen.console_character_switcher_available()
+        ),
+        query_handoff=(
+            lambda handoff: screen.open_console_character_switcher_query(
+                handoff.query
+            )
         ),
     )
 
