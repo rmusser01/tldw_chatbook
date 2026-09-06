@@ -1571,9 +1571,14 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
 
         composer.load_draft("prefix ")
         composer.insert_pasted_text(pasted_text)
+        # This paste wraps to two rows and moves the bottom-anchored draft up.
+        # Let layout finish before Pilot samples the mouse coordinates.
+        await pilot.pause()
+        assert visible_draft.content_region.height == 2
         await pilot.click("#console-command-visible-text", offset=(8, 0))
         await pilot.pause(0.1)
         assert "Expand?" in visible_draft.renderable.plain
+        assert composer.has_pending_paste_confirmation()
 
         await pilot.click("#console-command-visible-text", offset=(0, 0))
         await pilot.pause(0.1)
@@ -1582,6 +1587,7 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
         assert "prefix " in visible_plain
         assert "Pasted text |" in visible_plain
         assert "Expand?" not in visible_plain
+        assert not composer.has_pending_paste_confirmation()
         assert composer.draft_text() == f"prefix {pasted_text}"
 
 
@@ -2795,6 +2801,7 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         tab_strip = console.query_one("#console-native-tab-strip")
+        tab_row = tab_strip.parent
         transcript = console.query_one("#console-native-transcript")
         empty_rows = list(transcript.query("#console-transcript-empty-state"))
 
@@ -2810,10 +2817,13 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )
+        # The tab row, including its overflow hints, now owns the bottom gap.
+        assert tab_row is not None
+        assert tab_row.has_class("console-session-tab-strip")
+        assert tab_row.region.height == 1
+        assert empty_panel.region.y == transcript.content_region.y
         assert empty_panel.region.y == (
-            tab_strip.region.y
-            + tab_strip.region.height
-            + tab_strip.styles.margin.bottom
+            tab_row.region.y + tab_row.region.height + tab_row.styles.margin.bottom
         )
 
 
@@ -3360,6 +3370,7 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
+        await _open_console_inspector(console, pilot)
         staged_context = console.query_one("#console-staged-context-tray")
         max_height = getattr(
             staged_context.styles.max_height,

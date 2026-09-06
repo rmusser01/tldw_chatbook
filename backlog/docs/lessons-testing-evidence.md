@@ -63,6 +63,14 @@ readiness is not proof that the layout fits the terminal. Bound the wait and fai
 explicitly if the rendered state never arrives; a temporarily absent replacement
 belongs in that same readiness poll, not an unconditional `query_one`.
 
+**Related incident, TASK-31750 residual UI qualification, 2026-09-05.** A paste
+confirmation test inserted a two-line wrapped draft while its mounted region
+still occupied one row at y=39. Pilot sampled that old origin before its internal
+pause moved the bottom-anchored draft to y=38; the click missed the intended token.
+Allowing layout before calling `pilot.click`, then checking the two-row geometry,
+restored the real confirm/click-away flow without changing coordinates or runtime
+hit testing. Widget existence and updated render text are not ready mouse geometry.
+
 ## A readiness check does not survive an extra asynchronous yield
 
 **Dev test review / TASK-31733, 2026-09-05.** The combined workbench/right-rail
@@ -2241,6 +2249,15 @@ the real app in tmux. `render_line`/`region` alone prove what a widget WOULD pai
 never what the screen shows; the composited screen is the only authority (third
 recorded instance of this lesson class). When a live report contradicts a green suite,
 suspect the harness before the reporter.
+
+**Dev review recurrence (2026-09-05, TASK-31750).** The Watchlists Follow button
+remained at y=48 in a 40-row terminal even after `scroll_visible`: its Inspector
+had `overflow-y: hidden`. The plain destination harness loaded lifted defaults
+but omitted the app bundle containing the existing `overflow-y: auto` rule.
+Using the existing `_CssTrueDestinationHarness` plus normal scrolling made the
+same real click and exact run/route assertions pass. Forcing a scroll through
+prohibited overflow or replacing the click with `press()` would not qualify
+the production interaction.
 
 **Fourth instance (2026-08-07, task-2859 item 10, padding not clipping this time).** A
 `.library-rag-result-snippet { padding: 0 1; }` bundle rule (fixing a snippet sitting

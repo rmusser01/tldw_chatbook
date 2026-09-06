@@ -15,7 +15,11 @@ from textual.css.query import NoMatches
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
-from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
+from Tests.UI.test_destination_shells import (
+    DestinationHarness,
+    _CssTrueDestinationHarness,
+    _wait_for_selector,
+)
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_evidence_models import (
@@ -1177,7 +1181,8 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
         )
     )
     app.open_active_home_item_in_console = Mock()
-    host = DestinationHarness(app, "watchlists_collections")
+    # The app bundle owns the Inspector's scroll rule; lifted defaults do not.
+    host = _CssTrueDestinationHarness(app, "watchlists_collections")
 
     async with host.run_test(size=(180, 40)) as pilot:
         await pilot.pause(0.1)
@@ -1188,6 +1193,9 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
         assert "Daily security feed" in str(button.label)
         assert "failed" in _screen_static_text(screen)
 
+        # Console actions can be below this terminal's Inspector viewport.
+        button.scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#watchlists-follow-in-console")
         await pilot.pause(0.1)
 
