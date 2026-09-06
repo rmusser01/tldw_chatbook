@@ -77,6 +77,23 @@ but names both items until the new detail settles. Late or failed loads cannot
 replace a newer selection. Conversations retains its existing paged
 list-and-preview layout.
 
+**Row markers.** An item's second row says what it is and how old it is, and
+adds **· analysed** when that item already carries an analysis — so you can
+see what is worth generating without opening anything (`document · 5m ·
+analysed`). Its title row starts with a single one-cell **state slot**, which
+is blank until a review set is active (see "Review these" below). While one
+is: every item in the set carries **·** until you review it and **✓**
+afterwards, and items outside the set stay blank — the marks update the moment
+you mark an item reviewed in the Reader, without leaving it. Select mode
+reuses that same cell for its **☑/☐**, so a row never carries two markers.
+
+*Verified against fix/media-wave5-i — 2026-09-06 (tasks 28008/28009: four
+seeded `document` items, two of them analysed, live at 235x52 and 100x30.
+Both analysed rows painted `document · 5m · analysed` in full at the Items
+pane's 36-cell floor; "Review these" put `·` on every row, two `]` presses
+turned the first two into `✓`, and `s` replaced the slot with `☐` on every
+row rather than adding a second marker.)*
+
 ## Features & controls
 
 ### The shared select / export grammar

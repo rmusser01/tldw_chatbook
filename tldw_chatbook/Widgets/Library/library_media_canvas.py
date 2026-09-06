@@ -411,6 +411,30 @@ def _capped_choice_value(value: str, cap: int = 8) -> str:
     return value if len(value) <= cap else value[: cap - 1] + "…"
 
 
+def _media_row_marker(
+    *,
+    select_mode: bool,
+    checked: bool,
+    reviewed: bool | None,
+    selected: bool,
+    compact: bool,
+) -> str:
+    """Return the row's ONE leading state cell.
+
+    task-28009 (controller ruling 4): a row never carries two slots. Select
+    mode owns the cell (☑/☐); otherwise an active review set owns it (``✓``
+    reviewed, ``·`` not yet), and only a row outside any active set falls
+    through to the wide-mode current-row cue (``▸``). The row that is open
+    in the Reader keeps its ``library-media-row-selected`` class either way,
+    so nothing about the selection becomes invisible when a set is active.
+    """
+    if select_mode:
+        return "☑" if checked else "☐"
+    if reviewed is not None:
+        return "✓" if reviewed else "·"
+    return "▸" if selected and not compact else " "
+
+
 def _media_row_label_rest(
     title: str,
     secondary: str,
@@ -693,14 +717,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 loaded=button._library_media_loaded,
             )
             button._library_row_label_rest = label_rest
-            if select_mode:
-                marker = "☑" if button._library_media_checked else "☐"
-            else:
-                marker = (
-                    "▸"
-                    if button._library_media_selected and not compact
-                    else " "
-                )
+            marker = _media_row_marker(
+                select_mode=select_mode,
+                checked=button._library_media_checked,
+                reviewed=button._library_media_reviewed,
+                selected=button._library_media_selected,
+                compact=compact,
+            )
             button.label = f"{marker}{label_rest}"
             button.set_class(
                 button._library_media_selected and not compact and not select_mode,
@@ -734,6 +757,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             button._library_media_checked = row.checked
             button._library_media_loading = row.loading
             button._library_media_loaded = row.loaded
+            button._library_media_reviewed = row.reviewed
             label_rest = _media_row_label_rest(
                 row.title,
                 row.secondary,
@@ -742,10 +766,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 loaded=row.loaded,
             )
             button._library_row_label_rest = label_rest
-            if select_mode:
-                marker = "☑" if row.checked else "☐"
-            else:
-                marker = "▸" if row.selected and not self.compact else " "
+            marker = _media_row_marker(
+                select_mode=select_mode,
+                checked=row.checked,
+                reviewed=row.reviewed,
+                selected=row.selected,
+                compact=self.compact,
+            )
             button.label = f"{marker}{label_rest}"
             button.set_class(
                 row.selected and not self.compact and not select_mode,
@@ -1623,10 +1650,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         else _MEDIA_ROW_WIDE_HEIGHT
                     )
                     for index, row in enumerate(self.canvas.rows):
-                        if select_mode:
-                            marker = "☑" if row.checked else "☐"
-                        else:
-                            marker = "▸" if row.selected and not self.compact else " "
+                        marker = _media_row_marker(
+                            select_mode=select_mode,
+                            checked=row.checked,
+                            reviewed=row.reviewed,
+                            selected=row.selected,
+                            compact=self.compact,
+                        )
                         # task-281 (PR #665 review): the in-place toggle needs the
                         # marker-less RAW label to rebuild from -- reading it back
                         # off the mounted Button un-escapes user titles (both
@@ -1654,6 +1684,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         button._library_media_checked = row.checked
                         button._library_media_loading = row.loading
                         button._library_media_loaded = row.loaded
+                        button._library_media_reviewed = row.reviewed
                         button.tooltip = escape_markup(row.title)
                         # task-31631 AC#2: the whole row is the toggle
                         # target. It already was one full-width Button

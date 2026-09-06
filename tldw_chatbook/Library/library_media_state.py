@@ -759,6 +759,11 @@ class LibraryMediaRow:
     checked: bool = False
     loading: bool = False
     loaded: bool = False
+    # task-28009: the row's review state -- ``True`` reviewed, ``False`` in
+    # the active set but not yet, ``None`` outside any active set (the
+    # screen decorates the browse rows; see
+    # ``LibraryScreen._decorate_library_media_reviewed``).
+    reviewed: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -1035,11 +1040,13 @@ def build_library_media_browse_state(
                 format_console_relative_age(
                     _first_present_text(item, ("updated_at",)), now=reference_now
                 ),
+                analysed=bool(item["has_analysis"]),
             ),
             selected=item["id"] == resolved_selected_id,
             checked=item["id"] in selected_ids,
             loading=item["id"] == loading_id,
             loaded=item["id"] == loaded_id,
+            reviewed=item["reviewed"],
         )
         for item in items
     )
@@ -1129,24 +1136,29 @@ def _parse_timestamp(value: str) -> datetime | None:
     return parsed
 
 
-def _secondary_text(media_type: str, age: str) -> str:
+def _secondary_text(media_type: str, age: str, *, analysed: bool = False) -> str:
     """Return secondary display text: '{type} · {age}' or fallback.
 
     Rules:
     - If type and age both present: 'type · age'
     - If only type (no age): 'type'
     - If no type: 'media' (regardless of age)
+    - task-28008: an item whose newest version carries analysis text gets a
+      trailing ' · analysed'. A WORD, not a colour or a glyph: the row has
+      to say what it means at the Items pane's 36-cell floor, which
+      'document · 5m · analysed' (24 cells) fits.
     """
     has_type = bool(media_type)
     has_age = bool(age)
 
     if has_type and has_age:
-        return f"{media_type} · {age}"
+        text = f"{media_type} · {age}"
     elif has_type:
-        return media_type
+        text = media_type
     else:
         # When no type, return 'media' regardless of age
-        return "media"
+        text = "media"
+    return f"{text} · analysed" if analysed else text
 
 
 def _sort_key(entry: _MediaEntry) -> tuple[int, float]:

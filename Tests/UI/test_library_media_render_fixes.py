@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from types import SimpleNamespace
@@ -2536,3 +2537,119 @@ async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
                 meta,
                 lines,
             )
+
+
+# ---------------------------------------------------------------------------
+# task-28008 / task-28009 (render half): the row's state slot and the
+# "analysed" segment of its secondary line.
+# ---------------------------------------------------------------------------
+
+
+_ANALYSED_SECONDARY = "document · 5m · analysed"
+
+
+def _review_state_host(count: int = 4, analysed: int = 2):
+    """Four ``document`` items, the first ``analysed`` of them analysed.
+
+    The stamp is fixed 5m30s back so every row's age label is "5m" and the
+    secondary line is exactly the 24-cell ``document · 5m · analysed`` the
+    36-cell Items pane floor has to hold.
+    """
+    stamp = (
+        datetime.now(timezone.utc) - timedelta(minutes=5, seconds=30)
+    ).isoformat()
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Doc {index}",
+            "type": "document",
+            "last_modified": stamp,
+            "content": f"Body of doc {index}.",
+            "version": 1,
+            "has_analysis": index <= analysed,
+        }
+        for index in range(1, count + 1)
+    ]
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+def _painted_media_rows(host, screen) -> tuple[list[str], list[str]]:
+    """Return the painted (title lines, secondary lines) of the Media list."""
+    lines = _painted_item_lines(host, screen)
+    titles = [line for line in lines if "Doc " in line]
+    secondaries = [line for line in lines if "document · " in line]
+    return titles, secondaries
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_media_rows_paint_analysed_only_for_analysed_items(size):
+    """task-28008: the row says which items already carry an analysis, in
+    words -- and the whole 24-cell secondary fits the Items pane floor."""
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+
+        _titles, secondaries = _painted_media_rows(host, screen)
+        assert len(secondaries) == 4, secondaries
+        assert [line.strip() for line in secondaries[:2]] == [
+            _ANALYSED_SECONDARY,
+            _ANALYSED_SECONDARY,
+        ], secondaries
+        assert [line.strip() for line in secondaries[2:]] == [
+            "document · 5m",
+            "document · 5m",
+        ], secondaries
+        assert screen.query_one("#library-media-canvas").region.width >= 36
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_media_rows_paint_the_active_sets_review_state(size):
+    """task-28009: every row in the active set carries a state glyph -- `·`
+    until it is reviewed, `✓` after -- and rows outside it carry neither."""
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        service = screen._review_set_service()
+        set_id = service.create_review_set(
+            "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+        )
+        _sync_library_canvas(screen, "media")
+        for _ in range(3):
+            await pilot.pause()
+
+        titles, _secondaries = _painted_media_rows(host, screen)
+        assert [line[1] for line in titles] == ["·", "·", " ", " "], titles
+
+        service.mark_item_done(set_id, backing_media_id=1, done=True)
+        _sync_library_canvas(screen, "media")
+        for _ in range(3):
+            await pilot.pause()
+
+        titles, _secondaries = _painted_media_rows(host, screen)
+        assert [line[1] for line in titles] == ["✓", "·", " ", " "], titles
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_select_mode_checkbox_replaces_the_review_state_slot(size):
+    """Controller ruling (4): one slot. In select mode it is the ☑/☐."""
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        service = screen._review_set_service()
+        service.create_review_set(
+            "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+        )
+        _sync_library_canvas(screen, "media")
+        await pilot.pause()
+        await _enter_media_select_mode(screen, pilot)
+
+        titles, _secondaries = _painted_media_rows(host, screen)
+        assert [line[1] for line in titles] == ["☐", "☐", "☐", "☐"], titles
+        assert "·" not in "".join(line[1] for line in titles), titles

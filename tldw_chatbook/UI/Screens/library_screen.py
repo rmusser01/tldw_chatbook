@@ -15542,7 +15542,9 @@ class LibraryScreen(BaseAppScreen):
         state = build_library_media_browse_state(
             controller.applied_result,
             type_options=controller.type_options,
-            retained_items=controller.retained_items,
+            retained_items=self._decorate_library_media_reviewed(
+                controller.retained_items
+            ),
             selected_id=self._selected_media_id,
             select_mode=self._library_media_select_mode,
             selected_ids=self._library_media_row_selection.ids,
@@ -15567,6 +15569,43 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
         return state
+
+    def _decorate_library_media_reviewed(
+        self, items: Sequence[Mapping[str, Any]]
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Stamp each browse row's ``reviewed`` from the ACTIVE review set.
+
+        The Media projection cannot know this -- a review set lives in the
+        Library collections DB, not the Media DB -- so the exact browse row
+        arrives with ``reviewed=None`` and is decorated here, at the one seam
+        every Media canvas build routes through (task-28009). A row in the
+        set carries its done mark (``True``/``False``); a row outside it, or
+        every row when no set is active, keeps ``None``.
+
+        Args:
+            items: The controller's retained exact browse rows.
+
+        Returns:
+            The rows with ``reviewed`` decorated.
+
+        Note:
+            Fails OPEN on a storage error (task-30042 doctrine): an
+            unreadable collections DB costs the markers, never the list.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return tuple(items)
+        try:
+            review_set = service.get_active_review_set()
+        except Exception:
+            return tuple(items)
+        if review_set is None:
+            return tuple(items)
+        done_by_id = {item.backing_media_id: item.done for item in review_set.items}
+        return tuple(
+            {**item, "reviewed": done_by_id.get(int(item["backing_media_id"]))}
+            for item in items
+        )
 
     def _review_dismiss_receipt_name(self) -> str:
         """Display name for the pending dismiss-undo receipt, "" when none."""
@@ -35141,6 +35180,17 @@ class LibraryScreen(BaseAppScreen):
         viewer = self._mounted_library_media_viewer()
         if viewer is None or not self._sync_library_media_viewer_state(viewer):
             self.refresh(recompose=True)
+            return
+        # task-28009: a done mark (`m`, or the final `]`) reaches this seam
+        # WITHOUT loading another item, and the Items list stays mounted
+        # beside the Reader -- so without this the row markers stayed a
+        # gesture behind the banner that had just moved. In-place row patch,
+        # same call `_apply_library_media_active_surface` already makes.
+        try:
+            canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
+        except (NoMatches, QueryError):
+            return
+        canvas.apply_reader_state(self._build_library_media_state())
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         """Disable a still-mounted edit Save while its write is unsettled."""
