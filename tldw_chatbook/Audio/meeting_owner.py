@@ -163,10 +163,13 @@ class PrepareResult:
     diarization_missing: tuple[str, ...]
     recoverable: tuple[Path, ...]
     input_devices: tuple[str, ...] = ()
-    #: Whether `start()` will actually inject a live diarizer (spec §3.4):
-    #: `diarization_available` alone only says the offline post-meeting pass
-    #: is possible -- this also requires `settings.live_diarization` to be
-    #: on. False here still leaves the offline pass available at Stop.
+    #: Whether `start()` will actually inject a live LOCAL diarizer (spec
+    #: §3.4): `diarization_available` alone only says the offline post-meeting
+    #: pass is possible -- this also requires `settings.live_diarization` on
+    #: AND `settings.diarizer_backend == "local"`, since `build_diarizer`
+    #: always returns `None` for the unimplemented "server" backend. Computed
+    #: without constructing a diarizer (no subprocess spawn during prepare).
+    #: False here still leaves the offline pass available at Stop.
     #: Defaulted (unlike the fields above) so existing positional/keyword
     #: callers built before Task 6 -- notably `Tests/UI/test_meetings_screen
     #: .py`'s `FakeOwner` -- keep constructing a `PrepareResult` unchanged.
@@ -435,7 +438,10 @@ class MeetingSessionOwner:
         self.prepared = PrepareResult(
             tap_mode=tap_mode, provider=provider, model=model or "",
             diarization_available=not missing, diarization_missing=missing,
-            live_diarization_active=self.settings.live_diarization and not missing,
+            live_diarization_active=(
+                self.settings.live_diarization and not missing
+                and self.settings.diarizer_backend == "local"
+            ),
             recoverable=recoverable, input_devices=devices, capture_error=capture_error,
         )
         return self.prepared

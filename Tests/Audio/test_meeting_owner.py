@@ -145,6 +145,38 @@ def test_prepare_reports_tap_provider_and_diarization(tmp_path, monkeypatch):
     assert owner.prepared is prepared and owner._facade.name == "facade"
 
 
+def test_build_diarizer_server_backend_returns_none_without_raising(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    settings = _settings(tmp_path, live_diarization=True, diarizer_backend="server")
+    assert mo.build_diarizer(settings) is None
+
+
+def test_build_diarizer_construction_failure_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", boom)
+    settings = _settings(tmp_path, live_diarization=True, diarizer_backend="local")
+    assert mo.build_diarizer(settings) is None
+
+
+def test_live_diarization_active_false_for_server_backend(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    owner, _, _ = _owner(tmp_path, live_diarization=True, diarizer_backend="server")
+    prepared = owner.prepare()
+    assert prepared.live_diarization_active is False
+
+
+def test_live_diarization_active_true_for_local_backend_with_deps(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    owner, _, _ = _owner(tmp_path, live_diarization=True, diarizer_backend="local")
+    prepared = owner.prepare()
+    assert prepared.live_diarization_active is True
+
+
 def test_no_diarizer_built_when_live_off(tmp_path, monkeypatch):
     owner, _, _ = _owner(tmp_path, live_diarization=False)
     owner.prepare(); session = owner.start()
