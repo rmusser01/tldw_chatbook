@@ -59,6 +59,12 @@ def default_server_credential_profile_id() -> str | None:
     directly, so tests that construct it explicitly (the overwhelming
     majority of `Tests/RuntimePolicy/`) keep getting the unscoped default
     with no changes required.
+
+    Returns:
+        None under the default (un-retargeted) config path. Otherwise the
+        resolved `TLDW_CONFIG_PATH` config file path, used as
+        `RuntimeServerContextProvider`'s `credential_profile_id` -- the
+        dedicated keyring namespace every server under that profile shares.
     """
     if not os.environ.get("TLDW_CONFIG_PATH"):
         return None
@@ -451,14 +457,16 @@ class RuntimeServerContextProvider:
     def clear_active_server_credentials(self) -> None:
         active_server_id = self._require_active_server_id()
         self.credential_store.clear_server(
-            self._credential_profile_scope_id(active_server_id)
+            self._credential_profile_scope_id(active_server_id),
+            normalized_origin=active_server_id,
         )
         self._mark_legacy_server_id_cleared(active_server_id)
         self._invalidate_cached_client()
 
     def clear_server_credentials(self, server_id: str) -> None:
         self.credential_store.clear_server(
-            self._credential_profile_scope_id(server_id)
+            self._credential_profile_scope_id(server_id),
+            normalized_origin=server_id,
         )
         self._mark_legacy_server_id_cleared(server_id)
         self._invalidate_cached_client()

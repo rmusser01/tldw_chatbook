@@ -165,6 +165,38 @@ def test_in_memory_credentials_clear_one_server_without_touching_another():
     assert store.get_secret("server-b", SERVER_CREDENTIAL_ACCESS_TOKEN) == "access-b"
 
 
+def test_in_memory_clear_server_with_origin_scopes_to_one_server_in_shared_profile():
+    """task-31824: two servers sharing one `server_profile_id` (the
+    TLDW_CONFIG_PATH scoped-mode shape) must stay independently clearable.
+    `clear_server(profile)` alone clears every origin under that profile;
+    passing `normalized_origin` narrows the clear to one server."""
+    store = InMemoryServerCredentialStore()
+    scope_a = ServerCredentialScope(
+        server_profile_id="shared-profile",
+        normalized_origin="server-a",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+    scope_a_bearer = ServerCredentialScope(
+        server_profile_id="shared-profile",
+        normalized_origin="server-a",
+        credential_type=SERVER_CREDENTIAL_BEARER_TOKEN,
+    )
+    scope_b = ServerCredentialScope(
+        server_profile_id="shared-profile",
+        normalized_origin="server-b",
+        credential_type=SERVER_CREDENTIAL_ACCESS_TOKEN,
+    )
+    store.set_scoped_secret(scope_a, "a-secret")
+    store.set_scoped_secret(scope_a_bearer, "a-bearer")
+    store.set_scoped_secret(scope_b, "b-secret")
+
+    store.clear_server("shared-profile", normalized_origin="server-a")
+
+    assert store.get_scoped_secret(scope_a) is None
+    assert store.get_scoped_secret(scope_a_bearer) is None
+    assert store.get_scoped_secret(scope_b) == "b-secret"
+
+
 def test_in_memory_delete_one_purpose_leaves_other_purposes_for_server():
     store = InMemoryServerCredentialStore()
     store.set_secret("server-a", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-a")
