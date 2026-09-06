@@ -122,7 +122,7 @@ async def test_basic_edit_reaches_screen_owned_prompt_draft(tmp_path) -> None:
         await _open_prompt_editor(screen, pilot, prompt_id)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_editor_armed,
+            lambda: screen._prompts_state.editor_armed,
             message="Prompt editor did not arm",
         )
         screen.query_one("#library-prompt-user", TextArea).load_text(
@@ -130,13 +130,13 @@ async def test_basic_edit_reaches_screen_owned_prompt_draft(tmp_path) -> None:
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_dirty,
+            lambda: screen._prompts_state.dirty,
             message="Basic edit did not reach the screen-owned Prompt draft",
         )
 
-        assert screen._library_prompt_block_state is not None
+        assert screen._prompts_state.block_state is not None
         assert (
-            screen._library_prompt_block_state.definition.lanes[1].blocks[0].content
+            screen._prompts_state.block_state.definition.lanes[1].blocks[0].content
             == "Summarize the verified changes."
         )
 
@@ -148,7 +148,7 @@ async def test_basic_edit_reaches_screen_owned_prompt_draft(tmp_path) -> None:
             lambda: screen.focused is name,
             message="Prompt validation did not focus the owning Name control",
         )
-        assert screen._library_prompt_status == (
+        assert screen._prompts_state.status == (
             "Name is required; enter a Prompt name."
         )
 
@@ -181,10 +181,10 @@ async def test_basic_save_preserves_advanced_only_prompt_fields(tmp_path) -> Non
         await _open_prompt_editor(screen, pilot, prompt_id)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_editor_armed,
+            lambda: screen._prompts_state.editor_armed,
             message="Prompt editor did not arm",
         )
-        screen._library_prompt_editor_mode = "basic"
+        screen._prompts_state.editor_mode = "basic"
         work = screen.query_one(
             "#library-prompt-work-pane", LibraryPromptWorkPane
         )
@@ -198,14 +198,14 @@ async def test_basic_save_preserves_advanced_only_prompt_fields(tmp_path) -> Non
         await pilot.press("!")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_dirty,
+            lambda: screen._prompts_state.dirty,
             message="Basic edit did not dirty the structured Prompt",
         )
         screen.query_one("#library-prompt-save", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen._library_prompt_dirty
-            and screen._library_prompt_version == 2,
+            lambda: not screen._prompts_state.dirty
+            and screen._prompts_state.version == 2,
             message="Basic structured Prompt save did not settle",
         )
 
@@ -243,7 +243,7 @@ async def test_invalid_advanced_block_routes_save_focus_to_its_owner(tmp_path) -
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
-        screen._library_prompt_editor_mode = "info"
+        screen._prompts_state.editor_mode = "info"
         await screen.query_one(
             "#library-prompt-work-pane", LibraryPromptWorkPane
         ).set_editor_mode("info")
@@ -255,7 +255,7 @@ async def test_invalid_advanced_block_routes_save_focus_to_its_owner(tmp_path) -
         )
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_dirty,
+            lambda: screen._prompts_state.dirty,
             message="Info-view edit did not dirty the invalid Prompt",
         )
         screen.query_one("#library-prompt-save", Button).press()
@@ -267,7 +267,7 @@ async def test_invalid_advanced_block_routes_save_focus_to_its_owner(tmp_path) -
         )
 
         assert screen.query_one("#library-prompt-info-region").display is False
-        assert screen._library_prompt_status == (
+        assert screen._prompts_state.status == (
             "Fix block validation errors before saving."
         )
 
@@ -333,7 +333,7 @@ async def test_list_and_work_identity_survive_basic_advanced_and_info(tmp_path) 
         assert isinstance(row, Button)
         row.press()
         for _ in range(150):
-            if screen._library_prompt_detail is not None:
+            if screen._prompts_state.detail is not None:
                 break
             await pilot.pause(0.02)
         await _wait_for_selector(screen, pilot, "#library-prompt-mode-info")
@@ -379,7 +379,7 @@ async def test_dirty_prompt_draft_survives_reader_route_and_revisit(tmp_path) ->
         screen.query_one("#library-prompt-mode-info", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_editor_mode == "info",
+            lambda: screen._prompts_state.editor_mode == "info",
             message="Prompt Info mode did not settle",
         )
         screen.query_one(
@@ -390,10 +390,10 @@ async def test_dirty_prompt_draft_survives_reader_route_and_revisit(tmp_path) ->
         ).value = "Unsaved route details"
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_dirty,
+            lambda: screen._prompts_state.dirty,
             message="Prompt route draft did not become dirty",
         )
-        assert screen._library_prompt_detail is not None
+        assert screen._prompts_state.detail is not None
 
         screen.query_one("#library-row-browse-skills", Button).press()
         await _wait_for_selector(screen, pilot, "#library-skills-reader-shell")
@@ -409,10 +409,10 @@ async def test_dirty_prompt_draft_survives_reader_route_and_revisit(tmp_path) ->
         assert screen.query_one("#library-prompt-details", Input).value == (
             "Unsaved route details"
         )
-        assert screen._library_prompt_editor_mode == "info"
-        assert screen._library_prompt_dirty is True
-        assert screen._selected_prompt_id == prompt_id
-        assert screen._library_prompt_loaded_id == prompt_id
+        assert screen._prompts_state.editor_mode == "info"
+        assert screen._prompts_state.dirty is True
+        assert screen._prompts_state.selected_prompt_id == prompt_id
+        assert screen._prompts_state.loaded_id == prompt_id
         assert len(screen.query("#library-prompts-reader-shell")) == 1
 
     save_prompt.assert_not_awaited()
@@ -438,14 +438,14 @@ async def test_dirty_create_prompt_draft_vetoes_reader_route(tmp_path) -> None:
         await _wait_for_selector(screen, pilot, "#library-prompt-name")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_editor_armed,
+            lambda: screen._prompts_state.editor_armed,
             message="Create Prompt editor did not arm",
         )
         name = screen.query_one("#library-prompt-name", Input)
         name.value = "Unsaved Create draft"
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_dirty,
+            lambda: screen._prompts_state.dirty,
             message="Create Prompt draft did not become dirty",
         )
 
@@ -453,8 +453,8 @@ async def test_dirty_create_prompt_draft_vetoes_reader_route(tmp_path) -> None:
         await pilot.pause()
 
         assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_PROMPT
-        assert screen._library_prompts_view == "editor"
-        assert screen._library_prompt_dirty is True
+        assert screen._prompts_state.view == "editor"
+        assert screen._prompts_state.dirty is True
         assert screen.query_one("#library-prompt-name", Input).value == (
             "Unsaved Create draft"
         )
@@ -518,7 +518,7 @@ async def test_import_from_clean_editor_replaces_work_and_cancel_restores_editor
         assert screen.query_one("#library-prompt-name", Input).value == (
             "Release assistant"
         )
-        assert screen._selected_prompt_id == prompt_id
+        assert screen._prompts_state.selected_prompt_id == prompt_id
 
 
 @pytest.mark.asyncio
@@ -535,14 +535,14 @@ async def test_import_from_dirty_editor_is_vetoed_without_hiding_draft(tmp_path)
         await _open_prompt_editor(screen, pilot, prompt_id)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_editor_armed,
+            lambda: screen._prompts_state.editor_armed,
             message="Prompt editor did not arm",
         )
         name = screen.query_one("#library-prompt-name", Input)
         name.value = "Unsaved release assistant"
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_dirty,
+            lambda: screen._prompts_state.dirty,
             message="Prompt draft did not become dirty",
         )
 
@@ -553,7 +553,7 @@ async def test_import_from_dirty_editor_is_vetoed_without_hiding_draft(tmp_path)
         assert screen.query_one("#library-prompt-name", Input).value == (
             "Unsaved release assistant"
         )
-        assert screen._selected_prompt_id == prompt_id
+        assert screen._prompts_state.selected_prompt_id == prompt_id
 
 
 @pytest.mark.asyncio
@@ -586,8 +586,8 @@ async def test_items_browse_settles_while_prompt_editor_remains_open(
             message="Retained Prompt Items browse did not settle in editor mode",
         )
 
-        assert screen._library_prompts_view == "editor"
-        assert screen._selected_prompt_id == prompt_id
+        assert screen._prompts_state.view == "editor"
+        assert screen._prompts_state.selected_prompt_id == prompt_id
         assert screen.query_one("#library-prompt-name", Input).value == (
             "Release assistant"
         )
@@ -607,8 +607,8 @@ async def test_items_browse_settles_while_prompt_editor_remains_open(
                 message=f"Retained Prompt Items request did not settle: {changes}",
             )
             assert controller.result.status != "error"
-            assert screen._library_prompts_view == "editor"
-            assert screen._selected_prompt_id == prompt_id
+            assert screen._prompts_state.view == "editor"
+            assert screen._prompts_state.selected_prompt_id == prompt_id
 
         await request_and_wait(query="release", page=1)
         await request_and_wait(query="", collection_id=999_999, page=1)
@@ -719,9 +719,9 @@ async def test_same_prompt_older_detail_load_cannot_overwrite_newer_generation(
         await first
         await pilot.pause()
 
-        assert screen._library_prompt_detail is not None
-        assert screen._library_prompt_detail["name"] == "Newer detail"
-        assert screen._library_prompt_version == 3
+        assert screen._prompts_state.detail is not None
+        assert screen._prompts_state.detail["name"] == "Newer detail"
+        assert screen._prompts_state.version == 3
 
 
 @pytest.mark.asyncio
@@ -766,8 +766,8 @@ async def test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selectio
         screen.query_one(f"#library-prompt-row-{second_id}", Button).press()
         await _wait_for_selector(screen, pilot, "#library-prompt-detail-retry")
 
-        assert screen._selected_prompt_id == second_id
-        assert screen._library_prompt_loaded_id == first_id
+        assert screen._prompts_state.selected_prompt_id == second_id
+        assert screen._prompts_state.loaded_id == first_id
         assert screen.query_one("#library-prompt-name", Input).value == "First prompt"
         assert screen.query_one("#library-prompt-name", Input).disabled is True
         assert "showing “first prompt”" in str(
@@ -779,7 +779,7 @@ async def test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selectio
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_prompt_loaded_id == second_id
+                screen._prompts_state.loaded_id == second_id
                 and screen.query_one("#library-prompt-name", Input).value
                 == "Second prompt"
             ),
@@ -836,7 +836,7 @@ async def test_prompt_items_sync_is_not_blocked_by_work_projection_failure(
             "sync_state",
             Mock(side_effect=RuntimeError("work projection failed")),
         )
-        screen._library_prompts_sort_choices_visible = True
+        screen._prompts_state.sort_choices_visible = True
 
         synced = _sync_library_canvas(
             screen,
@@ -872,7 +872,7 @@ async def test_prompt_work_sync_is_not_blocked_by_items_projection_failure(
             "sync_state",
             Mock(side_effect=RuntimeError("items projection failed")),
         )
-        screen._library_prompt_status = "Restore failed safely."
+        screen._prompts_state.status = "Restore failed safely."
 
         synced = _sync_library_canvas(
             screen,
@@ -936,18 +936,18 @@ async def test_bulk_mode_keeps_loaded_prompt_as_labelled_read_only_preview(
         )
         work = screen.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
 
-        assert screen._library_prompt_dirty is False
+        assert screen._prompts_state.dirty is False
         prompts_list.query_one("#library-prompts-select", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_select_mode,
+            lambda: screen._prompts_state.select_mode,
             message=lambda: (
                 "Prompt Select action did not enter bulk mode: "
                 f"disabled={prompts_list.query_one('#library-prompts-select', Button).disabled!r}, "
                 f"freshness={screen._library_prompt_browse_controller.freshness!r}, "
                 f"status={screen._library_prompt_browse_controller.result.status!r}, "
                 f"rows={len(screen._build_library_prompts_state().rows)!r}, "
-                f"dirty={screen._library_prompt_dirty!r}"
+                f"dirty={screen._prompts_state.dirty!r}"
             ),
         )
         await _wait_for_condition(
@@ -984,21 +984,21 @@ async def test_bulk_mode_keeps_loaded_prompt_as_labelled_read_only_preview(
 
         bulk_status = work.query_one("#library-prompt-bulk-status", Static)
         assert str(bulk_status.renderable).endswith("Included in bulk selection")
-        assert screen._library_prompt_detail is not None
-        assert screen._selected_prompt_id == prompt_id
+        assert screen._prompts_state.detail is not None
+        assert screen._prompts_state.selected_prompt_id == prompt_id
 
         prompts_list.query_one("#library-prompts-selection-done", Button).press()
         await _wait_for_condition(
             pilot,
             lambda: (
-                not screen._library_prompt_select_mode
+                not screen._prompts_state.select_mode
                 and not work.query_one("#library-prompt-bulk-status", Static).display
                 and not work.query_one("#library-prompt-name", Input).disabled
             ),
             message="Leaving Prompt bulk mode did not restore the loaded editor",
         )
         assert screen.query_one("#library-prompt-work-pane") is work
-        assert screen._selected_prompt_id == prompt_id
+        assert screen._prompts_state.selected_prompt_id == prompt_id
 
 
 @pytest.mark.asyncio

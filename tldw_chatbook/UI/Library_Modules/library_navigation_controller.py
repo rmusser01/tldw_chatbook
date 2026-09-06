@@ -72,7 +72,10 @@ class LibraryNavigationController:
                 exact ``open_source_id`` pair delegates to Library's existing
                 item opener.
         """
-        if self.screen._library_prompts_mutation_in_flight:
+        # wave-6 (prompts) retarget: the flat `_library_prompts_mutation_in_
+        # flight` attribute this line read on dev was deleted by the prompts
+        # cleanup PR; the field now lives on the Prompts state object.
+        if self.screen._prompts_state.mutation_in_flight:
             return
         if not isinstance(context, Mapping):
             return

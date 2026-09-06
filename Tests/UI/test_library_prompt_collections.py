@@ -2016,7 +2016,7 @@ async def test_library_screen_membership_load_retry_and_apply_retry_are_distinct
         name_input = screen.query_one("#library-prompt-name", Input)
         name_input.value = "Retry prompt dirty"
         await pilot.pause()
-        assert screen._library_prompt_dirty is True
+        assert screen._prompts_state.dirty is True
         controller.stage_memberships(
             tuple(sorted((first["collection_id"], second["collection_id"])))
         )
@@ -2032,8 +2032,8 @@ async def test_library_screen_membership_load_retry_and_apply_retry_are_distinct
         )
         assert controller.membership_state.can_apply is True
         assert apply.disabled is False
-        assert screen._library_prompt_dirty is True
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.dirty is True
+        assert screen._prompts_state.status == ""
 
         apply.press()
         await _wait_for_condition(
@@ -2045,8 +2045,8 @@ async def test_library_screen_membership_load_retry_and_apply_retry_are_distinct
         assert (await read_memberships(mode="local", prompt_id=prompt_id))[
             "collection_ids"
         ] == tuple(sorted((first["collection_id"], second["collection_id"])))
-        assert screen._library_prompt_dirty is True
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.dirty is True
+        assert screen._prompts_state.status == ""
 
 
 @pytest.mark.asyncio
@@ -2432,7 +2432,7 @@ async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_
         name_input = screen.query_one("#library-prompt-name", Input)
         name_input.value = "Dirty prompt edited"
         await pilot.pause()
-        assert screen._library_prompt_dirty is True
+        assert screen._prompts_state.dirty is True
         refreshes: list[str] = []
         screen._refresh_local_source_snapshot = lambda: refreshes.append("refresh")
         browse_token = screen._library_prompt_browse_controller.result.request_token
@@ -2482,8 +2482,8 @@ async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_
         assert after_apply["collection_ids"] == tuple(
             sorted((first["collection_id"], second["collection_id"]))
         )
-        assert screen._library_prompt_dirty is True
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.dirty is True
+        assert screen._prompts_state.status == ""
         assert refreshes == ["refresh"]
         assert (
             screen._library_prompt_browse_controller.result.request_token > browse_token
@@ -2568,8 +2568,8 @@ async def test_membership_apply_refreshes_retained_items_before_clean_back_to_li
             ),
             message="membership Apply did not refresh retained Items",
         )
-        assert screen._library_prompts_view == "editor"
-        assert screen._selected_prompt_id == prompt_id
+        assert screen._prompts_state.view == "editor"
+        assert screen._prompts_state.selected_prompt_id == prompt_id
         assert screen.query_one("#library-prompt-name", Input).value == (
             "Deferred refresh prompt"
         )
@@ -2583,20 +2583,20 @@ async def test_membership_apply_refreshes_retained_items_before_clean_back_to_li
             "page_size": scope.page_size,
         }
         assert count_refreshes == ["count"]
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.status == ""
 
         screen.query_one("#library-prompt-back", Button).press()
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_prompts_view == "list"
+                screen._prompts_state.view == "list"
                 and len(browse_calls) == browse_before_apply + 2
                 and screen._library_prompt_browse_controller.result.status
                 == "empty_collection"
             ),
             message=lambda: (
                 "Back to list did not dispatch its exact list-entry browse: "
-                f"view={screen._library_prompts_view!r}, "
+                f"view={screen._prompts_state.view!r}, "
                 f"calls={browse_calls[browse_before_apply:]!r}, "
                 f"scope={screen._library_prompt_browse_controller.scope!r}, "
                 f"result={screen._library_prompt_browse_controller.result!r}"
@@ -2619,4 +2619,4 @@ async def test_membership_apply_refreshes_retained_items_before_clean_back_to_li
             )
         )["collection_ids"] == (second["collection_id"],)
         assert count_refreshes == ["count", "count"]
-        assert screen._library_prompt_status == ""
+        assert screen._prompts_state.status == ""

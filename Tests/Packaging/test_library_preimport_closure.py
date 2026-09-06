@@ -36,8 +36,8 @@ for route in routes:
 deferred = {
     "tldw_chatbook.UI.Library_Modules.library_" + suffix + "_controller"
     for suffix in (
-        "collections", "conversation_reader", "note_import",
-        "notes_sync", "rag_search", "skills",
+        "collections", "conversation_reader", "ingest", "note_import",
+        "notes_sync", "prompts", "rag_search", "skills",
     )
 }
 assert not deferred.intersection(sys.modules), sorted(deferred.intersection(sys.modules))
@@ -46,6 +46,7 @@ assert not deferred.intersection(sys.modules), sorted(deferred.intersection(sys.
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 assert LibraryScreen._restore_library_collections_page({}) == 1
 assert LibraryScreen._restore_library_skills_scope({}).query == ""
+assert LibraryScreen._restore_library_prompts_scope({}).query == ""
 """,
         ],
         cwd=repo_root,

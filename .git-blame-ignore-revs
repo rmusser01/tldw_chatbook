@@ -169,3 +169,53 @@ ed4c29d45f06ea5a4dc162d8356de4b1e0d77e83
 # fix, not new logic, same shape as the export/collections/search+RAG/
 # skills series' own closing commits above.
 e6148e29acf10fe1b74f6098bf8775136e1234e6
+
+# Wave-6 task 1: prompts state object + shims (prompts series 1/3). 43 of
+# the 46 "prompt"-named LibraryScreen.__init__ fields relocated verbatim
+# into LibraryPromptsState (UI/Library_Modules/library_prompts_state.py --
+# NOT the unrelated, pre-existing Library/library_prompts_state.py domain
+# module of the same basename), with a generated getter/setter property
+# shim keeping every original flat name alive over self._prompts_state
+# (three prefixes: _library_prompt_, _library_prompts_, and the bare
+# _selected_prompt_id). Zero method bodies touched; all 23 relocated
+# comment lines verified byte-for-byte identical. Also seeds
+# _prompts_state in the one object.__new__-bypassed test fixture the shim
+# newly broke (recipe §3's seventh shape) -- one mechanical line, no
+# assertions touched. Filed in the SAME series that made the move, per the
+# gap wave 5 had to backfill for four earlier state PRs.
+f59db7c94dec199a5f3f418191febf050812a03a
+
+# Wave-6 task 2: prompts controller (prompts series 2/3). 139 of the 161
+# "prompt"-named LibraryScreen methods relocated byte-for-byte into
+# LibraryPromptsController (UI/Library_Modules/library_prompts_controller.py),
+# each replaced by a one-line screen delegator; the 22 exclusions stay on
+# the screen untouched. The largest single move of this program. Verified
+# by tooling rather than by eye: every moved segment was extracted by its
+# ORIGINAL line offset and re-compared after assembly -- 139/139 identical
+# as raw text AND as a normalized ast dump, with all 22 excluded methods
+# byte-identical too. The only non-move lines in the commit are the
+# born-lazy controller import, its construction site, the two size-ratchet
+# re-pins, the derived diagnostic-inventory regeneration (9 logger
+# statements relocated, digest-for-digest identical), and a same-commit
+# owner retarget of the two test_prompt_review_docstrings.py parametrize
+# rows (assertions byte-for-byte unchanged) that a delegator's absent
+# docstring makes loudly RED at this exact boundary.
+d0ec95b16f17668af9e32725eed788aeeed1d991
+
+# Wave-6 task 3: prompts cleanup (prompts series 3/3, closing commit).
+# Screen shim block (43 properties, three prefixes) deleted; 128 screen-side
+# + 465 test-side flat-name occurrences retargeted to
+# self._prompts_state.<field>/<receiver>._prompts_state.<field> (a
+# mechanical receiver swap, no assertion values changed -- verified by
+# diffing every retargeted file with both sides normalized through the
+# rewrite); 4 dynamic-dispatch dict values dotted and 2 getattr/setattr
+# receivers fixed; 13 SimpleNamespace fixtures plus one fake-harness class
+# attribute restructured to the nested state object; 39 dead screen
+# delegators and 25 dead imports removed (5 more kept, _SURFACE-pinned);
+# the four stale test_library_modal_dismissal.py inventory rows repointed
+# at LibraryPromptsController behind a new _OwnerScope; 10 docstring/
+# comment corrections, none on a moved body -- every per-line change is a
+# mechanical receiver swap, a removal, or a comment fix, not new logic,
+# same shape as the export/collections/search+RAG/skills/ingest series'
+# own closing commits above.
+6fd2b753aaa90160c286579fe07257cb72917f32
