@@ -68,9 +68,7 @@ def normalize_assistant_generation_state(
     """
     if str(role or "").lower() != "assistant":
         return None
-    normalized = (
-        None if raw_state is None else AssistantGenerationState(str(raw_state))
-    )
+    normalized = None if raw_state is None else AssistantGenerationState(str(raw_state))
     if has_valid_active_continuation:
         return AssistantGenerationState.CONTINUATION_ACTIVE
     return normalized
