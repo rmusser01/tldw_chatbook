@@ -272,7 +272,7 @@ in ``test_prompts_controller_binds_every_name_its_moved_bodies_use``:
 
 **No class-level constants move.** ``LibraryScreen``'s own
 ``_PROMPTS_WORKBENCH_FOCUS_TARGETS`` is read only by a shell method
-(``library_screen.py:9434``), never by a mover, so unlike the ingest series'
+(``library_screen.py:9472``), never by a mover, so unlike the ingest series'
 three dead-zone constants there is nothing to relocate or delete here.
 
 **Construction order and import shape.** ``LibraryScreen.__init__`` builds
