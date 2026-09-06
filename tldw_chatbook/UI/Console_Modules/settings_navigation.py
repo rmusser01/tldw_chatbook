@@ -197,7 +197,7 @@ class ConsoleSettingsNavigationController:
                     response_format=None,
                     max_output_tokens=1,
                 )
-                await gateway.complete_auxiliary(auxiliary_request)
+                await gateway.complete_auxiliary(auxiliary_request, route=None)
         except asyncio.CancelledError:
             raise
         except (TimeoutError, asyncio.TimeoutError):
