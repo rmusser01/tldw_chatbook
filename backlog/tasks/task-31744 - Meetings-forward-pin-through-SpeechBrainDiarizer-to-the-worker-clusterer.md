@@ -1,7 +1,7 @@
 ---
 id: TASK-31744
 title: 'Meetings: forward pin() through SpeechBrainDiarizer to the worker clusterer'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-06 07:40'
 labels:
@@ -17,5 +17,9 @@ The sticky-pin guarantee (a user-named speaker cluster is never auto-merged) liv
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A live rename pins the cluster in the real subprocess backend so it is never auto-merged
+- [x] #1 A live rename pins the cluster in the real subprocess backend so it is never auto-merged
 <!-- AC:END -->
+
+## Implementation Notes
+
+`Diarizer.pin(cluster_id)` added to the protocol; `SpeechBrainDiarizer.pin` sends `{"cmd": "pin"}` to the worker (best-effort, non-blocking lock acquire, no reply awaited, only the cluster id crosses the pipe); the worker calls the live `OnlineClusterer.pin`. Covered by fake-subprocess tests and a torch-free test that drives the worker's real command loop (`serve()`). Landed in PR #2471 (commits 691f968a9, 3598e070c, 39f046f84).

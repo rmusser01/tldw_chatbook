@@ -1,7 +1,7 @@
 ---
 id: TASK-31746
 title: 'Meetings: pre-fill the You channel from user_display_name'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-06 07:40'
 labels:
@@ -17,5 +17,9 @@ The mic channel label uses a Meetings-local 'You' default instead of chat_defaul
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A configured user_display_name appears on the mic channel; an unset value falls back to You
+- [x] #1 A configured user_display_name appears on the mic channel; an unset value falls back to You
 <!-- AC:END -->
+
+## Implementation Notes
+
+One shared helper (`meeting_user_display_name`, reusing `config.get_chat_defaults_user_display_name`) renders the mic channel everywhere: the configured name when set and different from the factory default, else "You"; `MeetingMeta.user_display_name` is stamped at Start (and the live screen uses the stamped value) so live rows, the partial preview, the Markdown transcript and the Library render agree. Overlap segments now render "<name> + Others" everywhere. Landed in PR #2471 (commits 05f2d353d, 48e8541df, 7fd57fe5c, b7c8fc29b).

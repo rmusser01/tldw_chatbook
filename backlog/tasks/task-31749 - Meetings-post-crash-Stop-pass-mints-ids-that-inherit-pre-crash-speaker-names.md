@@ -1,7 +1,7 @@
 ---
 id: TASK-31749
 title: 'Meetings: post-crash Stop pass mints ids that inherit pre-crash speaker names'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-06 14:53'
 labels:
@@ -17,5 +17,9 @@ After the diarizer worker crashes and is restarted once (the backend then serves
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 After a worker crash and restart, no pre-crash speaker name is applied to a post-crash minted cluster id
+- [x] #1 After a worker crash and restart, no pre-crash speaker name is applied to a post-crash minted cluster id
 <!-- AC:END -->
+
+## Implementation Notes
+
+After a worker crash the restarted worker is spawned with `--start-id <max id seen>` so post-crash ids are minted past the pre-crash range (the Stop-pass batch mint honours the same floor), the backend records `crashed_at_seq`, and `MeetingSession.stop()` runs the batch pass only over the post-crash span and overlays only those segments, so pre-crash segments keep their ids and names. When no post-crash segment exists the pass is skipped rather than run full-span. Landed in PR #2471 (commit 656ec4236).
