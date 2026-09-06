@@ -7,30 +7,40 @@ mirrors). These pins exist BEFORE the Media extraction moves any state, so a
 later move that silently breaks one of these ``@on`` dispatch paths goes red
 rather than green-but-vacuous.
 
-**Scope, and why it is only three tests.** Media is by far the widest
-cluster this program has processed -- **79** ``@on``-decorated media-named
-handlers over **76** distinct selectors, against ~20 dedicated
-``Tests/UI/test_library_media_*.py`` files plus ``test_library_shell.py``,
-``test_library_multiselect_media.py``, ``test_review_set_walker.py`` and the
-canvas suites. The census ran every selector against ALL of ``Tests/`` with
-exact id/class boundaries (a substring match scores ``#library-media-review``
-as covered off ``#library-media-review-selected``), widened the
-press-detection window to +/-4 lines, additionally derived the ``#<id>-N``
-row spelling for the four CLASS-bound handlers (rows are pressed by id, never
-by class), and separately grepped each handler's own METHOD NAME for the
+**Scope, and why it is only three tests.** Media is by far the widest cluster
+this program has processed -- **79** ``@on``-decorated media-named handlers,
+of which **76 carry a string selector** and 3 are Message-typed
+(``PaneToggleRequested``/``MediaShellResized``/
+``LibraryMediaRowGeometryChanged``; all three are exercised at the message
+level in ``test_library_adaptive_reader_shell.py`` and
+``test_library_media_return_settlement.py``, so none is a gap) -- against ~20
+dedicated ``Tests/UI/test_library_media_*.py`` files plus
+``test_library_shell.py``, ``test_library_multiselect_media.py``,
+``test_review_set_walker.py`` and the canvas suites. The census ran every
+selector against ALL of ``Tests/`` with exact id/class boundaries (a substring
+match scores ``#library-media-review`` as covered off
+``#library-media-review-selected``), widened the press-detection window to
++/-4 lines, additionally derived the ``#<id>-N`` row spelling for the four
+CLASS-bound handlers (rows are pressed by id, never by class), and separately
+grepped each handler's own METHOD NAME for the
 unbound-``LibraryScreen.<name>(fake, event)`` call shape several media suites
 favour. Every non-``COVERED`` verdict was then read rather than trusted.
 
-Result: **73 of 79 already covered** -- 60 by a real selector press, 13 more
-only by a direct unbound call. Of the remaining 6, three touch NO moved
-``LibraryMediaState`` field at all (``handle_library_media_review_these``,
-``handle_library_media_review_sets`` -- both are a bare ``event.stop()`` plus
-``run_worker``; and ``handle_library_media_reader_mode``, which the census
-first scored as a gap and a read overturned: it is class-bound
-(``.library-media-reader-mode``) but pressed by id
-(``#library-media-reader-select-analysis``) in
-``test_library_reader_press_scope_t22228.py``, the same
-bound-by-class/pressed-by-id shape the prompts series recorded).
+Result, measured on the tree BEFORE this file existed: **71 of the 76
+selector-bound handlers already covered** -- **62** by a real selector press,
+**9** more only by a direct unbound call. Of the remaining 5, two touch NO
+moved ``LibraryMediaState`` field at all (``handle_library_media_review_these``
+and ``handle_library_media_review_sets``, each a bare ``event.stop()`` plus
+``run_worker``). Three OTHER handlers the first census pass wrongly scored as
+gaps were overturned by the passes above -- ``handle_library_media_reader_mode``
+(class-bound on ``.library-media-reader-mode`` but pressed by id,
+``#library-media-reader-select-analysis``, in
+``test_library_reader_press_scope_t22228.py``: the same
+bound-by-class/pressed-by-id shape the prompts series recorded),
+``handle_library_media_highlight_delete`` and
+``handle_library_media_trash_row`` (both reached by the derived ``#<id>-N``
+row spelling) -- each confirmed by reading the hitting test, not by the grep
+verdict.
 
 The three genuine gaps pinned below, each of which reads state this PR
 moves:
