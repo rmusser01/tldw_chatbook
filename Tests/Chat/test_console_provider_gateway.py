@@ -4974,6 +4974,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
 
     signal_fields = dataclasses.fields(signals)
     assert [item.name for item in signal_fields] == [
+        "_trace_preparation",
         "_synthetic_fallback",
         "model_retry_callback",
         "usage_payload",
@@ -4993,6 +4994,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     ]
     assert isinstance(signals._synthetic_fallback, threading.Event)
     assert signals.__class__.__slots__ == (
+        "_trace_preparation",
         "_synthetic_fallback",
         "model_retry_callback",
         "usage_payload",
@@ -5017,6 +5019,15 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     assert signals.usage_payload is None
     assert signals.completed_usage_payloads == []
     assert signals.usage_payloads() == []
+    preparation_field = next(item for item in signal_fields if item.name == "_trace_preparation")
+    assert preparation_field.repr is False
+    assert preparation_field.init is False
+    private_canary = "PRIVATE_ACCEPTED_PREPARATION_REQUEST"
+    signals._trace_preparation = gateway_module._TraceAcceptedPreparation(
+        issuer=object(), owner={"active_request": private_canary},
+        boundary={"frozen_request": private_canary},
+    )
+    assert private_canary not in repr(signals._trace_preparation)
 
     # Content-free repr: usage payloads are provider-reported token counts,
     # not transcript text, but they are still per-request data that has no
@@ -5043,6 +5054,8 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     )
     call.record_exchange_content("SENSITIVE_EXCHANGE_TEXT")
     call.close_exchange()
+    assert private_canary not in repr(signals.usage_payloads())
+    assert private_canary not in repr(signals.exchange_captures())
     assert repr(signals) == (
         f"ConsoleProviderStreamSignals(run_tag={signals.run_tag!r}, "
         "exchange_capture_enabled=True)"

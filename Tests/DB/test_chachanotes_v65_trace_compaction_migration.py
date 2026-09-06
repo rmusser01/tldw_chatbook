@@ -26,7 +26,7 @@ def test_v65_adds_singleton_content_free_compaction_status(tmp_path: Path) -> No
             "FROM console_trace_compaction_state WHERE singleton_id = 1"
         ).fetchone()
 
-        assert version == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 66
+        assert version == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert tuple(row) == (
             "pending",
             "awaiting_gc",

@@ -427,7 +427,9 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
         )
         defaults = serialize_console_rail_preferences(ConsoleRailPreferences())
         seeded_defaults = {
-            key: value for key, value in defaults.items() if key != "right_open"
+            key: value
+            for key, value in defaults.items()
+            if key not in {"right_open", "character_open"}
         }
         workspace_payload = {**defaults, "left_open": False, "workspace_open": False}
         legacy_payload = {**defaults, "right_open": True, "details_open": True}

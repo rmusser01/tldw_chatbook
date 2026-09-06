@@ -265,6 +265,16 @@ def require_durable_capture_admission(
         )
 
 
+@dataclass(slots=True)
+class _TraceAcceptedPreparation:
+    """One live accepted continuation's private recovery handoff."""
+
+    issuer: object = field(repr=False)
+    owner: object = field(repr=False)
+    boundary: object | None = field(default=None, repr=False)
+    claimed: bool = False
+
+
 class _ProviderAdapterAdmission:
     """Single-use proof that this gateway admitted one adapter entry."""
 
@@ -495,6 +505,7 @@ class ConsoleProviderStreamSignals:
     fallback copy.
     """
 
+    _trace_preparation: object | None = field(default=None, init=False, repr=False)
     _synthetic_fallback: threading.Event = field(
         default_factory=threading.Event,
         init=False,
@@ -2359,11 +2370,63 @@ class ConsoleProviderGateway:
             admission._consumed = True
         return adapter(*args, **kwargs)
 
+    def _bind_trace_preparation(
+        self, signals: ConsoleProviderStreamSignals, owner: object,
+        *, boundary: object | None = None,
+    ) -> None:
+        """Bind recovery to the controller's exact frozen accepted continuation."""
+        if boundary is not None and getattr(boundary, "_accepted_preparation", None) is not owner:
+            raise TraceCallPersistenceError(boundary=boundary)
+        signals._trace_preparation = _TraceAcceptedPreparation(
+            self._adapter_admission_issuer, owner, boundary,
+        )
+
+    def _trace_preparation_scope(self, signals: object) -> _TraceAcceptedPreparation | None:
+        aggregate = getattr(signals, "_aggregate", signals)
+        scope = getattr(aggregate, "_trace_preparation", None)
+        if scope is None:
+            return None
+        if type(scope) is not _TraceAcceptedPreparation or scope.issuer is not self._adapter_admission_issuer:
+            raise TraceCallPersistenceError()
+        return scope
+
+    def _verify_trace_preparation_recovery(self, owner: object, boundary: object) -> None:
+        """Prove the exact owner's unbound reservation before local re-entry."""
+        if boundary is None or getattr(boundary, "_accepted_preparation", None) is not owner:
+            raise TraceCallPersistenceError(boundary=boundary)
+        verify = getattr(getattr(boundary, "_factory", None), "_verify_owned_recovery", None)
+        if not callable(verify):
+            raise TraceCallPersistenceError(boundary=boundary)
+        verify(boundary, owner)
+
+    def _trace_recovery_route_identity(self, signals: object) -> tuple[str, str] | None:
+        """Restore an owned primary run before the bridge allocates new IDs."""
+        scope = self._trace_preparation_scope(signals)
+        if scope is None or scope.boundary is None or scope.claimed:
+            return None
+        boundary = scope.boundary
+        request = getattr(boundary, "_request", None)
+        if (
+            getattr(boundary, "_accepted_preparation", None) is not scope.owner
+            or not isinstance(request, PreparedProviderRequest)
+            or request.provenance is None
+        ):
+            raise TraceCallPersistenceError(boundary=boundary)
+        record = next((item for item in request.provenance.metadata
+                       if type(item) is RequestRouteTraceProvenance), None)
+        if (
+            record is None or record.route is not ConsoleRequestRoute.AGENT_FIRST
+            or record.actor_id is None or record.chain_id is None
+        ):
+            raise TraceCallPersistenceError(boundary=boundary)
+        return record.actor_id, record.chain_id
+
     def _reserve_trace_call(
         self,
         request: PreparedProviderRequest,
         resolution: ConsoleProviderResolution,
         route: ConsoleRequestRoute | None,
+        *, signals: object = None,
     ) -> object:
         """Create and reserve one distinct Capture-On call boundary."""
 
@@ -2372,7 +2435,18 @@ class ConsoleProviderGateway:
         assert self._trace_call_boundary_factory is not None
         boundary: object | None = None
         try:
-            boundary = self._trace_call_boundary_factory(request, resolution, route)
+            scope = self._trace_preparation_scope(signals)
+            if scope is not None and scope.boundary is not None and not scope.claimed:
+                boundary = scope.boundary
+                recover = getattr(getattr(boundary, "_factory", None), "_recover_owned_boundary", None)
+                if not callable(recover):
+                    raise TraceCallPersistenceError(boundary=boundary)
+                scope.claimed = True
+                boundary = recover(boundary, scope.owner, request, resolution, route)
+            else:
+                boundary = self._trace_call_boundary_factory(request, resolution, route)
+            if scope is not None and hasattr(boundary, "_accepted_preparation"):
+                boundary._accepted_preparation = scope.owner
             reserve = getattr(boundary, "reserve", None)
             if not callable(reserve):
                 raise TraceCallPersistenceError()
@@ -4098,6 +4172,7 @@ class ConsoleProviderGateway:
                     prepared,
                     effective_resolution,
                     route,
+                    signals=call_signals,
                 )
                 _bind_legacy_capture_to_trace_call(
                     call_signals,

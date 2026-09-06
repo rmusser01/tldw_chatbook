@@ -134,6 +134,7 @@ def _source_graph(
             "sender": "assistant",
             "content": "Base answer",
             "thinking_blocks_json": dump_thinking_blocks_json(_thinking()),
+            "provider_continuation_json": _private_checkpoint("Base answer"),
             "timestamp": "2026-08-26T00:00:01+00:00",
         }
     )
@@ -288,20 +289,27 @@ def test_chatbook_export_blocks_opaque_future_thinking_with_upgrade_copy(
     )
     database = CharactersRAGDB(source_paths["ChaChaNotes"], "future-thinking")
     try:
-        with database.transaction() as connection:
-            connection.execute(
-                "UPDATE messages SET thinking_blocks_json = ? WHERE id = ?",
-                (
-                    json.dumps(
-                        {
-                            "version": 2,
-                            "blocks": [],
-                            "secret": "FUTURE-THINKING-CANARY",
-                        }
-                    ),
-                    ids["base"],
-                ),
+        with database.transaction() as cursor:
+            connection = cursor.connection
+            authorization = database._semantic_mutation_authorization_for_coordinator(
+                connection
             )
+            with authorization._authorize(
+                message_id=ids["base"], operations={"message_update"}
+            ):
+                cursor.execute(
+                    "UPDATE messages SET thinking_blocks_json = ? WHERE id = ?",
+                    (
+                        json.dumps(
+                            {
+                                "version": 2,
+                                "blocks": [],
+                                "secret": "FUTURE-THINKING-CANARY",
+                            }
+                        ),
+                        ids["base"],
+                    ),
+                )
     finally:
         database.close_connection()
 
@@ -515,34 +523,95 @@ def test_chatbook_v2_rejects_deleted_thinking_before_conversation_mutation(
         destination.close_connection()
 
 
-def test_durable_soft_delete_clears_thinking_from_tombstone() -> None:
-    database = CharactersRAGDB(":memory:", "deleted-thinking-control")
+def test_soft_deleted_thinking_owner_round_trips_as_an_importable_tombstone(
+    tmp_path: Path, chachanotes_template_db: Path
+) -> None:
+    source_paths, conversation_id, ids = _source_graph(
+        tmp_path, chachanotes_template_db
+    )
+    database = CharactersRAGDB(source_paths["ChaChaNotes"], "deleted-thinking-control")
     try:
-        conversation_id = database.add_conversation({"title": "Tombstone control"})
-        message_id = database.add_message(
-            {
-                "conversation_id": conversation_id,
-                "sender": "assistant",
-                "content": "Visible answer",
-                "thinking_blocks_json": dump_thinking_blocks_json(_thinking()),
-            }
-        )
-        row = database.execute_query(
-            "SELECT version FROM messages WHERE id = ?", (message_id,)
+        before = database.execute_query(
+            "SELECT version, thinking_blocks_json FROM messages WHERE id = ?",
+            (ids["base"],),
         ).fetchone()
+        before_revisions = database.execute_query(
+            "SELECT revision_id, revision_sequence, predecessor_revision_id, "
+            "live_message_id, live_locator_retired_at "
+            "FROM console_trace_semantic_revisions WHERE source_message_id = ? "
+            "ORDER BY revision_sequence",
+            (ids["base"],),
+        ).fetchall()
 
-        assert database.soft_delete_message(message_id, row["version"])
+        assert database.soft_delete_message(ids["base"], before["version"])
 
         tombstone = database.execute_query(
-            "SELECT deleted, thinking_blocks_json FROM messages WHERE id = ?",
-            (message_id,),
+            "SELECT deleted, version, thinking_blocks_json FROM messages WHERE id = ?",
+            (ids["base"],),
         ).fetchone()
-        assert (tombstone["deleted"], tombstone["thinking_blocks_json"]) == (
-            1,
-            None,
-        )
+        after_revisions = database.execute_query(
+            "SELECT revision_id, revision_sequence, predecessor_revision_id, "
+            "live_message_id, live_locator_retired_at "
+            "FROM console_trace_semantic_revisions WHERE source_message_id = ? "
+            "ORDER BY revision_sequence",
+            (ids["base"],),
+        ).fetchall()
+        assert tombstone["deleted"] == 1
+        assert tombstone["version"] == before["version"] + 1
+        assert tombstone["thinking_blocks_json"] == before["thinking_blocks_json"]
+        assert [tuple(row) for row in after_revisions] == [
+            tuple(row) for row in before_revisions
+        ]
+        assert ids["base"] not in {
+            message["id"]
+            for message in database.get_messages_for_conversation(conversation_id)
+        }
     finally:
         database.close_connection()
+
+    archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
+    assert result[0], result[1]
+    with zipfile.ZipFile(archive_path) as archive:
+        conversation = json.loads(
+            archive.read(
+                "content/conversations/conversation_thinking-conversation.json"
+            )
+        )
+    exported = {message["id"]: message for message in conversation["messages"]}
+    assert exported[ids["base"]]["deleted"] is True
+    assert exported[ids["base"]]["content"] == "Base answer"
+    assert "_thinking" not in exported[ids["base"]]
+    assert "_private" in exported[ids["base"]]
+    assert "_thinking" in exported[ids["selected"]]
+    assert "_private" in exported[ids["selected"]]
+
+    destination_path = tmp_path / "thinking-tombstone-destination.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+    success, message, status = _import(archive_path, destination_path, tmp_path)
+    assert success, message
+    assert status.failed_items == 0
+
+    destination = CharactersRAGDB(destination_path, "deleted-thinking-assert")
+    try:
+        imported = destination.get_conversation_by_name("Thinking graph")[0]
+        rows = destination.execute_query(
+            "SELECT content, deleted, thinking_blocks_json, "
+            "provider_continuation_json FROM messages "
+            "WHERE conversation_id = ? ORDER BY timestamp, rowid",
+            (imported["id"],),
+        ).fetchall()
+        by_content = {row["content"]: row for row in rows}
+        assert by_content["Base answer"]["deleted"] == 1
+        assert by_content["Base answer"]["thinking_blocks_json"] is None
+        assert by_content["Base answer"]["provider_continuation_json"] is not None
+        assert by_content["Selected answer"]["thinking_blocks_json"] is not None
+        assert by_content["Selected answer"]["provider_continuation_json"] is not None
+        assert "Base answer" not in {
+            row["content"]
+            for row in destination.get_messages_for_conversation(imported["id"])
+        }
+    finally:
+        destination.close_connection()
 
 
 def test_chatbook_v2_unknown_policy_falls_back_to_auto_with_content_free_warning(

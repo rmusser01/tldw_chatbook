@@ -386,5 +386,19 @@ class BaseAppScreen(Screen):
     # longer exists.
 
     def on_unmount(self) -> None:
-        """Called when the screen is unmounted."""
+        """Called when the screen is unmounted.
+
+        MRO contract (TASK-31418, same rule as ``on_mount`` above): Textual's
+        dispatcher invokes EVERY ``on_unmount`` defined along the MRO for one
+        Unmount event, so a subclass handler must NOT call
+        ``super().on_unmount()`` -- that runs this body a second time.
+        Harmless today because this handler only logs, but the next
+        non-idempotent teardown added here (a close, a release, a decrement)
+        would double-fire in every subclass that still carries a
+        ``super().on_unmount()`` call. Probed on Textual 8.2.8 with a
+        two-level ``Screen`` subclass: base fired twice per unmount
+        (``['child', 'base', 'base']``); the same double-fire was confirmed
+        for ``on_mount`` and ``on_screen_resume``. See
+        ``backlog/docs/lessons-textual.md`` for the full probe.
+        """
         logger.info(f"Screen {self.screen_name} unmounted")

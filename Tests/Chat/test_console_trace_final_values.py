@@ -138,6 +138,77 @@ def test_verified_shadow_binds_revisions_and_structural_values() -> None:
     assert secret not in repr(result)
 
 
+@pytest.mark.parametrize(
+    "scenario",
+    ["missing_witness", "extra_descriptor", "unsupported_route", "unavailable_values"],
+)
+def test_compound_delta_never_generalizes_replacement_or_omission(
+    scenario: str,
+) -> None:
+    """Two new slots require exact witness shape and complete verified values."""
+    from tldw_chatbook.Chat.console_trace_final_values import (
+        CompletedToolTurnWitness,
+        ProviderRequestShadowBundle,
+        SurfaceDeltaAdmission,
+        VerifiedSurfaceReplacementRange,
+        build_verified_surface_delta,
+    )
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ConsoleRequestRoute,
+        request_route_provenance,
+    )
+
+    witness = CompletedToolTurnWitness(*(new_opaque_id() for _ in range(4)))
+    descriptors = (
+        SavedRevisionTraceProvenance(witness.assistant_revision_id),
+        SavedRevisionTraceProvenance(witness.user_revision_id),
+    )
+    route = (
+        ConsoleRequestRoute.REGENERATE
+        if scenario == "unsupported_route"
+        else ConsoleRequestRoute.FRESH
+    )
+    head = new_opaque_id()
+    preparation = new_opaque_id()
+    with pytest.raises(ValueError):
+        admission = SurfaceDeltaAdmission(
+            new_opaque_id(),
+            new_opaque_id(),
+            head,
+            route.value,
+            preparation,
+            descriptors
+            + (
+                (SavedRevisionTraceProvenance(new_opaque_id()),)
+                if scenario == "extra_descriptor"
+                else ()
+            ),
+            replacement_range=VerifiedSurfaceReplacementRange(
+                head,
+                new_opaque_id(),
+                head,
+                1,
+                2,
+                current_ordinal=1,
+                component_ordinal=1,
+            ),
+            completed_tool_turn=None if scenario == "missing_witness" else witness,
+        )
+        build_verified_surface_delta(
+            ProviderRequestProvenance(
+                messages=descriptors,
+                messages_payload=descriptors,
+                metadata=(request_route_provenance(route),),
+            ),
+            ProviderRequestShadowBundle(
+                available=False,
+                preparation_identity=preparation,
+                omission_reason=TraceOmissionReason.SOURCE_UNAVAILABLE,
+            ),
+            admission=admission,
+        )
+
+
 def test_mismatch_is_content_free_and_never_projects_actual_values() -> None:
     secret = "mismatch-secret"
     projected = False

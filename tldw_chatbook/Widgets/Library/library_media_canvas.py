@@ -34,6 +34,7 @@ from tldw_chatbook.Library.library_shell_state import (
     library_choice_tooltip,
     library_disabled_action_label,
 )
+from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
@@ -193,6 +194,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
         analysis_action_reason: str = "",
+        load_failure: DestinationRecoveryState | None = None,
         compact: bool = False,
         show_preview: bool = True,
         **kwargs: Any,
@@ -206,6 +208,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
         self.analysis_action_reason = analysis_action_reason
+        self.load_failure = load_failure
         self.compact = compact
         self.show_preview = show_preview
         # Fill the (already 13fr) canvas host, not an independent 13fr --
@@ -234,6 +237,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         stale_action_reason: str = "",
         mutation_action_reason: str = "",
         analysis_action_reason: str = "",
+        load_failure: DestinationRecoveryState | None = None,
         compact: bool = False,
         show_preview: bool = True,
     ) -> None:
@@ -253,6 +257,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.stale_action_reason = stale_action_reason
         self.mutation_action_reason = mutation_action_reason
         self.analysis_action_reason = analysis_action_reason
+        self.load_failure = load_failure
         self.compact = compact
         self.show_preview = show_preview
         self.refresh(recompose=True)
@@ -1103,11 +1108,64 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         )
                         yield self._gate_mutation_action(analyze_dismiss, "Dismiss")
 
+        # task-31632 (critique #5 P1): ONE recovery callout for a failed
+        # load -- what failed, why, and the Retry that recovers it, INSIDE
+        # the callout. Measured before this: "Couldn't load page 1." painted
+        # as a bare sentence with no reason at all, and its only Retry sat
+        # 33 rows below in the pager strip (15 rows at 100x30). The
+        # ``.ds-recovery-callout`` grammar is the Library hub's own "Needs
+        # attention" row; ``.is-blocked`` is the repo-wide error tint that
+        # overrides the base warning tint, so a timeout (recoverable by a
+        # later attempt) and a hard failure never paint alike.
+        failure = self.load_failure
+        if failure is not None:
+            classes = "ds-recovery-callout"
+            if failure.severity == "error":
+                classes += " is-blocked"
+            callout = Horizontal(
+                id="library-media-load-failure", classes=classes
+            )
+            # Bare harnesses never load the bundle, and Horizontal defaults
+            # to 1fr height -- the callout must wrap to its copy either way.
+            callout.styles.height = "auto"
+            with callout:
+                copy = Static(
+                    failure.message,
+                    id="library-media-load-failure-copy",
+                    markup=False,
+                )
+                # The reason WRAPS; the Retry keeps its content width. Left
+                # to the defaults the copy swallowed the whole row and the
+                # button rendered outside the callout, clipped (measured at
+                # 235x52 and 100x30 -- the same trap the title row above
+                # documents). Inline because no rule targets these ids.
+                copy.styles.width = "1fr"
+                copy.styles.min_width = 0
+                yield copy
+                retry = Button(
+                    "Retry",
+                    id="library-media-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                retry.styles.width = "auto"
+                retry.styles.min_width = 0
+                yield self._gate_mutation_action(retry, "Retry")
+
         status_text = (
             self.pager.status_copy
             if self.pager is not None and self.pager.status_copy
             else self.canvas.status_copy or self.canvas.empty_copy
         )
+        if failure is not None and status_text.startswith(failure.unavailable_what):
+            # The callout above IS this sentence with its reason attached
+            # (the controller derives both halves in the same branch, so
+            # they can never name different failures) -- painting the bare
+            # form again directly under it is the duplicate the callout
+            # exists to remove. A STALE page's own gate copy ("Media
+            # changed…", "Couldn't retry · <reason>") names a different
+            # event and survives untouched.
+            status_text = ""
         status = Static(
             status_text,
             id="library-media-status",
@@ -1268,6 +1326,11 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # first page.", "No more results.") are pure noise. Show only the item
         # range and keep the (disabled) controls; both return the moment a
         # second page exists.
+        # task-31632: while a load failure renders its own callout, the ONE
+        # Retry lives there, next to the reason -- not down here. The stale
+        # gate has no callout (its copy is a different event) and keeps its
+        # Retry in this strip.
+        retry_visible = pager.retry_visible and self.load_failure is None
         disabled_reasons = (
             ()
             if pager.single_page
@@ -1306,8 +1369,10 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # pager controls -- two dead "○ Previous ○ Next" forms under
             # every short list were pure noise. The range Static above
             # stays; the controls return the moment a second page exists.
-            # A failed fetch still needs its Retry even on one page.
-            if pager.single_page and not pager.retry_visible:
+            # A stale page still needs its Retry here even on one page
+            # (task-31632 moved a FAILED fetch's Retry into the callout,
+            # which is why this reads the gated ``retry_visible``).
+            if pager.single_page and not retry_visible:
                 return
             with Horizontal(classes="library-source-pager-controls"):
                 previous = Button(
@@ -1322,7 +1387,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 if pager.previous_disabled:
                     previous.tooltip = pager.previous_reason
                 yield self._gate_mutation_action(previous, "Previous")
-                if pager.retry_visible:
+                if retry_visible:
                     retry = Button(
                         "Retry",
                         id="library-media-retry",

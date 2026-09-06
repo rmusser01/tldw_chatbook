@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import Iterable, Sequence
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, ClassVar
 
 import pytest
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Constants import (
-    LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
-    LIBRARY_NAV_CONTEXT_MODE,
-)
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticLibraryConversationScopeService,
@@ -24,6 +22,24 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+from tldw_chatbook import Constants as constants
+from tldw_chatbook.Character_Chat import (
+    character_conversation_navigation as character_service_module,
+)
+from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+    CharacterConversationPage,
+    CharacterConversationRow,
+    UnavailableCharacterReason,
+    UnresolvedConversationKey,
+)
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_MODE,
+)
+from tldw_chatbook.UI.Navigation import (
+    character_conversation_navigation as character_navigation,
+)
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 
 
 async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -329,6 +345,26 @@ async def test_library_source_rail_marks_active_mode_without_mutating_action_lab
         assert collections_row.tooltip == "Collections"
 
 
+def test_navigation_uses_extracted_prompt_state_before_and_after_admission():
+    app = _build_test_app()
+    screen = library_screen_module.LibraryScreen(app)
+    state = screen._prompts_state
+    state.mutation_in_flight = True
+    state.selected_prompt_id = 99
+    state.view = "editor"
+    context = {"open_source_type": "prompt", "open_source_id": "7"}
+    before_generation = screen._library_navigation_context_generation
+    screen.apply_navigation_context(context)
+    screen._apply_navigation_context_state(context, recompose=False)
+    assert screen._library_navigation_context_generation == before_generation
+    assert (state.selected_prompt_id, state.view) == (99, "editor")
+    state.mutation_in_flight = False
+    screen._apply_navigation_context_state(context, recompose=False)
+    assert (state.selected_prompt_id, state.view) == (7, "list")
+    assert not hasattr(screen, "_selected_prompt_id")
+    assert not hasattr(screen, "_library_prompts_view")
+
+
 @pytest.mark.asyncio
 async def test_library_navigation_context_opens_requested_conversation() -> None:
     app = _build_test_app()
@@ -371,6 +407,680 @@ async def test_library_navigation_context_opens_requested_conversation() -> None
         assert screen.query_one("#library-row-browse-conversations", Button).has_class(
             "library-rail-row-selected"
         )
+
+
+@pytest.mark.asyncio
+async def test_library_unavailable_inspection_opens_exact_detail_once_without_repair() -> (
+    None
+):
+    """Inspection keeps its typed intent through exact detail settlement."""
+
+    assert hasattr(constants, "LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION")
+    assert hasattr(constants, "LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE")
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        [
+            {"title": "Other chat", "conversation_id": "chat-1"},
+            {"title": "Unavailable chat", "conversation_id": "chat-2"},
+        ]
+    )
+    authority = "task4-library-authority"
+    app.chachanotes_db = SimpleNamespace(
+        get_local_authority_id=lambda: authority,
+    )
+    unresolved = UnresolvedConversationKey(authority, "chat-2")
+    return_target = (
+        character_navigation.RoleplayReturnTarget.console_context_character()
+    )
+    key = constants.LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION
+    value = character_navigation.serialize_library_unavailable_inspection(
+        character_navigation.LibraryUnavailableConversationInspection(
+            unresolved, return_target
+        )
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context({key: value})
+        await _wait_for_library_conversation_selection(
+            screen, pilot, "chat-2", "Unavailable chat"
+        )
+
+        assert not screen.query("#library-character-repair-dialog")
+        assert screen._library_selected_row_id == "browse-conversations"
+        assert screen._pending_library_source_open is None
+        locator_calls = [
+            call
+            for call in app.chat_conversation_scope_service.calls
+            if call.get("locator")
+        ]
+        assert len(locator_calls) == 1
+        await screen._unavailable_navigation._open_pending_library_character_navigation(
+            screen,
+        )
+        assert (
+            len(
+                [
+                    call
+                    for call in app.chat_conversation_scope_service.calls
+                    if call.get("locator")
+                ]
+            )
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_unavailable_browse_is_complete_explicit_projection(
+    monkeypatch,
+) -> None:
+    """Browse excludes ordinary resolved rows and preserves the selected anchor."""
+
+    authority = "task4-library-authority"
+    unresolved_rows = tuple(
+        CharacterConversationRow.unavailable(
+            UnresolvedConversationKey(authority, conversation_id),
+            reason=UnavailableCharacterReason.MISSING_CARD,
+            character_label="Missing",
+            title=title,
+            last_modified=f"2026-09-0{index}T10:00:00Z",
+            created_at="2026-09-01T00:00:00Z",
+        )
+        for index, (conversation_id, title) in enumerate(
+            (("chat-2", "Unavailable chat"), ("chat-3", "Also unavailable")),
+            start=1,
+        )
+    )
+
+    class NavigationService:
+        def __init__(self, _database):
+            pass
+
+        def unavailable_page(self, *, offset: int, limit: int):
+            rows = unresolved_rows[offset : offset + limit]
+            return CharacterConversationPage(rows, 2, None, 7)
+
+    monkeypatch.setattr(
+        character_service_module,
+        "CharacterConversationNavigationService",
+        NavigationService,
+    )
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        [{"title": "Ordinary resolved chat", "conversation_id": "chat-1"}]
+    )
+    app.chachanotes_db = SimpleNamespace(get_local_authority_id=lambda: authority)
+    selected = UnresolvedConversationKey(authority, "chat-3")
+    payload = character_navigation.serialize_library_unavailable_browse(
+        character_navigation.LibraryUnavailableConversationsBrowse(
+            selected,
+            character_navigation.RoleplayReturnTarget.console_context_character(),
+        )
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(
+            {constants.LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE: payload}
+        )
+        for _ in range(80):
+            if screen._conversations_state.total == 2:
+                break
+            await pilot.pause(0.05)
+
+        assert screen._conversations_state.total == 2
+        assert screen._selected_conversation_id == "chat-3"
+        assert {
+            str(record.get("conversation_id"))
+            for record in screen._conversations_state.page_records
+        } == {"chat-2", "chat-3"}
+        await _wait_for_selector(screen, pilot, "#library-conversations-title")
+        title = screen.query_one("#library-conversations-title", Static)
+        assert str(title.renderable) == "Unavailable character conversations (2)"
+        assert "Ordinary resolved chat" not in _visible_text(screen)
+        assert screen._pending_library_character_navigation is None
+
+
+@pytest.mark.asyncio
+async def test_library_unavailable_browse_owns_page_filter_and_retry(
+    monkeypatch,
+) -> None:
+    """Pager/filter/retry must stay on the retained unavailable-only source."""
+
+    authority = "task4-library-authority"
+    page_size = library_screen_module.LIBRARY_CONVERSATION_PAGE_SIZE
+    rows = tuple(
+        CharacterConversationRow.unavailable(
+            UnresolvedConversationKey(authority, f"chat-{index:02d}"),
+            reason=UnavailableCharacterReason.MISSING_CARD,
+            character_label="Missing",
+            title=("Special unavailable" if index == page_size else f"Lost {index}"),
+            last_modified=f"2026-09-03T10:{index:02d}:00Z",
+            created_at="2026-09-01T00:00:00Z",
+        )
+        for index in range(page_size + 1)
+    )
+
+    class NavigationService:
+        calls: ClassVar[list[tuple[int, int, str]]] = []
+        fail_retry_once = True
+
+        def __init__(self, _database):
+            pass
+
+        def unavailable_page(self, *, offset: int, limit: int, query: str = ""):
+            type(self).calls.append((offset, limit, query))
+            if query == "retry" and type(self).fail_retry_once:
+                type(self).fail_retry_once = False
+                raise RuntimeError("temporary failure")
+            matching = tuple(
+                row
+                for row in rows
+                if not query or query.casefold() in row.title.casefold()
+            )
+            return CharacterConversationPage(
+                matching[offset : offset + limit],
+                len(matching),
+                None,
+                7,
+            )
+
+    monkeypatch.setattr(
+        character_service_module,
+        "CharacterConversationNavigationService",
+        NavigationService,
+    )
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    ordinary = StaticLibraryConversationScopeService(
+        [{"title": "Ordinary resolved chat", "conversation_id": "ordinary"}]
+    )
+    app.chat_conversation_scope_service = ordinary
+    database = SimpleNamespace(get_local_authority_id=lambda: authority)
+    app.chachanotes_db = database
+    selected = UnresolvedConversationKey(authority, f"chat-{page_size:02d}")
+    payload = character_navigation.serialize_library_unavailable_browse(
+        character_navigation.LibraryUnavailableConversationsBrowse(
+            selected,
+            character_navigation.RoleplayReturnTarget.console_context_character(),
+        )
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(
+            {constants.LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE: payload}
+        )
+        for _ in range(80):
+            if screen._conversations_state.total == page_size + 1:
+                break
+            await pilot.pause(0.05)
+        ordinary_calls = len(ordinary.calls)
+        assert screen._pending_library_character_navigation is None
+        assert screen._library_unavailable_browse_scope is not None
+
+        screen.query_one("#library-conversations-next", Button).press()
+        for _ in range(80):
+            if screen._conversations_state.page == 2:
+                break
+            await pilot.pause(0.05)
+        assert NavigationService.calls[-1] == (page_size, page_size, "")
+        assert screen._conversations_state.total == page_size + 1
+        assert [
+            record["conversation_id"]
+            for record in screen._conversations_state.page_records
+        ] == [f"chat-{page_size:02d}"]
+        assert screen._selected_conversation_id == selected.conversation_id
+        assert len(ordinary.calls) == ordinary_calls
+
+        filter_input = screen.query_one("#library-conversations-filter", Input)
+        filter_input.value = "Special"
+        filter_input.focus()
+        await pilot.press("enter")
+        expected_filter_call = (0, page_size, "Special")
+        for _ in range(80):
+            if (
+                screen._conversations_state.requested_query == "Special"
+                and not screen._conversations_state.loading
+                and NavigationService.calls[-1:] == [expected_filter_call]
+            ):
+                break
+            await pilot.pause(0.05)
+        assert NavigationService.calls[-1] == expected_filter_call
+        assert screen._conversations_state.total == 1
+        assert len(ordinary.calls) == ordinary_calls
+
+        filter_input = screen.query_one("#library-conversations-filter", Input)
+        filter_input.value = "retry"
+        filter_input.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-conversations-retry")
+        screen.query_one("#library-conversations-retry", Button).press()
+        expected_retry_calls = [
+            (0, page_size, "retry"),
+            (0, page_size, "retry"),
+        ]
+        for _ in range(80):
+            if (
+                screen._conversations_state.requested_query == "retry"
+                and not screen._conversations_state.loading
+                and not screen._conversations_state.error
+                and NavigationService.calls[-2:] == expected_retry_calls
+            ):
+                break
+            await pilot.pause(0.05)
+        assert NavigationService.calls[-2:] == expected_retry_calls
+        assert len(ordinary.calls) == ordinary_calls
+        assert screen._library_unavailable_browse_scope is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_stage", ("service", "final_recompose"))
+async def test_library_unavailable_browse_rejects_profile_churn_before_commit(
+    monkeypatch,
+    blocked_stage: str,
+) -> None:
+    """Old-profile unavailable rows never commit across either final await."""
+
+    authority = "task4-library-authority"
+    entered = threading.Event()
+    release = threading.Event()
+
+    class NavigationService:
+        returned = False
+
+        def __init__(self, _database):
+            pass
+
+        def unavailable_page(self, *, offset: int, limit: int, query: str = ""):
+            if blocked_stage == "service":
+                entered.set()
+                assert release.wait(2)
+            type(self).returned = True
+            row = CharacterConversationRow.unavailable(
+                UnresolvedConversationKey(authority, "old-unavailable"),
+                reason=UnavailableCharacterReason.MISSING_CARD,
+                character_label="Missing",
+                title="Old unavailable",
+                last_modified="2026-09-03T10:00:00Z",
+                created_at="2026-09-01T00:00:00Z",
+            )
+            return CharacterConversationPage((row,), 1, None, 7)
+
+    monkeypatch.setattr(
+        character_service_module,
+        "CharacterConversationNavigationService",
+        NavigationService,
+    )
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    database = SimpleNamespace(get_local_authority_id=lambda: authority)
+    app.chachanotes_db = database
+    selected = UnresolvedConversationKey(authority, "old-unavailable")
+    payload = character_navigation.serialize_library_unavailable_browse(
+        character_navigation.LibraryUnavailableConversationsBrowse(
+            selected,
+            character_navigation.RoleplayReturnTarget.console_context_character(),
+        )
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        original_recompose = screen.recompose
+
+        async def blocked_recompose():
+            if (
+                blocked_stage == "final_recompose"
+                and NavigationService.returned
+                and not entered.is_set()
+            ):
+                entered.set()
+                assert await asyncio.to_thread(release.wait, 2)
+            return await original_recompose()
+
+        monkeypatch.setattr(screen, "recompose", blocked_recompose)
+        screen.apply_navigation_context(
+            {constants.LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE: payload}
+        )
+        assert await asyncio.to_thread(entered.wait, 2)
+        app.chachanotes_db = SimpleNamespace(get_local_authority_id=lambda: authority)
+        release.set()
+        await pilot.pause(0.3)
+
+        assert screen._pending_library_character_navigation is None
+        assert screen._library_unavailable_browse_scope is None
+        assert screen._conversations_state.loading is False
+        assert all(
+            record.get("conversation_id") != "old-unavailable"
+            for record in screen._conversations_state.page_records
+        )
+        assert screen._selected_conversation_id != "old-unavailable"
+        assert "Old unavailable" not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_stage", ("flush", "lookup"))
+async def test_library_character_route_rejects_profile_churn_across_await(
+    blocked_stage: str,
+) -> None:
+    """A new DB handle cannot consume an admitted typed route, even with same authority."""
+
+    authority = "task4-library-authority"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingConversationService(StaticLibraryConversationScopeService):
+        async def locate_conversation_page(self, conversation_id, **kwargs):
+            if blocked_stage == "lookup":
+                entered.set()
+                await release.wait()
+            return await super().locate_conversation_page(conversation_id, **kwargs)
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    service = BlockingConversationService(
+        [{"title": "Unavailable chat", "conversation_id": "chat-2"}]
+    )
+    app.chat_conversation_scope_service = service
+    old_database = SimpleNamespace(get_local_authority_id=lambda: authority)
+    app.chachanotes_db = old_database
+    unresolved = UnresolvedConversationKey(authority, "chat-2")
+    payload = character_navigation.serialize_library_unavailable_inspection(
+        character_navigation.LibraryUnavailableConversationInspection(
+            unresolved,
+            character_navigation.RoleplayReturnTarget.console_context_character(),
+        )
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        if blocked_stage == "flush":
+
+            async def blocked_flush():
+                entered.set()
+                await release.wait()
+                return True
+
+            screen._flush_active_file_notes = blocked_flush
+        screen.apply_navigation_context(
+            {constants.LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: payload}
+        )
+        await asyncio.wait_for(entered.wait(), 2)
+        app.chachanotes_db = SimpleNamespace(get_local_authority_id=lambda: authority)
+        release.set()
+        await pilot.pause(0.3)
+
+        assert screen._selected_conversation_id != "chat-2"
+        assert screen._pending_library_character_navigation is None
+        if blocked_stage == "flush":
+            assert not any(call.get("locator") for call in service.calls)
+
+
+@pytest.mark.asyncio
+async def test_library_character_route_rejects_authority_mismatch() -> None:
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    service = StaticLibraryConversationScopeService(
+        [{"title": "Wrong profile", "conversation_id": "chat-2"}]
+    )
+    app.chat_conversation_scope_service = service
+    app.chachanotes_db = SimpleNamespace(
+        get_local_authority_id=lambda: "active-authority"
+    )
+    payload = character_navigation.serialize_library_unavailable_inspection(
+        character_navigation.LibraryUnavailableConversationInspection(
+            UnresolvedConversationKey("other-authority", "chat-2"),
+            character_navigation.RoleplayReturnTarget.console_context_character(),
+        )
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context(
+            {constants.LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: payload}
+        )
+        await pilot.pause(0.2)
+
+        assert screen._selected_conversation_id != "chat-2"
+        assert screen._pending_library_character_navigation is None
+        assert not any(call.get("locator") for call in service.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "incoming",
+    (
+        "invalid_repair",
+        "invalid_character",
+        "ordinary_veto",
+        "typed_veto",
+        "superseded_typed",
+    ),
+)
+async def test_rejected_navigation_preserves_committed_unavailable_browse(
+    monkeypatch, incoming
+):
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    authority = "retained-authority"
+    key = UnresolvedConversationKey(authority, "retained-chat")
+    row = CharacterConversationRow.unavailable(
+        key,
+        reason=UnavailableCharacterReason.MISSING_CARD,
+        character_label="Unavailable",
+        title="Retained chat",
+        last_modified="2026-09-03T10:00:00Z",
+        created_at="2026-09-01T00:00:00Z",
+    )
+
+    class NavigationService:
+        def __init__(self, database):
+            pass
+
+        def unavailable_page(self, *, offset, limit, query=""):
+            return CharacterConversationPage((row,), 1, None, 7)
+
+    monkeypatch.setattr(
+        character_service_module,
+        "CharacterConversationNavigationService",
+        NavigationService,
+    )
+    app = _build_test_app()
+    _seed_library_content(app)
+    app.chachanotes_db = SimpleNamespace(get_local_authority_id=lambda: authority)
+    route = character_navigation.LibraryUnavailableConversationsBrowse(
+        key, character_navigation.RoleplayReturnTarget.console_context_character()
+    )
+    context = {
+        constants.LIBRARY_NAV_CONTEXT_CHARACTER_BROWSE: character_navigation.serialize_library_unavailable_browse(
+            route
+        )
+    }
+    returned = []
+    host = DestinationHarness(app, "library")
+    async with host.run_test(
+        size=(120, 40),
+        message_hook=lambda message: (
+            returned.append(message) if isinstance(message, NavigateToScreen) else None
+        ),
+    ) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        screen.apply_navigation_context(context)
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if screen._conversations_state.page_loaded and screen.query(
+                "#library-character-back-console"
+            ):
+                break
+        back = screen.query_one("#library-character-back-console", Button)
+        committed = screen._navigation_controller.character_route
+        scope = screen._library_unavailable_browse_scope
+        records = screen._conversations_state.page_records
+        generation = screen._library_navigation_context_generation
+        entered = asyncio.Event()
+
+        async def veto():
+            entered.set()
+            return False
+
+        screen._flush_active_file_notes = veto
+        if incoming == "invalid_repair":
+            rejected = {constants.LIBRARY_NAV_CONTEXT_CHARACTER_REPAIR: {}}
+        elif incoming == "invalid_character":
+            rejected = {constants.LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: {}}
+        elif incoming == "ordinary_veto":
+            rejected = {LIBRARY_NAV_CONTEXT_MODE: "search"}
+        else:
+            rejected = {
+                constants.LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: character_navigation.serialize_library_unavailable_inspection(
+                    character_navigation.LibraryUnavailableConversationInspection(
+                        UnresolvedConversationKey(authority, "replacement-chat"),
+                        route.return_target,
+                    )
+                )
+            }
+        if incoming == "superseded_typed":
+            release = asyncio.Event()
+
+            async def delayed_save():
+                entered.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    await asyncio.wait_for(release.wait(), 2)
+                return True
+
+            async def permit():
+                return True
+
+            screen._flush_active_file_notes = delayed_save
+            screen.apply_navigation_context(rejected)
+            await asyncio.wait_for(entered.wait(), 2)
+            attempted_generation = screen._library_navigation_context_generation
+            assert screen._navigation_controller.character_route is committed
+            assert not screen._conversations_state.loading
+            screen._flush_active_file_notes = permit
+            screen.apply_navigation_context(context)
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if (
+                    screen._navigation_controller.character_route is not committed
+                    and screen._pending_library_character_navigation is None
+                ):
+                    break
+            replacement = screen._navigation_controller.character_route
+            assert replacement is not None and replacement is not committed
+            successful_generation = screen._library_navigation_context_generation
+            assert successful_generation > attempted_generation > generation
+            release.set()
+            await pilot.pause(0.2)
+            assert screen._navigation_controller.character_route is replacement
+            assert (
+                screen._library_navigation_context_generation == successful_generation
+            )
+            screen._unavailable_navigation.return_from_character(screen, committed)
+            await pilot.pause()
+            assert not returned
+            committed = replacement
+            scope = screen._library_unavailable_browse_scope
+            records = screen._conversations_state.page_records
+        else:
+            screen.apply_navigation_context(rejected)
+        if incoming.endswith("veto"):
+            await asyncio.wait_for(entered.wait(), 2)
+        await pilot.pause()
+        assert screen._navigation_controller.character_route is committed
+        assert screen._library_navigation_context_generation >= generation
+        assert screen._library_unavailable_browse_scope is scope
+        assert screen._conversations_state.page_records == records
+        assert (
+            screen._unavailable_navigation._library_unavailable_browse_scope_is_current(
+                screen, scope
+            )
+        )
+        filter_input = screen.query_one("#library-conversations-filter", Input)
+        filter_input.value = "Retained"
+        filter_input.focus()
+        await pilot.press("enter")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if not screen._conversations_state.loading:
+                break
+        assert screen._conversations_state.projection == "unavailable_character"
+        assert (
+            screen._conversations_state.page_records[0]["conversation_id"]
+            == "retained-chat"
+        )
+        back = screen.query_one("#library-character-back-console", Button)
+        back.press()
+        await pilot.pause()
+        assert returned and all(message is returned[0] for message in returned)
+        assert (returned[0].screen_name, returned[0].screen_context) == (
+            "chat",
+            {"return_focus": "console-context-character"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_character_authority_read_yields_ui_and_cannot_admit_superseded_route():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    entered, release = threading.Event(), threading.Event()
+    read_threads = []
+
+    def delayed_authority():
+        read_threads.append(threading.get_ident())
+        entered.set()
+        release.wait(0.4)
+        return "slow-authority"
+
+    app.chachanotes_db = SimpleNamespace(get_local_authority_id=delayed_authority)
+    payload = character_navigation.serialize_library_unavailable_inspection(
+        character_navigation.LibraryUnavailableConversationInspection(
+            UnresolvedConversationKey("slow-authority", "stale-chat"),
+            character_navigation.RoleplayReturnTarget.console_context_character(),
+        )
+    )
+    host = DestinationHarness(app, "library")
+    try:
+        async with host.run_test(size=(120, 40)) as pilot:
+            screen = _active_destination_screen(host)
+            await _wait_for_library_shell_ready(screen, pilot)
+            started = time.monotonic()
+            screen.apply_navigation_context(
+                {constants.LIBRARY_NAV_CONTEXT_CHARACTER_INSPECTION: payload}
+            )
+            assert time.monotonic() - started < 0.1
+            assert await asyncio.to_thread(entered.wait, 1)
+            heartbeat = asyncio.Event()
+            asyncio.get_running_loop().call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), 0.1)
+            assert screen._conversations_state.loading
+            screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "search"})
+            release.set()
+            await pilot.pause(0.2)
+            assert screen._selected_conversation_id != "stale-chat"
+            assert read_threads and threading.get_ident() not in read_threads
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio

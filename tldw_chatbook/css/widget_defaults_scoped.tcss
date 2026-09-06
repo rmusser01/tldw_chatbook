@@ -1955,7 +1955,14 @@
 
 
     ConflictsTab #scheduling-conflicts-table {
-        height: 1fr;
+        /* 31713 AC#4: a `height: 1fr` table left a handful of conflict
+           rows sitting atop a wall of blank DataTable background in a
+           full-height pushed pane. Bounded to a reasonable row count
+           (independently scrollable beyond it, nothing lost) and the
+           freed space goes to the detail pane below, which is the
+           actually content-rich half of this screen. */
+        height: auto;
+        max-height: 15;
     }
     ConflictsTab #scheduling-conflicts-empty {
         color: $text-muted;
@@ -1966,8 +1973,10 @@
         height: auto;
     }
     ConflictsTab #scheduling-conflict-detail {
-        height: auto;
-        max-height: 9;
+        /* 31713 AC#4: grows into the space the table above no longer
+           claims, instead of clipping a version comparison to 9 rows
+           regardless of how much screen is free. */
+        height: 1fr;
         padding: 0 1;
         color: $text;
         border-top: solid $surface-lighten-2;
@@ -1989,7 +1998,14 @@
 
 
     ResultsTab #scheduling-results-table {
-        height: 1fr;
+        /* 31713 AC#4: same fix as `ConflictsTab`'s table -- a `height:
+           1fr` table left a handful of result rows sitting atop a wall
+           of blank DataTable background in a full-height pushed pane.
+           Bounded to a reasonable row count (independently scrollable
+           beyond it, nothing lost) and the freed space goes to the
+           detail pane below. */
+        height: auto;
+        max-height: 15;
     }
     ResultsTab #scheduling-results-empty {
         color: $text-muted;
@@ -1997,8 +2013,10 @@
         display: none;
     }
     ResultsTab #scheduling-results-detail {
-        height: auto;
-        max-height: 14;
+        /* 31713 AC#4: grows into the space the table above no longer
+           claims, instead of clipping an answer/evidence/review-metadata
+           readout to 14 rows regardless of how much screen is free. */
+        height: 1fr;
         padding: 0 1;
         color: $text;
         border-top: solid $surface-lighten-2;
@@ -2053,6 +2071,15 @@
         color: $text-muted;
         padding: 0 1 0 0;
         width: 10;
+    }
+
+    /* 31712 AC#5: "Recent runs:"/"Open incidents:" are stacked labels (own
+       line, value on the next), not paired with a value in a Horizontal --
+       the shared class's fixed 10-column width above wraps them instead of
+       aligning anything. */
+    TaskDetail .scheduling-detail-label-stacked {
+        width: auto;
+        min-width: 0;
     }
 
     TaskDetail .scheduling-detail-value {

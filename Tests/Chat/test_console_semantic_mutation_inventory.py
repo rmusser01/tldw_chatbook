@@ -57,6 +57,7 @@ DIRECT_SQL_ROUTE_CLASSIFICATION: dict[str, str] = {
     ),
     **dict.fromkeys(
         {
+            "tldw_chatbook/Canvas/repository.py::CanvasRepository.hard_purge_conversation::sql:delete:conversations(cascades-messages)",
             "tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.create_message_variant::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.select_message_variant::sql:update:messages",
@@ -104,6 +105,7 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.keep_message_attachment::call:db:swap_message_attachment_with_scalar",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.promote_console_conversation_bundle::call:persistence:create_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.replace_assistant_generation_projection::call:db:replace_assistant_generation_projection",
+            "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.replace_assistant_generation_projection_with_contributions::call:db:replace_assistant_generation_projection",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:persistence:create_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:persistence:update_message_content",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.update_message_content.coordinated_update::call:db:update_message",
@@ -2802,7 +2804,7 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
     assert "ADR-097" in inventory
     assert "Hard deletion" in inventory
     assert "Generated and dynamic SQL" in inventory
-    assert "39 live SQL sink identities and 64 boundary call" in inventory
+    assert "40 live SQL sink identities and 65 boundary call" in inventory
     all_classifications = (
         *DIRECT_SQL_ROUTE_CLASSIFICATION.values(),
         *BOUNDARY_CALL_ROUTE_CLASSIFICATION.values(),
@@ -2811,11 +2813,11 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
         classification: all_classifications.count(classification)
         for classification in CLASSIFICATIONS
     } == {
-        "model-visible": 66,
-        "visibility/ownership-only": 11,
+        "model-visible": 67,
+        "visibility/ownership-only": 12,
         "presentation-only": 26,
     }
-    assert "66 model-visible, 11 visibility/ownership-only, and 26" in inventory
+    assert "67 model-visible, 12 visibility/ownership-only, and 26" in inventory
     for phrase in (
         "generation settlement",
         "Edit and regeneration replacement",
@@ -4251,6 +4253,7 @@ def test_public_owner_table_is_labeled_manual_and_names_required_owners() -> Non
         "ConsoleChatStore.set_message_usage",
         "ConsoleChatStore.attach_message_exchanges",
         "ConsoleChatStore.set_message_metadata",
+        "CanvasRepository.hard_purge_conversation",
     ):
         assert f"`{owner}`" in inventory
 

@@ -8,6 +8,7 @@ import pytest
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskStatus
+from tldw_chatbook.Scheduling.schedule_input_parsing import system_timezone_name
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services import SchedulingServerClient, SchedulingService
 from tldw_chatbook.Scheduling.services import scheduling_service as scheduling_service_module
@@ -171,6 +172,48 @@ async def test_update_reminder_local(db):
     refreshed = await svc.get_reminder(task.id)
     assert refreshed is not None
     assert refreshed.title == "Updated"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_preserves_detected_timezone_for_one_time(db):
+    """task-31711 review finding 1 (root-cause, not the form): `ReminderForm.
+    _save()` builds the identical form_data shape for a create AND an edit,
+    setting `timezone=system_timezone_name()` for a one-time reminder either
+    way. `update_reminder`'s local-path branch used to hard-null `timezone`
+    back to `None` on EVERY edit regardless of what the payload carried
+    (`if merged_task.schedule_kind == ScheduleKind.ONE_TIME: ...
+    payload["timezone"] = None`) -- so a reminder created with a real zone
+    lost it the moment it was next saved, silently reproducing the exact
+    "later displays UTC" bug AC#2 was meant to fix. Round-trips through the
+    real service + DB (no form/widget involved) with the same field shape
+    `ReminderForm._save()` sends, so it fails on the old `= None` the way
+    the form-only test (which never reaches `update_reminder`) could not."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    detected = system_timezone_name()
+
+    created = await svc.create_reminder(
+        _reminder_payload("Water plants", body="", timezone=detected)
+    )
+    assert created.timezone == detected
+
+    # The exact shape ReminderForm._save() sends for a ONE_TIME edit
+    # (owner_id is popped by the caller before this call, per
+    # SchedulesWorkbench._on_reminder_form_result).
+    edit_payload = {
+        "title": "Water plants",
+        "body": "",
+        "schedule_kind": "one_time",
+        "run_at": created.run_at,
+        "cron": None,
+        "timezone": detected,
+    }
+    updated = await svc.update_reminder(created.id, edit_payload)
+    assert updated is not None
+    assert updated.timezone == detected
+
+    refreshed = await svc.get_reminder(created.id)
+    assert refreshed is not None
+    assert refreshed.timezone == detected
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,8 @@ from __future__ import annotations
 from textual.widgets import Button, Static
 from textual.containers import Horizontal
 
+from .unified_rows import _format_local_timestamp
+
 
 class SyncStatusWidget(Horizontal):
     """Bar showing current owner, last sync timestamps, and latest error.
@@ -182,11 +184,14 @@ class SyncStatusWidget(Horizontal):
         last_push_at: str | None,
         sync_errors: list[dict],
     ) -> None:
+        # task-31711 AC#3: `last_pull_at`/`last_push_at` are raw, often
+        # microsecond-precision, ISO-8601 strings straight from the DB --
+        # render a human-readable LOCAL timestamp instead.
         self.query_one("#scheduling-last-pull", Static).update(
-            f"Last pull: {last_pull_at or '—'}"
+            f"Last pull: {_format_local_timestamp(last_pull_at)}"
         )
         self.query_one("#scheduling-last-push", Static).update(
-            f"Last push: {last_push_at or '—'}"
+            f"Last push: {_format_local_timestamp(last_push_at)}"
         )
         error_widget = self.query_one("#scheduling-sync-error", Static)
         if sync_errors:

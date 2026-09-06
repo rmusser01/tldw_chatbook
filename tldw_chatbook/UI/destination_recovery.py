@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,19 @@ class DestinationRecoveryState:
         authority_owner: Owner of the capability or blocker.
         stable_selector: Stable widget selector used to expose and test this state.
         disabled_tooltip: Tooltip copy for the disabled control.
+        severity: Callout tint: ``warning`` (`$warning`, the `.ds-recovery-callout`
+            default every blocked state has always rendered with) or ``error``
+            (`$error`, a hard failure).
+        retry_id: Id of the Retry button that recovers this state, for callouts
+            that carry their own Retry. Empty when recovery is not a retry.
+        attempt: How many consecutive times this same failure has repeated
+            (task-31632 final review I-1). A caller that dedups a fresh state
+            against the previous one by equality (this dataclass's own
+            ``==``) would otherwise render nothing when a Retry reproduces a
+            byte-identical failure -- bumping this on repeat breaks that
+            equality so the repaint, and the reason for it, are both visible.
+            Defaults to 1 (a first attempt); ``message`` stays silent about it
+            until it actually repeats.
     """
 
     status_label: str
@@ -29,6 +42,9 @@ class DestinationRecoveryState:
     authority_owner: str
     stable_selector: str
     disabled_tooltip: str
+    severity: Literal["error", "warning"] = "warning"
+    retry_id: str = ""
+    attempt: int = 1
 
     @staticmethod
     def _sentence(value: str) -> str:
@@ -36,6 +52,24 @@ class DestinationRecoveryState:
         if not text or text.endswith((".", "!", "?")):
             return text
         return f"{text}."
+
+    @property
+    def message(self) -> str:
+        """Render the one-line callout copy: what failed, then why.
+
+        Silent about ``attempt`` on a first failure; once a caller bumps it
+        past 1 (the same failure repeating), the label names the attempt so
+        a retry against an unchanged failure still reads as a fresh press.
+
+        Returns:
+            The one-line ``"<unavailable_what> · <why>"`` callout copy, with
+            a trailing ``· attempt N`` clause once ``attempt`` exceeds 1.
+        """
+
+        base = f"{self.unavailable_what} · {self.why}"
+        if self.attempt > 1:
+            return f"{base} · attempt {self.attempt}"
+        return base
 
     @property
     def visible_copy(self) -> str:
@@ -156,6 +190,50 @@ def policy_denied_recovery_state(
         authority_owner=authority_owner,
         stable_selector=stable_selector,
         disabled_tooltip=disabled_tooltip,
+    )
+
+
+def load_failure_recovery_state(
+    *,
+    what: str,
+    reason: str,
+    retry_id: str,
+    stable_selector: str,
+    kind: Literal["error", "timeout"] = "error",
+) -> DestinationRecoveryState:
+    """Build one recovery callout for a load that failed, with its reason.
+
+    Args:
+        what: What could not be loaded, as a clause ("Couldn't load page 1").
+        reason: Why it failed, in the reader's terms ("database is locked").
+        retry_id: Id of the Retry button rendered inside the callout.
+        stable_selector: Stable widget selector for the rendered callout.
+        kind: ``timeout`` for a deadline a later attempt may beat (tinted
+            `$warning`), ``error`` for a hard failure (tinted `$error`).
+
+    Returns:
+        Recovery state whose `message` reads "<what> · <reason>".
+    """
+
+    state_what = _clause(what, "Couldn't load this view")
+    state_reason = _clause(reason, "reason unavailable")
+    return DestinationRecoveryState(
+        status_label="Timed out" if kind == "timeout" else "Load failed",
+        unavailable_what=state_what,
+        why=state_reason,
+        next_action="Retry",
+        recovery_action="Retry",
+        # Hardcoded on purpose (task-31632 review): every caller so far is a
+        # local read, and the callout does not paint the owner -- only
+        # ``visible_copy`` does, which no load-failure surface uses. Make it
+        # a parameter when a remote/server load first needs one.
+        authority_owner="local data source",
+        stable_selector=stable_selector,
+        disabled_tooltip=DestinationRecoveryState._sentence(
+            f"{state_what} · {state_reason}"
+        ),
+        severity="warning" if kind == "timeout" else "error",
+        retry_id=retry_id,
     )
 
 

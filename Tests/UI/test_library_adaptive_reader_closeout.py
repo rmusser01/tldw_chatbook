@@ -99,8 +99,12 @@ DESTINATION_CONTRACT = {
         "#library-row-browse-prompts",
         "#library-prompts-reader-shell",
         ".library-prompt-row",
-        "_library_prompts_reader_preferences",
-        "_library_prompts_reader_layout",
+        # Wave-6 task 3: prompts' own reader_preferences/reader_layout
+        # fields moved to ``screen._prompts_state.<field>`` -- same extra
+        # hop as collections'/conversations'/skills' own entries. Read
+        # through ``operator.attrgetter``, so no consumption site changes.
+        "_prompts_state.reader_preferences",
+        "_prompts_state.reader_layout",
     ),
     "skills": (
         "#library-row-browse-skills",
@@ -442,7 +446,7 @@ async def _open_destination(screen, pilot, destination: str):
             == str(second.conversation_id)
         ),
         "notes": lambda: str(screen._selected_note_id or "") == str(second.note_id),
-        "prompts": lambda: str(screen._selected_prompt_id) == expected,
+        "prompts": lambda: str(screen._prompts_state.selected_prompt_id) == expected,
         "skills": lambda: (
             screen._skills_state.editor_state is not None
             and screen._skills_state.editor_state.name == str(second.skill_name)
@@ -508,10 +512,10 @@ async def _open_destination(screen, pilot, destination: str):
         await _wait_for_condition(
             pilot,
             lambda: (
-                str(screen._selected_prompt_id) == expected
-                and str(screen._library_prompt_loaded_id) == expected
-                and screen._library_prompt_detail is not None
-                and not screen._library_prompt_detail_loading
+                str(screen._prompts_state.selected_prompt_id) == expected
+                and str(screen._prompts_state.loaded_id) == expected
+                and screen._prompts_state.detail is not None
+                and not screen._prompts_state.detail_loading
             ),
             message="Prompt second selection did not settle",
         )
@@ -594,7 +598,7 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
         )
         semantic = (screen._selected_note_id, mode)
     elif destination == "prompts":
-        semantic = (screen._selected_prompt_id, screen._library_prompt_editor_mode)
+        semantic = (screen._prompts_state.selected_prompt_id, screen._prompts_state.editor_mode)
     else:
         semantic = (
             screen._skills_state.editor_state.name,
@@ -677,14 +681,14 @@ def _durable_live_oracle(
         }
     elif destination == "prompts":
         record = {
-            "selected": screen._selected_prompt_id,
+            "selected": screen._prompts_state.selected_prompt_id,
             "pending": (
-                screen._selected_prompt_id
-                if screen._library_prompt_detail_loading
+                screen._prompts_state.selected_prompt_id
+                if screen._prompts_state.detail_loading
                 else None
             ),
-            "loaded": screen._library_prompt_loaded_id,
-            "mode": screen._library_prompt_editor_mode,
+            "loaded": screen._prompts_state.loaded_id,
+            "mode": screen._prompts_state.editor_mode,
         }
     else:
         state = screen._skills_state.editor_state
@@ -1129,7 +1133,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     screen.query_one("#library-prompt-mode-info", Button).press()
                     await _wait_for_condition(
                         pilot,
-                        lambda: screen._library_prompt_editor_mode == "info",
+                        lambda: screen._prompts_state.editor_mode == "info",
                         message="Prompt Info mode did not settle",
                     )
                 elif destination == "skills":

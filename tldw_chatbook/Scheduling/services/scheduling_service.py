@@ -123,9 +123,9 @@ _TRANSFER_IMMINENT_WINDOW = timedelta(minutes=5)
 #: (the actual mutation) share exactly one source of truth instead of
 #: two copies of the same branching drifting apart (Task 7 fix round
 #: finding 1: the UI used to re-derive this locally).
-_CANCEL_TOO_LATE_REASON = "Too late to cancel -- start a reverse transfer instead."
+_CANCEL_TOO_LATE_REASON = "Too late to cancel — start a reverse transfer instead."
 _CANCEL_NOT_IN_PROGRESS_REASON = (
-    "No transfer in progress on this row -- if it already moved, start a "
+    "No transfer in progress on this row — if it already moved, start a "
     "reverse transfer instead."
 )
 
@@ -140,7 +140,7 @@ _TRANSFER_IN_PROGRESS_REASON = "A transfer is already in progress on this row."
 #: the PRE-edit content to the server and then be overwritten locally by
 #: the first mirror pull -- silently discarding the user's edit.
 _TRANSFER_READ_ONLY_REASON = (
-    "This row is moving between this device and the server -- it is "
+    "This row is moving between this device and the server — it is "
     "read-only until the move finishes. Cancel the transfer first."
 )
 
@@ -254,7 +254,7 @@ def _seam_failure_warning(exc: Exception) -> dict[str, str]:
             "code": "policy_denied",
             "message": (
                 f"The server refused this automation ({exc}); showing local "
-                "validation only -- this will not resolve by retrying."
+                "validation only — this will not resolve by retrying."
             ),
         }
     return {
@@ -697,7 +697,24 @@ class SchedulingService:
             payload = dict(payload)
             if merged_task.schedule_kind == ScheduleKind.ONE_TIME:
                 payload["cron"] = None
-                payload["timezone"] = None
+                # task-31711 fix round (review finding 1): this used to
+                # hard-null the timezone unconditionally, stomping
+                # `ReminderForm._save()`'s now-real detected zone back to
+                # `None` the moment an existing one-time reminder was
+                # edited -- create persisted a real zone, the very next
+                # edit erased it. Root-caused here (the one place both
+                # the create and edit paths' payloads converge before a
+                # DB write) instead of in the form: `merged_task.timezone`
+                # already reflects whatever this update's own payload
+                # supplied, so this only backstops a caller that supplies
+                # none (or an untouched legacy `None` row), exactly
+                # mirroring the recurring form's own detected-or-UTC
+                # default rather than introducing a second convention.
+                from tldw_chatbook.Scheduling.schedule_input_parsing import (
+                    system_timezone_name,
+                )
+
+                payload["timezone"] = merged_task.timezone or system_timezone_name()
             elif merged_task.schedule_kind == ScheduleKind.RECURRING:
                 payload["run_at"] = None
             payload["next_run_at"] = self._compute_next_run_at(merged_task)
@@ -778,6 +795,7 @@ class SchedulingService:
         # module level would also be safe; left function-local anyway for
         # a minimal diff against Task 2's shape.
         from tldw_chatbook.Scheduling.schedule_input_parsing import (
+            example_run_at_text,
             is_valid_zone,
             parse_forgiving_datetime,
         )
@@ -791,7 +809,7 @@ class SchedulingService:
                     field_error(
                         "run_at",
                         "invalid_datetime",
-                        "Run At must be a date and time like 2026-08-28 09:00.",
+                        f"Run At must be a date and time like {example_run_at_text()}.",
                     )
                 )
             else:
@@ -849,7 +867,7 @@ class SchedulingService:
                     field_error(
                         "_row",
                         "update_refused",
-                        "This reminder could not be updated -- it may have "
+                        "This reminder could not be updated — it may have "
                         "just been deleted or locked by a transfer.",
                     )
                 ],
@@ -1228,7 +1246,7 @@ class SchedulingService:
             # simply refused this specific request.
             if self.server_permission_denied:
                 return (
-                    "Permission denied while checking the server -- ask "
+                    "Permission denied while checking the server — ask "
                     "an admin about the automations permission."
                 )
             return "The configured server is not reachable right now."
@@ -2014,7 +2032,7 @@ class SchedulingService:
             return ResolveOutcome(
                 status="error",
                 reason=(
-                    f"The server refused to {action_desc} ({exc}) -- this "
+                    f"The server refused to {action_desc} ({exc}) — this "
                     "will not resolve by retrying."
                 ),
             )
@@ -2029,7 +2047,7 @@ class SchedulingService:
             )
             return ResolveOutcome(
                 status="error",
-                reason=f"Could not {action_desc} -- this action requires a server connection.",
+                reason=f"Could not {action_desc} — this action requires a server connection.",
             )
 
         await asyncio.to_thread(
@@ -2813,7 +2831,7 @@ class SchedulingService:
         scope = config.get("scope")
         if isinstance(scope, dict) and "resolved_sources" in scope:
             config["scope"] = {k: v for k, v in scope.items() if k != "resolved_sources"}
-        return {
+        fields: dict[str, Any] = {
             "name": normalized.get("name"),
             "description": normalized.get("description"),
             "schedule": schedule,
@@ -2822,18 +2840,31 @@ class SchedulingService:
             "visibility_policy": preview.visibility_policy or {},
             "notification_policy": normalized.get("notification_policy") or {},
             "approval_policy": normalized.get("approval_policy") or {},
-            # Dedicated DB columns, not merely `config` members: the executor
-            # reads `row["finding_policy"]` (`automation_execution.py`'s
-            # `_resolve_finding_policy`) and the run snapshot copies
-            # `task["finding_policy"]` (`automation_handler.py`), so a policy
-            # left only inside `config` reaches neither -- every locally
-            # authored or offline-queued definition ran with the column
-            # DEFAULT (`balanced_findings`) whatever the author picked.
-            # `retention_policy` has the same column and the same exposure.
-            "finding_policy": config.get("finding_policy") or {},
-            "retention_policy": config.get("retention_policy") or {},
             "next_run_at": compute_next_run_at(schedule, now=datetime.now(timezone.utc)),
         }
+        # Dedicated DB columns, not merely `config` members: the executor
+        # reads `row["finding_policy"]` (`automation_execution.py`'s
+        # `_resolve_finding_policy`) and the run snapshot copies
+        # `task["finding_policy"]` (`automation_handler.py`), so a policy
+        # left only inside `config` reaches neither -- every locally
+        # authored or offline-queued definition ran with the column
+        # DEFAULT (`balanced_findings`) whatever the author picked.
+        # `retention_policy` has the same column and the same exposure.
+        #
+        # task-31414: only included when the validator actually produced
+        # a value for that key (`config` carries it for a create, or for
+        # an edit that supplied or already had it -- see
+        # `validate_recurring_question_config`'s `mode` gate). Omitting
+        # the dict key here -- rather than falling back to `{}` -- means
+        # `update_automation_definition`'s `**kwargs` never puts this
+        # column in its SQL `SET` clause, so an edit that never touched
+        # policy leaves the column exactly as it was instead of
+        # overwriting a real stored value with an empty dict.
+        if "finding_policy" in config:
+            fields["finding_policy"] = config["finding_policy"] or {}
+        if "retention_policy" in config:
+            fields["retention_policy"] = config["retention_policy"] or {}
+        return fields
 
     def _reject_unsupported_family(
         self, payload: dict[str, Any]

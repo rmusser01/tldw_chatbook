@@ -23,6 +23,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCall,
     ToolCatalogEntry,
     ToolLoadSelection,
+    ToolRecordProjection,
     ToolResult,
     ToolSchema,
 )
@@ -100,6 +101,101 @@ def test_fenced_tool_call_then_answer():
     assert calls[0].name == "calculator"
     kinds = [s.kind for s in out.steps]
     assert kinds == ["model", "tool_call", "tool_result", "model"]
+
+
+def test_tool_record_audience_inventory_keeps_raw_payload_only_in_model_history():
+    """Deleting any display/log/cycle projection call site leaks Canvas-like data."""
+    raw_argument = "<canvas-html-argument data-sentinel='task-3-1-round-1'>"
+    raw_result = "<canvas-html-result>"
+    seen_messages = []
+    records = []
+    turns = [
+        ModelTurn(text=fence("calculator", {"html": raw_argument + str(index)}))
+        for index in range(3)
+    ]
+
+    def call_model(messages, _schemas):
+        seen_messages.append(list(messages))
+        return turns.pop(0)
+
+    def project(audience, _call, result=None):
+        if audience == "cycle":
+            # Distinct raw payloads become one stable projected key, proving
+            # cycle detection consumes the projection rather than raw args.
+            return ToolRecordProjection(arguments={"digest": "same"})
+        return ToolRecordProjection(
+            arguments={"audience": audience},
+            content=f"{audience}-result",
+            error=f"{audience}-error",
+            ok=result.ok if result is not None else None,
+        )
+
+    deps = make_deps([], invoke=lambda _call: ToolResult(ok=True, content=raw_result))
+    deps.call_model = call_model
+    deps.on_record = lambda kind, payload: records.append((kind, payload)) or None
+    deps.project_tool_record = project
+    # The registry, rather than the provider, authoritatively identifies this
+    # hook as opt-in.  The loop uses that distinction to protect model steps.
+    deps.has_tool_record_projection = lambda _call: True
+    out = run_agent_loop(
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=50),
+        ),
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        deps,
+    )
+
+    assert out.status == RUN_STUCK
+    assert raw_result in seen_messages[1][-1]["content"]  # volatile model history
+    # Every emitted step is persisted and is also the source for the resumed
+    # Console transcript.  This includes the model step that carried the
+    # fence/native call, not merely the tool call/result rows.
+    assert all(
+        raw_argument not in str(step) and raw_result not in str(step)
+        for step in out.steps
+    )
+    assert all(raw_argument not in str(row) and raw_result not in str(row) for row in records)
+
+    from tldw_chatbook.Agents.agent_service import _safe_agent_step_record
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+    persisted = [_safe_agent_step_record("run-1", step) for step in out.steps]
+    assert all(
+        raw_argument not in str(row) and raw_result not in str(row) for row in persisted
+    )
+    assert all(
+        raw_argument not in ConsoleAgentBridge._summarize_persisted_step(row)
+        and raw_result not in ConsoleAgentBridge._summarize_persisted_step(row)
+        for row in persisted
+    )
+
+
+def test_default_projection_keeps_nonfinite_tool_arguments_in_runtime_records():
+    """Default providers retain the legacy JSON spelling for non-finite values."""
+    for value, encoded in (
+        (float("nan"), "NaN"),
+        (float("inf"), "Infinity"),
+        (float("-inf"), "-Infinity"),
+    ):
+        out = run(
+            [
+                ModelTurn(
+                    text="",
+                    tool_calls=(ToolCall("calculator", {"value": value}),),
+                ),
+                ModelTurn(text="done"),
+            ],
+            invoke=lambda _call: ToolResult(ok=True, content="ok"),
+        )
+        assert out.status == RUN_DONE
+        # Display uses the original default projection, retaining Python's
+        # established JSON spelling for these values.
+        step = next(step for step in out.steps if step.kind == STEP_TOOL_CALL)
+        assert json.dumps(step.args, sort_keys=True) == f'{{"value": {encoded}}}'
 
 
 def test_native_tool_calls_take_precedence_over_text():

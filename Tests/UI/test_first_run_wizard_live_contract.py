@@ -344,7 +344,7 @@ async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # TASK-31226: Exit setup now LANDS THE USER ON THE CONSOLE
+            # TASK-31813: Exit setup now LANDS THE USER ON THE CONSOLE
             # workbench instead of stranding them on the Home screen the
             # wizard was pushed over. This is the integration pin: the
             # cancellation flows through the real mounted-wizard callback
@@ -2139,7 +2139,7 @@ async def test_palette_setup_wizard_action_wires_result_callback(
             provider.handle_setup_wizard_action("run_setup_wizard")
             await pilot.pause(0.2)
 
-            # TASK-31226: re-entry wires an adapter around the app-level
+            # TASK-31813: re-entry wires an adapter around the app-level
             # result callback (cancel returns to the caller's screen; the
             # boot wizard's cancel now routes to the Console). Identity is
             # pinned by BEHAVIOR: a None result reaches the handler with
@@ -2858,20 +2858,26 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
             provider_step = container.steps[container.current_step]
             assert isinstance(provider_step, ProviderStep)
 
-            async def discover_many():
-                return tuple(
+            provider_step.select_provider("llama_cpp")
+            provider_step.query_one(
+                "#setup-provider-auth-toggle", Collapsible
+            ).collapsed = False
+            # Render the detected-endpoint rows DIRECTLY -- they are what
+            # pushes the key Input past the 18-row viewport. The previous
+            # arrangement pressed the Detect button and paused 0.2s, but the
+            # detect worker never delivers the injected servers in this
+            # harness, so the "genuine overflow" precondition only held
+            # through transient mid-layout state that a ~1ms shift in the
+            # discovery worker's completion path (task-31741) tipped over.
+            # Direct render makes the overflow deterministic and settled.
+            provider_step._render_detection_results(
+                tuple(
                     DiscoveredLocalServer(
                         "llama_cpp", f"http://127.0.0.1:{8080 + index}"
                     )
                     for index in range(8)
                 )
-
-            provider_step._local_discover = discover_many
-            provider_step.select_provider("llama_cpp")
-            provider_step.query_one(
-                "#setup-provider-auth-toggle", Collapsible
-            ).collapsed = False
-            provider_step.query_one("#setup-provider-detect", Button).press()
+            )
             await pilot.pause(0.2)
 
             key_input = app.screen.query_one("#setup-provider-api-key", Input)
@@ -3875,3 +3881,114 @@ async def test_production_sized_catalog_reaches_the_model_picker(
     assert server.accept_encodings and all(
         "gzip" not in encoding.casefold() for encoding in server.accept_encodings
     ), server.accept_encodings
+
+
+# ---------------------------------------------------------------------------
+# task-31741 (release UAT): Escape on the Provider step after a failed model
+# discovery. Live walkthrough on a loaded machine read as "Esc is dead":
+# two Escapes produced no visible change while the footer Exit button worked.
+# Reproduction on idle and loaded CPUs showed the key was never dead -- the
+# first Escape opens the Exit-setup dialog and a second press >0.5s later
+# silently dismisses it again. Under heavy load the dialog can take seconds
+# to PAINT, while `_SettlingGuardedConfirmationDialog`'s settle clock started
+# at on_mount -- so a user's (or a UAT harness's) "is this thing on?" second
+# press landed after the wall-clock grace and reverted a dialog nobody had
+# ever seen. Two pins:
+#   1. the faithful key-driven sequence keeps Escape working (and focus
+#      attached -- the TASK-22281 orphan mechanism must not regress here);
+#   2. a second Escape arriving before the dialog has ever painted must be
+#      absorbed, no matter how much wall-clock time mount-to-press ate.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_provider_discovery_failure_keeps_escape_exit_alive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Real Enter/Enter/Escape walk: discovery fails, Escape still exits."""
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(235, 52)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            container = app.screen.query_one(SetupWizardContainer)
+            await _wait_until(pilot, lambda: container.can_proceed)
+            await pilot.press("enter")
+
+            def _on_provider() -> bool:
+                step = container.steps[container.current_step]
+                return step.config is not None and step.config.id == STEP_PROVIDER
+
+            await _wait_until(pilot, _on_provider)
+            # The real Enter-driven flow: Enter selects the preselected
+            # provider row, which launches the (failing -- no key, no
+            # server) selected-provider discovery worker for real.
+            await pilot.press("enter")
+            status = app.screen.query_one("#setup-provider-probe-status", Static)
+            await _wait_until(
+                pilot,
+                lambda: "Couldn't discover models" in str(status.renderable),
+            )
+            # task-31741 Bug B: this exact state hard-blocks Next on the
+            # missing key, so the failure copy must not promise continuing.
+            assert "continue anyway" not in str(status.renderable).lower(), (
+                f"blocked state still promises continuing: {status.renderable!r}"
+            )
+            focused = app.focused
+            assert focused is not None, "focus lost after failed discovery"
+            assert focused.is_attached and focused.display, (
+                f"focus orphaned on detached widget {focused!r} -- every"
+                " subsequent key (incl. Escape) would dispatch into a dead"
+                " message pump (TASK-22281 mechanism)"
+            )
+            await pilot.press("escape")
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, _SettlingGuardedConfirmationDialog),
+            )
+
+
+@pytest.mark.asyncio
+async def test_escape_cannot_dismiss_an_exit_dialog_that_never_painted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The settle clock must anchor to first paint, not to on_mount.
+
+    Models the loaded-machine condition from the live walkthrough: the
+    dialog is mounted but the render pipeline has not delivered its first
+    frame (here: the settle callback never runs). However much wall-clock
+    time passes, a second Escape must be absorbed -- dismissing a dialog
+    the user has never seen reads as "Escape does nothing", twice.
+    """
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    original_call_after_refresh = _SettlingGuardedConfirmationDialog.call_after_refresh
+
+    def _swallow_settle(self, callback, *args, **kwargs):
+        if getattr(callback, "__name__", "") == "_mark_settled":
+            return None  # the choked pipeline never delivers the frame
+        return original_call_after_refresh(self, callback, *args, **kwargs)
+
+    monkeypatch.setattr(
+        _SettlingGuardedConfirmationDialog, "call_after_refresh", _swallow_settle
+    )
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _wait_until(
+                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+            )
+            await pilot.press("escape")
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, _SettlingGuardedConfirmationDialog),
+            )
+            dialog = app.screen
+            # Any wall-clock grace has long elapsed on the loaded machine.
+            dialog._escape_grace_seconds = 0.0
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            assert isinstance(app.screen, _SettlingGuardedConfirmationDialog), (
+                "a second Escape dismissed a dialog that never painted --"
+                " to the user, Escape did nothing twice (task-31741)"
+            )

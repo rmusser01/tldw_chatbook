@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="chatbook-csrf" content="__CHATBOOK_CSRF__">
+  <title>__CHATBOOK_TITLE__</title>
+  <link rel="stylesheet" href="/static/css/xterm.css">
+  <link rel="stylesheet" href="/static/chatbook/served-shell.css">
+  <script src="/static/js/chatbook-auth.js"></script>
+  <script src="/static/js/textual.js"></script>
+  <script src="/static/chatbook/served-shell.js" defer></script>
+</head>
+<body>
+  <main id="served-workbench" class="served-workbench terminal-only">
+    <header class="served-toolbar">
+      <div class="served-identity">
+        <strong>Chatbook</strong>
+        <span class="served-divider" aria-hidden="true"></span>
+        <span id="served-canvas-state" role="status" aria-live="polite">Terminal only</span>
+      </div>
+      <div class="served-actions">
+        <button id="served-open-canvas" type="button" hidden>Open Canvas</button>
+        <button id="served-close-canvas" type="button" hidden>Hide Canvas</button>
+      </div>
+    </header>
+
+    <section id="terminal-region" class="terminal-region" aria-label="Chatbook terminal">
+      <div class="dialog-container intro-dialog" aria-live="polite">
+        <div class="shade"></div>
+        <div class="intro">Starting Chatbook…</div>
+      </div>
+      <div class="dialog-container closed-dialog" aria-live="polite">
+        <div class="shade"></div>
+        <div class="intro">
+          <div class="message">Terminal session ended.</div>
+          <button type="button" id="terminal-restart">Restart</button>
+        </div>
+      </div>
+      <div
+        id="terminal"
+        class="textual-terminal"
+        data-session-websocket-url="__APP_WEBSOCKET_URL__"
+        data-font-size="__FONT_SIZE__"
+      ></div>
+    </section>
+
+    <section id="served-canvas-region" class="served-canvas-region" aria-label="Canvas" hidden>
+      <iframe
+        id="served-canvas-frame"
+        title="Chatbook Canvas"
+        referrerpolicy="no-referrer"
+      ></iframe>
+    </section>
+  </main>
+</body>
+</html>

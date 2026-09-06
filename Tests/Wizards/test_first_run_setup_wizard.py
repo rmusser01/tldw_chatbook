@@ -11155,7 +11155,7 @@ class TestCommandPaletteReentry:
         # path (app.py's _push_first_run_wizard) already do -- without it,
         # a truthy exit_route off the Summary step's "Start chatting" button is
         # silently dropped instead of navigating anywhere.
-        # TASK-31226: the re-run wires a cancel-stays-put adapter around
+        # TASK-31813: the re-run wires a cancel-stays-put adapter around
         # that same handler, so cancelling a re-run returns to Settings
         # instead of routing to the Console (the boot wizard's cancel now
         # lands there).

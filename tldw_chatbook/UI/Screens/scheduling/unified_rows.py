@@ -133,6 +133,41 @@ def _format_timezone(dt) -> str:
     return dt.tzname() or "UTC"
 
 
+def _format_local_timestamp(raw: str | None) -> str:
+    """Render a stored ISO-8601 timestamp as a human-readable LOCAL time.
+
+    task-31711 AC#3: `SyncStatusWidget`'s `Last pull:`/`Last push:` values
+    and `ConflictsTab`'s server/local `updated_at` columns pass a raw,
+    often microsecond-precision, ISO-8601 string straight through to the
+    user (e.g. ``"2026-09-05T12:00:00.123456+00:00"``). This is the one
+    shared "make it presentable" step both call, rather than each
+    growing its own parse/format pair.
+
+    A naive value is assumed UTC (matching `results_tab._parse_created_
+    at`'s own convention) before conversion to the system's local zone.
+    ``None``, an empty string, or a placeholder that isn't a parseable
+    timestamp (e.g. the "—" callers already default to) passes through
+    unchanged.
+
+    Args:
+        raw: The stored value, or ``None``.
+
+    Returns:
+        ``"YYYY-MM-DD HH:MM <TZ>"`` in local time, or ``raw`` (``"—"``
+        for a falsy value) when it isn't a parseable ISO-8601 string.
+    """
+    if not raw:
+        return raw or "—"
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return str(raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    local = parsed.astimezone()
+    return f"{local.strftime('%Y-%m-%d %H:%M')} {_format_timezone(local)}"
+
+
 def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
     """Summarize a cron expression in plain English.
 

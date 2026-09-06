@@ -3,16 +3,16 @@
     "filesystem": "apfs",
     "hardware": {
       "architecture": "arm64",
-      "cpu_model": "Apple M4 Pro",
-      "logical_cpu_count": 14,
-      "memory_bytes": 51539607552,
-      "model_identifier": "Mac16,8"
+      "cpu_model": "Apple M5 Max",
+      "logical_cpu_count": 18,
+      "memory_bytes": 137438953472,
+      "model_identifier": "Mac17,6"
     },
     "python_implementation": "CPython",
     "python_version": "3.12.11",
     "sqlite_version": "3.49.1"
   },
-  "fixture_version": 4,
+  "fixture_version": 5,
   "non_reference_policy": "Fail after writing the complete workload artifact unless TLDW_TRACE_LATENCY_ALLOW_NON_REFERENCE=1 explicitly selects correctness-only execution. Correctness-only execution records environment_mismatches and threshold_gate_applied=false and does not apply release thresholds.",
   "operation_order": [
     "warmup_reservation_plus_dispatch_started",
@@ -26,7 +26,7 @@
     "thread_time_ns"
   ],
   "p95_formula": "statistics.quantiles(samples, n=100, method=\"inclusive\")[94]",
-  "reference_machine_identity": "tldw-mac16-8-m4-pro-14c-48gb-apfs-v4",
+  "reference_machine_identity": "tldw-mac17-6-m5-max-18c-128gb-apfs-v5",
   "samples": {
     "fresh_database_count": 5,
     "measured_per_operation_per_database": 1000,

@@ -1,5 +1,5 @@
 ---
-id: TASK-31741
+id: TASK-31812
 title: Show Buddy listening during local Console dictation
 status: Done
 assignee: []
@@ -47,6 +47,12 @@ Reason: Directly implement the existing request-owned Buddy voice lifecycle.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Integration bookkeeping: renumbered from TASK-31741 to TASK-31812 because the
+Canvas task claimed31741 earlier (add4c9a1c514, 2026-09-05T13:13:23-07:00)
+than this Buddy task (addec3e745a7, 2026-09-05T14:49:32-07:00). Fresh all-remote
+and all-worktree task sweep found maximum31811 before allocation. All shipped
+inbound references move with this task; implementation and acceptance are unchanged.
+
 Local dictation publishes a capture-owned listening lease through the existing ADR074 Buddy voice seam. Preparation does not acquire it; stop, failure, cancel and teardown release only that owner. Retry-dialog ownership is covered separately by TASK31756. On revision e9a1543d2, intentional human capture recognized the requested phrase locally, DeepSeek completed the reply, and Kokoro delivered 68608 bytes to a drained sink; the user confirmed hearing it clearly. Buddy was listening during capture and idle afterward. The retained successful dictation session object is intentional reuse, not the recorder handle; the live probe did not directly inspect that handle. Process exit and normal configuration integrity are verified. Fresh focused Buddy lifecycle tests: 10 passed, 1 existing dependency warning, 12.89 seconds. Earlier touched-code Ruff/Bandit comparison found no added findings; no production code changed in this acceptance update. Evidence: qa/buddy-uat-2026-09-05/merged-live-uat/README.md. Existing ADR074 applies; no new ADR required. Server browser voice and full OpenAI realtime interaction remain outside this task.
 <!-- SECTION:NOTES:END -->
 

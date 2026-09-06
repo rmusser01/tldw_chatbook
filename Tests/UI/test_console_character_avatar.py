@@ -351,10 +351,14 @@ async def test_character_section_composes_when_config_on(
 
 
 @pytest.mark.asyncio
-async def test_character_section_absent_when_config_off(console_screen_avatar_off):
-    # console_screen_avatar_off: app_config has chat.images.show_character_avatar = False
+async def test_character_section_remains_when_avatar_config_off(
+    console_screen_avatar_off,
+):
+    # The image preference cannot remove the Character navigation surface.
     screen = console_screen_avatar_off
-    assert not screen.query("#console-rail-section-body-character")
+    assert screen.query("#console-rail-section-body-character")
+    assert screen.query("#console-character-identity")
+    assert screen.query_one("#console-character-avatar-frame").styles.display == "none"
 
 
 @pytest.mark.asyncio
@@ -1836,6 +1840,30 @@ async def test_character_shapes_and_controls_settle_inside_35_rows(
         <= 1
     )
 
+    from Tests.UI.test_console_character_context import _resolved
+    from tldw_chatbook.UI.Console_Modules.character_context import (
+        ConsoleCharacterContextState,
+    )
+
+    screen._character_context._publish(
+        ConsoleCharacterContextState(
+            query="needle",
+            search_rows=tuple(_resolved(1, f"search-{index}") for index in range(8)),
+        )
+    )
+    for _ in range(20):
+        left_rail.request_allocation_reconcile()
+        await pilot.pause(0.05)
+        if (
+            body.virtual_region_with_margin.height <= 35
+            and bounded.desired_content_lines <= 35
+        ):
+            break
+    assert len(screen.query(".console-character-search-row")) == 8
+    assert body.virtual_region_with_margin.height <= 35
+    assert bounded.desired_content_lines <= 35
+    assert screen.query_one("#console-character-reaction-open") is reaction_button
+
 
 @pytest.mark.asyncio
 async def test_oversized_character_controls_use_local_scroll_and_keep_offset(
@@ -1861,7 +1889,8 @@ async def test_oversized_character_controls_use_local_scroll_and_keep_offset(
     bounded = screen.query_one(
         "#console-bounded-section-character", ConsoleBoundedSection
     )
-    name = screen.query_one("#console-character-name", Static)
+    # Navigation owns the visible identity; the legacy painter caption is hidden.
+    name = screen.query_one("#console-character-identity", Static)
     reaction_button = screen.query_one("#console-character-reaction-open")
     name.styles.height = 36
     left_rail.apply_section_open("character", True)
@@ -2005,6 +2034,27 @@ async def test_character_geometry_replacement_is_equality_guarded_and_keeps_focu
     assert len(settled_calls) == 1
     assert tuple(calls) == settled_calls
     assert screen.app.focused is reaction_button
+
+
+@pytest.mark.asyncio
+async def test_character_browse_refresh_preserves_reaction_focus_and_mount(
+    console_screen_with_db_and_pilot,
+):
+    """Refreshing saved chats must not remove the independent reaction control."""
+
+    from dataclasses import replace
+
+    _app, screen, _db, pilot = console_screen_with_db_and_pilot
+    reaction = screen.query_one("#console-character-reaction-open")
+    reaction.focus()
+    await pilot.pause()
+    controller = screen._character_context
+    controller._publish(replace(controller.state, error="Could not load chats"))
+    await pilot.pause()
+
+    assert reaction.is_mounted
+    assert screen.query_one("#console-character-reaction-open") is reaction
+    assert screen.app.focused is reaction
 
 
 @pytest.mark.asyncio

@@ -96,6 +96,10 @@ a content-free proprietary-evidence marker intact; edit or deletion removes it.
 
 ### Amendment recorded 2026-08-27: deletion ownership supersedes sidecar retention
 
+For retained soft-delete rows, the later ADR-097 accepted mutation contract
+supersedes this amendment; see its
+[retained soft-delete clarification](097-console-reference-backed-semantic-trace-ledger.md#clarification-recorded-2026-09-05-retained-soft-delete-envelopes).
+
 For Console assistant-generation deletion, this ADR supersedes the older continuation
 design statement that a soft-deleted row retains its provider continuation sidecar.
 Answer content, displayable thinking, and provider continuation are one selected-

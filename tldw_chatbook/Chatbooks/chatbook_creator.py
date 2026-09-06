@@ -8,29 +8,24 @@ Chatbook Creator
 Handles the creation and packaging of chatbooks from database content.
 """
 
+import hashlib
+import html
 import json
 import os
 import shutil
 import tempfile
 import threading
 import zipfile
-import hashlib
-import html
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Dict, Any, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
 from loguru import logger
 
-from .chatbook_models import (
-    ChatbookManifest,
-    ChatbookContent,
-    ContentItem,
-    ContentType,
-    ChatbookVersion,
-    Relationship,
-)
+from ..Canvas.archive import export_canvas_archive, validate_exported_canvas_origins
+from ..Chat.assistant_generation_state import normalize_assistant_generation_state
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
 )
@@ -38,7 +33,6 @@ from ..Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
-from ..Chat.assistant_generation_state import normalize_assistant_generation_state
 from ..Chat.thinking_blocks import (
     THINKING_EXPORT_WARNING,
     ThinkingEnvelopeValidationError,
@@ -46,18 +40,25 @@ from ..Chat.thinking_blocks import (
     normalize_thinking_history_policy,
     thinking_envelope_to_exchange,
 )
+from ..config import load_console_library_migration_seed
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
-from ..config import load_console_library_migration_seed
 from ..Prompt_Management.prompt_chatbook_record import encode_chatbook_prompt_record
 from ..STT.persistence import load_transcription_provenance_document
 from ..Utils.input_validation import sanitize_string
 from ..Utils.path_validation import validate_filename
+from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
 from ..Utils.text import sanitize_filename
-from ..Utils.paths import get_user_data_dir
-
+from .chatbook_models import (
+    ChatbookContent,
+    ChatbookManifest,
+    ChatbookVersion,
+    ContentItem,
+    ContentType,
+    Relationship,
+)
 
 CITATION_MESSAGE_EXPORT_KEYS = ("citation_validation", "evidence_bundle", "citations")
 MAX_CITATION_REPORT_SNIPPET_CHARS = 1000
@@ -392,6 +393,32 @@ class ChatbookCreator:
                 f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}, prompts={manifest.total_prompts}, kept_briefings={manifest.total_kept_briefings}"
             )
 
+            exported_conversation_ids = tuple(
+                str(conversation["id"]) for conversation in content.conversations
+            )
+            if exported_conversation_ids and self.db_paths.get("ChaChaNotes"):
+                canvas_db = CharactersRAGDB(
+                    self.db_paths["ChaChaNotes"],
+                    "chatbook_canvas_exporter",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
+                try:
+                    with canvas_db.transaction():
+                        canvas_archive = export_canvas_archive(
+                            canvas_db,
+                            exported_conversation_ids,
+                            work_dir,
+                        )
+                        validate_exported_canvas_origins(
+                            canvas_archive,
+                            tuple(content.conversations),
+                        )
+                finally:
+                    canvas_db.close_connection()
+                if canvas_archive is not None:
+                    manifest.canvas_archive = canvas_archive
+                    manifest.version = ChatbookVersion.V3
+
             # Write manifest
             manifest_path = work_dir / "manifest.json"
             logger.info(
@@ -411,7 +438,12 @@ class ChatbookCreator:
             logger.info(
                 f"ChatbookCreator.create_chatbook: Creating ZIP archive at {output_path}"
             )
-            self._create_zip_archive(work_dir, output_path, partial_path)
+            self._create_zip_archive(
+                work_dir,
+                output_path,
+                partial_path,
+                deterministic=manifest.version is ChatbookVersion.V3,
+            )
 
             # Best-effort size calc: the archive is already finalized on disk
             # (os.replace done inside _create_zip_archive), so a stat() failure
@@ -433,6 +465,8 @@ class ChatbookCreator:
             dependency_info = {
                 "missing_dependencies": list(self.missing_dependencies),
                 "auto_included": list(self.auto_included_characters),
+                "archive_version": manifest.version.value,
+                "canvas_included": manifest.canvas_archive is not None,
             }
 
             # Build success message
@@ -509,6 +543,30 @@ class ChatbookCreator:
             "chatbook_creator",
             console_library_migration_seed=load_console_library_migration_seed(),
         )
+        try:
+            self._collect_conversations_with_database(
+                conversation_ids,
+                work_dir,
+                manifest,
+                content,
+                auto_include_dependencies,
+                db=db,
+            )
+        finally:
+            db.close_connection()
+
+    def _collect_conversations_with_database(
+        self,
+        conversation_ids: list[str],
+        work_dir: Path,
+        manifest: ChatbookManifest,
+        content: ChatbookContent,
+        auto_include_dependencies: bool,
+        *,
+        db: CharactersRAGDB,
+    ) -> None:
+        """Collect conversations through one caller-owned database handle."""
+
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
             sidecar_path=get_user_data_dir()
@@ -779,7 +837,15 @@ class ChatbookCreator:
                 message_data["_private"] = {
                     "provider_continuation": json.loads(canonical or "null")
                 }
-            thinking_json = msg.get("thinking_blocks_json")
+            # Soft deletion retains the durable semantic envelope and only
+            # changes visibility/ownership. V2 archives keep the tombstone for
+            # graph identity, but the V2 importer deliberately rejects
+            # `_thinking` on a deleted row. Project only active thinking into
+            # the archive; do not mutate the retained database bytes or strip
+            # the separately governed private continuation.
+            thinking_json = (
+                None if message_data["deleted"] else msg.get("thinking_blocks_json")
+            )
             if thinking_json is not None:
                 if message_data["role"] != "assistant":
                     raise _ConversationGraphProjectionError(
@@ -1970,10 +2036,17 @@ class ChatbookCreator:
                 f.write("See individual content files for licensing information.")
 
     def _create_zip_archive(
-        self, work_dir: Path, output_path: Path, partial_path: Path
+        self,
+        work_dir: Path,
+        output_path: Path,
+        partial_path: Path,
+        *,
+        deterministic: bool = False,
     ) -> None:
         """Zip work_dir into a sibling .partial, then atomically replace output_path."""
         files = [p for p in work_dir.rglob("*") if p.is_file()]
+        if deterministic:
+            files.sort(key=lambda path: path.relative_to(work_dir).as_posix())
         total = len(files)
         file_fd = -1
         partial_created = False
@@ -1993,8 +2066,22 @@ class ChatbookCreator:
                 ) as archive:
                     for idx, file_path in enumerate(files):
                         self._check_cancel()
-                        arcname = file_path.relative_to(work_dir)
-                        archive.write(file_path, arcname)
+                        arcname = file_path.relative_to(work_dir).as_posix()
+                        if deterministic:
+                            info = zipfile.ZipInfo(
+                                arcname,
+                                date_time=(1980, 1, 1, 0, 0, 0),
+                            )
+                            info.compress_type = zipfile.ZIP_DEFLATED
+                            info.create_system = 3
+                            info.external_attr = 0o100600 << 16
+                            with file_path.open("rb") as source, archive.open(
+                                info, "w"
+                            ) as destination:
+                                while chunk := source.read(64 * 1024):
+                                    destination.write(chunk)
+                        else:
+                            archive.write(file_path, arcname)
                         self._emit_progress("packaging", idx + 1, total)
                 archive_stream.flush()
                 os.fsync(archive_stream.fileno())

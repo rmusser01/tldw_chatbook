@@ -1,28 +1,28 @@
 # test_chatbook_importer.py
 # Unit tests for chatbook importer
 
-import pytest
 import io
 import json
 import os
-import zipfile
-from pathlib import Path
-from datetime import datetime
-from unittest.mock import MagicMock, patch
 import sqlite3
-
 import sys
+import zipfile
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
-from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
-from tldw_chatbook.Chatbooks.chatbook_models import ChatbookManifest, ChatbookVersion
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
     encode_project_context_json,
 )
+from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
+from tldw_chatbook.Chatbooks.chatbook_models import ChatbookManifest, ChatbookVersion
+from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
@@ -160,7 +160,16 @@ class TestChatbookImporter:
     ):
         chatbook_path = tmp_path / "private.zip"
         with zipfile.ZipFile(chatbook_path, "w") as archive:
-            archive.writestr("manifest.json", "{}")
+            archive.writestr(
+                "manifest.json",
+                json.dumps(
+                    ChatbookManifest(
+                        version=ChatbookVersion.V2,
+                        name="Private",
+                        description="privacy permissions",
+                    ).to_dict()
+                ),
+            )
             archive.writestr("content/private-note.md", "secret")
         observed: dict[str, int] = {}
 
@@ -449,6 +458,111 @@ Keywords: test, sample"""
         assert manifest.name == "Sample Chatbook"
         assert manifest.description == "A sample chatbook for testing"
         assert len(manifest.content_items) == 3
+
+    @staticmethod
+    def _write_empty_chatbook(path: Path) -> None:
+        manifest = ChatbookManifest(
+            version=ChatbookVersion.V2,
+            name="Boundary control",
+            description="Synthetic path-boundary fixture",
+        )
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("manifest.json", json.dumps(manifest.to_dict()))
+
+    @pytest.mark.parametrize("operation", ["preview", "import"])
+    def test_archive_source_rejects_lexical_danger_before_open_without_disclosure(
+        self,
+        chatbook_importer,
+        monkeypatch,
+        operation,
+    ):
+        canary = "ARCHIVE_PATH_CANARY"
+        dangerous_path = Path("selected") / ".." / ".." / f"{canary}.zip"
+        opened = False
+        observed_logger = MagicMock()
+
+        def fail_open(_path, *_args, **_kwargs):
+            nonlocal opened
+            opened = True
+            raise AssertionError("archive source open must not run")
+
+        monkeypatch.setattr(Path, "open", fail_open)
+        monkeypatch.setattr(importer_module, "logger", observed_logger)
+
+        if operation == "preview":
+            result = chatbook_importer.preview_chatbook(dangerous_path)
+            assert result == (None, "Invalid chatbook source path.")
+        else:
+            status = ImportStatus()
+            result = chatbook_importer.import_chatbook(
+                dangerous_path, import_status=status
+            )
+            assert result == (False, "Invalid chatbook source path.")
+            assert status.errors == ["Invalid chatbook source path."]
+
+        assert opened is False
+        assert canary not in repr(observed_logger.method_calls)
+
+    @pytest.mark.parametrize("operation", ["preview", "import"])
+    def test_archive_source_consumes_shared_validator_returned_path(
+        self,
+        chatbook_importer,
+        tmp_path,
+        monkeypatch,
+        operation,
+    ):
+        selected_path = tmp_path / "selected.not-zip"
+        validated_path = tmp_path / "validated.zip"
+        self._write_empty_chatbook(validated_path)
+        calls = []
+
+        def redirect_path(
+            user_path,
+            require_exists=False,
+            *,
+            probe_existing=True,
+        ):
+            calls.append((user_path, require_exists, probe_existing))
+            return validated_path
+
+        monkeypatch.setattr(
+            importer_module,
+            "validate_path_simple",
+            redirect_path,
+            raising=False,
+        )
+
+        if operation == "preview":
+            manifest, error = chatbook_importer.preview_chatbook(selected_path)
+            assert manifest is not None
+            assert manifest.name == "Boundary control"
+            assert error is None
+        else:
+            success, message = chatbook_importer.import_chatbook(selected_path)
+            assert success is True
+            assert message == "No items to import"
+
+        assert calls == [(selected_path, False, False)]
+
+    def test_real_archive_source_outside_workspace_remains_accepted(
+        self,
+        chatbook_importer,
+        tmp_path,
+    ):
+        outside_workspace = tmp_path / "external-selection"
+        outside_workspace.mkdir()
+        archive_path = outside_workspace / "valid.zip"
+        self._write_empty_chatbook(archive_path)
+        assert Path.cwd() not in archive_path.parents
+
+        manifest, error = chatbook_importer.preview_chatbook(archive_path)
+        success, message = chatbook_importer.import_chatbook(archive_path)
+
+        assert manifest is not None
+        assert manifest.name == "Boundary control"
+        assert error is None
+        assert success is True
+        assert message == "No items to import"
 
     def test_preview_chatbook_invalid_zip(self, chatbook_importer, tmp_path):
         """Test previewing an invalid ZIP file."""

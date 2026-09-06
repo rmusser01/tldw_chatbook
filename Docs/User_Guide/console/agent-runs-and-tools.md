@@ -26,6 +26,12 @@ run*. This page covers what you see while a run is in flight, how tool-call
 approvals work, how background runs in other tabs surface, and how skills and
 MCP tools plug in. For the Console screen itself see [Console](../console.md).
 
+Canvas uses four conversation-scoped agent tools outside the ordinary approval
+card flow: list and read are branch-bounded, while create and update stage local,
+reversible revisions that commit with the assistant turn. Canvas submit and
+download requests still require their own explicit trusted-shell confirmation.
+See [Canvas](canvas.md) for the complete workflow and recovery model.
+
 ## Getting there
 
 Open Console (**Ctrl+2**) and send a message — runs happen wherever you

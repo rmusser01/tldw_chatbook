@@ -368,7 +368,7 @@ def test_create_note_row_targets_notes_create_canvas():
 def test_create_prompt_row_targets_prompts_canvas():
     # Task 8b D1: the "New prompt" row reuses the SAME canvas kind
     # ("prompts") Browse > Prompts targets -- the screen distinguishes the
-    # two by view state (`_library_prompts_view`), not by a separate canvas
+    # two by view state (`_prompts_state.view`), not by a separate canvas
     # kind, mirroring the brief's "a `prompts` editor view ... prompt_id=None
     # sentinel" design.
     shell = build_library_shell_state(

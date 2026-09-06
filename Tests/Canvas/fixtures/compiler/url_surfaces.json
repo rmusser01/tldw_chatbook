@@ -1,0 +1,94 @@
+[
+  {
+    "name": "external-anchor",
+    "html": "<!doctype html><html><head></head><body><a href=\"https://example.test/x\">leave</a></body></html>"
+  },
+  {
+    "name": "entity-obscured-javascript-anchor",
+    "html": "<!doctype html><html><head></head><body><a href=\"jav&#x61;script:alert(1)\">run</a></body></html>"
+  },
+  {
+    "name": "whitespace-and-case-obscured-anchor",
+    "html": "<!doctype html><html><head></head><body><a HREF=\"  HTTP://example.test/x\">leave</a></body></html>"
+  },
+  {
+    "name": "image-http-source",
+    "html": "<!doctype html><html><head></head><body><img src=\"http://example.test/pixel.png\"></body></html>"
+  },
+  {
+    "name": "responsive-image-source-set",
+    "html": "<!doctype html><html><head></head><body><img src=\"data:image/png;base64,iVBORw0KGgpyZXN0\" srcset=\"https://example.test/2x.png 2x\"></body></html>"
+  },
+  {
+    "name": "form-action",
+    "html": "<!doctype html><html><head></head><body><form action=\"https://example.test/post\"><button>send</button></form></body></html>"
+  },
+  {
+    "name": "button-form-action",
+    "html": "<!doctype html><html><head></head><body><form><button formaction=\"https://example.test/post\">send</button></form></body></html>"
+  },
+  {
+    "name": "form-target",
+    "html": "<!doctype html><html><head></head><body><form target=\"_top\"><button>send</button></form></body></html>"
+  },
+  {
+    "name": "anchor-target",
+    "html": "<!doctype html><html><head></head><body><a href=\"#safe\" target=\"_top\">jump</a><p id=\"safe\">safe</p></body></html>"
+  },
+  {
+    "name": "anchor-ping",
+    "html": "<!doctype html><html><head></head><body><a href=\"#safe\" ping=\"https://example.test/audit\">jump</a><p id=\"safe\">safe</p></body></html>"
+  },
+  {
+    "name": "meta-refresh",
+    "html": "<!doctype html><html><head><meta http-equiv=\"refresh\" content=\"0; url=https://example.test/\"></head><body></body></html>"
+  },
+  {
+    "name": "base-url",
+    "html": "<!doctype html><html><head><base href=\"https://example.test/\"></head><body></body></html>"
+  },
+  {
+    "name": "stylesheet-link",
+    "html": "<!doctype html><html><head><link rel=\"stylesheet\" href=\"https://example.test/x.css\"></head><body></body></html>"
+  },
+  {
+    "name": "script-source",
+    "html": "<!doctype html><html><head></head><body><script src=\"https://example.test/x.js\"></script></body></html>"
+  },
+  {
+    "name": "iframe-document",
+    "html": "<!doctype html><html><head></head><body><iframe src=\"https://example.test/\"></iframe></body></html>"
+  },
+  {
+    "name": "iframe-source-document",
+    "html": "<!doctype html><html><head></head><body><iframe srcdoc=\"<p>nested</p>\"></iframe></body></html>"
+  },
+  {
+    "name": "object-data",
+    "html": "<!doctype html><html><head></head><body><object data=\"https://example.test/x\"></object></body></html>"
+  },
+  {
+    "name": "video-poster",
+    "html": "<!doctype html><html><head></head><body><video poster=\"https://example.test/x.png\"></video></body></html>"
+  },
+  {
+    "name": "svg-use-href",
+    "html": "<!doctype html><html><head></head><body><svg><use href=\"https://example.test/x.svg#shape\"></use></svg></body></html>"
+  },
+  {
+    "name": "svg-xlink-href",
+    "html": "<!doctype html><html><head></head><body><svg><use xlink:href=\"https://example.test/x.svg#shape\"></use></svg></body></html>"
+  },
+  {
+    "name": "svg-image-href",
+    "html": "<!doctype html><html><head></head><body><svg><image href=\"https://example.test/x.png\"></image></svg></body></html>"
+  },
+  {
+    "name": "svg-paint-server-url",
+    "html": "<!doctype html><html><head></head><body><svg><rect fill=\"url(https://example.test/p.svg#p)\"></rect></svg></body></html>"
+  },
+  {
+    "name": "xml-base",
+    "html": "<!doctype html><html><head></head><body><svg xml:base=\"https://example.test/\"><rect></rect></svg></body></html>"
+  }
+]

@@ -10,6 +10,7 @@ from __future__ import annotations
 from tldw_chatbook.UI.Logs_Window import LogsWindow
 from tldw_chatbook.UI.Navigation.main_navigation import nav_button_label
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import ConflictsTab
+from tldw_chatbook.UI.Screens.scheduling.unified_rows import _format_local_timestamp
 
 
 # UX-053 -----------------------------------------------------------------
@@ -50,6 +51,10 @@ def test_conflict_version_summary_covers_deletion_and_normal() -> None:
         missing_text="(missing)",
     )
     assert "'Digest'" in summary
-    assert "2026-08-01T10:00:00" in summary
+    # task-31711 AC#3: a human-readable LOCAL timestamp, not the raw
+    # ISO-8601 string -- pin the shared formatter's own output rather
+    # than a literal clock value (which shifts with the test host's TZ).
+    assert "2026-08-01T10:00:00" not in summary
+    assert _format_local_timestamp("2026-08-01T10:00:00") in summary
     assert "0 9 * * *" in summary
     assert "hello" in summary
