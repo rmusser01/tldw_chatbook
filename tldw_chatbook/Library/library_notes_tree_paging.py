@@ -174,24 +174,67 @@ def retitle_note_placements(
     return (tuple(out), True) if changed else (items, False)
 
 
+def placement_title_sort_key(item: NotesSliceItem) -> tuple[str, str, str]:
+    """Sort key mirroring the repository's placement ordering.
+
+    ``page_note_placements`` returns rows ``ORDER BY title COLLATE NOCASE,
+    n.id`` (root/unfiled) and ``ORDER BY title COLLATE NOCASE, id,
+    membership_id`` (folder). SQLite ``NOCASE`` is approximated here with
+    ``str.casefold`` so an instant in-place re-sort matches the repository
+    order for the common case; the repository stays authoritative on the
+    next slice reload/visit (see ``patch_notes_tree_branches_title``). A
+    folder item, if ever passed, sorts to the front deterministically.
+    """
+    if not isinstance(item, NotePlacementRecord):
+        return ("", "", "")
+    title = str(item.note.get("title", "") or "")
+    note_id = str(item.note.get("id", item.note.get("note_id", "")) or "")
+    membership_id = (
+        item.membership.membership_id if item.membership is not None else ""
+    )
+    return (title.casefold(), note_id, membership_id)
+
+
 def patch_notes_tree_branches_title(
     branches: Mapping[NotesBranchKey, NotesBranchSliceState],
     *,
     note_id: str,
     title: str,
     modified_at: str | None = None,
-) -> dict[NotesBranchKey, NotesBranchSliceState]:
-    """Return ``branches`` with every cached placement of ``note_id`` retitled.
+) -> tuple[dict[NotesBranchKey, NotesBranchSliceState], bool]:
+    """Retitle every cached placement of ``note_id`` and re-sort its slice.
 
     The Database Notes tree renders placement rows from these cached branch
     slices, not from the flat list records, so the save-time flat-record
     patch (``patch_note_records_after_save``) left the tree row showing the
     pre-rename title until a filter re-query rebuilt the slices
-    (task-31796). This rewrites only the matching placement's note mapping
-    inside each ``placements`` slice, preserving every other slice, item,
-    id, and field; unchanged slices keep their original identity.
+    (task-31796). This rewrites the matching placement's note mapping inside
+    each ``placements`` slice.
+
+    Contract / maintained invariants:
+
+    - Only ``placements`` slices are touched; ``folders`` slices and every
+      non-matching item pass through unchanged, and an unchanged slice keeps
+      its original object identity so callers can skip a needless rebuild.
+    - Because repository pages are ordered by title (Qodo #3), a rename can
+      change a note's collation position; the affected slice's ``items`` and
+      the parallel ``item_ids`` are therefore re-sorted together by
+      :func:`placement_title_sort_key` so the loaded page stays ordered.
+
+    Invariant NOT maintained (caller's responsibility): cross-page offset
+    boundaries. Re-sorting only the loaded window cannot pull in an item that
+    now belongs on a different page, nor push one out; ``start_offset`` /
+    ``total`` / continuation offsets are left as-is and are reconciled by the
+    next slice reload or a fresh visit. This helper never re-filters, so it
+    must not be used on an FTS filter window (see task-31796 notes: the
+    active filter is cleared on rename instead).
+
+    Returns:
+        A ``(branches, changed)`` pair; ``changed`` is True iff some
+        placement's title actually changed.
     """
     patched: dict[NotesBranchKey, NotesBranchSliceState] = {}
+    changed_any = False
     for key, state in branches.items():
         if key.slice_kind != "placements":
             patched[key] = state
@@ -199,8 +242,22 @@ def patch_notes_tree_branches_title(
         items, changed = retitle_note_placements(
             state.items, note_id=note_id, title=title, modified_at=modified_at
         )
-        patched[key] = replace(state, items=items) if changed else state
-    return patched
+        if not changed:
+            patched[key] = state
+            continue
+        changed_any = True
+        # Re-sort items and their parallel ids together so the loaded page
+        # matches the repository's title ordering after the rename.
+        reordered = sorted(
+            zip(items, state.item_ids),
+            key=lambda pair: placement_title_sort_key(pair[0]),
+        )
+        patched[key] = replace(
+            state,
+            items=tuple(pair[0] for pair in reordered),
+            item_ids=tuple(pair[1] for pair in reordered),
+        )
+    return patched, changed_any
 
 
 def begin_notes_slice_load(
