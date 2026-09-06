@@ -1287,3 +1287,24 @@ inspection of every byte. See the [runtime profile](V1_RUNTIME_COMPATIBILITY.md)
 No ambient secrets, source/payload/capability logs, screenshots, recordings,
 TLS keys, or disposable browser state are intentionally retained by these tests.
 V2 libraries, V3 VFS, elevated capabilities and TASK-31003 sync remain deferred.
+
+## Post-merge repair review (PR #2459)
+
+TASK-31861's Qodo correction wave enforces SQL-bounded and typed same-identity
+comparison, includes exported citation context without key or journal writes,
+and maps unsupported profiles to the plan-specific bounded refusal. Native,
+served, and archive compatibility use one lightweight profile constant. Public
+selection/ownership contracts now have Google-style parameter/result/error docs.
+Existing ADR-121 applies; runtime powers, quotas, schema, and dependencies are
+unchanged. Citation history requiring reconciliation is conservatively refused
+during read-only restore comparison.
+
+Verification: 532 targeted Python tests passed; after formatting and rebase onto
+dev `a9e13f4e3`, 163 focused cases passed again. Chromium zero-egress/native
+workflows passed 34 tests with two optional-engine skips (Firefox/WebKit absent).
+The existing RequestsDependencyWarning remains. Changed-code Ruff diagnostics
+match the baseline at 243 each, all 41 changed Python ranges pass formatting,
+and all six preflight guards pass. These are overlapping targeted runs, not a
+full repository sweep. Rebase range-diff preserved all six replayed patches;
+the correction commit is `713ba8cc6`. PR review/merge status is recorded on
+[PR #2459](https://github.com/rmusser01/tldw_chatbook/pull/2459).

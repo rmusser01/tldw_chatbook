@@ -1,11 +1,11 @@
 ---
 id: TASK-31861
 title: Correct four post-merge Canvas V1 review defects
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-06 13:36'
-updated_date: '2026-09-06 14:42'
+updated_date: '2026-09-06 15:17'
 labels:
   - canvas
   - review
@@ -25,7 +25,7 @@ Correct four independently reproduced defects in the merged Canvas V1 implementa
 - [x] #3 Same-identity Canvas archive restore rejects any divergent canonical conversation or message graph atomically while exact restores remain idempotent.
 - [x] #4 Untouched textarea and select defaults have matching rendered and virtual values in real Chromium; edits and reconstruction preserve supported form behavior.
 - [x] #5 All four findings have permanent regressions with observed RED then GREEN, focused preservation tests and independent scoped review, without weakened sandbox or performance limits.
-- [ ] #6 Qodo feedback on PR #2459 is verified and addressed: bounded typed archive comparison including citations, structured unsupported-profile refusal, shared profile constant, and documented public contracts; targeted regressions and scoped review pass.
+- [x] #6 Qodo feedback on PR #2459 is verified and addressed: bounded typed archive comparison including citations, structured unsupported-profile refusal, shared profile constant, and documented public contracts; targeted regressions and scoped review pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -71,6 +71,27 @@ Citation implementation clarification: use an optional read-only projection thro
 
 <!-- SECTION:NOTES:BEGIN -->
 Corrected all four post-merge V1 findings under existing ADR-121 (no new ADR, schema, dependency, authority, quotas, or scheduling changes): native/served stored-profile gates; live historical selection with stale-owner and atomic-promotion fences; canonical conversation/message/Canvas archive equality under writer transactions; and virtual textarea/select defaults, dirty state and reflected disabled controls. Native screen and dispatch now share the existing durable-only SYSTEM-row projection rule via ConsoleChatStore. Permanent regressions were observed RED then GREEN. Independent scoped review addressed the four findings; its two new regressions were reproduced, fixed, and independently re-reviewed with spec compliance pass and code quality approval, no remaining findings. Local repair commits:40cd4e653 and53ae7d5bd. Consolidated targeted Python verification:413 passed. Final Chromium security/native workflows:34 passed,2 optional browser-engine skips (Firefox/WebKit unavailable). Asset verification:21 passed including cached reproducibility; final formatted control regressions:6 passed. Counts overlap and are not summed. Existing RequestsDependencyWarning remains. Static comparison found no new lint diagnostic signatures (622 inherited/current across touched Python files); changed ranges formatted, diff-check and runtime integrity passed. Updated runtime compatibility docs; preserved all worktrees, refs and ignored reports/probes. No full repository sweep, user database operations, remote publication, PR or merge. Mermaid V2 remains next after integration.
+
+PR #2459 Qodo follow-up: bounded the same-identity SQL query at the existing
+ceiling plus one; added a strict typed envelope before graph semantics; included
+canonical exported citations without provisioning keys or writing journals;
+deferred writable citation setup beyond exact-restore skip; shared the runtime
+profile across native, served and archive gates; documented public contracts;
+and mapped only unsupported profiles to plan_unavailable. The existing gateway
+already bounded generic faults as 503, so Qodo's raw-500 claim was corrected.
+Read-only citation reconciliation refusal follows existing ADR-121; it may
+require ordinary local reconciliation before exact restore. No new ADR, schema,
+dependencies, quotas, runtime powers, or V2 work.
+
+Independent scoped review passed all six findings with no new actionable issues.
+532 targeted Python tests passed; post-format and latest-dev rebase focused
+verification passed 163 cases each. Chromium security/native checks:34 passed,
+2 optional-engine skips; existing Requests warning remains. Ruff baseline/current
+243/243, no new diagnostic signatures; 41 changed ranges format clean, diff-check
+and all six preflight guards pass. Rebased cleanly onto dev a9e13f4e3 with all
+six patches unchanged; correction commit713ba8cc6. Rechecked404refs/68worktrees
+for TASK-31861 ownership; preserved all worktrees, refs and ignored evidence.
+Remote current-head Qodo/CI and merge remain integration gates, not claimed here.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
