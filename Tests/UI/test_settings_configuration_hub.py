@@ -12764,6 +12764,38 @@ async def test_settings_overview_status_reports_ready_with_credential(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_settings_overview_status_reports_not_ready_without_model(monkeypatch):
+    """Qodo #2 (TASK-31805): credential present but no model -> not-ready.
+
+    A credential-only check would return Ready here while the Overview
+    identity renders "not selected" and the send gateway blocks with "Select
+    a model before sending." The Overview 'Status:' must agree with the send
+    path for BOTH missing-key AND missing-model, so this reports 'Not ready:
+    Select a model'.
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    # Valid credential resolves, but NO model is selected.
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": ""}
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings.setdefault("openai", {})["api_key"] = "sk-test-overview-nomodel-0123456789"
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        config_text = str(
+            screen.query_one("#settings-overview-configuration", Static).renderable
+        )
+        assert "; Status: Not ready: Select a model" in config_text
+        # The identity half shows the model is unselected, matching the status.
+        assert "not selected" in config_text
+        # Must NOT read a bare "Ready" verdict.
+        assert "; Status: Ready" not in config_text
+
+
+@pytest.mark.asyncio
 async def test_settings_overview_open_category_buttons_switch_category():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
