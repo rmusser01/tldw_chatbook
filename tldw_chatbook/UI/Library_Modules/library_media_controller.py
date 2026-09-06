@@ -71,15 +71,15 @@ of 238 plus 11 singletons**. There is no second component of any size, so
 there is no seam to split on. The plan's own candidate seam (browse/viewer
 vs trash/maintenance) was probed directly and does not hold: the 35
 trash-named candidates carry **16 cross-call edges** to the rest and share
-**6 media state fields** with it, and only 19 of the 141 movers are
+**6 media state fields** with it, and only 19 of the 140 movers are
 trash-named -- a second controller for 20 methods, still coupled through six
 shared fields, buys nothing the ratchet's per-file governance does not
 already give. The feared size did not materialise either: the hazard
-exclusions below remove 110 of the 251 candidates, so the 141 that move
-carry **3,202 source lines** of body, putting this file within a few hundred
+exclusions below remove 111 of the 251 candidates, so the 140 that move
+carry **3,155 source lines** of body, putting this file within a few hundred
 lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
 
-**110 of the 251 candidates excluded, not moved (141 move):**
+**111 of the 251 candidates excluded, not moved (140 move):**
 
 1. **73 unbound-fake-self test-bypass exclusions** (recipe §3's first
    documented shape, and by far the largest population any subsystem has
@@ -153,7 +153,7 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
 
 4. **4 module-globals-coupling exclusions** (recipe §3's oldest shape,
    restated as the eighth numbered shape's mechanical census). The census ran
-   to completion: all **71 bare module-global names** the 141 mover
+   to completion: all **71 bare module-global names** the 140 mover
    bodies read, crossed against every ``library_screen``-scoped patch shape
    (direct-attribute, fully-qualified string, two-argument
    ``monkeypatch.setattr``/``patch.object``) across ALL of ``Tests/``, under
@@ -291,18 +291,36 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
    ``ancestors`` membership tests (excluded) -- which is the whole class,
    proven rather than sampled.
 
-**141 of the 251 candidates move onto this controller** (48 ``@on`` handlers
-+ 5 ``action_*`` + 3 ``@staticmethod`` + 85 plain).
+10. **1 callback-identity exclusion -- a TENTH bypass shape, also found by
+   this task's own battery.** ``_exit_library_media_viewer``'s body schedules
+   its continuation as ``self.call_next(self._apply_library_media_list_
+   return, None)``, and ``test_screen_navigation.py:3109`` asserts
+   ``continuation == screen._apply_library_media_list_return`` on a REAL
+   screen. Moved, ``self`` is the controller, so the captured callback is the
+   CONTROLLER's bound method and the equality fails -- and note that
+   excluding the CALLEE would not have fixed it either: the controller's
+   late-binding property returns the injected ``lambda``, which is a third
+   object again. The CALLER is what has to stay, so that ``self.<name>``
+   resolves to a screen-bound method whose ``__self__``/``__func__`` match
+   the assertion's own. The census: any test comparing a captured callback
+   against ``<receiver>.<cluster-name>`` as a BARE attribute (not a call, not
+   an assignment target). Run over all 251 candidates across ``Tests/`` it
+   returns 10 names, 9 of them already excluded on other grounds and 1
+   (``_navigate_to_media``) where the receiver holds a ``MagicMock`` set on
+   the instance, which a delegator cannot disturb.
+
+**140 of the 251 candidates move onto this controller** (48 ``@on`` handlers
++ 5 ``action_*`` + 3 ``@staticmethod`` + 84 plain).
 
 **Byte-for-byte canon** (moved bodies never edited -- every name they
 reference that is not this controller's own state is rebound under the SAME
 name, per the two binding kinds; see ``LibraryPromptsController.__init__``
 and ``ConsoleDictationController.__init__`` for the sibling worked
-examples). The binding surface was derived MECHANICALLY, by walking all 141
+examples). The binding surface was derived MECHANICALLY, by walking all 140
 moved bodies for every ``self.<attr>`` load/store AND every
 ``getattr(self, "<literal>")`` call, then subtracting this controller's own
-state fields and the movers themselves -- **89 names** -- and then adding
-**2 more the walk cannot see**, for **91**, every one pinned in
+state fields and the movers themselves -- **90 names** -- and then adding
+**2 more the walk cannot see**, for **92**, every one pinned in
 ``test_media_controller_binds_every_name_its_moved_bodies_use``:
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
@@ -329,7 +347,7 @@ state fields and the movers themselves -- **89 names** -- and then adding
    prior-extracted media controller instances task 1 kept off
    ``LibraryMediaState`` (``_library_media_browse_controller``,
    ``_library_media_trash_browse_controller`` -- 11 movers each, the
-   cluster's most-referenced names); (e) 34 named late-binding callables for
+   cluster's most-referenced names); (e) 35 named late-binding callables for
    the exclusions above that a MOVER still calls internally -- each a
    ``lambda`` re-reading ``screen.<name>`` on every invocation, at CALL time,
    which is exactly why every bypass fixture named above keeps working
@@ -490,14 +508,14 @@ if TYPE_CHECKING:
 
 
 class LibraryMediaController:
-    """Owns the Library Media cluster (141 methods).
+    """Owns the Library Media cluster (140 methods).
 
     Holds no state of its own beyond what it reads and writes through
     ``LibraryMediaState`` (via the injected accessor) and the shared
     shell/framework/wiring bindings below. ``LibraryScreen`` constructs
     exactly one of these, in ``__init__`` right after
     ``self._prompts_controller``, and keeps a one-line delegator for every
-    one of the 141 original names this cluster moved (this series' own
+    one of the 140 original names this cluster moved (this series' own
     cleanup PR, media series 3/3, prunes the ones nothing external reaches).
     """
 
@@ -570,6 +588,7 @@ class LibraryMediaController:
         close_library_media_find,
         commit_library_media_return,
         exit_library_media_trash,
+        exit_library_media_viewer,
         library_media_analysis_provider_reason,
         library_media_backing_id,
         library_media_content_matches,
@@ -599,7 +618,7 @@ class LibraryMediaController:
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
-        Every one of the 141 method bodies below is a byte-for-byte copy of
+        Every one of the 140 method bodies below is a byte-for-byte copy of
         the pre-extraction ``LibraryScreen`` method: no internal line was
         edited to retarget a call or an attribute. That is possible because
         this constructor binds every name those bodies reference that is not
@@ -676,6 +695,7 @@ class LibraryMediaController:
         self._close_library_media_find_fn = close_library_media_find
         self._commit_library_media_return_fn = commit_library_media_return
         self._exit_library_media_trash_fn = exit_library_media_trash
+        self._exit_library_media_viewer_fn = exit_library_media_viewer
         self._library_media_analysis_provider_reason_fn = library_media_analysis_provider_reason
         self._library_media_backing_id_fn = library_media_backing_id
         self._library_media_content_matches_fn = library_media_content_matches
@@ -1001,6 +1021,10 @@ class LibraryMediaController:
         return self._exit_library_media_trash_fn
 
     @property
+    def _exit_library_media_viewer(self) -> Any:
+        return self._exit_library_media_viewer_fn
+
+    @property
     def _library_media_analysis_provider_reason(self) -> Any:
         return self._library_media_analysis_provider_reason_fn
 
@@ -1104,7 +1128,7 @@ class LibraryMediaController:
     def _toggle_library_media_select_mode(self) -> Any:
         return self._toggle_library_media_select_mode_fn
 
-    # -- moved cluster methods (141), byte-for-byte, original file order --
+    # -- moved cluster methods (140), byte-for-byte, original file order --
     def _project_library_media_stage_classes(self, shell_grid: Widget) -> bool:
         """Project effective Media stage classes; return whether they changed."""
         changed = False
@@ -2940,43 +2964,6 @@ class LibraryMediaController:
         """
         event.stop()
         self._exit_library_media_viewer()
-
-    def _exit_library_media_viewer(self) -> None:
-        """Shared Back exit: return the media canvas from viewer to list.
-
-        Shared by the "‹ Back to list" button and the viewer's Escape
-        binding (``action_library_media_viewer_back``, task-2856 AC2) so
-        both exits run the identical reset sequence -- one seam, not a
-        parallel key-driven path that could drift from the button's. Runs
-        unconditionally regardless of the viewer's editing/confirming-
-        delete sub-state, mirroring the "‹ Back to list" button itself,
-        which renders (and is reachable) in every one of those sub-states.
-        """
-        self._cancel_library_media_selection_settlement()
-        self._library_media_reader_session = leave_external_detail(
-            self._library_media_reader_session
-        )
-        self._library_media_view = "list"
-        self._library_media_editing = False
-        self._library_media_confirming_delete = False
-        self._library_media_editing_analysis = False
-        self._close_library_media_find()
-        self._library_media_content_mode = "raw"
-        self._load_library_media_list_if_needed()
-        # task-21116: the exit is a canvas-child swap (viewer -> list), not
-        # a whole-screen rebuild. Scheduled via ``call_next`` because this
-        # seam is synchronous (Button handler + Escape action) while the
-        # child replacement awaits its unmount/mount; the task-2856 AC1
-        # entry-focus arm rides the same continuation so its immediate
-        # attempt runs against the MOUNTED list rows.
-        media_return = self._library_media_viewer_return
-        self._library_media_viewer_return = None
-        if media_return is not None and media_return.final_focus_policy == "row":
-            # The focused Back control is about to be removed. Clear it before
-            # the child swap so Textual cannot choose the replacement semantic
-            # row as an implicit successor ahead of exact scroll settlement.
-            self.set_focus(None)
-        self.call_next(self._apply_library_media_list_return, media_return)
 
     def _library_media_adjacent_row(
         self, direction: int

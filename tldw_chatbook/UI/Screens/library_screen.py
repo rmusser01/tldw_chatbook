@@ -2913,6 +2913,9 @@ class LibraryScreen(BaseAppScreen):
             exit_library_media_trash=(
                 lambda *a, **k: self._exit_library_media_trash(*a, **k)
             ),
+            exit_library_media_viewer=(
+                lambda *a, **k: self._exit_library_media_viewer(*a, **k)
+            ),
             library_media_analysis_provider_reason=(
                 lambda *a, **k: self._library_media_analysis_provider_reason(*a, **k)
             ),
@@ -30367,7 +30370,41 @@ class LibraryScreen(BaseAppScreen):
         return self._media_controller.handle_library_media_back(event)
 
     def _exit_library_media_viewer(self) -> None:
-        return self._media_controller._exit_library_media_viewer()
+        """Shared Back exit: return the media canvas from viewer to list.
+
+        Shared by the "‹ Back to list" button and the viewer's Escape
+        binding (``action_library_media_viewer_back``, task-2856 AC2) so
+        both exits run the identical reset sequence -- one seam, not a
+        parallel key-driven path that could drift from the button's. Runs
+        unconditionally regardless of the viewer's editing/confirming-
+        delete sub-state, mirroring the "‹ Back to list" button itself,
+        which renders (and is reachable) in every one of those sub-states.
+        """
+        self._cancel_library_media_selection_settlement()
+        self._library_media_reader_session = leave_external_detail(
+            self._library_media_reader_session
+        )
+        self._library_media_view = "list"
+        self._library_media_editing = False
+        self._library_media_confirming_delete = False
+        self._library_media_editing_analysis = False
+        self._close_library_media_find()
+        self._library_media_content_mode = "raw"
+        self._load_library_media_list_if_needed()
+        # task-21116: the exit is a canvas-child swap (viewer -> list), not
+        # a whole-screen rebuild. Scheduled via ``call_next`` because this
+        # seam is synchronous (Button handler + Escape action) while the
+        # child replacement awaits its unmount/mount; the task-2856 AC1
+        # entry-focus arm rides the same continuation so its immediate
+        # attempt runs against the MOUNTED list rows.
+        media_return = self._library_media_viewer_return
+        self._library_media_viewer_return = None
+        if media_return is not None and media_return.final_focus_policy == "row":
+            # The focused Back control is about to be removed. Clear it before
+            # the child swap so Textual cannot choose the replacement semantic
+            # row as an implicit successor ahead of exact scroll settlement.
+            self.set_focus(None)
+        self.call_next(self._apply_library_media_list_return, media_return)
 
     def action_library_media_viewer_back(self) -> None:
         """Escape: step back ONE level in the media viewer (task-2856 AC2).

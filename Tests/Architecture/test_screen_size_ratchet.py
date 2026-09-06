@@ -587,31 +587,32 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # search+RAG/skills/ingest/prompts state PRs each installed and their own
     # cleanup PRs each deleted). -242 + 4 + 14 + 20 = -204.
     #
-    # 2026-09-06, wave-7 task 2 (media controller PR, media series 2/3): 141
+    # 2026-09-06, wave-7 task 2 (media controller PR, media series 2/3): 140
     # of the 251 media-named `LibraryScreen` methods moved to
     # `LibraryMediaController` (`UI/Library_Modules/library_media_controller.
     # py`, born governed by `test_library_modules_size_ratchet.py`'s glob),
-    # each replaced by a one-line screen delegator. The other 110 stay
+    # each replaced by a one-line screen delegator. The other 111 stay
     # screen-resident and full-bodied: 73 unbound-fake-self test bypasses, 16
     # instance-attribute monkeypatches, 8 `inspect.getsource` censuses, 4
     # module-globals couplings, 3 screen-identity (`self in
     # <widget>.ancestors`), 2 class monkeypatches, 2 reached by a lifecycle
-    # hook on an `object.__new__`-bypassed screen, 1 shared shell helper
-    # (`_sanitize_media_field`, which Prompts and Notes also call) and 1
-    # generic dispatcher (`_toggle_library_media_reader_pane`). The last two
-    # classes (5 names) were found by this task's own BATTERY after the RED
-    # tuple was already written, which recipe §3 records as the expected
-    # shape of the work rather than a defect in the census.
-    # Fresh `_measure()`: 37333/1282 -> 34717/1282. The METHOD count is
-    # unchanged, as every pure controller move's must be: 141 `FunctionDef`s
-    # left, 141 delegators arrived (the AST method-NAME SET on `LibraryScreen`
+    # hook on an `object.__new__`-bypassed screen, 1 callback-identity
+    # assertion, 1 shared shell helper (`_sanitize_media_field`, which
+    # Prompts and Notes also call) and 1 generic dispatcher
+    # (`_toggle_library_media_reader_pane`). The last THREE classes (6 names)
+    # were found by this task's own BATTERY after the RED tuple was already
+    # written, which recipe §3 records as the expected shape of the work
+    # rather than a defect in the census.
+    # Fresh `_measure()`: 37333/1282 -> 34754/1282. The METHOD count is
+    # unchanged, as every pure controller move's must be: 140 `FunctionDef`s
+    # left, 140 delegators arrived (the AST method-NAME SET on `LibraryScreen`
     # is identical before and after, both directions of the difference empty
     # -- a count match can hide an add-and-remove pair; a set match cannot).
-    # Line delta -2616 reconciles EXACTLY, each term measured rather than
-    # estimated: -3202 moved lines (each mover's first decorator line through
+    # Line delta -2579 reconciles EXACTLY, each term measured rather than
+    # estimated: -3166 moved lines (each mover's first decorator line through
     # its `end_lineno`; unlike the prompts move, ZERO movers carry comment
     # lines outside their own AST range -- measured, not assumed -- so nothing
-    # was orphaned behind a delegator); +345 delegator lines (2-7 each: every
+    # was orphaned behind a delegator); +343 delegator lines (2-7 each: every
     # `@on`/`@staticmethod` decorator line copied verbatim, one reconstructed
     # signature, one forwarding `return` -- plus, for each of the cluster's
     # three `@staticmethod`s (`_bounded_library_media_trash_title`,
@@ -630,10 +631,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `LibraryMediaController` import inside `__init__`'s existing lazy-import
     # block (NEVER module level -- `Tests/Packaging/test_library_preimport_
     # closure.py` and the `_ui_ready` module census both enforce this); and
-    # +246 for the construction site (`self._media_controller =
-    # LibraryMediaController(...)`, 91 named dependencies, under a 3-line
-    # comment). -3202 + 345 - 12 + 4 + 3 + 246 = -2616.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 34717, 1282),
+    # +249 for the construction site (`self._media_controller =
+    # LibraryMediaController(...)`, 92 named dependencies, under a 3-line
+    # comment). -3166 + 343 - 12 + 4 + 3 + 249 = -2579.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 34754, 1282),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

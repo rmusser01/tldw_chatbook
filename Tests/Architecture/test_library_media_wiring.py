@@ -31,15 +31,15 @@ docstring's own note on the collision).
 
 **Task 2 (controller PR)** adds the full-cluster ownership / same-name-
 delegator-forwarding / staticmethod-class-forwarding / controller-state-shim
-checks (``_MEDIA_CLUSTER_METHOD_NAMES``, 141 names) plus a
-constructor-binding coverage check (``_MEDIA_CONTROLLER_BOUND_NAMES``, 91
+checks (``_MEDIA_CLUSTER_METHOD_NAMES``, 140 names) plus a
+constructor-binding coverage check (``_MEDIA_CONTROLLER_BOUND_NAMES``, 92
 names) carried from the prompts series, which added it because the skills
 series shipped a silent production regression precisely in that gap (a moved
 body's ``getattr(self, "focused", None)`` with no ``focused`` property
 bound; recipe §3's unbound-attribute-escape entry). Media's own instance of
 that shape is one indirection further out and is called out on the tuple
 itself. See ``library_media_controller.py``'s own module docstring for the
-full 251-candidate derivation, the 110 exclusions, and the
+full 251-candidate derivation, the 111 exclusions, and the
 connected-components evidence behind the single-controller decision.
 """
 from __future__ import annotations
@@ -204,17 +204,19 @@ def test_wiring_and_blocked_attributes_stay_off_the_state_object() -> None:
 #: original ``LibraryScreen`` name. Derived from a full ``ast`` census of
 #: every ``LibraryScreen`` class-body method whose name contains "media"
 #: (case-insensitive): **251 raw ``FunctionDef`` matches, 251 unique names**
-#: (no property/setter-pair gap) -- minus 110 exclusions: 73 unbound-fake-
+#: (no property/setter-pair gap) -- minus 111 exclusions: 73 unbound-fake-
 #: self, 16 instance-attribute-monkeypatch, 8 source-census, 4
 #: module-globals-coupling, 3 screen-identity (``self in <widget>.ancestors``
 #: -- recipe §3's sixth bypass shape in a MEMBERSHIP form its own ``is``/``is
 #: not`` census cannot see), 2 class-monkeypatch, 2 bypassed-construction-
-#: lifecycle, 1 shared-shell-helper (``_sanitize_media_field``, which the
-#: Prompts and Notes clusters also call) and 1 generic dispatcher
-#: (``_toggle_library_media_reader_pane``). The last two classes were found
-#: by this task's own BATTERY, not by its static census -- see the controller
-#: docstring's exclusion classes 8 and 9, and the amended-RED-tuple rule in
-#: recipe §3 that makes such a correction expected rather than a smell.
+#: lifecycle, 1 callback-identity, 1 shared-shell-helper
+#: (``_sanitize_media_field``, which the Prompts and Notes clusters also
+#: call) and 1 generic dispatcher (``_toggle_library_media_reader_pane``).
+#: The last THREE classes -- 6 names -- were found by this task's own
+#: BATTERY, not by its static census: see the controller docstring's
+#: exclusion classes 8, 9 and 10, and the amended-RED-tuple rule in recipe §3
+#: that makes such a correction the expected shape of the work rather than a
+#: smell.
 #: NOT a prefix/substring shortcut. See ``library_media_controller.py``'s
 #: module docstring for the full per-name reasoning behind every exclusion,
 #: and for the connected-components evidence behind the single-controller
@@ -241,7 +243,6 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_delete_library_media_highlight",
     "_disarm_library_media_return_for_route_change",
     "_dispatch_library_media_detail_request",
-    "_exit_library_media_viewer",
     "_expire_library_media_return_settlement",
     "_fetch_library_media_analysis_detail",
     "_fetch_library_media_highlights",
@@ -466,7 +467,7 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_sync_library_skills_reader_layout_from_shell",
     "_walk_active_review_set",
     "request_library_reader_layout_refresh",
-    # -- named late-binding callables for the excluded media methods a mover still calls (34)
+    # -- named late-binding callables for the excluded media methods a mover still calls (35)
     "_arm_library_media_return_settlement",
     "_build_library_media_trash_state",
     "_cancel_library_media_bulk_delete",
@@ -475,6 +476,7 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_close_library_media_find",
     "_commit_library_media_return",
     "_exit_library_media_trash",
+    "_exit_library_media_viewer",
     "_library_media_analysis_provider_reason",
     "_library_media_backing_id",
     "_library_media_content_matches",
@@ -514,8 +516,8 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
         n for n in _MEDIA_CLUSTER_METHOD_NAMES if "media" not in n.lower()
     ]
     assert not not_media_named, f"non-media-named cluster entries: {not_media_named!r}"
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 141, (
-        f"expected 141 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 140, (
+        f"expected 140 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -524,7 +526,7 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
 
 @pytest.mark.unit
 def test_media_controller_owns_its_cluster() -> None:
-    """Every one of the 141 moved names is a callable on the controller.
+    """Every one of the 140 moved names is a callable on the controller.
 
     Covers the whole cluster, not a hand-picked sample -- mirrors
     ``test_prompts_controller_owns_its_cluster``.
@@ -543,7 +545,7 @@ def test_media_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_media_handlers() -> None:
-    """Every one of the 141 moved names is a one-line screen delegator that
+    """Every one of the 140 moved names is a one-line screen delegator that
     forwards to the SAME-NAMED controller method (or, for the 3
     staticmethods, to the module-level controller CLASS) -- unless a later
     cleanup task pruned it.
@@ -654,8 +656,8 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
         LibraryMediaController,
     )
 
-    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 91, (
-        f"expected 91 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
+    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 92, (
+        f"expected 92 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_MEDIA_CONTROLLER_BOUND_NAMES)) == len(
         _MEDIA_CONTROLLER_BOUND_NAMES
