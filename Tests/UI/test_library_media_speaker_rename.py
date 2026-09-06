@@ -283,6 +283,50 @@ def test_rename_works_on_the_markdown_transcript_and_keeps_its_shape(
     assert any(h["id"] == media_id for h in hits)
 
 
+def test_rename_accepts_a_legacy_unescaped_markdown_transcript_and_upgrades_it(
+    tmp_media_db, meeting_folder_media_item
+):
+    """Qodo Q1 follow-on: escaping names changed what `render_markdown`
+    produces for a name containing Markdown punctuation, so a `transcript.md`
+    ingested BEFORE the escape existed no longer matched its own re-render --
+    and the guard refused a rename on exactly the recordings the escape was
+    added for. The legacy render must count too, and the rewrite must upgrade
+    the document to the escaped form."""
+    from tldw_chatbook.Audio.meeting_session import read_meeting_json
+    from tldw_chatbook.Library.meeting_speaker_rename import _render_meeting_markdown
+    from tldw_chatbook.Widgets.Library.library_media_canvas import (
+        _read_meeting_transcript_segments,
+        rename_meeting_speaker,
+    )
+
+    name = "[x](http://e)"
+    media_id, folder = meeting_folder_media_item(
+        names={"S1": name}, segments=[("S1", "hello")], markdown=True,
+    )
+    # Put the item back on the render it would have had before the escape.
+    legacy = _render_meeting_markdown(
+        read_meeting_json(folder), _read_meeting_transcript_segments(folder),
+        {"S1": name}, escape_names=False,
+    )
+    assert f"**{name}:**" in legacy                # the shape under test
+    tmp_media_db.add_media_with_keywords(
+        url=str(folder / "mixed.wav"), title="Test Meeting", media_type="audio",
+        content=legacy, overwrite=True,
+    )
+    assert tmp_media_db.get_media_by_id(media_id)["content"].strip() == legacy.strip()
+
+    # A rename that does not change the name at all still has to be accepted
+    # (the guard is what refused) and still upgrades the stored document.
+    assert rename_meeting_speaker(tmp_media_db, media_id, "S1", name).ok is True
+    upgraded = tmp_media_db.get_media_by_id(media_id)["content"]
+    assert "**\\[x\\]\\(http://e\\):**" in upgraded
+    assert f"**{name}:**" not in upgraded
+
+    # ... and the item stays renameable from its upgraded shape.
+    assert rename_meeting_speaker(tmp_media_db, media_id, "S1", "Alice").ok is True
+    assert "**Alice:**" in tmp_media_db.get_media_by_id(media_id)["content"]
+
+
 def test_rename_refuses_when_the_transcript_is_missing(tmp_media_db, meeting_folder_media_item):
     """Qodo Q16: a missing/empty transcript.jsonl rendered as "" and the
     rename wrote that empty string over `Media.content` AND its FTS row."""

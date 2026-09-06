@@ -764,7 +764,9 @@ class MeetingSession:
         self._emit("transcribing", False)
 
 
-def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> str:
+def render_markdown(
+    result: MeetingResult, segments: list[MeetingSegment], escape_names: bool = True,
+) -> str:
     """Render a meeting as a Markdown transcript.
 
     Used when post-meeting re-transcription is off: the Markdown, not the
@@ -779,6 +781,13 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
     Args:
         result: The finished meeting.
         segments: Its segments, in order.
+        escape_names: Escape Markdown punctuation in speaker names. Always
+            True when WRITING. `rename_meeting_speaker`'s content-shape
+            guard passes False to reproduce the LEGACY render of a document
+            written before the escape existed, so such a recording is still
+            recognised as its own (and then rewritten escaped, upgrading
+            it). Escaping is a no-op for a name that needs none, so the two
+            renders differ only for the recordings that legacy case is for.
 
     Returns:
         The Markdown document, newline-terminated.
@@ -803,9 +812,8 @@ def render_markdown(result: MeetingResult, segments: list[MeetingSegment]) -> st
     for segment in segments:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
         who = render_label(segment, speaker_names, meta.user_display_name, diarize_mic=meta.diarize_mic_channel)
-        lines.append(
-            f"{stamp} **{escape_markdown_name(who)}:** {segment.text}" if who else f"{stamp} {segment.text}"
-        )
+        label = escape_markdown_name(who) if escape_names else who
+        lines.append(f"{stamp} **{label}:** {segment.text}" if who else f"{stamp} {segment.text}")
     return "\n".join(lines) + "\n"
 
 

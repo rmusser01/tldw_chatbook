@@ -100,7 +100,9 @@ def _render_meeting_transcript(
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-def _render_meeting_markdown(meeting: dict, segments: list[MeetingSegment], names: dict) -> str:
+def _render_meeting_markdown(
+    meeting: dict, segments: list[MeetingSegment], names: dict, escape_names: bool = True,
+) -> str:
     """Render the SAME `transcript.md` the meeting itself wrote to the Library.
 
     With `post_transcribe = false` the Library copy is not the plain render
@@ -119,6 +121,10 @@ def _render_meeting_markdown(meeting: dict, segments: list[MeetingSegment], name
         meeting: The `meeting.json` payload.
         segments: The transcript's segments, in order.
         names: The speaker name map to render with.
+        escape_names: False reproduces the LEGACY render of a document
+            written before names were Markdown-escaped (Qodo Q1); the guard
+            below matches against both so such a recording is still its own.
+            Always True when writing.
 
     Returns:
         The Markdown document, newline-terminated.
@@ -129,7 +135,7 @@ def _render_meeting_markdown(meeting: dict, segments: list[MeetingSegment], name
     """
     meta = SimpleNamespace(**{**meeting, "speaker_names": dict(names)})
     result = SimpleNamespace(meta=meta, duration_s=meeting.get("duration_s", 0.0))
-    return render_markdown(result, segments)
+    return render_markdown(result, segments, escape_names=escape_names)
 
 
 def _write_meeting_transcript_row(
@@ -248,10 +254,13 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
     rename) name map and comparing is that proof -- against BOTH shapes a
     meeting can leave behind (final review I2): the plain
     "[hh:mm:ss] Name: text" render, and `transcript.md`'s Markdown, which is
-    what lands in the Library whenever `post_transcribe` is off. The shape
-    that matched is the shape the rewrite re-renders in. An empty render (a
-    missing or emptied `transcript.jsonl`, Qodo Q16) is refused for the same
-    reason. A refusal touches neither the DB nor `meeting.json`.
+    what lands in the Library whenever `post_transcribe` is off -- in EITHER
+    the current, name-escaped form or the legacy unescaped one a recording
+    made before Qodo Q1 carries. The shape that matched is the shape the
+    rewrite re-renders in, always through the escaped renderer, so a legacy
+    document is upgraded by its first rename. An empty render (a missing or
+    emptied `transcript.jsonl`, Qodo Q16) is refused for the same reason. A
+    refusal touches neither the DB nor `meeting.json`.
 
     A FAILED write is compensated (Qodo Q5): `meeting.json` is rewritten
     before the transaction (a filesystem write cannot join it), so an aborted
@@ -307,10 +316,20 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
         markdown_shape = False
     else:
         try:
-            markdown_content = _render_meeting_markdown(meeting, segments, names)
+            # Both Markdown renders count. They are byte-identical unless a
+            # speaker name contains Markdown punctuation, in which case the
+            # second is the LEGACY render of a `transcript.md` written before
+            # names were escaped (Qodo Q1) -- refusing that would have stranded
+            # exactly the recordings the escape was added for. Either match
+            # rewrites through the ESCAPED renderer below, upgrading the
+            # document on its first rename.
+            candidates = [
+                _render_meeting_markdown(meeting, segments, names),
+                _render_meeting_markdown(meeting, segments, names, escape_names=False),
+            ]
         except Exception:  # noqa: BLE001 - a partial/never-stopped meeting.json
-            markdown_content = ""
-        if not markdown_content.strip() or stored != markdown_content.strip():
+            candidates = []
+        if not any(c.strip() and stored == c.strip() for c in candidates):
             return SpeakerRenameResult(False, RENAME_REFUSED_NOT_MEETING_CONTENT)
         markdown_shape = True
 
