@@ -649,8 +649,13 @@ class MeetingSession:
         if segment is not None:
             if segment.label in ("others", None):
                 source = "others" if segment.label == "others" else "mixed"
-            elif self.meta.diarize_mic_channel:
-                # task 31743: hybrid-room mic diarization, call mode only --
+            elif self.capture.mode == "call" and self.meta.diarize_mic_channel:
+                # task 31743: hybrid-room mic diarization, call mode only.
+                # The mode test is explicit (final review M2) so this half of
+                # the feature reads the same shape as the Stop pass's channel
+                # choice above -- room mode has no "you"/"both" label to reach
+                # here anyway, since `_label` returns None off call mode.
+                #
                 # "you"/"both" are the mic-carrying channels, so their PCM
                 # comes from the "you" track and the mixed (overlap) track
                 # respectively.

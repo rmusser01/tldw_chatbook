@@ -136,6 +136,25 @@ def test_others_segment_still_assigned_from_others_pcm_when_flag_on(meeting_sess
     assert session.segments[-1].speaker_id == "S1"
 
 
+def test_room_mode_never_routes_a_segment_through_the_mic_channel_branch(
+    meeting_session_with_fake_capture,
+):
+    """Final review M2: `diarize_mic_channel` is a CALL-mode feature -- the
+    Stop pass's channel choice already says so explicitly, the near-live
+    branch only did so implicitly (room mode's `_label` returns None). Room
+    mode diarizes everything through the `label is None` branch and does not
+    even record a separate "you" track, so a "you"-labelled segment there must
+    not be routed to one."""
+    session = meeting_session_with_fake_capture(
+        diarizer=FakeDiarizer(["S1"]), mode="room", diarize_mic_channel=True,
+    )
+    calls = _pcm_spy(session)
+    session.start()
+    session._on_final_for_test("hi", label="you")
+    assert calls == []
+    assert session.segments[-1].speaker_id is None
+
+
 def test_stop_uses_mixed_wav_when_diarize_mic_flag_on_in_call_mode(tmp_path, meeting_session_with_fake_capture):
     """task 31743: with the flag on, live centroids came from every channel,
     so the Stop pass must reconcile against mixed.wav, not others.wav."""

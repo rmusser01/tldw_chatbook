@@ -93,6 +93,42 @@ def test_viewer_state_has_no_legend_for_a_plain_document(tmp_media_db):
     assert state.speaker_legend_rows == ()
 
 
+def test_the_empty_viewer_state_never_parses_a_transcript(
+    tmp_media_db, meeting_folder_media_item
+):
+    """Final review M1: the ``detail is None`` memo entry is the EMPTY state,
+    whose legend the reader discards anyway -- but it still paid for the
+    selection's ``SELECT url``, an ``exists()`` and a whole
+    ``transcript.jsonl`` parse on the UI thread."""
+    media_id, _folder = meeting_folder_media_item(names={}, segments=[("S1", "hi")])
+
+    class _SpyDB:
+        def __init__(self, real):
+            self._real = real
+            self.reads = 0
+
+        def execute_query(self, *args, **kwargs):
+            self.reads += 1
+            return self._real.execute_query(*args, **kwargs)
+
+        def get_media_by_id(self, *args, **kwargs):
+            self.reads += 1
+            return self._real.get_media_by_id(*args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    spy = _SpyDB(tmp_media_db)
+    screen = _library_screen(spy)
+    screen._selected_media_id = f"local:media:{media_id}"
+
+    state = screen._build_library_media_viewer_display_state(None)
+
+    assert state.can_rename_speakers is False
+    assert state.speaker_legend_rows == ()
+    assert spy.reads == 0
+
+
 @pytest.mark.asyncio
 async def test_reader_renders_one_legend_row_per_speaker(
     tmp_media_db, meeting_folder_media_item

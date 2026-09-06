@@ -34358,12 +34358,14 @@ class LibraryScreen(BaseAppScreen):
             if force_raw:
                 state = dataclasses.replace(state, is_markdown=False)
             state = dataclasses.replace(
-                state, **self._library_media_speaker_rename_facts()
+                state, **self._library_media_speaker_rename_facts(detail)
             )
             states[key] = state
         return state
 
-    def _library_media_speaker_rename_facts(self) -> dict[str, Any]:
+    def _library_media_speaker_rename_facts(
+        self, detail: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         """TASK-31745: the selected item's meeting speaker-rename facts.
 
         Resolved on the memo MISS above (once per detail arrival x build
@@ -34372,10 +34374,18 @@ class LibraryScreen(BaseAppScreen):
         task-22208 exists to keep off this path. A rename re-fetches the
         detail, so the memo's own invalidation keeps the labels fresh.
 
+        Args:
+            detail: The detail this state is being built for. ``None`` is the
+                EMPTY state -- nothing is on screen to rename -- and the
+                reader discards the legend for it anyway, so the whole
+                ``transcript.jsonl`` parse is skipped (final review M1).
+
         Returns:
             The ``can_rename_speakers``/``speaker_legend_rows`` fields, ready
             for ``dataclasses.replace``.
         """
+        if detail is None:
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
         if self._library_media_reader_session.external_detail:
             # A server item is being read; the local selection's id says
             # nothing about it, and nothing local is renameable from here.
