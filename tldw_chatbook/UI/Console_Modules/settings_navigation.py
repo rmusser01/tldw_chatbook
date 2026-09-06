@@ -150,6 +150,11 @@ class ConsoleSettingsNavigationController:
 
     @property
     def app_instance(self) -> Any:
+        """Return the application supplied by the owning screen's accessor.
+
+        Returns:
+            The current application instance; this controller does not own it.
+        """
         return self._app_instance_accessor()
 
     @property
