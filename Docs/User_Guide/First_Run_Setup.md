@@ -1,11 +1,12 @@
 # First-Run Setup
 
-> Verified against: first-run wizard implementation, 2026-08 (TASK-21148: layout/density — stable step totals, stacked tracker titles, outcome-first Voice step, small-terminal hint).
+> Verified against: first-run wizard implementation, 2026-09 (task-31741: honest skip/continue copy — a keyed provider without a credential refuses Next until a key is supplied or you go Back; Escape remains the universal out).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
-every step can be skipped (Next moves on without configuring it), Escape asks
-before closing, and anything you configure (or don't) can be changed later in
-Settings.
+most steps can be skipped (Next moves on without configuring it; the one
+exception is a cloud provider you've picked, which needs its API key before
+Next continues), Escape asks before closing, and anything you configure (or
+don't) can be changed later in Settings.
 
 If a step can't save what you entered, the reason appears just above the
 navigation buttons — fix it and press Next again, or go Back.

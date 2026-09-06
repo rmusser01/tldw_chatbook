@@ -11781,3 +11781,28 @@ remained required rather than calling the local selection green.
 Rule: identify the failing allocation and compare the unchanged baseline before
 interpreting an OS resource message. Retain environmental qualifications; do not
 delete unrelated files, weaken gates or infer resource ownership from errno alone.
+## A "dead key" report can be an invisible open-then-undo toggle
+
+**task-31741 release UAT, 2026-09-05.** A live walkthrough reported Escape
+completely dead on the wizard's Provider step after a failed model discovery
+— two presses, "nothing happens", while the footer Exit button worked. Four
+live tmux reproductions of the exact key sequence (splash on/off, idle and
+14-core-loaded CPU) plus a faithful run_test harness all showed Escape
+WORKING: the first press opened the Exit dialog, and a second press >0.5s
+later silently dismissed it. The report's machine was running a full pytest
+sweep; the dialog's paint lagged seconds behind its push, and
+`_SettlingGuardedConfirmationDialog`'s double-tap grace was anchored to
+`on_mount` wall-clock — so the "is this thing on?" second press landed after
+the grace and reverted a dialog nobody ever saw. Escape's effect existed but
+was invisible and self-undoing; the key was never dead. The fix anchors the
+settle clock to the first delivered frame (`call_after_refresh`), so an
+unpainted dialog absorbs Escape unconditionally.
+
+**What to do.** Before accepting "key X does nothing", check whether X's
+effect is a toggle whose second activation restores the prior screen — and
+capture-pane immediately AND a few seconds after each press, because "screen
+unchanged" from a single capture can just mean paint lag. Any grace-window
+guard on a modal must measure from first paint, not from mount: under load
+those diverge by seconds. Note also that the wizard's bottom hint line stays
+visible while the dialog is up, so grepping the footer proves nothing about
+whether a dialog opened.
