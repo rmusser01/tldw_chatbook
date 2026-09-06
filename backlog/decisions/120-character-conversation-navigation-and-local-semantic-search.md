@@ -123,6 +123,28 @@ new Task4 routes, not future navigation origins; later delivery must explicitly
 define any extension. Returning reveals Character transiently and does not write
 manual disclosure preferences.
 
+Task5 admission correction (2026-09-06, TASK-31245): a switcher-to-Library
+inspection is accepted only after Library prepares the exact immutable local
+conversation and admits its existing save guards. Generic destination stack
+ownership is not evidence that the requested inspection was accepted. Library
+owns preparation through its existing bounded local conversation locator; the
+app's existing navigation coordinator owns the one-way commit and screen
+transfer. Preparation must not replace the retained Library view or dismiss the
+source switcher. It captures the database, authority, exact conversation,
+navigation generation, and originating visit, and rejects stale or cancelled
+requests before commit.
+
+Cold and retained Library screens use the same prepared inspection contract.
+Commit installs the validated route and exact reader selection, without a
+second competing admission lookup on mount. Later transcript rendering remains
+Library-owned and is not confused with route admission. Until commit begins,
+rejection or cancellation preserves the switcher's query, highlight, scroll,
+and recovery identity; after commit begins, source controls cannot cancel or
+retarget the transfer. This does not broaden repair authority or return origins,
+create a parallel navigation service, or redesign generic overlay rollback for
+an unrelated late synchronous screen-switch failure. The existing Context
+Character return anchor remains unchanged.
+
 Surface roles remain distinct:
 
 - Console Context owns a bounded ambient Character section directly after

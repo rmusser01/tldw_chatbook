@@ -135,6 +135,9 @@ def _navigate_character_context(
     target: Any,
     *,
     on_completion: Callable[[bool], None] | None = None,
+    require_character_inspection_admission: bool = False,
+    is_current: Callable[[], bool] | None = None,
+    on_commit_started: Callable[[], bool] | None = None,
 ) -> None:
     """Serialize exact navigation only when the user leaves the Character browser."""
     from ..Navigation.character_conversation_navigation import (
@@ -163,7 +166,12 @@ def _navigate_character_context(
         ),
     }[context_key]
     message = NavigateToScreen(
-        route, {context_key: serialize(target)}, on_completion=on_completion
+        route,
+        {context_key: serialize(target)},
+        on_completion=on_completion,
+        require_character_inspection_admission=require_character_inspection_admission,
+        is_current=is_current,
+        on_commit_started=on_commit_started,
     )
     if not screen.post_message(message):
         message.report_completion(False)

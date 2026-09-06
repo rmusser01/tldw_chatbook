@@ -814,7 +814,7 @@ async def test_unresolved_recovery_retains_exact_result_until_route_is_accepted(
     async def character_loader(**_kwargs):
         return CharacterConversationPage((unresolved,), 1, None, 8)
 
-    async def open_library(result):
+    async def open_library(result, **_kwargs):
         received.append(result)
         return accepted
 
@@ -862,7 +862,7 @@ async def test_becomes_unavailable_recovery_dismisses_only_after_exact_acceptanc
             False,
         )
 
-    async def open_library(result):
+    async def open_library(result, **_kwargs):
         received.append(result)
         return True
 
@@ -922,8 +922,8 @@ async def test_mounted_library_recovery_keeps_visit_until_app_navigation_complet
             7,
         )
 
-    async def recover(result):
-        return await ChatScreen._open_console_character_library(owner, result)
+    async def recover(result, **kwargs):
+        return await ChatScreen._open_console_character_library(owner, result, **kwargs)
 
     app = _CharacterSwitcherApp(
         character_loader=loader,
