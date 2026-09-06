@@ -454,6 +454,9 @@ from ...Widgets.Library.library_media_canvas import (
     LibraryMediaRowGeometry,
     LibraryMediaRowGeometryChanged,
     LibraryMediaRowScroll,
+)
+from ...Library.meeting_speaker_rename import (
+    _meeting_speaker_legend_rows,
     can_rename_meeting_speakers,
 )
 from ...Widgets.Library.library_note_folder_dialog import (
@@ -6627,6 +6630,22 @@ class LibraryScreen(BaseAppScreen):
                 severity="warning",
             )
         self._disarm_library_list_entry_focus()
+
+    @on(LibraryMediaViewer.SpeakerRenamed)
+    async def _handle_library_media_speaker_renamed(
+        self, event: LibraryMediaViewer.SpeakerRenamed
+    ) -> None:
+        """Re-fetch the renamed item so the memoized detail stops being stale.
+
+        TASK-31745: the reader repaints itself the moment the rename lands,
+        but this screen's viewer state is memoized per detail ARRIVAL -- the
+        next sync would otherwise repaint the pre-rename transcript over the
+        new name (and re-derive the legend labels from it).
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if media_id:
+            await self._refresh_library_media_detail(media_id)
 
     @on(LibraryMediaRowGeometryChanged)
     def _handle_library_media_row_geometry_changed(
@@ -34182,6 +34201,10 @@ class LibraryScreen(BaseAppScreen):
             image_preview_source=preview_source,
             review_banner=self._active_review_set_banner() or "",
             back_visible=self._library_media_reader_exit_available(),
+            # TASK-31745: what the speaker-rename legend needs to actually
+            # persist a rename (harmless when the state says it cannot).
+            media_db=getattr(self.app_instance, "media_db", None),
+            speaker_rename_media_id=self._library_media_selected_backing_id(),
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
@@ -34315,8 +34338,38 @@ class LibraryScreen(BaseAppScreen):
             )
             if force_raw:
                 state = dataclasses.replace(state, is_markdown=False)
+            state = dataclasses.replace(
+                state, **self._library_media_speaker_rename_facts()
+            )
             states[key] = state
         return state
+
+    def _library_media_speaker_rename_facts(self) -> dict[str, Any]:
+        """TASK-31745: the selected item's meeting speaker-rename facts.
+
+        Resolved on the memo MISS above (once per detail arrival x build
+        parameters), never per sync: the legend rows parse the whole
+        ``transcript.jsonl``, which is the per-interaction cost class
+        task-22208 exists to keep off this path. A rename re-fetches the
+        detail, so the memo's own invalidation keeps the labels fresh.
+
+        Returns:
+            The ``can_rename_speakers``/``speaker_legend_rows`` fields, ready
+            for ``dataclasses.replace``.
+        """
+        if self._library_media_reader_session.external_detail:
+            # A server item is being read; the local selection's id says
+            # nothing about it, and nothing local is renameable from here.
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        db = getattr(self.app_instance, "media_db", None)
+        backing_id = self._library_media_selected_backing_id()
+        if not self._library_media_can_rename_speakers(db, backing_id):
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        try:
+            rows = tuple(_meeting_speaker_legend_rows(db, backing_id))
+        except Exception:  # noqa: BLE001 - a bad read just means no legend
+            rows = ()
+        return {"can_rename_speakers": bool(rows), "speaker_legend_rows": rows}
 
     def _build_library_media_viewer_display_state(
         self, detail: Mapping[str, Any] | None, *, arrival_note: str = ""
@@ -34491,6 +34544,13 @@ class LibraryScreen(BaseAppScreen):
             viewer.image_preview_source = preview_source
             viewer.review_banner = review_banner
             viewer.back_visible = back_visible
+            # TASK-31745: the backing id follows the selection like any other
+            # compose input (the state's own rename fields are in the compare
+            # above, so a stale id here could never outlive them).
+            viewer.media_db = getattr(self.app_instance, "media_db", None)
+            viewer.speaker_rename_media_id = (
+                self._library_media_selected_backing_id()
+            )
             # task-31567: this recompose replaces every child, so whatever
             # the user was standing on (the content box, the Find input, an
             # action button) is about to be removed and Textual will pick
