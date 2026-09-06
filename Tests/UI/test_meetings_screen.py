@@ -21,9 +21,16 @@ pytestmark = pytest.mark.unit
 
 class FakeSession:
     def __init__(self, folder: Path, mode="call"):
+        # Mirrors `MeetingSessionOwner.start()`: the display name is STAMPED
+        # onto the meta once, here, and every render reads it back from there
+        # (Qodo Q4). Read through the screen module's own symbol because that
+        # is the one these tests monkeypatch to stand in for configuration.
+        import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
+
         self.meta = MeetingMeta(folder=folder, mode=mode, started_at="2026-09-04T14:30:00",
                                 mic_device="default", system_source="Native (macOS tap)",
-                                provider="faster-whisper", model="base.en")
+                                provider="faster-whisper", model="base.en",
+                                user_display_name=meetings_screen_module.meeting_user_display_name())
         self.state = "recording"
         self.segments: list[MeetingSegment] = []
         self.failed_segments = 0
@@ -629,10 +636,57 @@ async def test_partial_preview_honours_the_configured_display_name(tmp_path, mon
         await pilot.pause(0.1)
         assert "You:" in _text(screen.query_one("#meetings-partial", Static))
 
-        monkeypatch.setattr(meetings_screen_module, "meeting_user_display_name", lambda **kw: "Alice")
+    monkeypatch.setattr(meetings_screen_module, "meeting_user_display_name", lambda **kw: "Alice")
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
         owner.session.emit("partial", ("hel", "you"))
         await pilot.pause(0.1)
         assert "Alice:" in _text(screen.query_one("#meetings-partial", Static))
+
+
+@pytest.mark.asyncio
+async def test_a_display_name_change_mid_meeting_never_splits_the_live_rows(
+    tmp_path, monkeypatch
+):
+    """Qodo Q4: `_user_display_name` re-read CONFIGURATION for every partial,
+    finalized row and legend label, while `render_markdown` and the Library
+    item's re-render read `meta.user_display_name` -- the value stamped once
+    at start(). Changing the setting mid-meeting therefore relabelled the new
+    live rows only: they disagreed with the rows already on screen AND with
+    the transcript that would be saved. The stamped name has to win."""
+    import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
+
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        assert owner.session.meta.user_display_name == "You"     # stamped at start
+
+        # The setting changes while the meeting is running.
+        monkeypatch.setattr(meetings_screen_module, "meeting_user_display_name", lambda **kw: "Alice")
+
+        owner.session.emit("partial", ("hel", "you"))
+        await pilot.pause(0.1)
+        assert "You:" in _text(screen.query_one("#meetings-partial", Static))
+
+        owner.session.add_segment("hello", "you")
+        owner.session.add_segment("overlap", "both")
+        owner.session.add_segment("hi", "others", speaker_id="S1")
+        await pilot.pause(0.1)
+
+        assert screen.rendered_lines[:2] == ["[00:00:00] You: hello", "[00:00:00] You + Others: overlap"]
+        # ... and the legend label for a diarized speaker, on the same path.
+        assert screen._speaker_label("S1") == "Speaker 1"
+        # The saved transcript renders from the SAME stamped name, so live and
+        # saved agree -- which is the whole point.
+        assert "You:" in screen._rendered_transcript_text()
+        assert "Alice" not in screen._rendered_transcript_text()
 
 
 @pytest.mark.asyncio

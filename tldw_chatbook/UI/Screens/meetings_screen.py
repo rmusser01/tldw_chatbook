@@ -521,16 +521,26 @@ class MeetingsScreen(BaseAppScreen):
     def _user_display_name(self) -> str:
         """The name that stands in for "you" in the transcript and legend.
 
-        Delegates to `meeting_owner.meeting_user_display_name` (task 31746),
-        the ONE place this decision is made: `chat_defaults.user_display_
-        name`'s own factory default is the literal string ``"User"`` (see
-        `config.py`'s `DEFAULT_CONFIG_FROM_TOML`), so a fresh install has no
-        way to tell "never touched this setting" apart from "chose User" --
-        honouring it unconditionally would silently turn every untouched
-        install's "You:" rows into "User:" rows. The owner stamps this same
-        value onto `meta.user_display_name` at `start()`, so the saved
-        transcript and the Library view agree with what was shown live.
+        The RUNNING meeting's own stamped `meta.user_display_name` wins
+        (Qodo Q4). The owner stamps it once at `start()` and every
+        after-the-fact render -- `render_markdown`, the Library item's
+        re-render, `meeting.json` -- reads it back from there, so re-reading
+        configuration per row instead meant a display-name setting changed
+        MID-meeting split the live rows away from the saved transcript: rows
+        already on screen kept the old name, new ones took the new one, and
+        neither matched what the Library would show.
+
+        Only before a session exists (the idle screen's legend/preview) does
+        this fall back to `meeting_owner.meeting_user_display_name`, the ONE
+        place the decision is made: `chat_defaults.user_display_name`'s own
+        factory default is the literal string ``"User"`` (see `config.py`'s
+        `DEFAULT_CONFIG_FROM_TOML`), so a fresh install has no way to tell
+        "never touched this setting" apart from "chose User" -- honouring it
+        unconditionally would silently turn every untouched install's "You:"
+        rows into "User:" rows.
         """
+        if self._session is not None:
+            return self._session.meta.user_display_name
         return meeting_user_display_name()
 
     def _coarse_label(self, label: str) -> str:
