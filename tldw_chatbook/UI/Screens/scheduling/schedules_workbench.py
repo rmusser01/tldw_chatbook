@@ -2704,6 +2704,16 @@ class SchedulesWorkbench(BaseAppScreen):
                             name,
                             pause_outcome.errors,
                         )
+                        # Honest copy on the rare error path: the plain
+                        # "Duplicated..." success toast (keyed off the
+                        # create outcome) would silently leave an ACTIVE
+                        # copy of a paused source (task-31823 re-review).
+                        self.app_instance.notify(
+                            f"Duplicated '{name}', but the copy could not "
+                            "be paused — it is active. Pause it from its "
+                            "detail pane if you don't want it to run.",
+                            severity="warning",
+                        )
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "Failed to duplicate automation definition {}", name
