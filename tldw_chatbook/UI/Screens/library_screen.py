@@ -34624,7 +34624,15 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-reader-more")
     def handle_library_media_reader_more(self, event: Button.Pressed) -> None:
-        """Toggle the transient inline secondary-action region."""
+        """Toggle the transient inline secondary-action region.
+
+        Args:
+            event: The More button press. Stopped here so the Reader's own
+                toolbar handling never sees it.
+
+        Returns:
+            None.
+        """
         event.stop()
         session = self._library_media_reader_session
         self._library_media_reader_session = set_more_open(
