@@ -7220,3 +7220,70 @@ async def test_library_browse_page_survives_a_failing_match_reason_probe():
         assert payload["match_reasons"] == {}
     finally:
         db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_page_survives_a_connect_failure_in_the_probe():
+    """Final review (3): the DB's own connect-failure wrapper is not a
+    ``sqlite3.Error``; the probe must fail open on it just the same."""
+    db = Database(db_path=":memory:", client_id="library-match-reason-dberror")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Opening remarks",
+            content="Transcript of the opening session.",
+            media_type="article",
+            keywords=["day2"],
+        )
+
+        def _boom(*args, **kwargs):
+            raise media_db_module.DatabaseError("Failed to connect to media database.")
+
+        db._library_browse_keyword_only_matches = _boom
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+
+        payload = await scope_service.search_media(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        assert [item["backing_media_id"] for item in payload["items"]] == [tagged_id]
+        assert payload["match_reasons"] == {}
+    finally:
+        db.close_connection()
+
+
+def test_library_browse_reasons_need_the_like_legs_a_preformatted_fts_query_drops():
+    """Final review (7): with ``fts_match_query`` the search drops the
+    title/content LIKE legs, so the probe's under-report argument no longer
+    holds -- no reasons rather than possibly wrong ones."""
+    db = Database(db_path=":memory:", client_id="library-match-reason-fts")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Session one",
+            content="A body about nothing.",
+            media_type="article",
+            keywords=["roadmap"],
+        )
+        service = LocalMediaReadingService(db)
+
+        preformatted = service.search_media(
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+            fields=list(LIBRARY_BROWSE_SEARCH_FIELDS),
+            fts_match_query="roadmap",
+        )
+        assert [row["id"] for row in preformatted["items"]] == [tagged_id]
+        assert "match_reasons" not in preformatted
+    finally:
+        db.close_connection()
