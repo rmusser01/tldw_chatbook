@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-05 21:37'
-updated_date: '2026-09-06 01:45'
+updated_date: '2026-09-06 02:50'
 labels:
   - canvas
   - review
@@ -27,11 +27,11 @@ Resolve every finding posted on PR 2432 with verified corrections or evidence-ba
 - [x] #3 Valid review corrections preserve path authorization, transaction ownership, strict bounded wire validation, effective configuration precedence, compatibility and source-private diagnostics.
 - [ ] #4 Targeted regression tests, independent review and required current-head CI support merge readiness; no security or performance gate is weakened.
 - [x] #5 A completed tool turn followed by a saved user prompt admits Capture On atomically, preserving original call reconstruction, exact owner/response/range validation and failure rollback; calculator and Canvas production-factory controls pass.
-- [ ] #6 Pre-dispatch Retry proves and reuses its exact owned reservation without admitting unrelated calls, reviving terminal calls or duplicating dispatch; real controller/gateway recovery tests cover repeated failure and stale authority.
-- [ ] #7 Commit reconciliation distinguishes committed, rolled-back and unknown outcomes; post-commit failures cannot duplicate surface writes or provider entry, or incorrectly mark a dispatched call not dispatched.
+- [x] #6 Pre-dispatch Retry proves and reuses its exact owned reservation without admitting unrelated calls, reviving terminal calls or duplicating dispatch; real controller/gateway recovery tests cover repeated failure and stale authority.
+- [x] #7 Commit reconciliation distinguishes committed, rolled-back and unknown outcomes; post-commit failures cannot duplicate surface writes or provider entry, or incorrectly mark a dispatched call not dispatched.
 - [x] #8 Both agent-mode and ordinary fresh next-message sends support the verified transition after a completed tool turn; other routes gain no implicit permission.
-- [ ] #9 Short-lived trace worker operations release only their owned database handles on completion, failure and cancellation; repeated real agent and settlement operations do not accumulate exited-thread handles, and caller-owned or same-file observer connections remain usable.
-- [ ] #10 After a proven pre-dispatch trace failure, explicit Send without capture and Cancel work for ordinary and agent sends without reviving terminal trace calls, weakening uncertain-delivery guards, or dispatching automatically.
+- [x] #9 Short-lived trace worker operations release only their owned database handles on completion, failure and cancellation; repeated real agent and settlement operations do not accumulate exited-thread handles, and caller-owned or same-file observer connections remain usable.
+- [x] #10 After a proven pre-dispatch trace failure, explicit Send without capture and Cancel work for ordinary and agent sends without reviving terminal trace calls, weakening uncertain-delivery guards, or dispatching automatically.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,6 +48,8 @@ Implemented all eight initial Qodo corrections under ADR-121 (Canvas ownership, 
 Published reviewed corrections at b87f7ac31 after a 127-commit rebase onto dev8e9d1128d; only append-only lessons context conflicted and both sides were preserved. Replied in all eight original Qodo threads (reply IDs3942331184,3942331194,3942331230,3942331284,3942331319,3942331344,3942331384,3942331424). Post-rebase derived preflight passes; Chromium native/served/zero-egress89passed2optionalbrowser skips; trace/provider/Canvas/startup/mount538passed, census967/972. A test-only production trace plus Canvas composition control is still under verification; it initially omitted required progressive tool discovery, which the product correctly rejected. Current-head protected CI and final integration qualification remain pending.
 
 Final integration is blocked, not Done: after a genuinely completed progressive Canvas turn, the next saved AGENT_FIRST request fails before transport with unsupported_surface_change. Runtime diagnostic proves prefix1/suffix0, six active tool artifacts versus two incoming saved revisions (assistant plus user): 1failed1warning1.80s. An ordinary successful calculator turn reproduces the next-turn failure; plain-history positive and changed-history negative still pass (1failed2passed1warning2.06s). These probes run on the feature tree, not untouched dev. No existing compound admission path composes bounded replacement plus append; implementing one changes the shared trace-admission/persistence contract governed by backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md. Per this task's plan, pause for design approval before that expansion. Retain the failing uncommitted diagnostic tests, all recovery refs and evidence; no capture bypass, weakened guard, merge or V2 work. All eight original Qodo replies are posted, but AC4 remains unchecked.
+
+Completed the approved Task 2 recovery repair under backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md in c388c2bd7 and ed86d6a90: exact accepted-owner reservation reuse, verifier retirement with recoverable preparation faults, atomic bind outcome read-back, cancellation and uncertain-delivery handling, cold/new-invocation replay refusal, and operation-owned worker connection cleanup. Independent task review and scoped I1 re-review are clean. Root verification: 983 affected passes (one known custom-API exclusion, Requests and descriptor warnings), 207 focused passes with zero regular-file descriptor growth, then 169 fix-covering passes with only Requests warning. Same affected baseline has 885 passes and descriptor growth345 versus current204; this is not global resource-cleanliness evidence. Ordinary Ruff remains baseline-qualified with no new fix findings. Growth/latency/startup/browser release gates, current-dev rebase, Qodo, protected CI and merge remain pending; task stays In Progress.
 <!-- SECTION:NOTES:END -->
 
 ### Approved integration expansion, 2026-09-05
