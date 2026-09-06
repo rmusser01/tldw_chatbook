@@ -5,7 +5,7 @@
 **Goal:** Close the reproduced 209-descriptor leak without changing rewind behavior.
 **Architecture:** Explicitly imported test ownership fixture, real constructors and existing controller shutdown / same-file database quiescence. No production or global conftest changes.
 **Tech Stack:** pytest-asyncio, SQLite, existing Console lifecycle APIs.
-**Spec:** TASK-31812 and the user's remaining resource/process test-review request.
+**Spec:** TASK-31923 and the user's remaining resource/process test-review request.
 
 ADR required: no
 ADR path: N/A
@@ -15,10 +15,10 @@ Reason: Test-only lifecycle repair preserves existing resource owners and interf
 
 - Keep real store/controller/database classes and all existing behavioral assertions.
 - No new garbage collection, relaxed FD limits, or foreign database cleanup.
-- TASK-31812 activates the fixture in the two importing rewind files. TASK-31814
+- TASK-31923 activates the fixture in the two importing rewind files. TASK-31814
   separately extends it to ten positively attributed recovery/boundary files.
 
-## TASK-31812: exact test-owned resource cleanup
+## TASK-31923: exact test-owned resource cleanup
 
 Files: `Tests/console_resource_fixtures.py`,
 `Tests/Chat/test_console_rewind_summarize.py`,
@@ -30,7 +30,7 @@ Files: `Tests/console_resource_fixtures.py`,
 - [x] For the agent-only payload-ordering test, create `WorkspaceDB(tmp_path / "workspaces.db")` and `AgentRunsDB(tmp_path / "runs.db", client_id="test")`, inject a real `LocalWorkspaceRegistryService` through `workspace_file_roots._registry_factory`, and register their `close` finalizers. Preserve payload ordering assertions.
 - [x] Run the three complete files with the native descriptor probe; require no retained test SQLite handles and no aggregate warning. The shutdown-only RED control omits quiescence and fails the zero-handle guard in both selected cases.
 - [x] Review-driven failure containment: five focused cases cover successful cleanup and shutdown/quiescence/count faults, individually and together. All controller attempts precede database cleanup, foreign paths remain excluded, and ordinary exceptions are reported together after attempting remaining owners. RED: 1 passed / 4 failed; GREEN: 5 passed.
-- [x] Run scoped Ruff/format/diff checks, obtain independent review and update TASK-31812 / checkpoint. Commit the verified bounded repair separately from ongoing inventory work.
+- [x] Run scoped Ruff/format/diff checks, obtain independent review and update TASK-31923 / checkpoint. Commit the verified bounded repair separately from ongoing inventory work.
 
 ## TASK-31814: separately attributed extension
 

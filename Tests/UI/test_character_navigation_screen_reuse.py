@@ -6,10 +6,18 @@ import asyncio
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_console_screen_reuse import (
     _boot_settled,
     _press_until_screen,
     _scratch_env,
+)
+from Tests.UI.test_screen_reuse import (
+    _build_test_app,
+    close_owned_real_app_notifications as close_owned_real_app_notifications,
 )
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     LocalCharacterConversationTarget,
@@ -36,7 +44,6 @@ async def test_unavailable_route_returns_to_originating_console_character(
     from textual.widgets import Button
 
     from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-    from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Character_Chat.character_conversation_navigation import (
         UnresolvedConversationKey,
     )
@@ -55,7 +62,7 @@ async def test_unavailable_route_returns_to_originating_console_character(
     )
 
     _scratch_env(monkeypatch, tmp_path)
-    app = TldwCli()
+    app = _build_test_app()
     _configure_native_ready_console(app)
     async with app.run_test(size=size) as pilot:
         await asyncio.wait_for(_boot_settled(app, pilot), 30)
@@ -259,9 +266,8 @@ async def test_character_activation_uses_cached_console_and_preserves_rollback(
     monkeypatch, tmp_path, fail_visibility, prior_resume_gate
 ):
     _scratch_env(monkeypatch, tmp_path)
-    from tldw_chatbook.app import TldwCli
 
-    app = TldwCli()
+    app = _build_test_app()
     # Configure synthetic readiness, not a server probe or a generated send.
     # The real setup modal intentionally prevents composer focus otherwise.
     from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -346,7 +352,6 @@ async def test_reused_library_accepts_character_repair_and_returns_to_roleplay(
 ):
     from textual.widgets import Button, Select
 
-    from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Character_Chat.character_conversation_navigation import (
         UnresolvedConversationKey,
     )
@@ -364,7 +369,7 @@ async def test_reused_library_accepts_character_repair_and_returns_to_roleplay(
     )
 
     _scratch_env(monkeypatch, tmp_path)
-    app = TldwCli()
+    app = _build_test_app()
     async with app.run_test(size=(170, 48)) as pilot:
         await asyncio.wait_for(_boot_settled(app, pilot), timeout=30)
         await _press_until_screen(pilot, "ctrl+3", "LibraryScreen")

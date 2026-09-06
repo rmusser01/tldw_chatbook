@@ -554,6 +554,9 @@ _NOTES_CONTROLLER_FILE = "tldw_chatbook/UI/Library_Modules/library_notes_control
 _SKILLS_CONTROLLER_FILE = (
     "tldw_chatbook/UI/Library_Modules/library_skills_controller.py"
 )
+_INGEST_CONTROLLER_FILE = (
+    "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py"
+)
 _FILE_NOTES_WORKSPACE_FILE = (
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py"
 )
@@ -572,6 +575,7 @@ _SUPPORTED_OWNER_SCOPES = (
     _OwnerScope(_PROMPTS_CONTROLLER_FILE, "LibraryPromptsController"),
     _OwnerScope(_NOTES_CONTROLLER_FILE, "LibraryNotesController"),
     _OwnerScope(_SKILLS_CONTROLLER_FILE, "LibrarySkillsController"),
+    _OwnerScope(_INGEST_CONTROLLER_FILE, "LibraryIngestController"),
     _OwnerScope(_FILE_NOTES_WORKSPACE_FILE, "LibraryFileNotesWorkspace"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "LibraryFileNotesGitPanel"),
     _OwnerScope(_FILE_NOTES_GIT_FILE, "PushDestinationAuthorizationDialog"),
@@ -687,8 +691,8 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         FileOpen,
     ),
     _edge(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
+        _INGEST_CONTROLLER_FILE,
+        "LibraryIngestController",
         "handle_library_ingest_browse",
         FileOpen,
     ),

@@ -150,7 +150,8 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
-    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1738,
+    # 2026-09-06, TASK-31932: lock in the merged dev controller's measured size.
+    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1686,
     "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1307,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

@@ -32,7 +32,7 @@ call in `tldw_chatbook/UI/Screens/chat_screen.py`, and `Tests/UI/test_console_di
 - [x] Implement the smallest controller-owned exact-dialog lifetime exception, capturing the suspend decision before asynchronous cleanup can race dismissal; retain default teardown behavior and repaint canonical mic state.
 - [x] Run complete dictation and cached-screen suspension files; review spec compliance and cleanup races, then static checks.
 
-### TASK-31822 — Stop action containment
+### TASK-31928 — Stop action containment
 
 Files: `tldw_chatbook/Widgets/Console/console_composer_bar.py`, `Tests/UI/test_console_pending_attachment_stash.py`, and the existing composer layout test file where relevant.
 
@@ -41,16 +41,16 @@ Files: `tldw_chatbook/Widgets/Console/console_composer_bar.py`, `Tests/UI/test_c
 - [x] Verify actual click/cancel at unchanged 160x48 and 0.5-second click deadline; run complete attachment and relevant composer/layout files.
 - [x] Review two representative rendered/geometry states and static layout scan; no forced hidden scrolling or unrelated styling changes.
 
-### TASK-31823 — warm CHAT handoff replay (root owns)
+### TASK-31929 — warm CHAT handoff replay (root owns)
 
 Files: `tldw_chatbook/UI/Screens/chat_screen.py` ordinary resume timer list only, `Tests/UI/test_console_chat_handoff_resume.py`, `Tests/UI/test_uat_first_time_character_chat.py`.
 
 - [x] Add a focused real warm-return CHAT regression with exact same-screen/session/acknowledgement checks; show RED. Add no-handoff and hide-before-timer controls.
 - [x] Add `self.set_timer(0.15, self._consume_pending_chat_handoff)` to the existing tracked list under `not ordered_resume_active`.
-- [x] Run focused controls and complete reuse/handoff/UAT files. Full UAT GREEN follows TASK-31825; do not disable capture to bypass it.
+- [x] Run focused controls and complete reuse/handoff/UAT files. Full UAT GREEN follows TASK-31931; do not disable capture to bypass it.
 - [x] Review first-mount, saved-startup, cancellation and claim behavior.
 
-### TASK-31824 — late empty-stack event (root owns)
+### TASK-31930 — late empty-stack event (root owns)
 
 Files: `tldw_chatbook/app.py` ContentsRebuilt handler and `Tests/UI/test_persona_buddy_app_mount.py`.
 
@@ -58,13 +58,13 @@ Files: `tldw_chatbook/app.py` ContentsRebuilt handler and `Tests/UI/test_persona
 - [x] Short-circuit with `if self.screen_stack and message.screen is self.screen:` before scheduling.
 - [x] Verify empty, matching and stale screen controls, then full buddy app-mount and parallel-run files; review exact event ownership.
 
-### TASK-31825 — synthesized system provenance
+### TASK-31931 — synthesized system provenance
 
 Files: `tldw_chatbook/Chat/console_chat_controller.py`, an existing durable trace/controller test file, and regression coverage using the existing UAT (do not edit its handoff ownership concurrently).
 
 - [x] Add real durable Capture-On tests for unsaved leading system, saved system, ordinary unsaved active and nonleading system descriptors; show the typed category failure before the change.
 - [x] Determine the contiguous leading `role == system` boundary and choose RENDERED_SYSTEM only for unsaved fallback rows in that slice; preserve existing saved descriptors and ACTIVE_REQUEST fallback elsewhere.
-- [x] Run full changed durable test file and related prepared/provenance tests, then the complete real character UAT with TASK-31823.
+- [x] Run full changed durable test file and related prepared/provenance tests, then the complete real character UAT with TASK-31929.
 - [x] Review fail-closed behavior, descriptor/category alignment and absence of capture bypasses.
 
 ## Integration completion
@@ -81,7 +81,7 @@ Files: `tldw_chatbook/Chat/console_chat_controller.py`, an existing durable trac
 - A pristine initial session may legitimately be repurposed by Start Chat. The
   new warm-return fixture instead seeds an existing conversation and verifies it
   remains unchanged; the existing UAT covers pristine-session behavior.
-- Adjacent fixture ownership is completed under TASK-31821 using existing
+- Adjacent fixture ownership is completed under TASK-31927 using existing
   cleanup APIs. Seven complete files pass 253 resource-clean; root integrated
   owner controls and handoff/UAT/attachment/width files pass 56 resource-clean.
 - Full buddy/parallel/live-handoff files pass 134 resource-clean; durable,

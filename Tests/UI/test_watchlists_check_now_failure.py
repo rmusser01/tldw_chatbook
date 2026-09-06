@@ -194,7 +194,7 @@ async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
 
     # Local Check now is owned by the operation coordinator. Mocking the
     # legacy controller leaves the real coordinator free to fetch this test's
-    # seeded public URL whenever DNS is available (TASK-31758).
+    # seeded public URL whenever DNS is available (TASK-31914).
     records: list[tuple[str, str]] = []
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
