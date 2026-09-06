@@ -15,6 +15,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Audio.meeting_session import (
     MEETING_JSON,
     TRANSCRIPT_JSONL,
@@ -251,6 +253,14 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
     missing or emptied `transcript.jsonl`, Qodo Q16) is refused for the same
     reason. A refusal touches neither the DB nor `meeting.json`.
 
+    A FAILED write is compensated (Qodo Q5): `meeting.json` is rewritten
+    before the transaction (a filesystem write cannot join it), so an aborted
+    transaction would otherwise leave the file holding the new map while
+    stored content holds the old render -- a state the shape guard above
+    reads as "not meeting content", refusing every subsequent rename on that
+    recording. The prior map is put back on any failure, so a retry starts
+    from a consistent pair.
+
     Args:
         db: The `MediaDatabase`.
         media_id: The meeting recording's Library media id.
@@ -305,6 +315,7 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
         markdown_shape = True
 
     name = normalize_speaker_name(name)
+    prior_names = dict(names)
     if name:
         names[cluster_id] = name
     else:
@@ -326,32 +337,51 @@ def rename_meeting_speaker(db: Any, media_id: int, cluster_id: str, name: str) -
     now = db._get_current_utc_timestamp_str()
     client_id = db.client_id
 
-    with db.transaction() as conn:
-        cur = conn.cursor()
-        # Make the swap reversible (C2): `rollback_to_version` restores a
-        # DocumentVersions row's content into `Media`, but refuses the LATEST
-        # version number -- so the state being replaced has to be seeded
-        # before the new one is appended, or the very first rename would be
-        # unrecoverable. Seed once per item; later renames just append.
-        cur.execute("SELECT 1 FROM DocumentVersions WHERE media_id = ? LIMIT 1", (media_id,))
-        if cur.fetchone() is None:
-            db.create_document_version(media_id=media_id, content=row["content"] or "")
-        cur.execute(
-            "UPDATE Media SET content=?, content_hash=?, last_modified=?, version=?, client_id=? "
-            "WHERE id=? AND version=?",
-            (new_content, new_hash, now, new_version, client_id, media_id, current_version),
-        )
-        if cur.rowcount == 0:
-            raise ConflictError(f"Media rename conflict for id={media_id}", media_id)
-        db._log_sync_event(
-            conn, "Media", media_uuid, "update", new_version,
-            {"last_modified": now, "version": new_version, "client_id": client_id, "content": new_content},
-        )
-        db._update_fts_media(conn, media_id, row["title"], new_content)
-        _write_meeting_transcript_row(
-            db, conn, media_id, row.get("transcription_model"), new_content, now, client_id,
-        )
-        db.create_document_version(media_id=media_id, content=new_content)
+    # Compensation, since a filesystem write cannot join the DB transaction
+    # (Qodo Q5): a transaction that aborts -- optimistic-lock ConflictError,
+    # a commit failure, any DB error -- rolls the stored content back to the
+    # OLD render while `meeting.json` already holds the NEW map. The shape
+    # guard above compares stored content against the render of the CURRENT
+    # map, so that half-applied state made the item look like non-meeting
+    # content and refused every later rename: one failed write and the
+    # feature was dead for that recording. Putting the old map back leaves
+    # both authorities on the pre-rename state, which a retry can act on.
+    try:
+        with db.transaction() as conn:
+            cur = conn.cursor()
+            # Make the swap reversible (C2): `rollback_to_version` restores a
+            # DocumentVersions row's content into `Media`, but refuses the LATEST
+            # version number -- so the state being replaced has to be seeded
+            # before the new one is appended, or the very first rename would be
+            # unrecoverable. Seed once per item; later renames just append.
+            cur.execute("SELECT 1 FROM DocumentVersions WHERE media_id = ? LIMIT 1", (media_id,))
+            if cur.fetchone() is None:
+                db.create_document_version(media_id=media_id, content=row["content"] or "")
+            cur.execute(
+                "UPDATE Media SET content=?, content_hash=?, last_modified=?, version=?, client_id=? "
+                "WHERE id=? AND version=?",
+                (new_content, new_hash, now, new_version, client_id, media_id, current_version),
+            )
+            if cur.rowcount == 0:
+                raise ConflictError(f"Media rename conflict for id={media_id}", media_id)
+            db._log_sync_event(
+                conn, "Media", media_uuid, "update", new_version,
+                {"last_modified": now, "version": new_version, "client_id": client_id, "content": new_content},
+            )
+            db._update_fts_media(conn, media_id, row["title"], new_content)
+            _write_meeting_transcript_row(
+                db, conn, media_id, row.get("transcription_model"), new_content, now, client_id,
+            )
+            db.create_document_version(media_id=media_id, content=new_content)
+    except BaseException:
+        # Best-effort: a folder that has since become unwritable leaves the
+        # half-applied state, which is no worse than not trying. Never
+        # masks the original failure -- that is what the caller reports.
+        try:
+            update_meeting_json(folder, speaker_names=prior_names)
+        except Exception:  # noqa: BLE001 - restoration is best-effort
+            logger.warning("meeting rename: could not restore the speaker map after a failed write")
+        raise
 
     dispatch_media_post_ingest(db, media_id, media_uuid)
     return SpeakerRenameResult(True)

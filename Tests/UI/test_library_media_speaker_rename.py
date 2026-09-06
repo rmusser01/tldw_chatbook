@@ -302,6 +302,92 @@ def test_rename_refuses_when_the_transcript_is_missing(tmp_media_db, meeting_fol
     assert tmp_media_db.get_media_by_id(media_id)["content"] == before["content"]
 
 
+def test_a_failed_rename_restores_meeting_json_so_a_retry_can_succeed(
+    tmp_media_db, meeting_folder_media_item
+):
+    """Qodo Q5: `meeting.json` is written BEFORE the DB transaction and
+    cannot join its rollback. An aborted transaction therefore left the file
+    on the NEW map while `Media.content` kept the OLD render -- and the shape
+    guard compares stored content against the render of the CURRENT map, so
+    from then on the item looked like non-meeting content and EVERY later
+    rename was refused. One failed write killed the feature for that
+    recording. The prior map must be put back."""
+    import json
+
+    from tldw_chatbook.DB.Client_Media_DB_v2 import ConflictError
+    from tldw_chatbook.Widgets.Library.library_media_canvas import rename_meeting_speaker
+
+    media_id, folder = meeting_folder_media_item(names={}, segments=[("S1", "hello")])
+    before = tmp_media_db.get_media_by_id(media_id)
+
+    class _RacedDB:
+        """Bumps `Media.version` the moment the rename reads the row, so the
+        optimistic-locked UPDATE finds `rowcount == 0` -- a real ConflictError
+        raised by the production code path, not a patched-in exception."""
+
+        def __init__(self, real):
+            self._real = real
+
+        def get_media_by_id(self, *args, **kwargs):
+            row = self._real.get_media_by_id(*args, **kwargs)
+            with self._real.transaction() as conn:
+                conn.execute(
+                    "UPDATE Media SET version = version + 1, client_id = ? WHERE id = ?",
+                    (self._real.client_id, media_id),
+                )
+            return row
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    with pytest.raises(ConflictError):
+        rename_meeting_speaker(_RacedDB(tmp_media_db), media_id, "S1", "Alice")
+
+    # Both authorities are back on the pre-rename state ...
+    assert json.loads((folder / "meeting.json").read_text())["speaker_names"] == {}
+    assert tmp_media_db.get_media_by_id(media_id)["content"] == before["content"]
+
+    # ... so the retry is not refused as "not meeting content", and lands.
+    assert rename_meeting_speaker(tmp_media_db, media_id, "S1", "Alice").ok is True
+    assert "Alice:" in tmp_media_db.get_media_by_id(media_id)["content"]
+    assert json.loads((folder / "meeting.json").read_text())["speaker_names"] == {"S1": "Alice"}
+
+
+def test_a_failed_markdown_rename_restores_meeting_json_too(
+    tmp_media_db, meeting_folder_media_item
+):
+    """Qodo Q5, the `post_transcribe = false` shape: the Markdown item's
+    guard re-renders through `render_markdown`, so a stale map strands it the
+    same way. Fails inside the transaction (after `meeting.json` is written)
+    rather than at the lock, covering the "any DB error" half of the fix."""
+    import json
+
+    import tldw_chatbook.Library.meeting_speaker_rename as rename_module
+    from tldw_chatbook.Widgets.Library.library_media_canvas import rename_meeting_speaker
+
+    media_id, folder = meeting_folder_media_item(
+        names={}, segments=[("S1", "hello")], markdown=True,
+    )
+    before = tmp_media_db.get_media_by_id(media_id)["content"]
+
+    def boom(*a, **k):
+        raise RuntimeError("database is locked")
+
+    original = rename_module._write_meeting_transcript_row
+    rename_module._write_meeting_transcript_row = boom
+    try:
+        with pytest.raises(RuntimeError):
+            rename_meeting_speaker(tmp_media_db, media_id, "S1", "Alice")
+    finally:
+        rename_module._write_meeting_transcript_row = original
+
+    assert json.loads((folder / "meeting.json").read_text())["speaker_names"] == {}
+    assert tmp_media_db.get_media_by_id(media_id)["content"] == before
+
+    assert rename_meeting_speaker(tmp_media_db, media_id, "S1", "Alice").ok is True
+    assert "**Alice:**" in tmp_media_db.get_media_by_id(media_id)["content"]
+
+
 def test_successful_rename_records_a_reversible_document_version(
     tmp_media_db, meeting_folder_media_item
 ):
@@ -453,6 +539,50 @@ def test_a_submitted_name_is_bounded(tmp_media_db, meeting_folder_media_item):
     import json
     stored = json.loads((folder / "meeting.json").read_text())["speaker_names"]["S1"]
     assert stored == "A" * MAX_SPEAKER_NAME_CHARS
+
+
+def test_a_submitted_name_is_stored_without_control_characters(
+    tmp_media_db, meeting_folder_media_item
+):
+    """Qodo Q1: the same boundary must strip control characters -- a newline
+    would split one transcript row into two, and an ANSI escape sequence
+    would repaint the reader that displays it."""
+    import json
+
+    from tldw_chatbook.Widgets.Library.library_media_canvas import rename_meeting_speaker
+
+    media_id, folder = meeting_folder_media_item(names={}, segments=[("S1", "hello")])
+    assert rename_meeting_speaker(tmp_media_db, media_id, "S1", "Ali\x1b[31mce\r\nBob").ok
+
+    stored = json.loads((folder / "meeting.json").read_text())["speaker_names"]["S1"]
+    assert stored == "Ali[31mceBob"
+    content = tmp_media_db.get_media_by_id(media_id)["content"]
+    assert "\x1b" not in content
+    assert len(content.strip().splitlines()) == 1     # still ONE transcript row
+
+
+def test_a_submitted_name_cannot_inject_markup_into_the_markdown_transcript(
+    tmp_media_db, meeting_folder_media_item
+):
+    """Qodo Q1: with `post_transcribe = false` the Library item IS a Markdown
+    document, rendered through Textual's Markdown widget -- so a name like
+    "[x](http://e)" used to persist as a live link (and a backticked one as a
+    code span) in the transcript and its FTS row."""
+    from tldw_chatbook.Widgets.Library.library_media_canvas import rename_meeting_speaker
+
+    media_id, _folder = meeting_folder_media_item(
+        names={}, segments=[("S1", "hello")], markdown=True,
+    )
+    assert rename_meeting_speaker(tmp_media_db, media_id, "S1", "`x` [l](http://e)").ok
+
+    content = tmp_media_db.get_media_by_id(media_id)["content"]
+    assert "**\\`x\\` \\[l\\]\\(http://e\\):** hello" in content
+    assert "`x`" not in content and "[l](http://e)" not in content
+
+    # And the escaped render still satisfies the content-shape guard, so the
+    # speaker stays renameable afterwards.
+    assert rename_meeting_speaker(tmp_media_db, media_id, "S1", "Alice").ok is True
+    assert "**Alice:**" in tmp_media_db.get_media_by_id(media_id)["content"]
 
 
 @pytest.mark.asyncio
