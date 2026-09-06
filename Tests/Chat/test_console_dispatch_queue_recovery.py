@@ -4,6 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
 import tldw_chatbook.Chat.console_chat_models as recovery_models
 from Tests.Chat.test_console_automatic_library_preparation import _StreamingFence
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService

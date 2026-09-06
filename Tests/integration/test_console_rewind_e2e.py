@@ -50,6 +50,9 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 from Tests.UI.test_destination_shells import _build_test_app
 from Tests.console_provider_doubles import provider_resolution
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
 
 
 class _SequencedCapturingGateway:

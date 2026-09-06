@@ -10,6 +10,10 @@ from typing import Any
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
 from Tests.Chat.test_console_automatic_library_preparation import _RagService, _row
 from Tests.Chat.test_console_dispatch_queue_recovery import _ephemeral_store
 from Tests.Chat.test_console_dispatch_recovery import (

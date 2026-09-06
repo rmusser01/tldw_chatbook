@@ -9,6 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
 import tldw_chatbook.Chat.console_chat_models as recovery_models
 from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService

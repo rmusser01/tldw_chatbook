@@ -11656,6 +11656,40 @@ after explicit cleanup. Assert `registered_connection_count() == 0` before the
 existing pass, so GC cannot conceal the database defect. No additional GC call or
 threshold change was needed; all 47 agent-swap tests passed without the FD warning.
 
+**TASK-31812 / TASK-31814, 2026-09-06.** The rewind, durable/recovery and
+first-send boundary selections reproduced 209, 378 and 234 surviving descriptors
+respectively even though every test body passed. Explicitly imported owner
+tracking, controller shutdown and same-file quiescence eliminated the native
+post-finalizer SQLite/WAL/SHM evidence across the combined 245-test selection.
+One agent-only summary fixture also needed an explicitly owned real workspace
+registry: otherwise it created a process-global default registry and retained
+its database outside the test's ChaChaNotes lifecycle. Review caught another
+trap in the cleanup itself: the first shutdown/quiescence/count exception skipped
+later owners. Four fault variants failed before per-owner error collection;
+all five controls passed after all independent cleanup was attempted in lifecycle
+order and errors were re-raised together. Do not suppress teardown failures or
+force-close busy handles to make the resource report green.
+The subsequent cancellation check exposed the same skip with CancelledError,
+which is a BaseException rather than Exception. Two new RED controls required
+BaseExceptionGroup reporting after cleanup; all 247 final cases then passed with
+zero retained SQLite descriptor evidence. Preserve cancellation, do not swallow it.
+
+## A deliberately short failure deadline must not also time unrelated setup
+
+**TASK-31813 / TASK-31815, 2026-09-06.** Qwen's retry probe intended two 50ms
+read timeouts but used a scalar requests timeout that also constrained connect.
+A real ConnectTimeout consumed one attempt before the scripted server action,
+so the three-attempt budget never reached success. Splitting the test-only
+connect allowance from its unchanged read deadline, and asserting actual
+ReadTimeoutError causes, produced 150 passing tests; widening the read deadline
+failed the new phase assertion. Separately, MCP's real-child retry test allowed
+only 10ms to receive a reap result. Delaying the actual child.wait result by 20ms
+reproduced the failure, while a test-only 250ms reap allowance passed both
+variants and all 145 file cases. The hanging-session-close allowance stayed
+10ms. Keep each intentional fault deadline narrow, give unrelated scheduling a
+bounded allowance, and verify the actual fault/reap phase rather than making
+every timeout larger. Neither repair changed production deadlines.
+
 ## Lifecycle relocation tests must include production change notifications
 
 **TASK-21123, 2026-09-04.** Moving Buddy ownership to the app initially passed
