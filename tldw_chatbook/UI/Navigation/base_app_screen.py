@@ -42,6 +42,26 @@ class BaseAppScreen(Screen):
     }
     """
 
+    #: task-31825: below this shell height, DestinationHeader's stacked
+    #: title/subtitle/status block (5 of 24 rows at the 80x24 floor --
+    #: measured live in task-31419) gives up its subtitle row. Pinned to
+    #: the floor tests' own 24 so "at/below the floor" and "compact" mean
+    #: the same terminal size everywhere in this program.
+    _DESTINATION_HEADER_COMPACT_FLOOR_HEIGHT = 24
+
+    #: Textual's own breakpoint mechanism (`Screen._on_resize` ->
+    #: `update_classes`, evaluated on every resize AND on the screen's own
+    #: first layout pass -- a freshly pushed screen posts itself a Resize
+    #: the moment it gets a real size, so this is already correct before
+    #: the first paint, not just after a later resize). Every screen shares
+    #: this base, so every DestinationHeader user gets the trigger with no
+    #: per-screen code (`.shell-header-compact .workbench-header` in
+    #: components/_workbench.tcss is the only other half of the wiring).
+    VERTICAL_BREAKPOINTS = [
+        (0, "shell-header-compact"),
+        (_DESTINATION_HEADER_COMPACT_FLOOR_HEIGHT + 1, "shell-header-normal"),
+    ]
+
     def __init__(self, app_instance: "TldwCli", screen_name: str, **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance

@@ -5484,6 +5484,29 @@ ConsoleExchangeExportDialog {
     padding: 0 1;
 }
 
+/* task-31825: the auto height trigger, distinct from `.density-compact`
+   above (the user's own global density preference, and on Console an
+   inner `#console-shell` wrapper it manages itself -- reusing that class
+   name here would let the two signals fight over the same selector).
+   `BaseAppScreen.VERTICAL_BREAKPOINTS` puts `shell-header-compact` on the
+   screen itself at/below the 24-row floor (task-31419's 80x24
+   measurement), so any `.workbench-header` under it -- every plain
+   DestinationHeader caller, with no per-screen CSS of its own -- picks up
+   the same compact geometry `.density-compact` already declares. A screen
+   with its own higher-specificity override (Console's `#console-workbench-
+   header.console-header-inline`, Lab's `.lab-header-inline`, Research
+   Workspace's `#research-workspace-header .workbench-header`) keeps its
+   existing shape unchanged, same as it does against `.density-compact`
+   today. */
+.shell-header-compact .workbench-header {
+    min-height: 1;
+    padding: 0 1;
+}
+
+.shell-header-compact .workbench-header-subtitle {
+    display: none;
+}
+
 /* task-1232 round 1 (fleet-UX expert review F2, Critical fix): the F1 help
    overlay used to be a bare, unstyled Vertical -- Textual's own defaults
    (height: 1fr, overflow: hidden hidden) silently clipped anything past the
