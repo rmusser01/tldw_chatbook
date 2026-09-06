@@ -71,10 +71,14 @@ scale.
    call sites across 3 files covering 10 names
    (``Tests/UI/test_library_prompts_canvas.py`` ×14,
    ``Tests/UI/test_library_canvas_scoped_sync.py`` ×3,
-   ``Tests/UI/test_library_choice_strips.py`` ×2). **Three MORE names reach
-   the same shape through an indirection that grep cannot see**, each found
-   by a separate mechanical census this controller PR ran precisely because
-   the direct grep is not a completeness proof:
+   ``Tests/UI/test_library_choice_strips.py`` ×2). **FIVE MORE names, across
+   three distinct indirection shapes, reach the same bypass in a way grep
+   cannot see** -- each shape found by a separate mechanical census this
+   controller PR ran precisely because the direct grep is not a completeness
+   proof. (An earlier draft of this sentence said "Three MORE names",
+   counting the three SHAPES below as if they were names; the bullets have
+   always listed five names -- 1 + 2 + 2 -- and 10 + 5 = the 15 rows this
+   class's own closing paragraph enumerates.)
    - ``_stage_library_prompt_for_console`` -- captured as a fake-harness
      **CLASS ATTRIBUTE**
      (``class _LibraryPromptHandlerHarness(SimpleNamespace): _stage_library_
@@ -169,15 +173,41 @@ scale.
      ``_persist_library_prompt_editor_mode`` excluded; its one mover caller
      (``handle_library_prompt_editor_mode``) reaches it through a named
      dependency.
-   - ``_sync_library_canvas`` -> **LATENT, kept** (33 sites across 10 files).
-     Every site was read. The three that touch Prompts at all
-     (``test_library_canvas_scoped_sync.py:253``/``:342``/``:418``) exercise
-     ``handle_library_prompt_row`` and ``_apply_library_prompts_import_
-     status`` -- both EXCLUDED, never moved, so their own bare
-     ``_sync_library_canvas`` call still resolves through
-     ``library_screen.py``'s globals regardless. The other seven files patch
-     it for notes/media/skills/ingest canvas syncs. Zero reach any of the
-     seven MOVERS that call it. This is the same systemic bare-function shape
+   - ``_sync_library_canvas`` -> **LATENT, kept** (**33 sites across 10
+     files**; "site" per the ingest controller's own definition -- one match,
+     one line, of the 3-shape pattern set, DEDUPLICATED by line number within
+     a file, since a single line can match two shapes at once. Summing the
+     per-shape match counts instead, without that dedup, gives 42: S1
+     direct-attribute 20, S2 fully-qualified-string 9, S3 two-argument
+     setattr/patch.object 13). Every site was read, and the LATENT verdict
+     rests on ENCLOSING-TEST scope, not on filenames:
+     - ``test_library_canvas_scoped_sync.py`` (3 sites) exercises
+       ``handle_library_prompt_row`` and ``_apply_library_prompts_import_
+       status`` -- both EXCLUDED, never moved, so their own bare
+       ``_sync_library_canvas`` call still resolves through
+       ``library_screen.py``'s globals regardless.
+     - ``test_library_entry_compose_once.py`` (8 sites) **does invoke a
+       MOVER** -- ``_sync_library_prompts_browse_result`` at ``:1014`` and
+       ``:1044``. It is still LATENT, and this is the precise argument:
+       ``monkeypatch`` is FUNCTION-scoped, and the file's four
+       ``_sync_library_canvas`` patch pairs live in four other test
+       functions (``test_source_worker_completion_during_resume_dispatch_
+       reconciles_once``, ``test_snapshot_timeout_is_repaired_by_blocked_
+       fresh_success``, ``test_queued_reconcile_supersedes_after_route_
+       switch``, ``test_detached_queued_reconcile_completion_is_a_noop``)
+       while the two mover invocations live in ``test_stale_prompt_token_
+       cannot_project_after_route_switch``/``..._is_rejected_on_the_same_
+       route``. Zero overlap, verified by mapping every census line and both
+       invocation lines to their enclosing ``FunctionDef``: no patch is in
+       effect while the mover runs. **A first draft of this entry claimed
+       "only ONE test function mentions any mover name" -- false, and it
+       would have hidden this file behind a wrong reason had the verdict
+       gone the other way.**
+     - The remaining eight files patch it for notes/media/skills canvas
+       syncs and never touch a Prompts name at all.
+
+     Zero of the 33 reach any of the SEVEN MOVERS that forward bare ``self``
+     into this dispatcher. This is the same systemic bare-function shape
      every sibling controller already carries, and the same verdict the
      ingest series recorded for it.
    - ``LIBRARY_ROW_BROWSE_PROMPTS`` (2 sites),
@@ -227,9 +257,14 @@ in ``test_prompts_controller_binds_every_name_its_moved_bodies_use``:
      bound here from the start, and pinned by a wiring test rather than left
      to a reviewer.
    - ``is_running`` and ``app`` are reached through the shared
-     ``_sync_library_canvas(self, "prompts", …)`` dispatcher (11 movers
-     forward bare ``self`` into it), not by any body directly -- the same
-     reason the skills/RAG/ingest controllers bind them.
+     ``_sync_library_canvas(self, "prompts", …)`` dispatcher, not by any body
+     directly -- the same reason the skills/RAG/ingest controllers bind them.
+     ELEVEN prompt-cluster methods forward bare ``self`` into that
+     dispatcher, but only **7 of them are MOVERS**; the other 4
+     (``_apply_library_prompts_import_status``, ``handle_library_prompt_
+     row``, ``handle_library_prompts_sort``, ``handle_library_prompts_sort_
+     choice``) are exclusions whose bodies never left ``library_screen.py``.
+     Only the 7 movers' forwarding is this controller's problem.
    - ``workers`` is read once, by ``_library_prompt_write_worker_is_active``,
      inside its own ``try``/``except``: off the app tree the screen's
      ``workers`` raises, and the body already handles that. The forward

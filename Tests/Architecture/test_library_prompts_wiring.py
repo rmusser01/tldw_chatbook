@@ -209,11 +209,14 @@ def test_wiring_fields_stay_off_the_state_object() -> None:
 #: (case-insensitive): **161 raw `FunctionDef` matches, 161 unique names**
 #: (no property/setter-pair gap, unlike Skills' own 133/127) -- minus 22
 #: exclusions: 2 screen-identity (recipe §3's sixth bypass shape, Form C:
-#: an inlined `self.app.screen is not self`), 14 unbound-fake-self (3 of
-#: them reached through an INDIRECTION a bare `LibraryScreen.<name>(` grep
-#: cannot see -- a fake-harness CLASS ATTRIBUTE, a `parametrize` tuple of
-#: unbound functions, and a `getattr(LibraryScreen, "<name>")` string-name
-#: dispatch), 3 instance-attribute-monkeypatch, 2 module-globals-coupling,
+#: an inlined `self.app.screen is not self`), 14 unbound-fake-self (FIVE of
+#: them -- across three distinct indirection shapes -- reached in a way a
+#: bare `LibraryScreen.<name>(` grep cannot see: a fake-harness CLASS
+#: ATTRIBUTE (1 name), a `parametrize` tuple of unbound functions (2 names),
+#: and a `getattr(LibraryScreen, "<name>")` string-name dispatch (2 names).
+#: An earlier draft of this line said "3 of them", counting the three SHAPES
+#: as if they were names), 3 instance-attribute-monkeypatch,
+#: 2 module-globals-coupling,
 #: and 1 merely-delegate-to-existing-controller `@property`. NOT a prefix/
 #: substring shortcut. See `library_prompts_controller.py`'s module
 #: docstring for the full per-name reasoning behind every exclusion.

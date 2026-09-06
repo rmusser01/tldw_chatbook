@@ -500,7 +500,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # (`UI/Library_Modules/library_prompts_controller.py`, born governed by
     # `test_library_modules_size_ratchet.py`'s glob), each replaced by a
     # one-line screen delegator -- the largest single move of this program.
-    # Fresh `_measure()`: 41359/1321 -> 37718/1321. The METHOD count is
+    # Fresh `_measure()`: 41359/1321 -> 37722/1321. The METHOD count is
     # unchanged, as every pure controller move's must be: 139 `FunctionDef`s
     # left, 139 delegators arrived. Line delta -3637 reconciles EXACTLY, each
     # term measured rather than estimated: -4061 moved lines (each mover's

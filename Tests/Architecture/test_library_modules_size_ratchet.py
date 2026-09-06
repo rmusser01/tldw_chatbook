@@ -237,7 +237,28 @@ _BUDGETS: dict[str, int] = {
     # flat-name state shims. See the module's own docstring for the full
     # 161-candidate / 22-exclusion derivation and the single-controller
     # decision (one connected component of 145 names, no seam to split on).
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 4956,
+    #
+    # 2026-09-05, wave-6 task 2 fix round 2 (post-review, counts only):
+    # comment-only growth, no method body touched (139 movers unchanged, all
+    # still byte-for-byte). Three census figures in this module's own
+    # docstring were wrong and were corrected in place: "Three MORE names"
+    # reach the unbound-fake-self shape by indirection -> FIVE (the sentence
+    # was counting the three SHAPES as if they were names; the bullets always
+    # listed 1 + 2 + 2, and 10 direct + 5 indirect = the 15 rows the same
+    # paragraph enumerates); "11 movers" forward bare `self` into `_sync_
+    # library_canvas` -> 7 movers + 4 exclusions (AST re-scan: 11 methods
+    # total, `set & movers` = 7); and the `_sync_library_canvas` LATENT
+    # verdict's supporting evidence, which claimed only one test function
+    # mentions a mover -- false, `test_library_entry_compose_once.py` INVOKES
+    # `_sync_library_prompts_browse_result` at :1014/:1044. The VERDICT is
+    # unchanged and now rests on the correct argument (monkeypatch is
+    # function-scoped; that file's four patch pairs live in four OTHER test
+    # functions, zero overlap, verified by mapping every census line and both
+    # invocation lines to their enclosing FunctionDef). The "site" definition
+    # and the alternative un-deduplicated count (42) are now stated inline so
+    # a reviewer can re-derive 33 without re-running the census.
+    # 4956 -> 4991.
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 4991,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
