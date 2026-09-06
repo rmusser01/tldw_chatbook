@@ -777,6 +777,25 @@ formatting and diff checks pass. Broader behavioral/architecture failures and
 the two pending task-ID decisions remain open; no full-suite or merge-readiness
 claim is made.
 
+## Residual internals-decomposition UI qualification
+
+The three recorded residual cases reproduced in isolation
+(`/private/tmp/tldw-console-residual-ui-baseline.xml`). The paste token was
+rendered as two rows before its one-row mounted geometry caught up; a layout
+pause before the real click resolves the stale mouse origin, with explicit
+two-row and confirmation-state checks plus unchanged payload/reset assertions.
+The ready-state test now measures the actual margin-owning tab row, and the
+staged-detail test opens the real Inspector before checking visible content.
+No production code or CSS changed.
+
+Complete `Tests/UI/test_console_internals_decomposition.py`: **142 passed in
+325.26 seconds**, with three existing dependency warnings
+(`/private/tmp/tldw-console-residual-ui-final.xml`). Independent review found no
+actionable issues; full-file Ruff and changed-region format/diff checks pass.
+TASK-31750's bounded residual-file criterion is qualified; its broader census
+and architecture criterion remains open. The paste mouse-layout incident is
+recorded in the testing-evidence lessons.
+
 ## Workbench ordering follow-up and right-rail timing evidence
 
 TASK-31733 was reopened for the workbench mirror missed by the earlier
@@ -822,3 +841,32 @@ control. TASK-31733 is qualified; its earlier 416-test session-settings result i
 historical, not rerun here. Other UI, resource/architecture and unexecuted census
 work, plus pending task-ID decisions, remain open. No full-suite or merge-ready
 claim is made.
+
+## Watchlists follow reachability and expanded handoff census
+
+The recorded Follow click reproduced OutOfBounds. Normal scrolling alone did
+not help: the plain destination harness omitted the app-bundle rule making the
+Inspector scrollable (button y=48 in a 40-row terminal, overflow hidden).
+Reusing `_CssTrueDestinationHarness` for this one test plus normal scrolling
+restores the real click and exact eligible run/route/once assertions. No runtime
+or CSS change, forced scroll or direct `press()` substitution was used.
+
+The first complete handoff file returned **58 passed / 8 failed**
+(`/private/tmp/tldw-console-handoff-final.xml`). After the CSS correction, the
+Watchlists target passes individually and in the complete-file rerun:
+**59 passed / 7 failed in 90.67 seconds**, three existing dependency warnings
+(`/private/tmp/tldw-console-handoff-qualified.xml`). This is explicitly not a
+green file. Remaining `Tests/UI/test_console_live_work_handoffs.py` failures:
+
+- Two `_bare_console_screen_for_restore(app)` calls attach a runtime before
+  Textual initialization, reaching a task-panel query without `_nodes`.
+- Sent-notice round-trip and legacy restore fixtures lack `_settings_navigation`.
+- Stage/navigate/stage retains Launch A instead of Launch B; diagnosis pending.
+- Card-swap topology still expects staged tray index 2 instead of the Subagents
+  slot preceding it; preserve the remaining mounted ordering assertions.
+- Media sendability calls removed `chat_screen_module._source_mentions_rag`.
+
+Independent review of the final Watchlists repair found no actionable issues;
+static checks pass. TASK-31750 remains In Progress (AC4 qualified by the 142-test
+internals file above, AC3/AC5 open). Broader census, resource/architecture work
+and pending task-ID decisions remain open. PR stays draft.
