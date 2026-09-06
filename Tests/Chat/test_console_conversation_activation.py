@@ -138,6 +138,36 @@ async def test_cancel_before_commit_changes_no_console_state() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("wrapped", (False, True))
+async def test_precommit_cancelled_error_preserves_domain_target(wrapped) -> None:
+    """An interrupted revalidation must not leak its request wrapper as target."""
+    harness = _Harness()
+
+    async def interrupted(_target):
+        raise asyncio.CancelledError
+
+    coordinator = ConsoleConversationActivationCoordinator(
+        capture_state=harness.capture,
+        revalidate=interrupted,
+        open_target=harness.open,
+        rollback_opened_target=harness.rollback_opened_target,
+        restore_state=harness.restore,
+        exact_target_visible=harness.exact_visible,
+    )
+    request = (
+        CharacterConversationActivationRequest(TARGET, "authority-A", 12)
+        if wrapped
+        else TARGET
+    )
+    result = await coordinator.activate(request)
+    assert result.target is TARGET
+    assert result.kind is ConsoleActivationResultKind.CANCELLED_PRECOMMIT
+    assert not result.commit_started
+    assert harness.state == _ConsoleState()
+    assert harness.open_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_escape_after_commit_started_is_ignored() -> None:
     harness = _Harness()
     coordinator = harness.coordinator()

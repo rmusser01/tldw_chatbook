@@ -143,6 +143,8 @@ class LibraryNavigationController:
                 database.get_local_authority_id()
                 != context.unresolved.data_authority_id
             ):
+                self.pending_repair_context = None
+                self.repair_present_on_resume = False
                 screen._notify(
                     "The active Data Profile changed. Repair was not applied.",
                     "warning",

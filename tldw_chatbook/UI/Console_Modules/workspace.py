@@ -4902,7 +4902,12 @@ class ConsoleWorkspaceController:
         except asyncio.CancelledError as error:
             cancellation = error
         except Exception:  # noqa: BLE001 - committed adapters must enter exact-runtime rollback
-            logger.opt(exception=True).warning(
+            logger.bind(
+                operation_id=id(request),
+                workspace_token=id(self),
+                target_type="local_character_conversation",
+                stage="open_target",
+            ).opt(exception=True).warning(
                 "Committed character-conversation activation failed"
             )
 
@@ -4915,7 +4920,13 @@ class ConsoleWorkspaceController:
                         owned_runtime
                     )
                 except Exception:  # noqa: BLE001 - failed owned-runtime removal must still restore prior
-                    logger.opt(exception=True).error(
+                    logger.bind(
+                        operation_id=id(request),
+                        workspace_token=id(self),
+                        target_type="local_character_conversation",
+                        stage="remove_owned_runtime",
+                        runtime_token=id(owned_runtime),
+                    ).opt(exception=True).error(
                         "Could not remove owned Console session after committed failure"
                     )
             try:
@@ -4923,7 +4934,12 @@ class ConsoleWorkspaceController:
                     prior_session_id
                 )
             except Exception:  # noqa: BLE001 - report prior-session recovery without replacing outcome
-                logger.opt(exception=True).error(
+                logger.bind(
+                    operation_id=id(request),
+                    workspace_token=id(self),
+                    target_type="local_character_conversation",
+                    stage="restore_prior_runtime",
+                ).opt(exception=True).error(
                     "Could not restore prior Console session after committed failure"
                 )
 

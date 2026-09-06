@@ -12472,14 +12472,20 @@ class TldwCli(
                 )
             return result
         except Exception:  # noqa: BLE001 - restore caller after any committed mount or transfer failure
-            logger.opt(exception=True).warning(
+            logger.bind(
+                operation_id=id(request), candidate_token=id(candidate),
+                caller_token=id(caller), stage="commit_screen",
+            ).opt(exception=True).warning(
                 "Committed Roleplay character-conversation activation failed"
             )
             if getattr(self, "screen", None) is candidate:
                 try:
                     await self.pop_screen()
                 except Exception:  # noqa: BLE001 - report caller restoration without losing typed outcome
-                    logger.opt(exception=True).error(
+                    logger.bind(
+                        operation_id=id(request), candidate_token=id(candidate),
+                        caller_token=id(caller), stage="restore_caller",
+                    ).opt(exception=True).error(
                         "Could not restore Roleplay after Console mount failure"
                     )
             return ConsoleConversationActivationResult(
@@ -12529,7 +12535,10 @@ class TldwCli(
                     await await_mount
                 await self.pop_screen()
             except BaseException:  # noqa: BLE001 - fallback restores ownership even when cleanup is cancelled
-                logger.opt(exception=True).error(
+                logger.bind(
+                    candidate_token=id(candidate), caller_token=id(caller),
+                    stage="restore_caller",
+                ).opt(exception=True).error(
                     "Could not atomically restore Roleplay after Console promotion"
                 )
                 stack[:] = original_stack[:-1]
@@ -12550,7 +12559,10 @@ class TldwCli(
                     ):
                         await candidate.remove()
                 except BaseException:  # noqa: BLE001 - final attempt-owned cleanup must not replace original failure
-                    logger.opt(exception=True).error(
+                    logger.bind(
+                        candidate_token=id(candidate), caller_token=id(caller),
+                        stage="cleanup_candidate",
+                    ).opt(exception=True).error(
                         "Could not clean failed Console promotion candidate"
                     )
             raise

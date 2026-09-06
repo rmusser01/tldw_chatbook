@@ -4,6 +4,7 @@ import asyncio
 import os
 import threading
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 from textual.app import App
@@ -37,6 +38,39 @@ CONTEXT = LibraryCharacterRepairContext(
     historical_display_snapshot="Historical Ada",
     return_target=RoleplayReturnTarget.personas_conversations(),
 )
+
+
+def test_cached_library_drops_obsolete_authority_repair_once(tmp_path):
+    """Terminal profile mismatch must not keep rearming a cached repair visit."""
+    from tldw_chatbook.UI.Library_Modules.library_navigation_controller import (
+        LibraryNavigationController,
+    )
+
+    database = CharactersRAGDB(tmp_path / "changed-profile.sqlite", client_id="changed")
+    warnings = []
+    screen = SimpleNamespace(
+        is_mounted=True,
+        app_instance=SimpleNamespace(chachanotes_db=database),
+        _notify=lambda message, severity: warnings.append((message, severity)),
+    )
+    screen.app = SimpleNamespace(screen=screen)
+    controller = LibraryNavigationController(
+        screen,
+        invalidate_media_browse=lambda: None,
+        unmount_collections_capture=lambda: None,
+    )
+    controller.pending_repair_context = CONTEXT
+    controller.repair_present_on_resume = True
+    try:
+        controller.present_pending_repair()
+        assert controller.pending_repair_context is None
+        assert not controller.repair_present_on_resume
+        controller.present_pending_repair()
+        controller.present_pending_repair()
+        assert len(warnings) == 1
+        assert "Data Profile changed" in warnings[0][0]
+    finally:
+        database.close()
 
 
 @dataclass

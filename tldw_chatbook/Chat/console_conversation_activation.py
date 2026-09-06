@@ -270,12 +270,18 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
                 self.phase = ConsoleActivationPhase.IDLE
                 return ConsoleConversationActivationResult(
                     ConsoleActivationResultKind.CANCELLED_PRECOMMIT,
-                    target,
+                    target.target
+                    if isinstance(target, CharacterConversationActivationRequest)
+                    else target,
                     False,
                 )
             raise
         except Exception:  # noqa: BLE001 - boundary converts adapters to typed failure
-            logger.opt(exception=True).warning(
+            logger.bind(
+                operation_id=id(commit_event),
+                target_type="local_character_conversation",
+                stage="open_target",
+            ).opt(exception=True).warning(
                 "Character-conversation activation failed after validation"
             )
 
@@ -284,13 +290,22 @@ class ConsoleConversationActivationCoordinator(Generic[ConsoleStateT]):
                 try:
                     await _maybe_await(self._rollback_opened_target(opened_token))
                 except Exception:  # noqa: BLE001 - continue restoring prior UI
-                    logger.opt(exception=True).error(
+                    logger.bind(
+                        operation_id=id(commit_event),
+                        target_type="local_character_conversation",
+                        stage="remove_owned_runtime",
+                        runtime_token=id(opened_token),
+                    ).opt(exception=True).error(
                         "Could not remove owned Console session after failed activation"
                     )
             try:
                 await _maybe_await(self._restore_state(prior_state))
             except Exception:  # noqa: BLE001 - rollback is best-effort at boundary
-                logger.opt(exception=True).error(
+                logger.bind(
+                    operation_id=id(commit_event),
+                    target_type="local_character_conversation",
+                    stage="restore_prior_runtime",
+                ).opt(exception=True).error(
                     "Could not restore prior Console session after failed activation"
                 )
         self.phase = ConsoleActivationPhase.FAILURE_VISIBLE
