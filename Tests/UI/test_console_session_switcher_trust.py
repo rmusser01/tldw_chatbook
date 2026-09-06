@@ -85,7 +85,7 @@ async def test_immediate_enter_uses_the_exact_unsettled_query():
         )
     )
 
-    async with app.run_test(size=(90, 30)) as pilot:
+    async with app.run_test(size=(52, 20)) as pilot:
         query = app.screen.query_one("#console-switcher-query", Input)
         query.value = "migration"
         await pilot.press("enter")
@@ -132,7 +132,7 @@ async def test_blank_enter_activates_the_mru_other_tab():
         preferred_native_session_id="session-mru",
     )
 
-    async with app.run_test(size=(90, 30)) as pilot:
+    async with app.run_test(size=(52, 20)) as pilot:
         await pilot.press("enter")
         await pilot.pause()
 

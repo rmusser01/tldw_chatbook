@@ -59,6 +59,8 @@ the one expanded group. Search returns at most eight saved local character
 conversations and never sends titles or transcript text to a network service.
 Each search result keeps its title, character name, and Local/age metadata
 on separate lines so the metadata remains readable in the narrow rail.
+When a Context search is active, **Continue search in Character chats** opens
+that same validated query in Ctrl+K's complete local Character-chat results.
 Enter or double-click opens an exact saved conversation in its Console tab;
 single-click selects it. **View all N in Roleplay** opens that character's
 complete saved history. A current card with no saved chats offers **Start in
@@ -111,18 +113,36 @@ match both `saved` and `open`. This keeps a lifecycle detail from hiding an
 otherwise relevant agent or destination.
 
 When a nonblank Active search has no match, the switcher automatically widens
-that search to local **History**. Press **F3** (or choose the Active/History
-buttons) to change modes directly; the query stays in place until you close the
-switcher. History searches every persisted local conversation, groups results
-by local calendar recency, and loads at most 50 rows per page. Previous/Next and
-the internal result scroll keep the complete switcher within 35 terminal rows.
+that search to local **History** and labels the widened scope. Press **F3** (or
+choose a mode button) to cycle **Active**, **History**, and **Character chats**.
+Active and History share one query. Character chats keeps its own Keyword query,
+never widens a zero-match search, and searches local chats in the current Data
+Profile only—no remote results, embeddings, or Meaning mode. Its rows show title,
+character, state, and relative age; only the selected row's matching excerpt and
+absolute update time appear in the fixed detail area. History and Character chats
+load at most 50 rows per page. Previous/Next and the internal result scroll keep
+the complete switcher within 35 terminal rows and retain four two-line results at
+52×20.
 
-With a blank query, **Enter** opens the most recently used *other* tab, making
+Character Keyword queries accept up to 200 characters without control characters;
+Active and History retain their separate 512-character limit. Context hands off
+only a query accepted by the Character Keyword boundary.
+
+In Active with a blank query, **Enter** opens the most recently used *other* tab, making
 Ctrl+K then Enter a fast two-tab toggle. Once you type a query or use ↑/↓,
 Enter opens the highlighted committed result; pointer activation follows the
 same target. **F2** renames only a focused open-agent result—focus the row with
-↓ first—and never falls back to an unrelated tab. **Esc** or the always-visible
-**Cancel** button closes without switching or marking anything seen.
+↓ first—and never falls back to an unrelated tab; it does nothing in Character
+chats. Opening a Character chat keeps Ctrl+K mounted during cancellable
+preflight, changes to a non-cancellable finishing state at commit, and closes
+only after the exact conversation is visible. **Esc** or the always-visible
+**Cancel** button closes without switching or marking anything seen; during
+Character preflight it cancels the open, while a finishing commit must settle.
+
+Unavailable Character rows offer **Open Library** for the exact local chat.
+Library Back returns to Console Context Character where supported, with Console's
+visible fallback at narrow widths. It does not restore the previous switcher visit;
+a fresh Ctrl+K starts in Active.
 
 Unseen successful results show a compact outcome notice at the exact
 destination and are marked seen only after that notice visibly loads. Failed,
@@ -355,9 +375,9 @@ for authority, privacy, limits, key routing, cleanup, and platform support.
 | Key | Action |
 |---|---|
 | Ctrl+T | New Console tab |
-| Ctrl+K | Open the Active/History operational switchboard |
+| Ctrl+K | Open the Active/History/Character chats switchboard |
 | Ctrl+K, Enter | Toggle to the most recently used other open tab when the query is blank |
-| F3 (in switcher) | Toggle Active/History while retaining the query |
+| F3 (in switcher) | Cycle Active/History/Character chats; Active and History share a query while Character chats keeps its own |
 | F2 (focused open-agent result) | Rename that exact open tab |
 | Alt+1 … Alt+9 | Jump to tab 1–9 |
 | Alt+W | "Change Workspace" switcher |
