@@ -63,6 +63,21 @@ _EXPECTED_DECLARATIONS = {
         "$ds-status-error-readable",
     ),
     ".console-workspace-conversation-row-subagent-unseen": ("color", "$ds-status-info"),
+    # TASK-31664 AC#4: a failing-check row's text must be READ, not merely
+    # glanced at as a status dot -- the readable token, not the decorative
+    # $ds-status-error.
+    ".console-inspector-section-row-error .console-inspector-section-row-primary": (
+        "color",
+        "$ds-status-error-readable",
+    ),
+    # Round-1 review correction: the row the critique actually measured
+    # (2.53:1) -- "Environment unavailable — Refresh to retry" and every
+    # stale Changes/branch/PR row -- carries status="blocked", not
+    # "error"; it needs the same readable token.
+    ".console-inspector-section-row-blocked .console-inspector-section-row-primary": (
+        "color",
+        "$ds-status-error-readable",
+    ),
 }
 
 

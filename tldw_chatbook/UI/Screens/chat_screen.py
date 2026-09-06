@@ -683,6 +683,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
         ConsoleEnvironmentController,
+        UnknownRoot,
     )
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Widgets.Console.console_settings_modal import (
@@ -784,13 +785,19 @@ CONSOLE_COST_TTL_TICK_SECONDS = 10.0
 # its own 60s TTL and never rides this tick; see
 # `UI/Console_Modules/environment.py`.
 CONSOLE_ENVIRONMENT_POLL_SECONDS = 10.0
-# DOM ids of the two Inspect-rail sections the Environment controller paints
-# (`UI/Console_Modules/right_rail.py`), keyed by the `section_id` their rows'
-# messages carry. One map, so the focus re-land and the landing path can
-# never disagree about which widget a `section_id` names.
+# DOM ids of the Inspect-rail `ConsoleInspectorSection`s whose rows are
+# focus-restorable (`UI/Console_Modules/right_rail.py`), keyed by the
+# `section_id` their rows' messages carry. One map, so the focus re-land and
+# the landing path can never disagree about which widget a `section_id`
+# names. The Agent fleet section joined the map in TASK-31665 AC#13, when
+# its own periodic sync got the same capture/restore the Environment poll
+# got in TASK-31661 -- it is listed here purely so the restore's
+# last-resort chevron fallback can prefer the fleet's OWN toggle over a
+# neighbouring section's; the Environment controller does not paint it.
 CONSOLE_ENVIRONMENT_SECTION_DOM_IDS = {
     ENVIRONMENT_SECTION_ID: "console-environment-section",
     TASKS_SECTION_ID: "console-tasks-section",
+    CONSOLE_AGENT_FLEET_SECTION_ID: "console-agent-section-subagents",
 }
 # task-15470: every `Collapsible.Toggled` (plus expand-all/collapse-all/reset)
 # used to reassign `sidebar_state` and have `watch_sidebar_state` open+parse+
@@ -2353,11 +2360,39 @@ class ChatScreen(BaseAppScreen):
         Only the Environment section mounts a tail today, and its label is
         "Refresh" (task-9), so this is the panel's explicit re-fetch: it
         busts the 60s ``gh`` TTL, which is the entire point of pressing it.
+
+        TASK-31664 AC#3 (round-1 review I1/I2): the button flips to
+        "Refreshing…" only if the controller actually dispatched something
+        (checked AFTER the call, via ``pending_ack_tiers`` -- never armed
+        unconditionally BEFORE it, which is what let the ack wedge forever
+        on an ``UNKNOWN_ROOT``/rail-closed no-op call that would never
+        land). It stays up until every tier the press dispatched has
+        landed -- not just the fast local one -- so the ~12 measured
+        seconds a fresh `gh` fetch can take are never indistinguishable
+        from a dead control. ``_land_console_environment`` clears it once
+        ``pending_ack_tiers`` is empty. Never armed here by the 10s
+        automatic poll (which never sets ``force_net``), so that cadence
+        never flickers it.
         """
         if message.section_id != ENVIRONMENT_SECTION_ID:
             return
         message.stop()
         self._console_environment.request_refresh(include_net=True, force_net=True)
+        if self._console_environment.pending_ack_tiers:
+            self._set_console_environment_refresh_busy(True)
+
+    def _set_console_environment_refresh_busy(self, busy: bool) -> None:
+        """Flip the Environment section's Refresh tail to a transient
+        acknowledgment, or restore it. See ``ConsoleInspectorSection.
+        set_view_all_busy`` for why this bypasses the ordinary sync path.
+        """
+        try:
+            section = self.query_one(
+                "#console-environment-section", ConsoleInspectorSection
+            )
+        except (NoMatches, QueryError):
+            return
+        section.set_view_all_busy(busy)
 
     @on(ConsoleInspectorSection.CollapseToggled)
     def on_console_inspector_section_collapse_toggled(
@@ -8038,8 +8073,10 @@ class ChatScreen(BaseAppScreen):
 
         A bare `ChatScreen` built outside `__init__`'s controller wiring
         (several architecture tests do exactly that) has no controller, and
-        `EnvironmentSnapshot()`'s NOT_APPLICABLE tiers are the right answer
-        there anyway -- the quiet "No git workspace" row.
+        `EnvironmentSnapshot()`'s PENDING tiers are the right answer there
+        anyway -- the quiet "Checking workspace…" row. TASK-31660: that
+        default used to be NOT_APPLICABLE, which projects as the definitive
+        "No git workspace" -- an assertion nothing had checked.
         """
         from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
 
@@ -8055,7 +8092,7 @@ class ChatScreen(BaseAppScreen):
         it at the live ``ConsoleEnvironmentController`` snapshot so a rail
         RECOMPOSE (which rebuilds the section from scratch) repaints the same
         data `_land_console_environment` last patched in, instead of
-        reverting to "No git workspace" until the next poll tick.
+        reverting to the pre-first-landing state until the next poll tick.
         """
         from datetime import datetime as _datetime
         from datetime import timezone as _timezone
@@ -8081,15 +8118,45 @@ class ChatScreen(BaseAppScreen):
             frozenset(self._console_environment_expanded),
         )
 
-    def _console_environment_root(self) -> str | None:
+    def _console_environment_root(self) -> "str | None | UnknownRoot":
         """Return the workspace root the Environment panel reports on.
 
         The conversation's own change-review roots (first = primary), so the
         panel and Change Review can never disagree about which tree is being
-        described. ``None`` when there is no root -- the controller treats
-        that as "nothing to gather" and dispatches nothing.
+        described.
+
+        THREE-VALUED, deliberately (TASK-31660 round 1 review):
+
+        - a root string -- gather against it;
+        - ``None`` -- the workspace was ASKED and binds no folder
+          (``resolve_turn_execution_context(...).workspace_roots`` returned
+          the empty tuple). The controller lands an explicit UNBOUND
+          snapshot for this, so the previous root's counts/branch/"Commit or
+          push" cannot survive a switch;
+        - ``UNKNOWN_ROOT`` -- the root could not be DETERMINED. The layers
+          below return ``None`` for that too (an exception swallowed in
+          ``_console_change_review_workspace_roots``; a chat controller not
+          built yet, or with no active session, in
+          ``_review_selection_workspace_roots``), and a plain ``if not
+          roots`` threw the distinction away. That was survivable while
+          ``None`` merely skipped, but it must never reach the UNBOUND
+          landing: a transient failure would assert "No folder is bound…"
+          on screen and reset the local tier's 3-strike backoff. The
+          controller skips silently on this, exactly as it did before.
+
+        Returns:
+            The primary workspace root, ``None`` when the workspace binds no
+            folder, or ``UNKNOWN_ROOT`` when it could not be determined.
         """
+        # ADR-097 / dev `84695063c4`: closed Inspect must not pull the
+        # Environment collectors into the first-paint import graph, so the
+        # sentinel is imported at call time. Only the controller (and the
+        # wiring tests) call this, and by then the module is already resident.
+        from ..Console_Modules.environment import UNKNOWN_ROOT
+
         roots = self._review_selection._console_change_review_workspace_roots()
+        if roots is None:
+            return UNKNOWN_ROOT
         if not roots:
             return None
         return roots[0]
@@ -8097,10 +8164,58 @@ class ChatScreen(BaseAppScreen):
     def _land_console_environment(self, snapshot: "EnvironmentSnapshot") -> None:
         """Repaint the Environment/Tasks sections from a landed snapshot.
 
-        Runs on the UI thread (the controller marshals every landing through
-        ``app.call_from_thread``). Both sections are resolved BEFORE either is
-        written, so a rail that is mid-recompose or not mounted at all leaves
-        the pair consistent rather than half-applied.
+        Runs on the UI thread. The controller's 10s poll marshals its calls
+        through ``app.call_from_thread``, but this is also called directly
+        and synchronously from ``_handle_console_environment_row``'s
+        row-expansion branch (after toggling
+        ``_console_environment_expanded``) -- so "a landing" below covers
+        both callers, not just the timer. When that activation path ALSO
+        restores focus to the same row via
+        ``_request_console_environment_row_focus``, the two restores race
+        harmlessly on the section's own ``call_next`` queue: whichever
+        runs first wins, and the second is a no-op re-focus of the same
+        already-focused widget. Deliberately left as a documented
+        redundancy rather than special-cased away (round-1 review #3).
+
+        Both sections are resolved BEFORE either is written, so a rail
+        that is mid-recompose or not mounted at all leaves the pair
+        consistent rather than half-applied.
+
+        TASK-31661: an external change (a new commit, a PR closing) can
+        change either section's row SET between landings while focus is
+        parked on one of that section's rows -- e.g. "Review in Change
+        Review" while an agent commits in the background. That is a
+        structural change (``ConsoleInspectorSection._structural_key``),
+        so ``sync_state`` recomposes and unmounts the focused row; Textual's
+        own focus-reset then lands the caret on the rail's outer body
+        (``_InspectorOuterBody``) or a section's own collapse chevron --
+        neither carries a visible indication of what the user was just
+        doing, and it takes two Tabs to recover.
+
+        Each section's currently-focused row_id (if any) is read
+        synchronously BEFORE ``sync_state`` mutates anything. That is
+        NOT what guards against a mid-flight user click (round-1 review
+        finding I2): ``sync_state``'s own recompose is an unmount +
+        remount, both of which ``await`` and so yield to the event loop,
+        which leaves a real window, between this capture and the
+        ``call_next`` restore callback actually running, for a user
+        gesture to land first. That guard lives in
+        ``_focus_console_environment_row_after_sync`` itself, checked at
+        CALLBACK time. The synchronous read here exists only because
+        Textual delivers ``DescendantFocus`` asynchronously, so reading
+        focus any other way would already be stale by the time anything
+        looked at it. Restoring is skipped entirely when focus was never
+        inside a given section (the common case) or when the sync turned
+        out to be a no-op for it (M5) -- zero extra work, and the
+        composer (or any other widget) is never fought for focus it
+        legitimately holds.
+
+        The Agent fleet section is not covered *here* -- it syncs through
+        ``_sync_console_agent_section`` on its own separate tick -- but it
+        is covered: TASK-31665 AC#13 applies the same capture/restore
+        there, reusing this method's own
+        ``_focus_console_environment_row_after_sync`` callback rather than
+        cloning it.
 
         Args:
             snapshot: The controller's newly landed environment snapshot.
@@ -8112,6 +8227,22 @@ class ChatScreen(BaseAppScreen):
             project_environment_section,
             project_tasks_section,
         )
+
+        # TASK-31664 AC#3 (round-1 review I1/I2): clear the transient
+        # "Refreshing…" acknowledgment FIRST and UNCONDITIONALLY relative
+        # to everything below -- including the rail-not-mounted early
+        # return two lines down -- so a landing that arrives while the
+        # rail is mid-recompose (or gone) can never wedge the label
+        # forever. Gated on `pending_ack_tiers` (not "any landing", which
+        # is what this used to check): that set is empty except during the
+        # window between an explicit Refresh press and every tier IT
+        # dispatched landing, so this only actually clears once the SLOW
+        # tier (`gh`) has also landed, not just the fast local one.
+        # `_set_console_environment_refresh_busy` no-ops harmlessly when
+        # the rail isn't mounted or busy was never armed (row-expansion
+        # re-renders also reach here and hit this same no-op).
+        if not self._console_environment.pending_ack_tiers:
+            self._set_console_environment_refresh_busy(False)
 
         expanded = frozenset(self._console_environment_expanded)
         environment_state = project_environment_section(
@@ -8127,12 +8258,71 @@ class ChatScreen(BaseAppScreen):
             )
         except (NoMatches, QueryError):
             return  # rail not mounted (or mid-recompose): nothing to paint
-        for section, state in (
-            (environment_section, environment_state),
-            (tasks_section, tasks_state),
-        ):
+
+        sections = (
+            (ENVIRONMENT_SECTION_ID, environment_section, environment_state),
+            (TASKS_SECTION_ID, tasks_section, tasks_state),
+        )
+        # Capture -- synchronously, before any `sync_state` call below can
+        # unmount anything -- which section (if any) currently owns focus,
+        # plus that section's pre-sync rows/summary (M5: skip a no-op
+        # sync) and row_id order (M4: the nearest-survivor search below
+        # needs the OLD order, not just the OLD row_id).
+        captured: dict[
+            str, tuple[str, tuple[str, ...], tuple[object, ...], str]
+        ] = {}
+        for section_id, section, _state in sections:
+            row_id = self._console_environment_focused_row_in_section(section_id)
+            if row_id is not None:
+                captured[section_id] = (
+                    row_id,
+                    tuple(row.row_id for row in section.rows),
+                    section.rows,
+                    section.summary,
+                )
+
+        for section_id, section, state in sections:
             section.sync_state(state)
             section.styles.display = "block" if state.rows else "none"
+            capture = captured.get(section_id)
+            if capture is None:
+                continue
+            row_id, previous_row_ids, previous_rows, previous_summary = capture
+            if tuple(state.rows) == previous_rows and state.summary == previous_summary:
+                continue  # M5: sync_state was a no-op here -- nothing to restore
+            section.call_next(
+                self._focus_console_environment_row_after_sync,
+                section,
+                row_id,
+                previous_row_ids,
+            )
+
+    def _console_environment_focused_row_in_section(
+        self, section_id: str
+    ) -> str | None:
+        """Return the row_id focused inside Inspector section ``section_id``.
+
+        Read synchronously at the call site (see `_land_console_environment`'s
+        docstring for why that matters): a flag set around `focus()` would
+        already be stale by the time anything reads it, because Textual
+        delivers `DescendantFocus` asynchronously.
+
+        Args:
+            section_id: ``"environment"``, ``"tasks"``, or the Agent fleet
+                section's id (TASK-31665 AC#13 -- the rows all carry their
+                owning section's id, so one lookup serves all three).
+
+        Returns:
+            The focused row's row_id, or ``None`` when focus is not
+            currently inside that section at all.
+        """
+        focused = self.focused
+        if (
+            isinstance(focused, ConsoleInspectorSectionRow)
+            and focused.section_id == section_id
+        ):
+            return focused.row_id
+        return None
 
     def _console_environment_row_is_focused(self, row_id: str) -> bool:
         """Whether the focused widget IS the Environment/Tasks row ``row_id``.
@@ -8206,10 +8396,346 @@ class ChatScreen(BaseAppScreen):
         """
         if not section.is_mounted:
             return
+        self._focus_console_environment_row_by_id(section, row_id)
+
+    @staticmethod
+    def _focus_console_environment_row_by_id(
+        section: ConsoleInspectorSection, row_id: str
+    ) -> bool:
+        """Focus the mounted row carrying ``row_id``, if any.
+
+        Shared lookup behind both `_focus_console_environment_row` (the
+        activation path, which only ever needs an exact match) and
+        `_focus_console_environment_row_after_sync` (the poll/sync path
+        below, which tries an exact match first and only then falls back).
+
+        Args:
+            section: The section whose body holds the row.
+            row_id: The stable row id to focus.
+
+        Returns:
+            ``True`` when a matching, focusable row was found and focused.
+        """
         for widget in section.query(ConsoleInspectorSectionRow):
             if widget.row_id == row_id and widget.can_focus:
                 widget.focus()
+                return True
+        return False
+
+    def _focus_console_environment_row_after_sync(
+        self,
+        section: ConsoleInspectorSection,
+        row_id: str,
+        previous_row_ids: tuple[str, ...],
+    ) -> None:
+        """Restore focus after a poll-driven `_land_console_environment` sync.
+
+        TASK-31661, extended by round-1 review findings I1/I2/M4. Scheduled
+        via the section's own ``call_next`` from `_land_console_environment`,
+        which guarantees this runs after any recompose `sync_state` queued
+        (same ordering argument as `_request_console_environment_row_focus`'s
+        docstring, which this mirrors).
+
+        I2 first: `sync_state`'s recompose (unmount + remount) is itself two
+        awaits, so real time -- and real user input -- can pass between
+        `_land_console_environment` scheduling this callback and it actually
+        running. A user who moved focus in that window (e.g. clicked the
+        composer) must win; bail immediately when focus has left the rail
+        (`_console_environment_focus_left_the_rail`) rather than fight them
+        for it.
+
+        Otherwise: ``row_id`` is tried first -- when the row survived the
+        sync (an in-place patch, or a recompose that happened to keep it),
+        this is the whole job, identical to the activation path. When the
+        row is genuinely gone (the section's row SET changed shape and
+        dropped it), M4's nearest-surviving-row search
+        (`_nearest_surviving_console_environment_row_id`) walks OUTWARD from
+        the removed row's old position for the closest id that is still
+        present. I1: some reachable projections (UNBOUND/ERROR/PENDING/the
+        "No git workspace" empty state -- task-31660) render a row saying
+        so but never a *clickable* one, so no row anywhere in the section
+        may qualify; a VISIBLE collapse chevron
+        (`_focus_console_environment_visible_toggle` -- round-2: not
+        necessarily this section's own, if this section itself is now
+        hidden) is the last resort, rather than leaving focus wherever
+        Textual's unmount reset already put it (the defect widget itself).
+
+        Args:
+            section: The section whose body held the focused row.
+            row_id: The row_id that was focused before the sync.
+            previous_row_ids: That section's row_id order *before* the
+                sync, used only to locate ``row_id``'s old position.
+        """
+        if not section.is_mounted:
+            return
+        if self._console_environment_focus_moved_by_user(section):
+            return  # I2: a human moved focus during the recompose window
+        if self._focus_console_environment_row_by_id(section, row_id):
+            return
+        current_row_ids = [row.row_id for row in section.rows]
+        nearest_row_id = self._nearest_surviving_console_environment_row_id(
+            row_id, previous_row_ids, current_row_ids
+        )
+        if nearest_row_id is not None and self._focus_console_environment_row_by_id(
+            section, nearest_row_id
+        ):
+            return
+        self._focus_console_environment_visible_toggle(section)  # I1 (round-2: visible chain)
+
+    def _console_environment_focus_moved_by_user(
+        self, origin_section: ConsoleInspectorSection
+    ) -> bool:
+        """Whether a HUMAN moved focus during the recompose window.
+
+        Q6 (final review). This used to be
+        `_console_environment_focus_left_the_rail`, which asked only whether
+        focus had left ``#console-inspector-rail-body``. That is the wrong
+        boundary: it treats the whole rail as one place. A user who Tabs or
+        clicks to ANOTHER row, or to any other rail control, in the window
+        between `_land_console_environment` scheduling the restore and the
+        restore running is still inside that body, so the check answered
+        "nobody moved" and the restore pulled them off the row they just
+        chose -- the same defect the composer case fixes, one step short of
+        the rail's edge.
+
+        Two signals, and the second is the new one:
+
+        1. Focus left the rail body entirely -- the original check, which
+           the composer cases rely on.
+        2. Focus is on a ``ConsoleInspectorSectionRow`` that is NOT the row
+           this restore captured. Textual's unmount reset cannot produce
+           that: it runs while the recomposing section's rows are
+           transiently gone, so it falls through to non-row chrome (a
+           collapse chevron, a "View all" button) or to ``None``. Landing
+           ON a row is therefore a human's doing.
+
+        The allowlist this replaced (``None`` / rail body / the origin
+        section's own toggle) was tried first and is WRONG: the fleet-sync
+        case (`test_fleet_section_sync_keeps_focus_on_the_same_row`) resets
+        onto ``#console-inspector-section-environment-view-all`` -- a
+        control belonging to a DIFFERENT section than the one recomposing
+        -- so the reset's landing spots are not closed by section and
+        cannot be enumerated. Hence the discriminator above, which keys on
+        the one property the reset provably cannot have.
+
+        Known residual gap, deliberately left: a user who clicks in-rail
+        CHROME (a section's chevron, "View all", Refresh) inside the
+        recompose window is still overridden, because that is exactly where
+        the reset also lands and the two are indistinguishable at this
+        seam. Moving to another ROW -- the ordinary Tab/click gesture, and
+        the case the finding was raised about -- is now honoured.
+
+        Args:
+            origin_section: The section whose focused row just vanished.
+                Unused by the checks above, kept because the caller's
+                other fallbacks are section-scoped and a future signal
+                here would be too.
+
+        Returns:
+            ``True`` when a human appears to have moved focus (so the
+            restore must not run); ``False`` when focus is where the
+            unmount reset would have left it and the restore should
+            proceed.
+        """
+        focused = self.focused
+        if focused is None:
+            return False
+        try:
+            rail_body = self.query_one("#console-inspector-rail-body")
+        except (NoMatches, QueryError):
+            return True
+        if rail_body not in focused.ancestors_with_self:
+            return True
+        return isinstance(focused, ConsoleInspectorSectionRow)
+
+    def _console_environment_focus_left_the_rail(self) -> bool:
+        """Whether focus is currently OUTSIDE the Inspect rail's row body.
+
+        Superseded as the restore's gate by
+        `_console_environment_focus_moved_by_user` (Q6): this answers a
+        strictly weaker question and cannot see a user move that stays
+        inside the rail. Kept as the rail-boundary predicate it always was.
+
+        Round-1 review finding I2. `_focus_console_environment_row_after_
+        sync` runs on a `call_next` scheduled well before `sync_state`'s own
+        recompose (an unmount, then a remount -- both `await`) actually
+        completes, so a user gesture dispatched in that window can land
+        BEFORE this callback runs; that gesture must win. Textual's own
+        unmount-triggered focus reset only ever lands INSIDE the rail's
+        outer body (`#console-inspector-rail-body`) -- on the body itself,
+        or on a section's own collapse chevron (also a descendant of that
+        body, and this task's own I1 fallback target) -- never outside it.
+        So "focus is currently outside that body" is a sound signal that a
+        human moved it, not Textual's reset.
+
+        Probe-verified (review): without this check, a click into the
+        composer landing in that window got silently overridden back onto
+        the rail row.
+
+        ``focused is None`` is handled as "still inside" (round-2 review
+        I1, Tasks-section case, also probe-reproduced): when a whole
+        section goes ``display: none`` because its row projection emptied
+        out (Tasks leaving ``EnvSourceAvailability.OK``), a row it held
+        focus on is unmounted with NO visible sibling anywhere for
+        Textual's `_reset_focus` to fall back to, so it sets
+        ``screen.focused = None`` -- never something a human click does.
+        Treating that as "a human moved it" made the restore bail
+        entirely, leaving NOTHING focused: worse than the original defect.
+
+        Returns:
+            ``True`` when focus has left the rail body (a human's move
+            should win, so the restore must not run); ``False`` when it is
+            still inside (including still on a row, reset to ``None``, or
+            nowhere yet reset at all) and the restore should proceed.
+        """
+        focused = self.focused
+        if focused is None:
+            return False
+        try:
+            rail_body = self.query_one("#console-inspector-rail-body")
+        except (NoMatches, QueryError):
+            return True
+        return rail_body not in focused.ancestors_with_self
+
+    @staticmethod
+    def _nearest_surviving_console_environment_row_id(
+        row_id: str,
+        previous_row_ids: tuple[str, ...],
+        current_row_ids: list[str],
+    ) -> str | None:
+        """Find the closest still-present row to a removed row's old spot.
+
+        Round-1 review finding M4. Walks OUTWARD from ``row_id``'s own
+        index in ``previous_row_ids`` -- one step back, one step forward,
+        two back, two forward, ... -- returning the first id that also
+        exists in ``current_row_ids``. This is genuinely "nearest" by edit
+        distance in the OLD ordering: a fixed same-index/index-1/first-row
+        ladder can overshoot straight past a much closer neighbor to a
+        distant row whenever more than one row disappears at once (e.g. a
+        whole PR sub-tree closing while focus was on a deeply-nested row).
+
+        Args:
+            row_id: The row_id that no longer exists in the new state.
+            previous_row_ids: That section's full row_id order before the
+                sync.
+            current_row_ids: That section's row_id order after the sync.
+
+        Returns:
+            The nearest surviving row_id, or ``None`` when ``row_id`` was
+            not found in ``previous_row_ids`` at all, or nothing in
+            ``previous_row_ids`` survived into ``current_row_ids``.
+        """
+        try:
+            removed_index = previous_row_ids.index(row_id)
+        except ValueError:
+            return None
+        current_row_id_set = set(current_row_ids)
+        last_index = len(previous_row_ids) - 1
+        for distance in range(1, len(previous_row_ids)):
+            for candidate_index in (removed_index - distance, removed_index + distance):
+                if 0 <= candidate_index <= last_index:
+                    candidate_id = previous_row_ids[candidate_index]
+                    if candidate_id in current_row_id_set:
+                        return candidate_id
+        return None
+
+    def _focus_console_environment_visible_toggle(
+        self, origin_section: ConsoleInspectorSection
+    ) -> None:
+        """Focus a VISIBLE collapse chevron -- the I1 last resort.
+
+        Used only when no row in ``origin_section`` is focusable at all:
+        the UNBOUND/ERROR/PENDING/"No git workspace" Environment
+        projections (task-31660) each render exactly one explanatory row,
+        and none of them are ever ``clickable``.
+
+        Round-2 review: round-1 focused ``origin_section``'s own toggle
+        unconditionally, which is unsafe when the ORIGIN SECTION ITSELF
+        has gone ``display: none``. `_land_console_environment` hides the
+        WHOLE section -- header, toggle, everything -- whenever its
+        projection has no rows at all (e.g. Tasks leaving
+        ``EnvSourceAvailability.OK``), so focusing that section's own
+        (now invisible) toggle would violate AC #2 exactly as badly as
+        the original defect -- probe-reproduced by parking focus on
+        ``task-head`` and landing a Tasks-emptying snapshot.
+
+        Chain, in order:
+
+        1. ``origin_section``'s own toggle, if ``origin_section`` is
+           displayed.
+        2. Otherwise the first DISPLAYED ``ConsoleInspectorSection`` among
+           [environment, tasks]'s own toggle. Environment renders at
+           least one row in EVERY ``EnvSourceAvailability`` state
+           reachable on this branch (PENDING/UNBOUND/ERROR/NOT_APPLICABLE/
+           OK all produce >=1 row -- see `project_environment_section`),
+           so it is never hidden and is the reliable anchor whenever
+           Tasks is the one that disappeared.
+        3. Last resort: the rail's own outer body
+           (`#console-inspector-rail-body`, `can_focus=True` by
+           construction -- `_InspectorOuterBody` in `right_rail.py` --
+           already used as a navigational fallback there for sections
+           with no focusable control at all).
+
+        Every candidate's own ``Button`` (or, for the rail body, its own
+        ``can_focus``) is still checked before focusing, rather than
+        assumed from displayedness alone.
+
+        Args:
+            origin_section: The section whose header chevron was the
+                first candidate (the one whose focused row just vanished).
+        """
+        for section_id in self._console_environment_visible_toggle_section_ids(
+            origin_section.section_id
+        ):
+            try:
+                toggle = self.query_one(
+                    f"#console-inspector-section-{section_id}-toggle", Button
+                )
+            except (NoMatches, QueryError):
+                continue
+            if toggle.can_focus:
+                toggle.focus()
                 return
+        try:
+            rail_body = self.query_one("#console-inspector-rail-body")
+        except (NoMatches, QueryError):
+            return
+        if rail_body.can_focus:
+            rail_body.focus()
+
+    def _console_environment_visible_toggle_section_ids(
+        self, origin_section_id: str
+    ) -> tuple[str, ...]:
+        """``section_id``s (``"environment"``/``"tasks"``) to try, in order.
+
+        Args:
+            origin_section_id: The section whose own toggle is tried
+                first, PROVIDED that section is currently displayed. Its
+                DOM container id (looked up via
+                ``CONSOLE_ENVIRONMENT_SECTION_DOM_IDS``) is what is
+                actually checked for visibility -- distinct from the
+                toggle's own id, which the caller derives separately.
+
+        Returns:
+            Just ``(origin_section_id,)`` when that section is displayed;
+            otherwise every DISPLAYED section id among
+            ``(ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID)``, in that fixed
+            order (so Environment -- never hidden, see the caller's
+            docstring -- is always reached first when Origin itself is
+            hidden).
+        """
+        origin_dom_id = CONSOLE_ENVIRONMENT_SECTION_DOM_IDS.get(origin_section_id)
+        if origin_dom_id is not None and self._is_console_widget_displayed(
+            origin_dom_id
+        ):
+            return (origin_section_id,)
+        return tuple(
+            section_id
+            for section_id in (ENVIRONMENT_SECTION_ID, TASKS_SECTION_ID)
+            if (dom_id := CONSOLE_ENVIRONMENT_SECTION_DOM_IDS.get(section_id))
+            is not None
+            and self._is_console_widget_displayed(dom_id)
+        )
 
     def _handle_console_environment_row(self, section_id: str, row_id: str) -> None:
         """Run one Environment/Tasks row's action.
@@ -8257,7 +8783,16 @@ class ChatScreen(BaseAppScreen):
                 self._request_console_environment_row_focus(section_id, row_id)
             return
         if row_id == "env-changes-review":
-            self._open_change_review()
+            # TASK-31665 AC#8 (the canonical-opener ruling). This row lives
+            # inside the Environment section's own Changes block, whose
+            # counts, file rows and "Review & commit…" all describe the
+            # WORKING TREE -- but it used to open Change Review on the
+            # latest RECORDED TURN, so two rows one line apart, under one
+            # heading, went to two different views of "changes". Destination
+            # now follows the surface that offers it: an Environment row
+            # opens the working tree; a run-anchored control (the run
+            # inspector button, a turn file card's Review) opens that run.
+            self._open_change_review_current_mode()
             return
         if row_id == ENV_ROW_COMMIT_PUSH:
             self._open_change_review_current_mode()
@@ -8509,10 +9044,38 @@ class ChatScreen(BaseAppScreen):
             fleet_section = self.query_one(
                 "#console-agent-section-subagents", ConsoleInspectorSection
             )
+            # TASK-31665 AC#13 (TASK-31661 round-1 review finding). The
+            # fleet section's rows ARE focusable (`clickable`/`cancellable`
+            # sub-agent rows), it lives inside the same Inspect rail, and
+            # this sync runs on its own periodic tick -- so it stole focus
+            # exactly the way the Environment poll did before TASK-31661:
+            # a child finishing changes the row SET, `sync_state`
+            # recomposes, the focused row unmounts, and Textual's reset
+            # parks the caret above the section header. Same capture/
+            # restore, same outside-rail guard (`_focus_console_environment_
+            # row_after_sync` bails when a human moved focus during the
+            # recompose window). Captured synchronously BEFORE `sync_state`,
+            # for the reason `_land_console_environment` documents at
+            # length: `DescendantFocus` is delivered asynchronously.
+            fleet_focus_row_id = self._console_environment_focused_row_in_section(
+                CONSOLE_AGENT_FLEET_SECTION_ID
+            )
+            fleet_previous_rows = fleet_section.rows
+            fleet_previous_summary = fleet_section.summary
             fleet_section.sync_state(fleet_section_state)
             fleet_section.styles.display = (
                 "block" if fleet_section_state.rows else "none"
             )
+            if fleet_focus_row_id is not None and (
+                tuple(fleet_section_state.rows) != tuple(fleet_previous_rows)
+                or fleet_section_state.summary != fleet_previous_summary
+            ):
+                fleet_section.call_next(
+                    self._focus_console_environment_row_after_sync,
+                    fleet_section,
+                    fleet_focus_row_id,
+                    tuple(row.row_id for row in fleet_previous_rows),
+                )
             # task-13 (addition A): the section mounts COLLAPSED in the
             # Inspect rail (`open=False`, right_rail.py) -- a header with no
             # body is not "surfacing the fleet". This call is also the only
@@ -14295,7 +14858,9 @@ class ChatScreen(BaseAppScreen):
             Button(
                 "Search Library",
                 id="console-run-library-rag",
-                classes="destination-action-button",
+                # `console-rail-focus-carrier` keys the focus-edge rule
+                # (TASK-31663); see `console_inspector_section.py`'s toggle.
+                classes="destination-action-button console-rail-focus-carrier",
             ),
             id="console-library-search-region",
             classes="console-inspector-context-section",
@@ -19163,7 +19728,26 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _open_change_review_current_mode(self) -> None:
-        """Open Change Review on the working tree (Environment "Commit or push")."""
+        """Open Change Review on the working tree.
+
+        TASK-31665 AC#8 -- the canonical-opener ruling, recorded here
+        because this is the pair of methods it is about. Every user-facing
+        route into Change Review already funnels through
+        ``_open_change_review``; what was NOT canonical was the
+        DESTINATION. The rule now is that destination follows the surface
+        that offers it:
+
+        * an Environment-section row (``Review & commit… · N files``,
+          ``Review in Change Review…``) describes the WORKING TREE -- its
+          counts come from ``git status`` -- so it opens this method;
+        * a RUN-anchored control (the run inspector's "Review changes"
+          button, a ``ConsoleTurnFileCard``'s own Review) opens that run's
+          recorded turn via ``_open_change_review(run_id)``.
+
+        Before the ruling, ``env-changes-review`` and ``env-commit-push``
+        sat one line apart under the same "Changes" heading and went to two
+        different views of the word "changes".
+        """
         self._open_change_review(initial_current_mode=True)
 
     @on(Button.Pressed, "#console-inspector-review-changes")
