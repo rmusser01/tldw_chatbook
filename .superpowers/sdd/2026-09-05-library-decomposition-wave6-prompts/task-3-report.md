@@ -588,6 +588,40 @@ comment-only growth from the two controller docstring corrections (§8);
 
 Both re-pins land in the same commit as the change that moved them.
 
+### 10.1 ERRATUM — commit `6fd2b753a`'s MESSAGE carries stale figures
+
+**The commit message of `6fd2b753aaa90160c286579fe07257cb72917f32` is wrong
+about its own pin.** Its closing paragraph reads:
+
+> `library_screen.py` 37722/1321 -> 37576/1282 (method delta -39 = exactly the
+> pruned delegators; line delta -146 reconciles term by term)
+
+**The correct figures are `37722/1321 → 37574/1282`, line delta `−148`.** The
+method delta (`−39`) is right. The message was written against an
+intermediate measurement taken before the final edit of that same commit —
+collapsing the now-single-name `from ..Library_Modules.library_prompts_state
+import LibraryPromptsState` back to one line, which shed 2 more lines — and
+was not re-derived after it.
+
+Everything that a check actually reads carries the CORRECT figures, verified
+against the live files while writing this erratum:
+
+| Location | Figure |
+|---|---|
+| `test_screen_size_ratchet.py:548` (the enforced `_BUDGETS` row) | `("LibraryScreen", 37574, 1282)` |
+| `test_screen_size_ratchet.py:526` (its inline comment) | `37722/1321 -> 37574/1282` |
+| `test_screen_size_ratchet.py:530` (same comment) | `Line delta -148` |
+| this report §10's table | `−148`, reconciled term by term |
+| recipe §21's per-task table and pin trajectory | `37574/1282` |
+| live `_measure()` | `(37574, 1282)`, equal to the pin |
+
+**The message is NOT being amended, deliberately.**
+`.git-blame-ignore-revs:221` records the literal hash
+`6fd2b753aaa90160c286579fe07257cb72917f32`; amending would change that hash
+and orphan the blame-ignore entry. Same ruling as wave-5's own arity erratum:
+a landed commit message is immutable history, and the correction lives here
+(and therefore in the PR body) instead.
+
 ---
 
 ## 11. Battery
@@ -596,13 +630,13 @@ Both re-pins land in the same commit as the change that moved them.
 |---|---|
 | the 7 `test_library_*_wiring.py` + `test_library_support_layer_surface.py` | **55 passed** |
 | `test_library_prompts_wiring.py` alone | **13 passed** |
-| `test_screen_size_ratchet.py` + `test_library_modules_size_ratchet.py` + `test_library_recompose_ratchet.py` + `test_library_preimport_closure.py` + `test_ui_ready_module_census.py` | 46 passed, **3 failed — all 3 the documented pre-existing rows** (2 × `chat_screen.py`, 1 × `library_media_browse_controller.py`); every `library_screen.py`/`library_prompts_controller.py` row GREEN |
+| `test_screen_size_ratchet.py` + `test_library_modules_size_ratchet.py` + `test_library_recompose_ratchet.py` + `test_library_preimport_closure.py` + `test_ui_ready_module_census.py` | **45 passed / 4 failed on a bad run, 46/3 on a good one** — measured 6 times: 3F/46P ×4, 4F/45P ×2. Three failures are constant and are the documented pre-existing rows (2 × `chat_screen.py`, 1 × `library_media_browse_controller.py`); the FOURTH, intermittent one is `test_ui_ready_module_census` (§11.1). Every `library_screen.py`/`library_prompts_controller.py` row is GREEN in all 6 runs. An earlier draft of this row reported only the 46/3 outcome as if it were the result — corrected here to present the intermittent red as a red |
 | `./scripts/preflight.sh` | **all derived-artifact checks passed** |
 | `Tests/UI/test_library_modal_dismissal.py` | 1 failed / 169 passed — **identical on both trees** (§7.1) |
 | `Tests/UI/test_library_prompts_characterization.py` (task 1's characterization file) | **4 passed** |
 | `Tests/UI/test_library_choice_strips.py` + `test_library_canvas_scoped_sync.py` + `test_library_screen_reuse.py` (the three restructured-fixture files) | 27 passed, **2 failed** — `test_media_type_strip_works_in_both_layouts` and `test_notes_per_click_updates_keep_screen_and_canvas_identity`, both reproduced at the parent in the baseline worktree (**2 failed** there too, same node names) |
 | `Tests/UI/test_library_shell.py -k "prompt"` | **1 failed / 10 passed** on BOTH trees — `test_adaptive_routes_never_receive_ordinary_emergency_geometry[browse-prompts-#library-prompts-reader-shell]`, same node name, zero branch-unique |
-| `Tests/Performance/test_ui_ready_module_census.py` re-run under load | **974 vs pin 972 on BOTH trees**, byte-identical assertion text; the zero-headroom breach task 2 documented. The 25 modules it names as consuming the headroom are all `tldw_chatbook.Chat.console_*` — nothing this wave imports. Green when run in a quiet process. |
+| `Tests/Performance/test_ui_ready_module_census.py` (§11.1) | **974 vs pin 972**, byte-identical assertion text on BOTH trees; the zero-headroom breach task 2 documented. Intermittent, NOT load-gated: 8 passed / 2 failed over 10 isolated single-node runs on a quiet machine (3 competing processes). Not caused by this branch — see §11.1 |
 | the 5 prompt-heavy files, paired (§12) | branch **24 failed / 404 passed**, baseline **29 failed / 399 passed** — **zero real branch-unique** |
 | `Tests/UI/test_library_adaptive_reader_closeout.py` + `test_library_entry_compose_once.py` + `test_screen_navigation.py`, paired (§12) | branch **35 failed / 209 passed**, baseline **34 failed / 210 passed** — **zero real branch-unique** |
 
@@ -611,6 +645,56 @@ selection in an ISOLATED worktree at the parent commit `bcf0631f7`
 (`.worktrees/w6t3-baseline`, its own `uv venv`, verified to resolve its own
 tree: `tldw_chatbook.__file__` under `w6t3-baseline/`). No stash overlay was
 used anywhere in this task.
+
+### 11.1 The `_ui_ready` census red — intermittent, and not this branch's
+
+**It is a real, currently-reproducible red, not a load artefact.** Measured
+on a quiet machine (3 competing processes), single node, 10 isolated runs:
+**8 passed / 2 failed.** Across 6 runs of the five-file selection above:
+**4 × 3F/46P, 2 × 4F/45P.** An earlier draft of this report said "green when
+run in a quiet process" — that is not reproducible and has been removed.
+
+**The 25 modules it names as consuming the headroom — re-derived, not
+recalled.** An earlier draft said they are "all `tldw_chatbook.Chat.console_*`".
+**Only 14 of the 25 are.** Captured from a failing run and counted:
+
+| Group | Count |
+|---|---|
+| `tldw_chatbook.Chat.console_*` (`console_endpoint_provenance`, `console_interrupt_rounds`, `console_semantic_revision`, `console_session_endpoint_policy`, and the 10 `console_trace_*`) | 14 |
+| `tldw_chatbook.DB.transaction_observer` | 1 |
+| `tldw_chatbook.LLM_Calls.anthropic_subscription` | 1 |
+| `tldw_chatbook.Scheduling.scheduler_heartbeat` | 1 |
+| `tldw_chatbook.UI.Console_Modules.console_spend_projection` | 1 |
+| `tldw_chatbook.UI.LLM_Management` + `.vllm_setup` | 2 |
+| `tldw_chatbook.UI.Navigation.conversation_settings_navigation` + `.vllm_handoff` | 2 |
+| `tldw_chatbook.Widgets.Console.console_activity_outcome_notice` + `.console_terminal_messages` | 2 |
+| `tldw_chatbook.emergency_stop` | 1 |
+| **total** | **25** |
+
+**Not caused by this branch — three independent checks, each re-run against
+the live tree while writing this:**
+
+1. **Zero of the 25 is a Library module.** A case-insensitive grep for
+   `library` over the captured list returns **0**. Console, DB, LLM,
+   Scheduling and Navigation own every one.
+2. **The branch's production diff only REMOVES imports.**
+   `git show 6fd2b753a -- tldw_chatbook/` has **4 removed** top-level import
+   statements and **1 added** — and that one added line is the collapsed
+   single-line form of the very same
+   `from ..Library_Modules.library_prompts_state import (...)` block that
+   already existed at `library_screen.py:539` in the parent
+   (`git show 6fd2b753a^` confirms it). No module enters the closure.
+3. **`library_screen.py` is not in the boot closure at all.** A grep for
+   `UI.Screens.library_screen` / `UI.Library_Modules.library_prompts_state`
+   over `Tests/Performance/boot_budget_snapshots/ui_ready_modules.txt`
+   returns **0** — the pinned snapshot never contained it, which is exactly
+   why task 1's module-level state import was safe and why nothing this
+   series does can move this number.
+
+Conclusion unchanged from task 2's hand-off: pin 972 has zero headroom, the
+census breaches intermittently on both trees, and it is not this wave's to
+fix. What changed is the honesty of the presentation — it is disclosed here
+as a red that occurs ~20% of the time, with the module list re-derived.
 
 ---
 
@@ -754,3 +838,46 @@ checks passed.**
    BOTH trees. Every dismissal in §12 therefore rests on an isolated re-run
    at the parent, not on a count comparison. Task 4's whole-wave sweep
    should budget for this and expect to do the same per-name resolution.
+8. **MISSED CENSUS CLASS, root cause of a review finding — the stale-prose
+   sweep covered the 39 pruned METHOD names but never the 43 deleted FIELD
+   names.** §8's staleness pass was built around "which method names no
+   longer exist on the screen"; the symmetric question — "which flat FIELD
+   names no longer exist" — was never asked as its own repo-wide census,
+   even though the shim deletion made all 43 of them dead in exactly the
+   same way. Review caught the consequence:
+   `library_export_controller.py:375`'s constructor docstring still said the
+   accessor "Reads ``LibraryScreen._library_prompts_mutation_in_flight``",
+   an attribute that no longer exists. Fixed (line-neutral, so the export
+   controller's 1307 ratchet pin is untouched) to name the real wiring,
+   which was verified at `library_screen.py:2318-2320`:
+   `lambda: self._prompts_state.mutation_in_flight`.
+
+   **The census now run, and its full result** (tokenize-based, COMMENT and
+   STRING tokens only, all 43 flat field names, over `tldw_chatbook/`,
+   `Tests/`, `Docs/`, `backlog/`, `scripts/`, `Helper_Scripts/`): **54
+   occurrences.** Almost all are legitimate — past-tense incident narrative,
+   this task's own "deleted here, and why" markers, other subsystems'
+   comparative prose, the wiring test's literal-string pins, and
+   `library_export_controller.py:194`, which names the name the CONTROLLER
+   itself still binds (verified live: the property exists at `:545`).
+   Besides the fixed `:375`, the sweep surfaced **two more present-tense
+   descriptions naming a now-dead flat field**, left unfixed because they
+   fall outside the fix round's ruled file scope, and recorded here so they
+   are not lost:
+   - `Tests/UI/test_library_prompts_characterization.py:48` — describes the
+     teardown as "``_library_prompt_detail`` and ``_library_prompt_block_
+     state`` both back to ``None``" with no qualifier, while the file's own
+     assertions now read `screen._prompts_state.detail` / `.block_state`.
+     (Its sibling at `:268-269` uses the same two names but immediately
+     labels them "two of the moved ``LibraryPromptsState`` fields", so that
+     one is self-consistent and needs nothing — the distinction is recorded
+     because a bare name-count census cannot tell the two apart.)
+   - `tldw_chatbook/Library/library_prompts_state.py:2405` — "callers thread
+     the screen's own ``_library_prompt_dirty`` flag through"; the screen's
+     flag is now `_prompts_state.dirty`.
+
+   **Recipe candidate for the wave close:** the cleanup-series census list
+   should name the deleted FIELD names as their own prose sweep, alongside
+   the pruned method names. Two waves of evidence now say the method-name
+   sweep does not cover it, and this class is invisible to every automated
+   guard — nothing imports or executes a docstring.

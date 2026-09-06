@@ -4244,9 +4244,12 @@ scripts are NOT retargeted (`task23019_scenarios.py` still spells
 Nonetheless the prune rule is "zero references **anywhere in the repo**",
 and this is a reference in executable form, so the delegator was KEPT — the
 first time a `Docs/` hit has changed a prune verdict. Prune fraction: 39 of
-139, ~28%, at the high end of the recorded range (export ~5% < ingest ~11%
-< skills ~19% < collections ~22% < search+RAG ~29% ≈ prompts ~28% <
-conversations ~30%).
+139 = **28.06%**, at the high end of the recorded range. Sorted by the
+computed fraction, not by eye — an earlier draft of this line put prompts
+AFTER search+RAG on a `~28%` vs `~29%` rounding, which reverses the true
+order: export 1/22 = 4.55% < ingest 6/56 = 10.71% < skills 16/86 = 18.60%
+< collections 14/64 = 21.88% < **prompts 39/139 = 28.06%** < search+RAG
+12/42 = 28.57% < conversations 18/61 = 29.51%.
 
 ### Dynamic-dispatch census — four spellings, six real screen-side sites
 
