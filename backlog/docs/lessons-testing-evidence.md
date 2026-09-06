@@ -11563,3 +11563,17 @@ and retains assets when that ownership cannot be determined. A separate
 interleaved-service regression found that a losing caller needed to refresh its
 Persona JSON cache before the winning installation became selectable. A green
 rollback-only test did not cover either postcommit behavior.
+
+## A screen's own recovery dialog suspends it too (TASK-31756, 2026-09-05)
+
+The mounted Parakeet Retry/Keep draft tests reproduced a composer stuck on
+`Dictate…` even though the dialog completed. Tracing showed that opening the
+retry dialog invoked Console's suspend cleanup, discarding retained audio and
+clearing the originating session before its completion handler resumed. Tests
+that replaced `push_screen_wait` with a returned boolean never exercised this
+suspend transition.
+
+Keep recovery retention scoped to the exact owned dialog; actual navigation and
+unmount still need unconditional cleanup. Verify both choices through a mounted
+dialog, plus teardown before a late affirmative answer. The latter regression
+failed with an unwanted replay when the post-dialog session fence was removed.

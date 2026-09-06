@@ -21370,7 +21370,7 @@ class ChatScreen(BaseAppScreen):
         self._hands_free.teardown()
         self._console_suspend_flush_tasks = [
             asyncio.ensure_future(self._realtime.teardown()),
-            asyncio.ensure_future(self._dictation.teardown()),
+            asyncio.ensure_future(self._dictation.suspend()),
         ]
 
     def on_screen_resume(self) -> None:
