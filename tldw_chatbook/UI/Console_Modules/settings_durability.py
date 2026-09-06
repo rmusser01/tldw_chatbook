@@ -699,10 +699,15 @@ class ConsoleSettingsDurabilityController:
                     ConsoleDefaultSavePhase.CACHE_PUBLICATION,
                 )
 
+        display_name_task = asyncio.create_task(persist_display_name())
+        if display_name_plan is not None:
+            display_name_task.add_done_callback(
+                lambda _task: store.abandon_roleplay_projection_plan(display_name_plan)
+            )
         await asyncio.gather(
             persist_conversation(),
             persist_default(),
-            persist_display_name(),
+            display_name_task,
         )
 
     def _record_console_default_failure(
