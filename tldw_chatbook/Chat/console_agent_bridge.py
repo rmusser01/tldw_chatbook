@@ -2962,8 +2962,17 @@ class _StreamingModelAdapter:
         route_actor_id = getattr(self._thread_loop, "route_actor_id", None)
         route_chain_id = getattr(self._thread_loop, "route_chain_id", None)
         if route_actor_id is None or route_chain_id is None:
-            route_actor_id = new_opaque_id()
-            route_chain_id = new_opaque_id()
+            recover_route = getattr(self._gateway, "_trace_recovery_route_identity", None)
+            recovered = (
+                recover_route(self._provider_stream_signals)
+                if request_count == 0 and not is_subagent and callable(recover_route)
+                else None
+            )
+            if recovered is None:
+                route_actor_id = new_opaque_id()
+                route_chain_id = new_opaque_id()
+            else:
+                route_actor_id, route_chain_id = recovered
             self._thread_loop.route_actor_id = route_actor_id
             self._thread_loop.route_chain_id = route_chain_id
         gate = StreamGate()

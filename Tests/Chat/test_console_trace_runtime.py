@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
-from contextlib import AsyncExitStack
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import AsyncExitStack, contextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
@@ -123,6 +126,144 @@ def _semantic_request(
     )
 
 
+@pytest.mark.parametrize("outcome", ["complete", "error", "cancel"])
+@pytest.mark.parametrize("borrowed", [False, True], ids=["owned", "borrowed"])
+def test_trace_factory_releases_only_operation_owned_thread_connection(
+    tmp_path, make_database, monkeypatch, outcome, borrowed,
+):
+    """An exited factory thread must not leave its SQLite handle registered."""
+    database = make_database(tmp_path / "factory-handles.sqlite", "factory-owner")
+    observer = make_database(tmp_path / "factory-handles.sqlite", "factory-observer")
+    conversation = database.add_conversation({"title": "factory ownership"})
+    _, revision = _saved_message(database, conversation, "synthetic request")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    factory = ConsoleTraceBoundaryFactory(database)
+    prepared = prepare_provider_request(
+        _semantic_request(
+            [{"role": "user", "content": "synthetic request"}], [revision], policy,
+        ),
+        wire_style="distinct_roles", provider="openai", model="gpt-test",
+        capacity=resolve_request_capacity(context_window_tokens=None),
+    )
+    if outcome != "complete":
+        original = factory.service.prepare_current_surface_delta
+
+        def fail_after_prepare(*args, **kwargs):
+            original(*args, **kwargs)
+            if outcome == "cancel":
+                raise asyncio.CancelledError()
+            raise RuntimeError("synthetic preparation fault")
+
+        monkeypatch.setattr(type(factory.service), "prepare_current_surface_delta",
+                            lambda _self, *args, **kwargs: fail_after_prepare(*args, **kwargs))
+
+    caller = database.get_connection()
+    observer_connection = observer.get_connection()
+    assert database.registered_connection_count() == 2
+
+    def operation():
+        borrowed_connection = database.get_connection() if borrowed else None
+        try:
+            if borrowed_connection is not None:
+                borrowed_connection.execute("BEGIN")
+            try:
+                factory(prepared, None, ConsoleRequestRoute.FRESH)
+            except (RuntimeError, asyncio.CancelledError):
+                assert outcome != "complete"
+            else:
+                assert outcome == "complete"
+            if borrowed_connection is not None:
+                assert database.get_connection() is borrowed_connection
+                assert borrowed_connection.in_transaction
+                assert borrowed_connection.execute("SELECT 1").fetchone()[0] == 1
+            else:
+                assert database.registered_connection_count() == 2
+        finally:
+            if borrowed_connection is not None:
+                borrowed_connection.rollback()
+                database.close_connection()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(operation).result()
+    assert database.registered_connection_count() == 2
+    assert database.get_connection() is caller
+    assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bind_failure", [False, True], ids=["complete", "bind-error"])
+async def test_real_gateway_and_settlement_release_operation_owned_handles(
+    tmp_path, make_database, monkeypatch, bind_failure,
+):
+    """Gateway and settlement workers release handles without closing observers."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
+
+    database = make_database(tmp_path / "gateway-handles.sqlite", "gateway-owner")
+    observer = make_database(tmp_path / "gateway-handles.sqlite", "gateway-observer")
+    conversation = database.add_conversation({"title": "gateway ownership"})
+    _, revision = _saved_message(database, conversation, "synthetic request")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    factory = ConsoleTraceBoundaryFactory(database)
+    store = ConsoleChatStore(settle_provider_traces_off_thread=True)
+    entries = []
+
+    def adapter(**kwargs):
+        entries.append(kwargs["messages_payload"])
+        return {"choices": [{"message": {"content": "synthetic response"}}]}
+
+    if bind_failure:
+        original_bind = factory.repository.bind_call
+
+        def fail_bind(*args, **kwargs):
+            original_bind(*args, **kwargs)
+            raise RuntimeError("synthetic bind fault")
+
+        monkeypatch.setattr(factory.repository, "bind_call", fail_bind)
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter,
+                                    trace_call_boundary_factory=factory)
+    resolution = ConsoleProviderResolution(
+        ready=True, provider="openai", model="gpt-test", execution_key="openai",
+        base_url="https://api.openai.com/v1", streaming=False,
+    )
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        _semantic_request(
+            [{"role": "user", "content": "synthetic request"}], [revision], policy,
+        ),
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    signals = ConsoleProviderStreamSignals()
+
+    def settle(handoff):
+        store._submit_provider_trace_settlement(handoff, None)
+        return True
+
+    signals.bind_trace_settlement_sink(settle)
+    caller = database.get_connection()
+    observer_connection = observer.get_connection()
+    assert database.registered_connection_count() == 2
+    try:
+        try:
+            result = [item async for item in gateway.stream_chat(
+                resolution, prepared, route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON, signals=signals,
+            )]
+        except TraceCallPersistenceError:
+            assert bind_failure
+        else:
+            assert not bind_failure
+            assert result == ["synthetic response"]
+        assert len(entries) == (0 if bind_failure else 1)
+    finally:
+        await gateway.aclose()
+        store.end_app_runtime()
+    assert database.registered_connection_count() == 2
+    assert database.get_connection() is caller
+    assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
+
+
 @pytest.mark.asyncio
 async def test_console_runtime_wires_production_boundary_for_durable_database(
     tmp_path,
@@ -198,9 +339,13 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
     actor, chain = new_opaque_id(), new_opaque_id()
     factory = ConsoleTraceBoundaryFactory(database)
     boundaries, adapter_entries = [], []
+    bind_database = None
+    accepted_trace_owner = None
 
     def boundary(request, resolution, route):
         result = factory(request, resolution, route)
+        if bind_database is not None:
+            result.database = bind_database
         boundaries.append(result)
         return result
 
@@ -245,6 +390,8 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
 
     async def dispatch(prepared, route, canonical_id=None):
         signals = ConsoleProviderStreamSignals()
+        if accepted_trace_owner is not None:
+            gateway._bind_trace_preparation(signals, accepted_trace_owner)
         if canonical_id is not None:
 
             def settle(handoff):
@@ -259,8 +406,8 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
                 resolution,
                 prepared,
                 route=route,
-                route_actor_id=actor,
-                route_chain_id=chain,
+                route_actor_id=(actor if route in {ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.TOOL_LOOP} else None),
+                route_chain_id=(chain if route in {ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.TOOL_LOOP} else None),
                 capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
                 signals=signals,
             )
@@ -321,6 +468,8 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
     descriptors = [user, answer, next_user]
     next_policy = policy
     route = ConsoleRequestRoute.AGENT_FIRST
+    if scenario in {"postcommit_fresh", "cold_fresh_reserved"}:
+        route = ConsoleRequestRoute.FRESH
     chain = new_opaque_id()
     if scenario == "cold":
         factory = ConsoleTraceBoundaryFactory(database)
@@ -382,7 +531,216 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
             tuple(row)
             for row in cursor.execute("SELECT * FROM console_trace_surface_nodes")
         )
-    if scenario.startswith("rollback_"):
+    if scenario == "cold_fresh_reserved":
+        from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+        accepted_trace_owner = object()
+        pending = factory(prepared, resolution, route)
+        pending._accepted_preparation = accepted_trace_owner
+        reserved = pending.reserve()
+        monkeypatch.setattr(gateway, "_trace_call_boundary_factory", ConsoleTraceBoundaryFactory(database))
+        with pytest.raises(TraceCallPersistenceError):
+            await dispatch(prepared, route)
+        assert len(adapter_entries) == 2
+        with database.transaction() as cursor:
+            assert repository.get_call(cursor, reserved.call_id) == reserved
+            assert reserved.state is TraceCallState.RESERVED
+            assert cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0] == 3
+            assert cursor.execute("SELECT COUNT(*) FROM console_trace_events WHERE event_type = 'call_boundary'").fetchone()[0] == 3
+            assert tuple(tuple(row) for row in cursor.execute("SELECT * FROM console_trace_surface_nodes")) == before_nodes
+        assert reader.read_calls(user_id) == original
+    elif scenario.startswith("postcommit_"):
+        from tldw_chatbook.Chat.console_provider_gateway import ChatProviderError
+        from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+        accepted_trace_owner = object()
+
+        class BindOutcomeDatabase:
+            """Fault the actual bind commit/restoration, not its reservation."""
+
+            committed = False
+            faulted = False
+            deny_reads = False
+            inconsistent_reads = False
+            prior_pages = None
+            restored_pages = None
+
+            def __getattr__(self, name):
+                return getattr(database, name)
+
+            @contextmanager
+            def transaction(self, *, immediate=False):
+                if self.deny_reads:
+                    raise RuntimeError("synthetic reconciliation read failure")
+                with database.transaction(immediate=immediate) as cursor:
+                    yield cursor
+                self.committed = True
+                if not self.faulted and scenario == "postcommit_cancel":
+                    self.faulted = True
+                    raise asyncio.CancelledError()
+                if not self.faulted and scenario in {
+                    "postcommit_commit", "postcommit_read_failure", "postcommit_inconsistent", "postcommit_fresh",
+                }:
+                    self.faulted = True
+                    self.deny_reads = scenario in {"postcommit_read_failure", "postcommit_fresh"}
+                    self.inconsistent_reads = scenario == "postcommit_inconsistent"
+                    raise RuntimeError("synthetic actual bind postcommit failure")
+
+            def get_connection(self):
+                connection = database.get_connection()
+                owner = self
+
+                class SettingsConnection:
+                    def execute(self, statement, *args):
+                        result = connection.execute(statement, *args)
+                        if statement == "PRAGMA wal_autocheckpoint":
+                            owner.prior_pages = connection.execute(statement).fetchone()[0]
+                        elif statement.startswith("PRAGMA wal_autocheckpoint=") and owner.committed:
+                            owner.restored_pages = connection.execute(
+                                "PRAGMA wal_autocheckpoint"
+                            ).fetchone()[0]
+                            if scenario == "postcommit_settings" and not owner.faulted:
+                                owner.faulted = True
+                                raise RuntimeError("synthetic actual settings restoration failure")
+                        return result
+
+                return SettingsConnection()
+
+        bind_database = BindOutcomeDatabase()
+        persisted_boundaries = []
+        original_persist = type(factory.service).persist_request
+
+        def record_persist(instance, *args, **kwargs):
+            result = original_persist(instance, *args, **kwargs)
+            if instance is factory.service:
+                persisted_boundaries.append(result)
+            return result
+
+        monkeypatch.setattr(type(factory.service), "persist_request", record_persist)
+        original_header = type(repository).get_request_header
+
+        def inconsistent_header(instance, *args, **kwargs):
+            header = original_header(instance, *args, **kwargs)
+            if instance is repository and bind_database.inconsistent_reads and header is not None:
+                return replace(header, endpoint_identity="https://inconsistent.invalid/v1")
+            return header
+
+        monkeypatch.setattr(type(repository), "get_request_header", inconsistent_header)
+        dispatch_inputs, issued_admissions, admission_cancellations = [], [], []
+        original_admission = gateway._trace_dispatch_admission
+
+        def record_admission(*args, **kwargs):
+            dispatch_inputs.append((args, kwargs))
+            try:
+                admission = original_admission(*args, **kwargs)
+            except asyncio.CancelledError:
+                admission_cancellations.append(True)
+                raise
+            issued_admissions.append(admission)
+            return admission
+
+        monkeypatch.setattr(gateway, "_trace_dispatch_admission", record_admission)
+        if scenario == "postcommit_after_entry":
+            original_entry = gateway._enter_provider_adapter
+
+            def fail_after_entry(*args, **kwargs):
+                original_entry(*args, **kwargs)
+                raise RuntimeError("synthetic wrapper failure after adapter entry")
+
+            monkeypatch.setattr(gateway, "_enter_provider_adapter", fail_after_entry)
+
+        if scenario in {"postcommit_read_failure", "postcommit_inconsistent", "postcommit_fresh"}:
+            with pytest.raises(TraceCallPersistenceError) as failure:
+                await dispatch(prepared, route)
+            assert failure.value.boundary is boundaries[-1]
+            assert boundaries[-1].dispatch_outcome == "unknown"
+            assert len(adapter_entries) == 2
+            assert issued_admissions == []
+        elif scenario == "postcommit_cancel":
+            with pytest.raises(ChatProviderError):
+                await dispatch(prepared, route)
+            assert admission_cancellations == [True]
+            assert issued_admissions == []
+            assert len(adapter_entries) == 2
+            assert boundaries[-1].dispatch_started
+            assert boundaries[-1].dispatch_outcome == "committed"
+        elif scenario == "postcommit_after_entry":
+            with pytest.raises(ChatProviderError):
+                await dispatch(prepared, route)
+            assert len(adapter_entries) == 3
+            assert len(issued_admissions) == 1
+            assert issued_admissions[0]._consumed
+        else:
+            assert await dispatch(prepared, route) == ["42"]
+            assert len(adapter_entries) == 3
+            assert len(issued_admissions) == 1
+            assert issued_admissions[0]._consumed
+            assert boundaries[-1].dispatch_started
+            assert boundaries[-1].dispatch_outcome == "committed"
+        assert len(persisted_boundaries) == 1
+        expected = persisted_boundaries[0]
+        bound = boundaries[-1]
+        reserved = bound.reserve()
+        bind_database.inconsistent_reads = False
+        with database.transaction() as cursor:
+            committed = repository.get_call(cursor, reserved.call_id)
+            assert committed.call_id == reserved.call_id
+            assert committed.idempotency_key == reserved.idempotency_key
+            assert committed.run_id == reserved.run_id
+            assert committed.surface_node_id == expected.surface_head_id
+            assert committed.request_header_id == expected.header.header_id
+            assert repository.get_request_header(cursor, committed.request_header_id) == expected.header
+            assert committed.dispatch_started_at is not None
+            assert cursor.execute("SELECT COUNT(*) FROM console_trace_surface_nodes").fetchone()[0] == 5
+            assert cursor.execute("SELECT COUNT(*) FROM console_trace_surface_replacements").fetchone()[0] == 1
+            before_reentry = tuple(cursor.execute(
+                "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                "(SELECT COUNT(*) FROM console_trace_events), "
+                "(SELECT COUNT(*) FROM console_trace_request_headers)"
+            ).fetchone())
+        assert bind_database.restored_pages == bind_database.prior_pages
+        bind_database.deny_reads = False
+        entries_before_reentry = len(adapter_entries)
+        grants_before_reentry = len(issued_admissions)
+        args, kwargs = dispatch_inputs[0]
+        with pytest.raises(TraceCallPersistenceError):
+            gateway._trace_dispatch_admission(*args, **kwargs)
+        assert len(issued_admissions) == grants_before_reentry
+        assert len(adapter_entries) == entries_before_reentry
+        cancellation_transitions = []
+        original_advance = type(repository).advance_call_state
+
+        def record_advance(instance, *args, **kwargs):
+            if instance is repository:
+                cancellation_transitions.append(kwargs["target"])
+            return original_advance(instance, *args, **kwargs)
+
+        monkeypatch.setattr(type(repository), "advance_call_state", record_advance)
+        with pytest.raises(TraceCallPersistenceError):
+            bound.mark_not_dispatched()
+        assert TraceCallState.NOT_DISPATCHED not in cancellation_transitions
+        if scenario == "postcommit_after_entry":
+            monkeypatch.setattr(gateway, "_enter_provider_adapter", original_entry)
+        monkeypatch.setattr(gateway, "_trace_call_boundary_factory", ConsoleTraceBoundaryFactory(database))
+        with pytest.raises(TraceCallPersistenceError):
+            await dispatch(prepared, route)
+        assert len(adapter_entries) == entries_before_reentry
+        assert len(issued_admissions) == grants_before_reentry
+        with database.transaction() as cursor:
+            assert repository.get_call(cursor, committed.call_id) == committed
+            assert tuple(cursor.execute(
+                "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                "(SELECT COUNT(*) FROM console_trace_events), "
+                "(SELECT COUNT(*) FROM console_trace_request_headers)"
+            ).fetchone()) == before_reentry
+        assert len(persisted_boundaries) == 1
+        assert reader.read_calls(user_id) == original
+        if scenario == "postcommit_fresh":
+            # Explicit recovery is a distinct route, not a replay of FRESH.
+            retry_request = prepare(incoming, descriptors, ConsoleRequestRoute.RETRY, next_policy)
+            assert await dispatch(retry_request, ConsoleRequestRoute.RETRY) == ["42"]
+            assert len(adapter_entries) == entries_before_reentry + 1
+    elif scenario.startswith("rollback_"):
         from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
 
         target = repository if scenario == "rollback_bind" else factory.service
@@ -471,6 +829,47 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
                 )
                 == before_nodes
             )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["commit", "settings", "read_failure", "inconsistent", "after_entry"])
+async def test_compound_bind_reconciles_actual_postcommit_outcome(
+    tmp_path, make_database, make_gateway, monkeypatch, fault,
+):
+    await test_completed_tool_turn_compound_admission_checks_durable_proof(
+        tmp_path, make_database, make_gateway, monkeypatch,
+        scenario=f"postcommit_{fault}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_cold_fresh_reservation_cannot_allocate_another_call(
+    tmp_path, make_database, make_gateway, monkeypatch,
+):
+    await test_completed_tool_turn_compound_admission_checks_durable_proof(
+        tmp_path, make_database, make_gateway, monkeypatch,
+        scenario="cold_fresh_reserved",
+    )
+
+
+@pytest.mark.asyncio
+async def test_cold_fresh_postcommit_replay_requires_exact_accepted_recovery(
+    tmp_path, make_database, make_gateway, monkeypatch,
+):
+    await test_completed_tool_turn_compound_admission_checks_durable_proof(
+        tmp_path, make_database, make_gateway, monkeypatch,
+        scenario="postcommit_fresh",
+    )
+
+
+@pytest.mark.asyncio
+async def test_compound_bind_cancellation_preserves_committed_boundary(
+    tmp_path, make_database, make_gateway, monkeypatch,
+):
+    await test_completed_tool_turn_compound_admission_checks_durable_proof(
+        tmp_path, make_database, make_gateway, monkeypatch,
+        scenario="postcommit_cancel",
+    )
 
 
 @pytest.mark.asyncio
@@ -1113,9 +1512,11 @@ def test_production_factory_batches_revision_owner_lookup_for_long_traces(
     assert boundary.identity.turn_id == saved[-1][0]
 
 
-def test_recreated_factory_continues_durable_chain_sequence(
+@pytest.mark.asyncio
+async def test_recreated_factory_continues_completed_response_as_tool_loop(
     tmp_path,
     make_database,
+    make_gateway,
 ) -> None:
     database = make_database(tmp_path / "trace-chain-sequence.sqlite", "trace-chain")
     conversation_id = database.add_conversation({"title": "chain sequence"})
@@ -1147,10 +1548,37 @@ def test_recreated_factory_continues_durable_chain_sequence(
         ConsoleRequestRoute.AGENT_FIRST,
     )
     first.reserve()
+    answer_id, _answer = _saved_message(database, conversation_id, "ok", sender="assistant")
+    gateway = make_gateway(
+        chat_api_call_fn=lambda **_kwargs: {"choices": [{"message": {"content": "ok"}}]},
+        trace_call_boundary_factory=lambda *_args: first,
+    )
+    resolution = ConsoleProviderResolution(
+        ready=True, provider="openai", model="gpt-test", execution_key="openai",
+        base_url="https://api.openai.com/v1", streaming=False,
+    )
+    signals = ConsoleProviderStreamSignals()
+    signals.bind_trace_settlement_sink(lambda handoff: handoff.settle(answer_id))
+    assert [item async for item in gateway.stream_chat(
+        resolution, prepared, route=ConsoleRequestRoute.AGENT_FIRST,
+        route_actor_id=actor_id, route_chain_id=chain_id,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON, signals=signals,
+    )] == ["ok"]
+    with database.transaction() as cursor:
+        assert first.service.repository.get_call(cursor, first.reserve().call_id).state is TraceCallState.COMPLETE
+    tool_prepared = prepare_provider_request(
+        _semantic_request(
+            [{"role": "user", "content": "turn"}, {"role": "tool", "content": "result", "tool_call_id": "call-1"}],
+            [revision, ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy)],
+            policy, route=ConsoleRequestRoute.TOOL_LOOP, actor_id=actor_id, chain_id=chain_id,
+        ),
+        wire_style="distinct_roles", provider="openai", model="gpt-test",
+        capacity=resolve_request_capacity(context_window_tokens=None), apply_safety_window=False,
+    )
     second = ConsoleTraceBoundaryFactory(database)(
-        prepared,
-        None,
-        ConsoleRequestRoute.AGENT_FIRST,
+        tool_prepared,
+        resolution,
+        ConsoleRequestRoute.TOOL_LOOP,
     )
 
     assert first.identity.call_sequence == 0
@@ -1158,7 +1586,7 @@ def test_recreated_factory_continues_durable_chain_sequence(
     second.reserve()
 
 
-def test_recreated_factories_atomically_reserve_distinct_chain_sequences(
+def test_recreated_factory_refuses_duplicate_primary_run_without_new_reservation(
     tmp_path,
     make_database,
 ) -> None:
@@ -1190,14 +1618,16 @@ def test_recreated_factories_atomically_reserve_distinct_chain_sequences(
         None,
         ConsoleRequestRoute.AGENT_FIRST,
     )
-    second = ConsoleTraceBoundaryFactory(database)(
-        prepared,
-        None,
-        ConsoleRequestRoute.AGENT_FIRST,
-    )
-
-    assert (first.identity.call_sequence, second.identity.call_sequence) == (0, 1)
-    assert first.reserve().call_id != second.reserve().call_id
+    with pytest.raises(ValueError, match="trace_primary_run_already_started"):
+        ConsoleTraceBoundaryFactory(database)(
+            prepared,
+            None,
+            ConsoleRequestRoute.AGENT_FIRST,
+        )
+    assert first.identity.call_sequence == 0
+    with database.transaction() as cursor:
+        assert cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0] == 1
+        assert cursor.execute("SELECT COUNT(*) FROM console_trace_events WHERE event_type = 'call_boundary'").fetchone()[0] == 1
 
 
 @pytest.mark.asyncio
@@ -1205,6 +1635,8 @@ async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fo
     tmp_path,
     make_database,
     make_gateway,
+    monkeypatch=None,
+    fork_failure=False,
 ) -> None:
     database = make_database(tmp_path / "trace-fork-runtime.sqlite", "trace-fork")
     source_id = database.add_conversation({"title": "source"})
@@ -1231,7 +1663,7 @@ async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fo
         streaming=False,
     )
 
-    async def dispatch(messages, descriptors) -> None:
+    async def dispatch(messages, descriptors, signals=None) -> None:
         prepared = gateway.prepare_chat_request(
             resolution,
             _semantic_request(messages, descriptors, policy),
@@ -1245,6 +1677,7 @@ async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fo
                 prepared,
                 route=ConsoleRequestRoute.FRESH,
                 capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                signals=signals,
             )
         ]
         assert chunks == ["ok"]
@@ -1263,6 +1696,56 @@ async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fo
             boundary=boundary,
         )
     child_message_id, child_revision = _saved_message(database, child_id, "child")
+
+    if fork_failure:
+        from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+        original_bind = type(factory.repository).bind_call
+        remaining = 1
+
+        def fail_bind(instance, *args, **kwargs):
+            nonlocal remaining
+            result = original_bind(instance, *args, **kwargs)
+            if instance is factory.repository and remaining:
+                remaining -= 1
+                raise RuntimeError("synthetic inherited-tail rollback")
+            return result
+
+        monkeypatch.setattr(type(factory.repository), "bind_call", fail_bind)
+        accepted_owner = object()
+        signals = ConsoleProviderStreamSignals()
+        gateway._bind_trace_preparation(signals, accepted_owner)
+        with pytest.raises(TraceCallPersistenceError) as failure:
+            await dispatch(
+                [{"role": "user", "content": "source"}, {"role": "user", "content": "child"}],
+                [source_revision, child_revision], signals,
+            )
+        failed = failure.value.boundary
+        assert failed.dispatch_outcome == "rolled_back"
+        reserved = failed.reserve()
+        with database.transaction() as cursor:
+            assert factory.repository.get_surface_tail(cursor, child_owner.root_segment_id) is None
+            assert failed.admission.predecessor_surface_head_id == boundary.inherited_surface_head_id
+            assert factory.repository.get_call(cursor, reserved.call_id) == reserved
+        gateway._bind_trace_preparation(signals, accepted_owner, boundary=failed)
+        assert [item async for item in gateway.stream_chat(
+            resolution, failed._request, route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON, signals=signals,
+        )] == ["ok"]
+        with database.transaction() as cursor:
+            final = factory.repository.get_call(cursor, reserved.call_id)
+            assert final.call_id == reserved.call_id
+            assert final.idempotency_key == reserved.idempotency_key
+            assert final.state is TraceCallState.COMPLETE
+            link = factory.repository.get_response_link(cursor, final.call_id)
+            assert link is not None
+            assert link.link_kind == "artifact"
+            assert link.verification_outcome == "sanitized_artifact"
+            assert cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_calls WHERE segment_id = ?",
+                (child_owner.root_segment_id,),
+            ).fetchone()[0] == 1
+        return
 
     await dispatch(
         [
@@ -1339,3 +1822,12 @@ async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fo
         assert len(replacements) == 1
         assert replacements[0].replacement.start_sequence == 0
         assert replacements[0].replacement.end_sequence == 0
+
+
+@pytest.mark.asyncio
+async def test_owned_retry_preserves_inherited_fork_predecessor_after_rollback(
+    tmp_path, make_database, make_gateway, monkeypatch,
+):
+    await test_production_factory_accepts_active_ancestor_revisions_on_nested_fork(
+        tmp_path, make_database, make_gateway, monkeypatch, fork_failure=True,
+    )

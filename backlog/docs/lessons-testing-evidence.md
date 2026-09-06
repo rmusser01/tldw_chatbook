@@ -129,6 +129,16 @@ registered SQLite handles or that a larger warning threshold repairs a leak.
 Conversely, do not require immediate process-baseline return for every individual
 SQLite close; another live connection can legitimately retain inode reuse FDs.
 
+**TASK-31742, completed-tool trace recovery, 2026-09-05.** The next-turn repair
+exposed 227 retained descriptors after trace worker tests; forced per-test GC
+did not help. Source-private creation-stack probes identified exited factory,
+agent, settlement, Canvas and policy workers. Closing only handles created by
+each whole synchronous operation preserved borrowed transactions and an independent
+same-file observer. The trace-only 152-case run then had zero regular-file growth.
+A per-trajectory-marker close was removed because it split the real worker
+lifetime and added unnecessary checkpoint work. Broader older fixtures still
+retain handles, so this scoped result is not a claim of repository-wide cleanup.
+
 ## Capture queued UI ownership in the row, not only in the event
 
 **PR #2432, Canvas review, 2026-09-05.** A queued card-open event originally

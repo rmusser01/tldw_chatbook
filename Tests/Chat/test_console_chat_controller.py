@@ -7556,21 +7556,27 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
     ordinary_tool_loop,
     next_fresh,
     recreate_factory,
+    recovery_scenario=None,
 ):
     """Ordinary history must extend the real trace surface on the next send."""
     from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+    from tldw_chatbook.Chat.console_trace_models import TraceCallState
     from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
     from tldw_chatbook.Chat.console_trace_provenance import SavedRevisionTraceProvenance
     from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
     chat_db = CharactersRAGDB(tmp_path / "two-turn-trace.sqlite", "task31714")
+    trace_observer = CharactersRAGDB(tmp_path / "two-turn-trace.sqlite", "trace-observer")
+    observer_connection = trace_observer.get_connection()
     runs_db = AgentRunsDB(tmp_path / "two-turn-runs.sqlite", client_id="task31714")
     factory = ConsoleTraceBoundaryFactory(chat_db)
     requests = []
+    recovery_boundaries = []
     adapter_entries = 0
     boundary_failures = []
     calculator_results = []
     tool_requested = False
+    unknown_database = None
 
     def boundary(request, resolution, route):
         try:
@@ -7579,6 +7585,9 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
             boundary_failures.append((route.value, str(exc)))
             raise
         requests.append(request)
+        if unknown_database is not None:
+            result.database = unknown_database
+        recovery_boundaries.append(result)
         return result
 
     def adapter(**_kwargs):
@@ -7692,11 +7701,286 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
         if next_fresh:
             controller.update_agent_runtime(enabled=False, bridge=bridge)
         tool_requested = False
+        if recovery_scenario is not None:
+            from tldw_chatbook.Chat.console_trace_service import (
+                ConsoleTraceCallBoundary,
+            )
+
+            remaining_failures = 2 if recovery_scenario == "retry-twice" else 1
+            original_bind = factory.repository.bind_call
+            original_mark = ConsoleTraceCallBoundary.mark_dispatch_started
+            bind_inputs = {}
+
+            def record_mark(boundary, bundle, provenance):
+                bind_inputs[id(boundary)] = (bundle, provenance)
+                return original_mark(boundary, bundle, provenance)
+
+            monkeypatch.setattr(ConsoleTraceCallBoundary, "mark_dispatch_started", record_mark)
+
+            def fail_bind_once(*args, **kwargs):
+                nonlocal remaining_failures
+                result = original_bind(*args, **kwargs)
+                if remaining_failures:
+                    remaining_failures -= 1
+                    raise RuntimeError("synthetic owned bind failure")
+                return result
+
+            if recovery_scenario == "unknown-postcommit":
+                from contextlib import contextmanager
+
+                checkpoint_attempts = []
+                dispatch_repository = store.persistence.console_dispatch_repository
+                original_cas = type(dispatch_repository).cas_state
+
+                def record_cas(instance, transition, *args, **kwargs):
+                    if instance is dispatch_repository:
+                        checkpoint_attempts.append(transition)
+                    return original_cas(instance, transition, *args, **kwargs)
+
+                monkeypatch.setattr(type(dispatch_repository), "cas_state", record_cas)
+
+                class UnreadableBindDatabase:
+                    committed = False
+
+                    def __getattr__(self, name):
+                        return getattr(chat_db, name)
+
+                    @contextmanager
+                    def transaction(self, *, immediate=False):
+                        if self.committed:
+                            raise RuntimeError("synthetic controller reconciliation unavailable")
+                        with chat_db.transaction(immediate=immediate) as cursor:
+                            yield cursor
+                        self.committed = True
+                        raise RuntimeError("synthetic controller bind postcommit failure")
+
+                unknown_database = UnreadableBindDatabase()
+            else:
+                monkeypatch.setattr(factory.repository, "bind_call", fail_bind_once)
         # Equal text is deliberate: different saved owners must remain distinct.
         second = await controller.submit_draft(
             "Observe the sky.", session_id=session.id
         )
         assert second.accepted
+        if recovery_scenario == "unknown-postcommit":
+            assert second.terminal_status is ConsoleRunStatus.BLOCKED
+            assert second.visible_copy == "Accepted turn is retained for recovery."
+            preparation_id = second.preparation_id
+            failed = recovery_boundaries[-1]
+            assert failed.dispatch_outcome == "unknown"
+            assert controller.trace_call_recovery_preparation() is None
+            recovery = store.dispatch_recovery_for_presentation(session.id)
+            assert recovery is not None
+            assert recovery.kind.value == "dispatch_started"
+            assert "retry_anyway" in {action.action_id.value for action in recovery.actions}
+            restored = dispatch_repository.reconcile_for_session(recovery.conversation_id)
+            assert restored.kind.value == "dispatch_started"
+            assert restored.checkpoint == recovery.checkpoint
+            assert len(checkpoint_attempts) == 1
+            assert checkpoint_attempts[0].new_state.value == "dispatch_started"
+            with chat_db.transaction() as cursor:
+                committed = factory.repository.get_call(cursor, failed.reserve().call_id)
+                assert committed.state is TraceCallState.DISPATCH_STARTED
+                counts = tuple(cursor.execute(
+                    "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                    "(SELECT COUNT(*) FROM console_trace_events), "
+                    "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                    "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                ).fetchone())
+            retried = await controller.retry_library_preparation(preparation_id)
+            assert not retried.accepted
+            cancelled = controller.cancel_library_preparation(preparation_id)
+            assert not cancelled.accepted
+            assert adapter_entries == 2
+            assert preparation_id in controller._durable_postcommit_continuations
+            with chat_db.transaction() as cursor:
+                assert factory.repository.get_call(cursor, committed.call_id) == committed
+                assert tuple(cursor.execute(
+                    "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                    "(SELECT COUNT(*) FROM console_trace_events), "
+                    "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                    "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                ).fetchone()) == counts
+            assert reader.read_calls(first_user_id) == first_trace
+            return
+        if recovery_scenario is not None:
+            from tldw_chatbook.Chat.console_trace_service import (
+                TraceCallPersistenceError,
+            )
+
+            assert second.terminal_status is ConsoleRunStatus.BLOCKED
+            preparation_id = second.preparation_id
+            failed_boundary = controller._trace_call_boundaries_by_preparation[preparation_id]
+            reserved = failed_boundary.reserve()
+            reserved_call_id = reserved.call_id
+            reserved_idempotency_key = reserved.idempotency_key
+            reserved_run_id = reserved.run_id
+            assert reserved.state is TraceCallState.RESERVED
+            assert adapter_entries == 2
+            with chat_db.transaction() as cursor:
+                assert factory.repository.get_surface_tail(
+                    cursor, reserved.segment_id,
+                ).node_id == failed_boundary.admission.predecessor_surface_head_id
+            if recovery_scenario in {"send-without-capture", "cancel"}:
+                with chat_db.transaction() as cursor:
+                    trace_counts = tuple(cursor.execute(
+                        "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                        "(SELECT COUNT(*) FROM console_trace_events), "
+                        "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                        "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                    ).fetchone())
+                if recovery_scenario == "cancel":
+                    action = controller.cancel_library_preparation(preparation_id)
+                    assert action.visible_copy == "Trace-captured send canceled."
+                    assert adapter_entries == 2
+                    expected_state = TraceCallState.NOT_DISPATCHED
+                else:
+                    action = await controller.send_without_capture(preparation_id)
+                    assert action.terminal_status is ConsoleRunStatus.COMPLETED
+                    assert adapter_entries == (3 if next_fresh else 4)
+                    expected_state = TraceCallState.RESERVED
+                assert store.preparation_for_session(session.id) is None
+                assert preparation_id not in controller._durable_postcommit_continuations
+                repeated = await controller.retry_library_preparation(preparation_id)
+                assert not repeated.accepted
+                with chat_db.transaction() as cursor:
+                    retained = factory.repository.get_call(cursor, reserved_call_id)
+                    assert retained.call_id == reserved_call_id
+                    assert retained.idempotency_key == reserved_idempotency_key
+                    assert retained.run_id == reserved_run_id
+                    assert retained.state is expected_state
+                    assert retained.surface_node_id is None
+                    assert retained.request_header_id is None
+                    assert tuple(cursor.execute(
+                        "SELECT (SELECT COUNT(*) FROM console_trace_calls), "
+                        "(SELECT COUNT(*) FROM console_trace_events), "
+                        "(SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                        "(SELECT COUNT(*) FROM console_trace_request_headers)"
+                    ).fetchone()) == trace_counts
+                assert reader.read_calls(first_user_id) == first_trace
+                store.end_app_runtime()
+                assert chat_db.registered_connection_count() == 2
+                assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
+                return
+            if recovery_scenario == "foreign":
+                controller._trace_call_boundaries_by_preparation[preparation_id] = recovery_boundaries[0]
+            elif recovery_scenario == "foreign-reserved":
+                other_owner = object()
+                failed_boundary._accepted_preparation = other_owner
+                assert not failed_boundary.dispatch_started
+                assert not failed_boundary._retired
+                with chat_db.transaction() as cursor:
+                    assert factory.repository.get_call(cursor, reserved_call_id).state is TraceCallState.RESERVED
+            elif recovery_scenario == "cold":
+                controller._trace_call_boundaries_by_preparation.pop(preparation_id)
+            elif recovery_scenario in {"request", "route", "destination"}:
+                continuation = controller._durable_postcommit_continuations[preparation_id]
+                if recovery_scenario == "request":
+                    changed_request = replace(
+                        continuation.trace_request,
+                        active_request=({"role": "user", "content": "changed request"},),
+                    )
+                    continuation = replace(continuation, trace_request=changed_request)
+                elif recovery_scenario == "route":
+                    continuation = replace(continuation, prefill="changed route")
+                else:
+                    continuation = replace(
+                        continuation,
+                        resolution=replace(continuation.resolution, base_url="https://other.invalid/v1"),
+                    )
+                controller._durable_postcommit_continuations[preparation_id] = continuation
+            elif recovery_scenario == "terminal":
+                failed_boundary.mark_not_dispatched()
+            elif recovery_scenario == "unrelated":
+                with chat_db.transaction() as cursor:
+                    unrelated = factory.repository.reserve_call(
+                        cursor, owner_id=reserved.owner_id, segment_id=reserved.segment_id,
+                        turn_id=reserved.turn_id, run_id=new_opaque_id(), call_sequence=0,
+                        idempotency_key=new_opaque_id(), policy_id=reserved.policy_id,
+                    )
+                    tail = factory.repository.get_event_tail(cursor, reserved.segment_id)
+                    factory.repository.append_event(
+                        cursor, segment_id=reserved.segment_id, sequence=tail.sequence + 1,
+                        event_type="call_boundary", call_id=unrelated.call_id,
+                    )
+            with chat_db.transaction() as cursor:
+                call_count_before_retry = cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0]
+                event_count_before_retry = cursor.execute("SELECT COUNT(*) FROM console_trace_events").fetchone()[0]
+            if recovery_scenario == "retry-prepare":
+                prepare_remaining = 1
+                original_prepare = type(factory.service).prepare_current_surface_delta
+
+                def fail_reprepare(instance, *args, **kwargs):
+                    nonlocal prepare_remaining
+                    result = original_prepare(instance, *args, **kwargs)
+                    if instance is factory.service and kwargs.get("reserved_call") is not None and prepare_remaining:
+                        prepare_remaining -= 1
+                        raise RuntimeError("synthetic owned re-preparation failure")
+                    return result
+
+                monkeypatch.setattr(type(factory.service), "prepare_current_surface_delta", fail_reprepare)
+            retried = await controller.retry_library_preparation(preparation_id)
+            if recovery_scenario in {"retry-twice", "retry-prepare"}:
+                assert retried.terminal_status is ConsoleRunStatus.BLOCKED
+                assert adapter_entries == 2
+                retained_boundary = controller._trace_call_boundaries_by_preparation[preparation_id]
+                assert isinstance(retained_boundary, ConsoleTraceCallBoundary)
+                retained = retained_boundary.reserve()
+                assert retained.call_id == reserved_call_id
+                assert retained.idempotency_key == reserved_idempotency_key
+                retried = await controller.retry_library_preparation(preparation_id)
+            if recovery_scenario not in {"retry-once", "retry-twice", "retry-prepare"}:
+                assert retried.terminal_status is not ConsoleRunStatus.COMPLETED
+                assert adapter_entries == 2
+                assert reader.read_calls(first_user_id) == first_trace
+                with chat_db.transaction() as cursor:
+                    still_reserved = factory.repository.get_call(cursor, reserved_call_id)
+                    assert still_reserved.call_id == reserved_call_id
+                    assert still_reserved.idempotency_key == reserved_idempotency_key
+                    assert still_reserved.run_id == reserved_run_id
+                    assert still_reserved.surface_node_id is None
+                    assert still_reserved.request_header_id is None
+                    assert cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0] == call_count_before_retry
+                    assert cursor.execute("SELECT COUNT(*) FROM console_trace_events").fetchone()[0] == event_count_before_retry
+                    assert cursor.execute(
+                        "SELECT COUNT(*) FROM console_trace_events WHERE event_type = 'call_boundary' AND call_id = ?",
+                        (reserved_call_id,),
+                    ).fetchone()[0] == 1
+                return
+            assert retried.terminal_status is ConsoleRunStatus.COMPLETED
+            with chat_db.transaction() as cursor:
+                final_call = factory.repository.get_call(cursor, reserved_call_id)
+                assert final_call.call_id == reserved_call_id
+                assert final_call.idempotency_key == reserved_idempotency_key
+                assert final_call.run_id == reserved_run_id
+                assert final_call.state is TraceCallState.COMPLETE
+                assert cursor.execute(
+                    "SELECT COUNT(*) FROM console_trace_events WHERE event_type = 'call_boundary' AND call_id = ?",
+                    (reserved_call_id,),
+                ).fetchone()[0] == 1
+                assert cursor.execute(
+                    "SELECT COUNT(*) FROM console_trace_calls WHERE turn_id = ? AND call_sequence = 0",
+                    (reserved.turn_id,),
+                ).fetchone()[0] == 1
+                counts_before_stale = tuple(cursor.execute(
+                    "SELECT (SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                    "(SELECT COUNT(*) FROM console_trace_events), "
+                    "(SELECT COUNT(*) FROM console_trace_request_headers), "
+                    "(SELECT COUNT(*) FROM console_trace_calls)"
+                ).fetchone())
+            # Try the actual obsolete verifier/bind, not only cancellation.
+            with pytest.raises(TraceCallPersistenceError):
+                failed_boundary.mark_dispatch_started(*bind_inputs[id(failed_boundary)])
+            with pytest.raises(TraceCallPersistenceError):
+                failed_boundary.mark_not_dispatched()
+            with chat_db.transaction() as cursor:
+                assert tuple(cursor.execute(
+                    "SELECT (SELECT COUNT(*) FROM console_trace_surface_nodes), "
+                    "(SELECT COUNT(*) FROM console_trace_events), "
+                    "(SELECT COUNT(*) FROM console_trace_request_headers), "
+                    "(SELECT COUNT(*) FROM console_trace_calls)"
+                ).fetchone()) == counts_before_stale
+            assert adapter_entries == (3 if next_fresh else 4)
         with chat_db.transaction() as connection:
             assert first_call in [
                 tuple(row)
@@ -7774,10 +8058,75 @@ async def test_two_saved_turns_keep_history_references_through_production_trace(
             for request in requests
             for row in request.messages_payload
         )
+        store.end_app_runtime()
+        assert chat_db.registered_connection_count() == 2
+        assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
     finally:
+        store.end_app_runtime()
         runs_db.close()
         await gateway.aclose()
         chat_db.close_connection()
+        trace_observer.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+@pytest.mark.parametrize("scenario", [
+    "retry-once", "retry-twice", "foreign", "cold", "request", "route",
+    "destination", "terminal", "unrelated",
+])
+async def test_controller_retry_reuses_exact_owned_compound_reservation(
+    tmp_path, monkeypatch, next_fresh, scenario,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario=scenario,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+async def test_controller_unknown_postcommit_outcome_refuses_trace_retry_and_cancel(
+    tmp_path, monkeypatch, next_fresh,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario="unknown-postcommit",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+async def test_controller_retry_retains_reservation_after_repreparation_failure(
+    tmp_path, monkeypatch, next_fresh,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario="retry-prepare",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+@pytest.mark.parametrize("action", ["send-without-capture", "cancel"])
+async def test_controller_compound_failure_preserves_explicit_recovery_actions(
+    tmp_path, monkeypatch, next_fresh, action,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario=action,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
+async def test_controller_refuses_reserved_boundary_with_other_accepted_owner(
+    tmp_path, monkeypatch, next_fresh,
+):
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+        tmp_path, monkeypatch, False, True, next_fresh, False,
+        recovery_scenario="foreign-reserved",
+    )
 
 
 @pytest.mark.asyncio
@@ -7793,6 +8142,8 @@ async def test_production_trace_factory_keeps_canvas_tool_loops_on_their_saved_t
     from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
     chat_db = CharactersRAGDB(tmp_path / "canvas-trace-chat.sqlite", "canvas-trace")
+    trace_observer = CharactersRAGDB(tmp_path / "canvas-trace-chat.sqlite", "trace-observer")
+    observer_connection = trace_observer.get_connection()
     runs_db = AgentRunsDB(
         tmp_path / "canvas-trace-runs.sqlite", client_id="canvas-trace"
     )
@@ -8112,11 +8463,119 @@ async def test_production_trace_factory_keeps_canvas_tool_loops_on_their_saved_t
                     revision.source_message_id == saved_assistant.persisted_message_id
                 )
         assert store.pending_provider_trace_settlement_count(second_assistant.id) == 0
+        await runtime.dispose()
+        assert chat_db.registered_connection_count() == 2
+        assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
     finally:
         runs_db.close()
         await gateway.aclose()
         await runtime.dispose()
         chat_db.close_connection()
+        trace_observer.close_connection()
+
+
+@pytest.mark.parametrize("seam", ["durable", "canvas", "policy"])
+@pytest.mark.parametrize("outcome", ["complete", "error", "cancel"])
+@pytest.mark.parametrize("borrowed", [False, True], ids=["owned", "borrowed"])
+def test_console_worker_operations_preserve_connection_ownership(
+    tmp_path, seam, outcome, borrowed,
+):
+    """Worker completion/error/cancel releases only its own registered handle."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Canvas.models import CanvasScope
+    from tldw_chatbook.Canvas.service import CanvasService
+    from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+    from tldw_chatbook.Chat.console_library_policy_coordinator import (
+        ConsoleLibraryPolicyCoordinator,
+    )
+    from tldw_chatbook.Chat.console_library_policy_repository import (
+        ConsoleLibraryPolicyRepository,
+    )
+
+    database = CharactersRAGDB(tmp_path / "worker-ownership.sqlite", "worker-owner")
+    observer = CharactersRAGDB(tmp_path / "worker-ownership.sqlite", "worker-observer")
+    conversation_id = database.add_conversation({"title": "worker ownership"})
+    caller_connection = database.get_connection()
+    observer_connection = observer.get_connection()
+    store = ConsoleChatStore(persistence=ChatPersistenceService(database))
+    controller = ConsoleChatController(store=store, provider_gateway=RecordingStreamingGateway())
+    scope = CanvasScope("session", conversation_id, (), None, None, "run")
+
+    def finish():
+        if outcome == "cancel":
+            raise asyncio.CancelledError()
+        if outcome == "error":
+            raise RuntimeError("synthetic worker fault")
+        return "complete"
+
+    class FaultingCanvasService(CanvasService):
+        def quota_usage(self, scope):
+            super().quota_usage(scope)
+            return finish()
+
+    canvas = ConsoleCanvasController(durable_service=FaultingCanvasService(database))
+    policy_repository = ConsoleLibraryPolicyRepository(database)
+    policy_coordinator = ConsoleLibraryPolicyCoordinator(policy_repository)
+
+    def policy_operation():
+        result = policy_repository.read(conversation_id)
+        assert result.durable_policy is None
+        assert result.snapshot.source == "missing"
+        return finish()
+
+    def durable_operation():
+        with database.transaction() as cursor:
+            assert cursor.execute("SELECT 1").fetchone()[0] == 1
+            return finish()
+
+    async def exercise():
+        # A dedicated single worker makes borrowed ownership deterministic.
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
+        borrowed_connection = None
+        if borrowed:
+            def begin():
+                connection = database.get_connection()
+                connection.execute("BEGIN")
+                return connection
+            borrowed_connection = await asyncio.to_thread(begin)
+        try:
+            try:
+                if seam == "durable":
+                    result = await controller._run_durable_db_call(durable_operation)
+                elif seam == "canvas":
+                    result = await asyncio.to_thread(canvas._service_call, "quota_usage", scope)
+                else:
+                    result = await policy_coordinator._run_repository_call(policy_operation)
+            except (RuntimeError, asyncio.CancelledError):
+                assert outcome != "complete"
+            else:
+                assert outcome == "complete"
+                assert result == "complete"
+            if borrowed:
+                def check_borrowed():
+                    assert database.get_connection() is borrowed_connection
+                    assert borrowed_connection.in_transaction
+                    assert borrowed_connection.execute("SELECT 1").fetchone()[0] == 1
+                await asyncio.to_thread(check_borrowed)
+            else:
+                assert database.registered_connection_count() == 2
+        finally:
+            if borrowed:
+                def release_borrowed():
+                    borrowed_connection.rollback()
+                    database.close_connection()
+                await asyncio.to_thread(release_borrowed)
+
+    try:
+        asyncio.run(exercise())
+        assert database.registered_connection_count() == 2
+        assert database.get_connection() is caller_connection
+        assert observer_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        store.end_app_runtime()
+        database.close_connection()
+        observer.close_connection()
 
 
 @pytest.mark.asyncio

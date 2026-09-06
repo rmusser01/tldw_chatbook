@@ -6323,6 +6323,12 @@ class ConsoleChatController:
                 }
             ):
                 return self._prepared_action_refusal(current)
+            if (
+                current.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+                and trace_call_admission.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                and preparation_id not in self._trace_call_boundaries_by_preparation
+            ):
+                return self._prepared_action_refusal(current)
             if current.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE:
                 current = self.store.compare_and_set_preparation(
                     current.session_id,
@@ -8564,6 +8570,16 @@ class ConsoleChatController:
         db = getattr(self.store.persistence, "db", None)
         return not bool(getattr(db, "is_memory_db", False))
 
+    def _run_owned_chat_db_operation(
+        self, call: Callable[..., Any], /, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Close a worker invocation's chat handle after all its work unwinds."""
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        database = getattr(self.store.persistence, "db", None)
+        with operation_owned_connection(database):
+            return call(*args, **kwargs)
+
     async def _run_durable_db_call(
         self, call: Callable[..., Any], /, *args: Any
     ) -> Any:
@@ -8585,7 +8601,7 @@ class ConsoleChatController:
         """
 
         if self._durable_db_call_offloadable():
-            return await asyncio.to_thread(call, *args)
+            return await asyncio.to_thread(self._run_owned_chat_db_operation, call, *args)
         return call(*args)
 
     async def _drain_dispatch_transition(self, assistant_id: str) -> bool:
@@ -9184,25 +9200,44 @@ class ConsoleChatController:
             and "checkpoint_transition" in existing_effects.completed
             and "provider_entry" not in existing_effects.completed
         ):
-            self.store.mark_dispatch_recovery_needed(
-                session_id,
-                commit.assistant_message_id,
-            )
-            self._hydrate_dispatch_recovery_queue(session_id, force=True)
-            return ConsoleSubmitResult(
-                True,
-                True,
-                "Delivery status is unknown. Use Retry anyway or Discard.",
-                session_id=session_id,
-                user_message_id=commit.user_message_id,
-                assistant_message_id=commit.assistant_message_id,
-                terminal_status=self.run_state_for(session_id).status,
-                origin=continuation.origin,
-                queue_entry_id=continuation.queue_entry_id,
-                committed_context_epoch=continuation.committed_context_epoch,
-                preparation_id=preparation_id,
-                provider_started=True,
-            )
+            try:
+                verify_recovery = getattr(
+                    self.provider_gateway, "_verify_trace_preparation_recovery", None,
+                )
+                if (
+                    continuation.trace_capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON
+                    or not callable(verify_recovery)
+                ):
+                    raise TraceCallPersistenceError()
+                await self._run_durable_db_call(
+                    verify_recovery, continuation,
+                    self._trace_call_boundaries_by_preparation.get(preparation_id),
+                )
+                # This only proves the missing provider effect may be retried.
+                # Keep the completed checkpoint CAS and its attempt unchanged;
+                # gateway recovery independently checks the newly prepared bytes.
+                # An explicit Capture-Off action uses this same ownership proof,
+                # but never re-admits or changes the abandoned trace reservation.
+            except TraceCallPersistenceError:
+                self.store.mark_dispatch_recovery_needed(
+                    session_id,
+                    commit.assistant_message_id,
+                )
+                self._hydrate_dispatch_recovery_queue(session_id, force=True)
+                return ConsoleSubmitResult(
+                    True,
+                    True,
+                    "Delivery status is unknown. Use Retry anyway or Discard.",
+                    session_id=session_id,
+                    user_message_id=commit.user_message_id,
+                    assistant_message_id=commit.assistant_message_id,
+                    terminal_status=self.run_state_for(session_id).status,
+                    origin=continuation.origin,
+                    queue_entry_id=continuation.queue_entry_id,
+                    committed_context_epoch=continuation.committed_context_epoch,
+                    preparation_id=preparation_id,
+                    provider_started=True,
+                )
         assistant_holder: dict[str, ConsoleChatMessage] = {}
 
         def publish_owners() -> None:
@@ -9472,6 +9507,13 @@ class ConsoleChatController:
                     preparation_id=preparation_id,
                     provider_started=False,
                 )
+            bind_trace_owner = getattr(self.provider_gateway, "_bind_trace_preparation", None)
+            if callable(bind_trace_owner):
+                bind_trace_owner(
+                    continuation.stream_signals, continuation,
+                    boundary=(self._trace_call_boundaries_by_preparation.get(preparation_id)
+                              if effective_capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON else None),
+                )
             stream_result = await self._run_durable_postcommit_effect(
                 preparation_id,
                 "provider_entry",
@@ -9551,7 +9593,23 @@ class ConsoleChatController:
             failed_call_started = any_provider_started
             if isinstance(exc, TraceCallPersistenceError):
                 boundary_started = getattr(exc.boundary, "dispatch_started", None)
-                if type(boundary_started) is bool:
+                if getattr(exc.boundary, "dispatch_outcome", None) == "unknown":
+                    # A cached unstarted reservation is not rollback evidence
+                    # when the exact dispatch read-back was unavailable.
+                    failed_call_started = True
+                    if getattr(exc.boundary, "_accepted_preparation", None) is continuation:
+                        self._trace_call_boundaries_by_preparation[preparation_id] = exc.boundary
+                        if not any_provider_started:
+                            try:
+                                # FRESH normalizes before this checkpoint;
+                                # AGENT already completed it. Persist the same
+                                # conservative uncertainty before cold recovery.
+                                await enter_provider_dispatch()
+                            except Exception:  # noqa: BLE001 - retain unknown ownership if its checkpoint also fails
+                                logger.warning("Uncertain trace dispatch checkpoint could not be saved.")
+                            else:
+                                any_provider_started = True
+                elif type(boundary_started) is bool:
                     failed_call_started = boundary_started
                 elif exc.reservation_status is not None:
                     # Boundary construction/reservation failed before this
@@ -22256,6 +22314,7 @@ class ConsoleChatController:
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
             run_id, outcome = await asyncio.to_thread(
+                self._run_owned_chat_db_operation,
                 self._agent_bridge.run_reply,
                 conversation_id=conversation_id,
                 session_id=session_id,

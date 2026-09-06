@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from collections.abc import Iterator
 from dataclasses import replace
@@ -20,12 +21,17 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     frozen_policy_from_provenance,
     request_route_provenance,
 )
-from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+from tldw_chatbook.Chat.console_trace_repository import (
+    ConsoleTraceRepository,
+    TraceCallRecord,
+)
 from tldw_chatbook.Chat.console_trace_service import (
     ConsoleTraceCallBoundary,
     ConsoleTraceService,
     TraceCallIdentity,
+    TraceCallPersistenceError,
 )
+from tldw_chatbook.DB.base_db import operation_owned_connection
 
 REVISION_OWNER_LOOKUP_BATCH_SIZE = 256
 
@@ -66,6 +72,136 @@ class ConsoleTraceBoundaryFactory:
         self.repository = repository or ConsoleTraceRepository()
         self.service = service or ConsoleTraceService(self.repository)
         self._lock = threading.RLock()
+
+    def _verify_owned_reservation(
+        self,
+        cursor: sqlite3.Cursor,
+        boundary: ConsoleTraceCallBoundary,
+        accepted_preparation: object,
+    ) -> TraceCallRecord:
+        """Read exact live ownership without issuing or retiring a capability."""
+        if (
+            type(boundary) is not ConsoleTraceCallBoundary
+            or boundary._factory is not self
+            or boundary._accepted_preparation is not accepted_preparation
+            or accepted_preparation is None
+            or boundary.dispatch_started
+            or boundary._recovery_transferred
+            or boundary.dispatch_outcome == "unknown"
+            or boundary._reserved is None
+            or not isinstance(boundary._request, PreparedProviderRequest)
+            or boundary._request.semantic.provenance is None
+        ):
+            raise ValueError("trace_recovery_owner")
+        reserved = self.repository.get_call(cursor, boundary._reserved.call_id)
+        latest = self.repository.get_latest_call_boundary(cursor, boundary.identity.segment_id)
+        tail = self.service._effective_surface_tail(cursor, boundary.identity.segment_id)
+        if (
+            reserved != boundary._reserved
+            or reserved is None
+            or reserved.state is not TraceCallState.RESERVED
+            or latest is None or latest.call_id != reserved.call_id
+            or (None if tail is None else tail.node_id)
+            != boundary.admission.predecessor_surface_head_id
+            or any(value is not None for value in (
+                reserved.surface_node_id, reserved.request_header_id,
+                reserved.provider_name, reserved.model_name, reserved.route_identity,
+                reserved.dispatch_started_at, reserved.response_started_at,
+                reserved.settled_at, reserved.provider_inactive_at,
+                reserved.outcome, reserved.usage,
+            ))
+            or self.repository.get_response_link(cursor, reserved.call_id) is not None
+            or cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_events WHERE event_type = 'call_boundary' AND call_id = ?",
+                (reserved.call_id,),
+            ).fetchone()[0] != 1
+        ):
+            raise ValueError("trace_recovery_reservation")
+        revision = self.repository.get_semantic_revision(cursor, boundary._current_revision_id)
+        owner = self.repository.get_owner(cursor, reserved.owner_id)
+        policy = frozen_policy_from_provenance(boundary._request.semantic.provenance)
+        if (
+            revision is None or owner is None
+            or revision.source_message_id != reserved.turn_id
+            or self.repository.get_attached_owner_by_conversation(
+                cursor, revision.source_conversation_id,
+            ) != owner
+            or policy.policy_id != reserved.policy_id
+            or self.repository.get_policy(cursor, policy.policy_id) != policy
+        ):
+            raise ValueError("trace_recovery_revision")
+        return reserved
+
+    def _verify_owned_recovery(
+        self, boundary: ConsoleTraceCallBoundary, accepted_preparation: object,
+    ) -> None:
+        """Prove safe local re-entry; transport still requires full preparation."""
+        try:
+            with self._lock, operation_owned_connection(self.database), self.database.transaction() as cursor:
+                self._verify_owned_reservation(cursor, boundary, accepted_preparation)
+        except Exception:  # noqa: BLE001 - failed proof cannot expose database/provider details
+            raise TraceCallPersistenceError(boundary=boundary) from None
+
+    def _recover_owned_boundary(
+        self,
+        boundary: ConsoleTraceCallBoundary,
+        accepted_preparation: object,
+        request: PreparedProviderRequest,
+        resolution: object,
+        route: object,
+    ) -> ConsoleTraceCallBoundary:
+        """Reverify the exact live owner's reservation without allocating a call."""
+        try:
+            if (
+                type(boundary) is not ConsoleTraceCallBoundary
+                or boundary._factory is not self
+                or boundary._accepted_preparation is not accepted_preparation
+                or accepted_preparation is None
+                or boundary._request != request
+                or boundary._resolution != resolution
+                or boundary.admission.route_identity != getattr(route, "value", None)
+                or boundary.dispatch_started
+                or boundary._recovery_transferred
+                or boundary.dispatch_outcome == "unknown"
+                or boundary._reserved is None
+                or request.provenance is None
+                or request.semantic.provenance is None
+            ):
+                raise ValueError("trace_recovery_owner")
+            with self._lock, operation_owned_connection(self.database):
+                with self.database.transaction(immediate=True) as cursor:
+                    reserved = self._verify_owned_reservation(
+                        cursor, boundary, accepted_preparation,
+                    )
+                    # Remove the original verifier before a replacement can exist.
+                    boundary._retired = True
+                    self.service._retire_preparation(boundary.admission)
+                    admission, surface = self.service.prepare_current_surface_delta(
+                        cursor,
+                        owner_id=reserved.owner_id, segment_id=reserved.segment_id,
+                        route_identity=boundary.admission.route_identity,
+                        preparation_identity=new_opaque_id(), provenance=request.provenance,
+                        values=tuple(request.messages_payload) + tuple(
+                            group.checkpoint for group in request.continuation_groups
+                        ),
+                        completed_tool_turn=boundary.admission.completed_tool_turn,
+                        current_turn_id=reserved.turn_id, current_policy_id=reserved.policy_id,
+                        reserved_call=reserved,
+                    )
+                recovered = ConsoleTraceCallBoundary(
+                    service=self.service, database=self.database, identity=boundary.identity,
+                    admission=admission, occurred_at_factory=_utc_now,
+                    surface_boundary=surface, _reserved=reserved,
+                    _factory=self, _request=request, _resolution=resolution,
+                    _current_revision_id=boundary._current_revision_id,
+                    _accepted_preparation=accepted_preparation,
+                )
+                # Verifier retirement happens before reconstruction, but the
+                # reservation owner transfers only once a replacement exists.
+                boundary._recovery_transferred = True
+                return recovered
+        except Exception:  # noqa: BLE001 - recovery errors are content-free owned failures
+            raise TraceCallPersistenceError(boundary=boundary) from None
 
     def __call__(
         self,
@@ -168,7 +304,7 @@ class ConsoleTraceBoundaryFactory:
         idempotency_key = new_opaque_id()
         call_sequence = 0
         reserved = None
-        with self._lock:
+        with self._lock, operation_owned_connection(self.database):
             with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
                 unique_revision_ids = tuple(dict.fromkeys(revision_ids))
                 rows = []
@@ -199,10 +335,31 @@ class ConsoleTraceBoundaryFactory:
                     call_sequence = self.repository.read_next_call_sequence(
                         cursor, run_id
                     )
+                    if route_record.route is ConsoleRequestRoute.AGENT_FIRST and call_sequence != 0:
+                        # Only the exact owned recovery path may reuse a primary
+                        # reservation. A cold invocation is not its continuation.
+                        raise ValueError("trace_primary_run_already_started")
                 owner = self.repository.get_attached_owner_by_conversation(
                     cursor,
                     conversation_id,
                 )
+                if owner is not None and route_record.route is ConsoleRequestRoute.FRESH:
+                    latest = self.repository.get_latest_call_boundary(cursor, owner.root_segment_id)
+                    prior = (
+                        None if latest is None or latest.call_id is None
+                        else self.repository.get_call(cursor, latest.call_id)
+                    )
+                    if (
+                        prior is not None
+                        and (prior.owner_id, prior.turn_id) == (owner.owner_id, turn_id)
+                        and prior.state in {
+                            TraceCallState.RESERVED,
+                            TraceCallState.DISPATCH_STARTED,
+                            TraceCallState.DISPATCH_UNKNOWN,
+                            TraceCallState.RESPONSE_STARTED,
+                        }
+                    ):
+                        raise ValueError("trace_fresh_turn_requires_owned_recovery")
                 if tool_loop:
                     origin = self.repository.get_run_origin(cursor, run_id)
                     if (
@@ -350,6 +507,10 @@ class ConsoleTraceBoundaryFactory:
                 occurred_at_factory=_utc_now,
                 surface_boundary=surface_boundary,
                 _reserved=reserved,
+                _factory=self,
+                _request=request,
+                _resolution=_resolution,
+                _current_revision_id=current_revision_id,
             )
 
 

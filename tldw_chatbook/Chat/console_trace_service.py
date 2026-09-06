@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from collections import Counter
@@ -9,7 +10,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Generic, TypeVar, cast, overload
+from typing import Generic, Literal, TypeVar, cast, overload
 from weakref import ReferenceType, ref
 
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
@@ -70,6 +71,7 @@ from tldw_chatbook.Chat.console_trace_repository import (
     TraceCallRecord,
     TraceEventType,
 )
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.transaction_observer import (
     current_managed_transaction,
     register_transaction_completion,
@@ -93,18 +95,19 @@ def trace_critical_write_checkpoint_policy(database: object) -> Iterator[None]:
     if not callable(get_connection):
         yield
         return
-    connection = get_connection()
-    row = connection.execute("PRAGMA wal_autocheckpoint").fetchone()
-    if row is None or type(row[0]) is not int or row[0] < 0:
-        raise RuntimeError("wal_autocheckpoint is unavailable")
-    previous_pages = row[0]
-    connection.execute(
-        f"PRAGMA wal_autocheckpoint={TRACE_CRITICAL_WRITE_WAL_AUTOCHECKPOINT_PAGES}"
-    )
-    try:
-        yield
-    finally:
-        connection.execute(f"PRAGMA wal_autocheckpoint={previous_pages}")
+    with operation_owned_connection(database):
+        connection = get_connection()
+        row = connection.execute("PRAGMA wal_autocheckpoint").fetchone()
+        if row is None or type(row[0]) is not int or row[0] < 0:
+            raise RuntimeError("wal_autocheckpoint is unavailable")
+        previous_pages = row[0]
+        connection.execute(
+            f"PRAGMA wal_autocheckpoint={TRACE_CRITICAL_WRITE_WAL_AUTOCHECKPOINT_PAGES}"
+        )
+        try:
+            yield
+        finally:
+            connection.execute(f"PRAGMA wal_autocheckpoint={previous_pages}")
 
 
 _REASONING_KEYS = frozenset(
@@ -171,6 +174,22 @@ from tldw_chatbook.Chat.console_trace_errors import (  # noqa: E402, F401
 )
 
 
+class _TraceDispatchWriteError(TraceCallPersistenceError):
+    """Keep bind outcome separate from reservation establishment."""
+
+    def __init__(self, outcome: Literal["rolled_back", "unknown"]) -> None:
+        super().__init__()
+        self.outcome = outcome
+
+
+class _TraceDispatchCancelled(asyncio.CancelledError):
+    """Carry reconciled write state without authorizing adapter entry."""
+
+    def __init__(self, outcome: TraceCallRecord | Literal["rolled_back", "unknown"]) -> None:
+        super().__init__()
+        self.outcome = outcome
+
+
 @dataclass(slots=True)
 class ConsoleTraceCallBoundary:
     """Own one reservation through its committed pre-adapter transition."""
@@ -182,6 +201,16 @@ class ConsoleTraceCallBoundary:
     occurred_at_factory: Callable[[], str] = field(repr=False)
     surface_boundary: object | None = field(default=None, repr=False)
     _reserved: TraceCallRecord | None = field(default=None, repr=False)
+    _factory: object | None = field(default=None, repr=False)
+    _request: object | None = field(default=None, repr=False)
+    _resolution: object | None = field(default=None, repr=False)
+    _current_revision_id: str | None = field(default=None, repr=False)
+    _accepted_preparation: object | None = field(default=None, repr=False)
+    _retired: bool = field(default=False, init=False, repr=False)
+    _recovery_transferred: bool = field(default=False, init=False, repr=False)
+    _dispatch_outcome: Literal["not_attempted", "rolled_back", "committed", "unknown"] = field(
+        default="not_attempted", init=False, repr=False,
+    )
     _started: TraceCallRecord | None = field(default=None, init=False, repr=False)
     _unknown: TraceCallRecord | None = field(default=None, init=False, repr=False)
     _response_started_at: str | None = field(default=None, init=False, repr=False)
@@ -213,6 +242,11 @@ class ConsoleTraceCallBoundary:
         return self._started is not None
 
     @property
+    def dispatch_outcome(self) -> str:
+        """Return the content-free result of the exact bind write/read-back."""
+        return self._dispatch_outcome
+
+    @property
     def preparation_identity(self) -> str:
         """Return the verifier identity admitted for this call."""
 
@@ -240,8 +274,8 @@ class ConsoleTraceCallBoundary:
     ) -> TraceCallRecord:
         """Persist the verified boundary and commit dispatch-start atomically."""
 
-        if self._reserved is None or self._started is not None:
-            raise TraceCallPersistenceError()
+        if self._reserved is None or self._started is not None or self._retired:
+            raise TraceCallPersistenceError(boundary=self)
         try:
             projected = getattr(self.surface_boundary, "provenance", None)
             if projected is not None:
@@ -263,10 +297,25 @@ class ConsoleTraceCallBoundary:
                 surface_delta=surface_delta,
                 occurred_at=self.occurred_at_factory(),
             )
+            self._dispatch_outcome = "committed"
+        except _TraceDispatchCancelled as exc:
+            if isinstance(exc.outcome, TraceCallRecord):
+                self._started = exc.outcome
+                self._dispatch_outcome = "committed"
+            else:
+                self._dispatch_outcome = exc.outcome
+                if exc.outcome == "unknown":
+                    self._retired = True
+            raise asyncio.CancelledError() from None
+        except _TraceDispatchWriteError as exc:
+            self._dispatch_outcome = exc.outcome
+            if exc.outcome == "unknown":
+                self._retired = True
+            raise TraceCallPersistenceError(boundary=self) from None
         except TraceCallPersistenceError:
-            raise
+            raise TraceCallPersistenceError(boundary=self) from None
         except Exception:
-            raise TraceCallPersistenceError() from None
+            raise TraceCallPersistenceError(boundary=self) from None
         return self._started
 
     def mark_dispatch_unknown(self) -> TraceCallRecord:
@@ -277,7 +326,7 @@ class ConsoleTraceCallBoundary:
         if self._started is None:
             raise TraceCallPersistenceError()
         try:
-            with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+            with operation_owned_connection(self.database), self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
                 self._unknown = self.service.repository.advance_call_state(
                     cursor,
                     call_id=self._started.call_id,
@@ -293,12 +342,15 @@ class ConsoleTraceCallBoundary:
     def mark_not_dispatched(self) -> TraceCallRecord:
         """Terminally record an explicit cancel before adapter entry."""
 
-        if self._reserved is None or self._started is not None:
+        if self._reserved is None or self._started is not None or self._retired:
             raise TraceCallPersistenceError(boundary=self)
         if self._reserved.state is TraceCallState.NOT_DISPATCHED:
             return self._reserved
         try:
-            with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+            with operation_owned_connection(self.database), self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+                durable = self.service.repository.get_call(cursor, self._reserved.call_id)
+                if durable != self._reserved or durable.state is not TraceCallState.RESERVED:
+                    raise TraceCallPersistenceError(boundary=self)
                 self._reserved = self.service.repository.advance_call_state(
                     cursor,
                     call_id=self._reserved.call_id,
@@ -1574,49 +1626,137 @@ class ConsoleTraceService:
     ) -> TraceCallRecord:
         """Persist, bind, and start one reserved call in one transaction."""
 
-        with trace_critical_write_checkpoint_policy(database):
-            try:
-                with database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
-                    reserved_call = self.repository.get_call(cursor, call_id)
-                    persisted = self.persist_request(
-                        cursor,
-                        owner_id=owner_id,
-                        segment_id=segment_id,
-                        provenance=provenance,
-                        bundle=bundle,
-                        surface_delta=surface_delta,
-                        reserved_call=reserved_call,
+        reserved_call = None
+        persisted = None
+        started = None
+        try:
+            with trace_critical_write_checkpoint_policy(database), database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+                reserved_call = self.repository.get_call(cursor, call_id)
+                persisted = self.persist_request(
+                    cursor,
+                    owner_id=owner_id,
+                    segment_id=segment_id,
+                    provenance=provenance,
+                    bundle=bundle,
+                    surface_delta=surface_delta,
+                    reserved_call=reserved_call,
+                )
+                self.repository.bind_call(
+                    cursor,
+                    call_id=call_id,
+                    surface_node_id=persisted.surface_head_id,
+                    request_header_id=persisted.header.header_id,
+                    provider_name=persisted.header.provider_name,
+                    model_name=persisted.header.model_name,
+                    route_identity=persisted.header.route_identity,
+                )
+                started = self.repository.advance_call_state(
+                    cursor,
+                    call_id=call_id,
+                    target=TraceCallState.DISPATCH_STARTED,
+                    occurred_at=occurred_at,
+                    integrity_state=(
+                        "complete" if bundle.available else "incomplete"
+                    ),
+                    omission_reason_code=(
+                        None
+                        if bundle.available or bundle.omission_reason is None
+                        else bundle.omission_reason.value
+                    ),
+                )
+            return started
+        except asyncio.CancelledError:
+            outcome = self._reconcile_dispatch_write(
+                database, reserved_call=reserved_call, persisted=persisted,
+                started=started, surface_delta=surface_delta,
+            )
+            if not isinstance(outcome, TraceCallRecord):
+                self._discard_failed_surface_delta(surface_delta)
+            raise _TraceDispatchCancelled(outcome) from None
+        except Exception:  # noqa: BLE001 - write/cleanup errors may contain provider values
+            outcome = self._reconcile_dispatch_write(
+                database, reserved_call=reserved_call, persisted=persisted,
+                started=started, surface_delta=surface_delta,
+            )
+            if isinstance(outcome, TraceCallRecord):
+                return outcome
+            self._discard_failed_surface_delta(surface_delta)
+            raise _TraceDispatchWriteError(outcome) from None
+
+    def _discard_failed_surface_delta(self, surface_delta: VerifiedSurfaceDelta) -> None:
+        """Discard tentative verifier state without changing durable evidence."""
+        self._surface_ref_cache.pop(surface_delta.segment_id, None)
+        self._child_capabilities.pop(id(surface_delta.child_binding), None)
+        self._pending_child_uses.pop(id(surface_delta.child_binding), None)
+        self._prune_unreferenced_parents()
+
+    def _reconcile_dispatch_write(
+        self,
+        database: object,
+        *,
+        reserved_call: TraceCallRecord | None,
+        persisted: PersistedTraceRequest | None,
+        started: TraceCallRecord | None,
+        surface_delta: VerifiedSurfaceDelta,
+    ) -> TraceCallRecord | Literal["rolled_back", "unknown"]:
+        """Read only the exact attempted call and changed boundary material."""
+        if reserved_call is None:
+            return "unknown"
+        try:
+            with operation_owned_connection(database), database.transaction() as cursor:  # type: ignore[attr-defined]
+                durable = self.repository.get_call(cursor, reserved_call.call_id)
+                tail = self._effective_surface_tail(cursor, surface_delta.segment_id)
+                head = None if tail is None else tail.node_id
+                if (
+                    durable == reserved_call
+                    and reserved_call.state is TraceCallState.RESERVED
+                    and reserved_call.surface_node_id is None
+                    and reserved_call.request_header_id is None
+                    and reserved_call.dispatch_started_at is None
+                    and reserved_call.response_started_at is None
+                    and head == surface_delta.predecessor_surface_head_id
+                ):
+                    return "rolled_back"
+                if (
+                    persisted is None or started is None or durable != started
+                    or started.state is not TraceCallState.DISPATCH_STARTED
+                    or head != persisted.surface_head_id
+                    or durable.surface_node_id != persisted.surface_head_id
+                    or durable.request_header_id != persisted.header.header_id
+                    or self.repository.get_request_header(cursor, persisted.header.header_id)
+                    != persisted.header
+                    or any(
+                        self.repository.get_surface_node(cursor, node.node_id) != node
+                        for node in persisted.appended_nodes
                     )
-                    self.repository.bind_call(
-                        cursor,
-                        call_id=call_id,
-                        surface_node_id=persisted.surface_head_id,
-                        request_header_id=persisted.header.header_id,
-                        provider_name=persisted.header.provider_name,
-                        model_name=persisted.header.model_name,
-                        route_identity=persisted.header.route_identity,
-                    )
-                    return self.repository.advance_call_state(
-                        cursor,
-                        call_id=call_id,
-                        target=TraceCallState.DISPATCH_STARTED,
-                        occurred_at=occurred_at,
-                        integrity_state=(
-                            "complete" if bundle.available else "incomplete"
-                        ),
-                        omission_reason_code=(
-                            None
-                            if bundle.available or bundle.omission_reason is None
-                            else bundle.omission_reason.value
-                        ),
-                    )
-            except Exception:
-                if surface_delta.completed_tool_turn is not None:
-                    self._surface_ref_cache.pop(segment_id, None)
-                    self._child_capabilities.pop(id(surface_delta.child_binding), None)
-                    self._pending_child_uses.pop(id(surface_delta.child_binding), None)
-                    self._prune_unreferenced_parents()
-                raise TraceCallPersistenceError() from None
+                ):
+                    return "unknown"
+                if persisted.replacement is not None:
+                    expected = persisted.replacement
+                    replacement = expected.replacement
+                    row = cursor.execute(
+                        """SELECT replacement_id, segment_id, predecessor_head_id,
+                                  start_node_id, start_sequence, end_node_id,
+                                  end_sequence, replacement_node_id
+                             FROM console_trace_surface_replacements
+                            WHERE replacement_id = ?""",
+                        (expected.replacement_id,),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or tuple(row) != (
+                            expected.replacement_id, expected.segment_id,
+                            replacement.predecessor_head_id, replacement.start_node_id,
+                            replacement.start_sequence, replacement.end_node_id,
+                            replacement.end_sequence, replacement.replacement_node_id,
+                        )
+                        or replacement.predecessor_head_id
+                        != surface_delta.predecessor_surface_head_id
+                    ):
+                        return "unknown"
+                return durable
+        except Exception:  # noqa: BLE001 - unavailable read-back is not evidence of rollback
+            return "unknown"
 
     def persist_request(
         self,
@@ -2140,6 +2280,7 @@ class ConsoleTraceService:
         completed_tool_turn: CompletedToolTurnWitness | None = None,
         current_turn_id: str | None = None,
         current_policy_id: str | None = None,
+        reserved_call: TraceCallRecord | None = None,
     ) -> tuple[SurfaceDeltaAdmission, object]:
         """Plan an append, no-op, or one-item bounded surface replacement.
 
@@ -2291,6 +2432,7 @@ class ConsoleTraceService:
                 values=values[admitted_from:admitted_to],
                 current_turn_id=current_turn_id,
                 current_policy_id=current_policy_id,
+                reserved_call=reserved_call,
             )
 
         predecessor = None if tail is None else tail.node_id
@@ -2371,8 +2513,21 @@ class ConsoleTraceService:
             provenance=delta_provenance,
             admission=admission,
             values=delta_values,
+            reserved_call=reserved_call,
         )
         return admission, boundary
+
+    def _retire_preparation(self, admission: SurfaceDeltaAdmission) -> None:
+        """Invalidate an old verifier before issuing an owned replacement."""
+        for key, prepared in tuple(self._prepared_capabilities.items()):
+            if prepared.admission is admission:
+                self._prepared_capabilities.pop(key, None)
+        for key, child in tuple(self._child_capabilities.items()):
+            if child.preparation_identity == admission.preparation_identity:
+                self._child_capabilities.pop(key, None)
+                self._pending_child_uses.pop(key, None)
+        self._surface_ref_cache.pop(admission.segment_id, None)
+        self._prune_unreferenced_parents()
 
     def _validate_completed_tool_turn(
         self,
@@ -2785,6 +2940,7 @@ class ConsoleTraceService:
         provenance: ProviderRequestProvenance,
         admission: object,
         values: tuple[object, ...],
+        reserved_call: TraceCallRecord | None = None,
     ) -> _PreparedSurfaceBoundary:
         """Derive one full structural projection from an opaque parent and delta.
 
@@ -2871,7 +3027,9 @@ class ConsoleTraceService:
                 descriptors=admitted,
                 values=values,
                 current_turn_id=None if user is None else user.source_message_id,
-                current_policy_id=None if terminal is None else terminal.policy_id,
+                current_policy_id=(reserved_call.policy_id if reserved_call is not None
+                                   else None if terminal is None else terminal.policy_id),
+                reserved_call=reserved_call,
             )
         if replacement_range is not None:
             replacement_position = parent.root.first_position_in_range(

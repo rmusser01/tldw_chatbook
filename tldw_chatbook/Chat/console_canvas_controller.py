@@ -1566,7 +1566,11 @@ class ConsoleCanvasController:
             if default is not None:
                 return default
             raise RuntimeError("canvas_base_unavailable")
-        return method(*args, **kwargs)
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        database = getattr(self._durable_service, "_db", None)
+        with operation_owned_connection(database):
+            return method(*args, **kwargs)
 
     def _temporary_latest_rows(self, scope: CanvasScope) -> dict[str, _StagedRevision]:
         latest: dict[str, _StagedRevision] = {}
