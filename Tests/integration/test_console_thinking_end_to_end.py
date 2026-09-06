@@ -22,6 +22,9 @@ from Tests.Chat.test_console_automatic_library_preparation import (
     _RagService,
 )
 from Tests.console_provider_doubles import with_destination
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     load_chat_history_from_file_and_save_to_db,
@@ -102,6 +105,10 @@ class _TranscriptHarness(App[None]):
 class _PausedThinkingGateway(ConsoleProviderGateway):
     """Real request preparation with a controllable adapter-edge stream."""
 
+    # This double replaces the real transport path that defers the callback,
+    # so the controller owns the provider-dispatch boundary.
+    deferred_dispatch_boundary = False
+
     def __init__(self) -> None:
         super().__init__(environ={})
         self.evidence_seen = asyncio.Event()
@@ -148,6 +155,10 @@ class _PausedThinkingGateway(ConsoleProviderGateway):
 
 class _DispositionGateway(ConsoleProviderGateway):
     """Typed capability resolution plus an adapter-contact spy."""
+
+    # This double replaces the real transport path that defers the callback,
+    # so the controller owns the provider-dispatch boundary.
+    deferred_dispatch_boundary = False
 
     def __init__(self, disposition: str) -> None:
         super().__init__(environ={})
@@ -1124,7 +1135,7 @@ def test_sync_v2_applies_one_complete_generation_then_hydrates(tmp_path) -> None
         target.close_connection()
 
 
-def test_edit_delete_and_generation_replacement_clear_owned_private_state(
+def test_edit_and_replacement_clear_while_soft_delete_retains_private_state(
     tmp_path,
 ) -> None:
     db = CharactersRAGDB(tmp_path / "ownership.sqlite", "ownership-source")
@@ -1148,6 +1159,8 @@ def test_edit_delete_and_generation_replacement_clear_owned_private_state(
         assert edited["thinking_blocks_json"] is None
         assert edited["provider_continuation_json"] is None
 
+        deleted_thinking = dump_thinking_blocks_json(_complete_displayable_envelope())
+        deleted_continuation = _complete_continuation_json()
         delete_id = db.add_message(
             {
                 "conversation_id": conversation_id,
@@ -1155,10 +1168,8 @@ def test_edit_delete_and_generation_replacement_clear_owned_private_state(
                 "sender": "assistant",
                 "role": "assistant",
                 "content": VISIBLE_ANSWER,
-                "thinking_blocks_json": dump_thinking_blocks_json(
-                    _complete_displayable_envelope()
-                ),
-                "provider_continuation_json": _complete_continuation_json(),
+                "thinking_blocks_json": deleted_thinking,
+                "provider_continuation_json": deleted_continuation,
                 "assistant_generation_state": "complete",
             }
         )
@@ -1171,9 +1182,45 @@ def test_edit_delete_and_generation_replacement_clear_owned_private_state(
         ).fetchone()
         assert dict(deleted) == {
             "deleted": 1,
-            "thinking_blocks_json": None,
-            "provider_continuation_json": None,
+            "thinking_blocks_json": deleted_thinking,
+            "provider_continuation_json": deleted_continuation,
         }
+        assert db.get_message_by_id(delete_id) is None
+        assert all(
+            row["id"] != delete_id
+            for row in db.get_messages_for_conversation(conversation_id, limit=100)
+        )
+        deleted_store, deleted_session = _resume_store(db, conversation_id)
+        provider_messages = ConsoleChatController(
+            store=deleted_store,
+            provider_gateway=_DispositionGateway("displayable"),
+        )._provider_messages_for_session(deleted_session.id)
+        assert {"role": "assistant", "content": "User-edited answer"} in (
+            provider_messages
+        )
+        assert VISIBLE_ANSWER not in json.dumps(provider_messages)
+
+        delete_payload_row = db.execute_query(
+            "SELECT payload FROM sync_log WHERE entity = 'messages' "
+            "AND entity_id = ? AND operation = 'delete' "
+            "ORDER BY change_id DESC LIMIT 1",
+            (delete_id,),
+        ).fetchone()
+        delete_payload = json.loads(delete_payload_row["payload"])
+        assert set(delete_payload) == {
+            "id",
+            "deleted",
+            "last_modified",
+            "assistant_generation_state",
+            "base_payload_hash",
+            "version",
+            "client_id",
+        }
+        assert delete_payload["id"] == delete_id
+        assert delete_payload["deleted"] == 1
+        assert VISIBLE_ANSWER not in json.dumps(delete_payload)
+        assert DISPLAYABLE_THINKING not in json.dumps(delete_payload)
+        assert RAW_CONTINUATION not in json.dumps(delete_payload)
 
         replacement_id = db.add_message(
             {

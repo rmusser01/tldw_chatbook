@@ -12176,3 +12176,25 @@ pattern capture. Checking only `Assign` and `Name(Store)` was insufficient;
 pattern and exception binding names are string fields in the AST. Keep detached
 recognition local to the proven target, reject unexpected binding forms, and
 exercise the actual classifier with poisoned bindings before trusting a pass.
+
+## A descriptor probe must detect a known open file on the host platform
+
+**TASK-31821, 2026-09-06 dev review.** A Linux-shaped probe silently skipped
+every failed `readlink(/dev/fd/N)` on macOS and reported zero growth for 25
+passing thinking/regeneration tests. Darwin `F_GETPATH` instead found retained
+SQLite/WAL/SHM handles in 12 thinking cases. A known-open-file control confirms
+that readlink fails while F_GETPATH identifies the file. Importing the existing
+exact controller/temporary-database cleanup leaves all 25 tests passing with no
+retained SQLite handles under the working probe. Validate the observer itself;
+an empty snapshot is not evidence of successful cleanup.
+
+## Forced scrolling can conceal a production action-width regression
+
+**TASK-31822, 2026-09-06 dev review.** A Stop regression passed after pre-focusing
+Stop and forcing ancestor scrolling. Review removed the force and found the
+button outside the 160-column viewport despite all production CSS being loaded.
+The hidden-overflow action row still budgeted 37 cells after a 10-cell Redirect
+control made its children require 47. The synthetic Send fixture also omitted
+normal composer focus, causing mouse-down reflow, but repairing that precondition
+alone did not fix clipping. Reject the workaround: preserve the original red
+test and fix the actual width/state contract before claiming a real click works.

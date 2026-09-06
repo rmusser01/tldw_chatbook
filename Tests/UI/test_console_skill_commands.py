@@ -20,6 +20,11 @@ from unittest.mock import AsyncMock
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_console_command_composer import _spy_submit_draft
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
@@ -279,6 +284,7 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
     with the bare `/name` dispatch it served (fix-wave branch (a)), so no
     TOOL row of any kind appears for a `$name` send."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     skills = FakeSkillsScopeService(
         available_skills=[_skill("code-review", "Reviews a diff.")]
