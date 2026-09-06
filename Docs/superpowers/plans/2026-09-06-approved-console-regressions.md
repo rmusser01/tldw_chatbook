@@ -72,7 +72,7 @@ Files: `tldw_chatbook/Chat/console_chat_controller.py`, an existing durable trac
 - [x] Independent plan/spec review before implementation; independent spec then code-quality review of completed changes.
 - [x] Run complete affected files in bounded selections with saved logs and native SQLite attribution.
 - [x] Run unchanged screen-size guard and explicitly report its pre-existing failure separately.
-- [ ] Update task acceptance criteria only when verified, record approved-design resolution and exact evidence, commit/push and update draft PR #2427; do not merge.
+- [x] Update task acceptance criteria only when verified, record approved-design resolution and exact evidence, commit/push and update draft PR #2427; do not merge.
 
 ## Verification notes and justified refinements
 
@@ -90,3 +90,5 @@ Files: `tldw_chatbook/Chat/console_chat_controller.py`, an existing durable trac
   retained in the checkpoint, not waived or presented as passing.
 - No new ADR. Exact evidence and remaining qualifications are in
   `backlog/docs/dev-test-review-checkpoint-2026-09-05.md`.
+- Publication verified: repair commit `f663423048` pushed to the existing branch;
+  draft PR #2427 description updated successfully. No merge was requested or run.
