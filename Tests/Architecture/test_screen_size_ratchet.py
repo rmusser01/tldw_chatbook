@@ -74,8 +74,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: compatibility methods and keeps fork state behind the message controller;
 #: the final merged tree measures 16,966/563.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    # TASK-31717: settings, commands, context, submission and row-action owners.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16818, 505),
+    # TASK-31750.1: citation eligibility joins the existing message owner.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16811, 505),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

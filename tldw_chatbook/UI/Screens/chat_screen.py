@@ -11945,37 +11945,6 @@ class ChatScreen(BaseAppScreen):
             group="console-sync",
         )
 
-    def _console_citation_modal_request_is_current(
-        self,
-        *,
-        native_message_id: str,
-        persisted_message_id: str,
-        current_body: str,
-        repository: Any,
-        repository_token: tuple[str, int, int, int],
-    ) -> bool:
-        """Return whether one open modal still targets the active message."""
-
-        current_token, current_repository = (
-            self._console_citation_repository_readiness()
-        )
-        if current_repository is not repository or current_token != repository_token:
-            return False
-        matching_messages = [
-            message
-            for message in self._message._native_console_messages()
-            if getattr(message, "id", None) == native_message_id
-        ]
-        if len(matching_messages) != 1:
-            return False
-        message = matching_messages[0]
-        return (
-            getattr(message, "role", None) is ConsoleMessageRole.ASSISTANT
-            and getattr(message, "status", None) == "complete"
-            and getattr(message, "persisted_message_id", None) == persisted_message_id
-            and self._message._console_citation_message_body(message) == current_body
-        )
-
     @on(Button.Pressed, ".console-transcript-citation-sources")
     def handle_console_citation_sources(self, event: Button.Pressed) -> None:
         """Open one lazy Sources modal for a current persisted assistant."""
@@ -12001,7 +11970,9 @@ class ChatScreen(BaseAppScreen):
         ):
             return
         current_body = self._message._console_citation_message_body(message)
-        repository_token, repository = self._console_citation_repository_readiness()
+        repository_token, repository = (
+            self._message._console_citation_repository_readiness()
+        )
         if repository is None:
             return
         modal = ConsoleCitationSourcesModal(
@@ -12009,12 +11980,14 @@ class ChatScreen(BaseAppScreen):
             persisted_message_id=persisted_message_id,
             current_body=current_body,
             repository=repository,
-            request_is_current=lambda: self._console_citation_modal_request_is_current(
-                native_message_id=native_message_id,
-                persisted_message_id=persisted_message_id,
-                current_body=current_body,
-                repository=repository,
-                repository_token=repository_token,
+            request_is_current=lambda: (
+                self._message._console_citation_modal_request_is_current(
+                    native_message_id=native_message_id,
+                    persisted_message_id=persisted_message_id,
+                    current_body=current_body,
+                    repository=repository,
+                    repository_token=repository_token,
+                )
             ),
         )
 
@@ -12037,75 +12010,12 @@ class ChatScreen(BaseAppScreen):
 
         self.app.push_screen(modal, callback=_open_source_in_library)
 
-    def _console_citation_signature(
-        self,
-        messages: list[Any],
-    ) -> tuple[str | None, tuple[tuple[str, str, str, str], ...]]:
-        """Return the active-session signature for eligible citation lookups."""
-        store = self._ensure_console_chat_store()
-        eligible: list[tuple[str, str, str, str]] = []
-        for message in messages:
-            if (
-                getattr(message, "role", None) is not ConsoleMessageRole.ASSISTANT
-                or getattr(message, "status", None) != "complete"
-            ):
-                continue
-            native_message_id = getattr(message, "id", None)
-            persisted_message_id = getattr(message, "persisted_message_id", None)
-            if (
-                not isinstance(native_message_id, str)
-                or not native_message_id
-                or not isinstance(persisted_message_id, str)
-                or not persisted_message_id
-            ):
-                continue
-            eligible.append(
-                (
-                    native_message_id,
-                    persisted_message_id,
-                    self._message._console_citation_message_body(message),
-                    "complete",
-                )
-            )
-        return (store.active_session_id, tuple(eligible))
-
-    def _console_citation_repository_readiness(
-        self,
-    ) -> tuple[tuple[str, int, int, int], Any | None]:
-        """Return a bounded repository identity token and a valid repository."""
-        repository = getattr(
-            self.app_instance,
-            "citation_trace_repository",
-            None,
-        )
-        if repository is None:
-            return (("missing", 0, 0, 0), None)
-        app_db = getattr(self.app_instance, "chachanotes_db", None)
-        repository_db = getattr(repository, "db", None)
-        if repository_db is not app_db:
-            return (
-                (
-                    "mismatch",
-                    id(repository),
-                    id(repository_db),
-                    id(app_db),
-                ),
-                None,
-            )
-        return (
-            (
-                "valid",
-                id(repository),
-                id(repository_db),
-                id(app_db),
-            ),
-            repository,
-        )
-
     def _sync_console_citation_count_discovery(self, messages: list[Any]) -> None:
         """Dispatch one count lookup worker when eligible inputs change."""
-        signature = self._console_citation_signature(messages)
-        repository_token, repository = self._console_citation_repository_readiness()
+        signature = self._message._console_citation_signature(messages)
+        repository_token, repository = (
+            self._message._console_citation_repository_readiness()
+        )
         repository_changed = repository_token != self._console_citation_repository_token
         if repository_changed:
             self._console_citation_repository_token = repository_token
@@ -12230,7 +12140,7 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Apply count-only results when their full captured input is current."""
         current_repository_token, current_repository = (
-            self._console_citation_repository_readiness()
+            self._message._console_citation_repository_readiness()
         )
         if (
             generation != self._console_citation_request_generation
@@ -12238,7 +12148,7 @@ class ChatScreen(BaseAppScreen):
             or current_repository is None
             or repository_token != current_repository_token
             or signature
-            != self._console_citation_signature(
+            != self._message._console_citation_signature(
                 self._message._native_console_messages()
             )
         ):
@@ -12266,7 +12176,7 @@ class ChatScreen(BaseAppScreen):
         """Discover citation footer counts off-loop and refresh current rows."""
         if repository_token is None:
             repository_token, current_repository = (
-                self._console_citation_repository_readiness()
+                self._message._console_citation_repository_readiness()
             )
             if current_repository is not repository:
                 return

@@ -29,6 +29,9 @@ from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from Tests.UI.test_console_internals_decomposition import (
     _configure_native_ready_console,
 )
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console as _configure_durable_ready_console,
+)
 from Tests.UI.test_destination_shells import _visible_text, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -312,7 +315,8 @@ async def test_console_recovery_controls_resize_bar_one_two_one() -> None:
 @pytest.mark.asyncio
 async def test_console_retry_speech_button_routes_without_resuming() -> None:
     app = _build_test_app()
-    host = ConsoleHarness(app)
+    _configure_durable_ready_console(app)
+    host = ConsoleLayoutHarness(app)
 
     async with host.run_test(size=(90, 30)) as pilot:
         console = host.screen_stack[-1]
@@ -329,7 +333,16 @@ async def test_console_retry_speech_button_routes_without_resuming() -> None:
         )
         await pilot.pause()
 
-        await pilot.click("#console-auto-speak-retry")
+        retry_button = console.query_one("#console-auto-speak-retry", Button)
+        assert not console._console_setup_modal_blocking()
+        assert not retry_button.disabled
+        assert console.region.contains_region(retry_button.region)
+        assert bar.content_region.contains_region(retry_button.region)
+        assert (
+            console.get_widget_at(retry_button.region.x, retry_button.region.y)[0]
+            is retry_button
+        )
+        assert await pilot.click("#console-auto-speak-retry")
         await pilot.pause()
 
         retry.assert_called_once_with()
