@@ -376,6 +376,29 @@ class SpeechBrainDiarizer:
             if isinstance(reply, dict) and "segments" in reply:
                 return list(reply.get("segments") or [])
 
+    def pin(self, cluster_id: str) -> None:
+        """Best-effort: tell the worker's live clusterer to pin `cluster_id`.
+
+        Fire-and-forget -- no reply is sent or awaited, so this never blocks
+        the caller (the screen's rename handler, on the app thread) behind a
+        subprocess round trip. Silently does nothing when there is no live
+        worker to tell (not ready, coarse-only, or degraded).
+        """
+        if self._degraded or self._coarse_only:
+            return
+        if not (self._ready.is_set() and self._ready_ok):
+            return
+        with self._lock:
+            if self._degraded or self._coarse_only:
+                return
+            proc = self._proc
+            if proc is None or proc.poll() is not None:
+                return
+            try:
+                self._send(proc, {"cmd": "pin", "id": cluster_id})
+            except Exception as exc:  # noqa: BLE001 - best-effort, never raises
+                logger.warning("diarizer: pin failed ({})", type(exc).__name__)
+
     def centroids(self) -> dict[str, Any]:
         # The live centroids live in the worker (voice embeddings never cross
         # the pipe by design, spec §3.4); reconciliation runs there, so the

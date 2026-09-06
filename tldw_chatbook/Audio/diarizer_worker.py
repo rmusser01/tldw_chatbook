@@ -243,6 +243,8 @@ def main() -> int:
                 sys.stderr.flush()
                 segs = []
             _write(stdout, {"segments": segs})
+        elif op == "pin":
+            live.pin(str(cmd.get("id", "")))
         elif op == "close":
             break
     return 0

@@ -369,3 +369,21 @@ def test_close_is_best_effort_and_idempotent():
     d.close()
     d.close()  # second call must not raise
     assert d.assign(_PCM, 16000, 0) is None  # closed -> coarse
+
+
+# --- 31744: forward pin() to the worker's live clusterer --------------------
+
+def test_pin_sends_a_pin_command_to_the_worker():
+    proc = FakeProc(['{"id": "S1", "seq": 0}\n'])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    assert d.assign(_PCM, 16000, 0) == "S1"
+    d.pin("S1")
+    assert any(b'"cmd": "pin"' in chunk and b'"S1"' in chunk for chunk in proc.stdin.chunks)
+
+
+def test_pin_is_a_noop_when_coarse_only():
+    proc = FakeProc([])
+    d = _ready(SpeechBrainDiarizer(spawn=lambda *a, **k: proc))
+    d._mark_coarse("backend crashed")
+    d.pin("S1")  # must not raise, must not write
+    assert not any(b'"cmd": "pin"' in c for c in proc.stdin.chunks)
