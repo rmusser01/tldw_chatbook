@@ -5,11 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from typing import Any, Literal
 
-from .runtime_assets import RUNTIME_MANIFEST_BYTES, load_canvas_runtime_assets
+from .runtime_assets import (
+    RUNTIME_MANIFEST_BYTES,
+    CanvasProfileRuntimeAssets,
+    load_canvas_profile_runtime_assets,
+)
 
 PROFILE_CATALOG_BYTES = RUNTIME_MANIFEST_BYTES
 PROFILE_UNAVAILABLE = "profile-unavailable"
@@ -89,6 +93,9 @@ class ProfileSnapshot:
     policy_id: str
     profiles: tuple[ProfileRecord, ...]
     default_diagram_profile: str | None
+    _runtime_assets: tuple[CanvasProfileRuntimeAssets, ...] = field(
+        default=(), repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         _validate_digest(self.build_id, "build_id")
@@ -100,6 +107,11 @@ class ProfileSnapshot:
             raise ValueError("profile identities must be unique")
         if self.default_diagram_profile is not None:
             _validate_profile_id(self.default_diagram_profile)
+        asset_identities = [asset.profile_id for asset in self._runtime_assets]
+        if len(asset_identities) != len(set(asset_identities)):
+            raise ValueError("runtime asset identities must be unique")
+        if asset_identities and set(asset_identities) != set(identities):
+            raise ValueError("runtime assets must cover every profile exactly")
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,18 +181,21 @@ def _validate_manifest_contract(manifest: dict[str, Any]) -> None:
     contract = manifest.get("profile_contract")
     if type(contract) is not dict or set(contract) != _CONTRACT_FIELDS:
         raise ValueError("runtime manifest omits a pinned profile contract")
-    for field in ("engine", "facade", "plan", "grammar", "layout"):
-        identity = contract[field]
+    for contract_name in ("engine", "facade", "plan", "grammar", "layout"):
+        identity = contract[contract_name]
         if type(identity) is not dict or set(identity) != _IDENTITY_FIELDS:
             raise ValueError("invalid runtime contract identity")
         if type(identity["id"]) is not str or not identity["id"]:
             raise ValueError("invalid runtime contract identifier")
-        _validate_digest(identity["sha256"], f"{field}.sha256")
+        _validate_digest(identity["sha256"], f"{contract_name}.sha256")
     unicode_contract = contract["unicode"]
     if type(unicode_contract) is not dict or set(unicode_contract) != _UNICODE_FIELDS:
         raise ValueError("invalid Unicode contract identity")
-    for field in ("version", "segmentation", "width"):
-        if type(unicode_contract[field]) is not str or not unicode_contract[field]:
+    for contract_name in ("version", "segmentation", "width"):
+        if (
+            type(unicode_contract[contract_name]) is not str
+            or not unicode_contract[contract_name]
+        ):
             raise ValueError("invalid Unicode contract identifier")
     _validate_digest(unicode_contract["sha256"], "unicode.sha256")
     quotas = contract["quotas"]
@@ -188,8 +203,8 @@ def _validate_manifest_contract(manifest: dict[str, Any]) -> None:
         raise ValueError("invalid quota contract identity")
     if type(quotas["id"]) is not str or not quotas["id"]:
         raise ValueError("invalid quota contract identifier")
-    for field in _QUOTA_FIELDS - {"id"}:
-        if type(quotas[field]) is not int or quotas[field] <= 0:
+    for quota_name in _QUOTA_FIELDS - {"id"}:
+        if type(quotas[quota_name]) is not int or quotas[quota_name] <= 0:
             raise ValueError("invalid quota contract value")
 
 
@@ -215,10 +230,8 @@ def _load_verified_snapshot() -> ProfileSnapshot:
     if type(entries) is not list or not entries:
         raise ValueError("profile catalog must contain profiles")
 
-    runtime_assets = load_canvas_runtime_assets()
-    if not runtime_assets.enabled or runtime_assets.manifest_bytes is None:
-        raise ValueError("runtime assets are unavailable")
     records: list[ProfileRecord] = []
+    owned_assets: list[CanvasProfileRuntimeAssets] = []
     build_projection: list[dict[str, object]] = []
     policy_projection: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -229,14 +242,17 @@ def _load_verified_snapshot() -> ProfileSnapshot:
         if profile_id in seen:
             raise ValueError("duplicate profile identity")
         seen.add(profile_id)
-        if entry["manifest"] != "runtime-manifest.json":
-            raise ValueError("unsupported runtime manifest path")
+        manifest_name = _validate_profile_id(entry["manifest"])
+        if not manifest_name.endswith(".json"):
+            raise ValueError("unsupported runtime manifest filename")
         manifest_sha256 = _validate_digest(entry["manifest_sha256"], "manifest_sha256")
-        if hashlib.sha256(runtime_assets.manifest_bytes).hexdigest() != manifest_sha256:
-            raise ValueError("runtime manifest integrity mismatch")
-        manifest = _strict_json(runtime_assets.manifest_bytes)
-        if manifest.get("runtime_profile") != profile_id:
-            raise ValueError("runtime profile identity reuse")
+        owned = load_canvas_profile_runtime_assets(
+            profile_id=profile_id,
+            manifest_name=manifest_name,
+            manifest_sha256=manifest_sha256,
+            library_inventory=entry["library"],
+        )
+        manifest = _strict_json(owned.manifest_bytes)
         _validate_manifest_contract(manifest)
 
         library = entry["library"]
@@ -247,19 +263,11 @@ def _load_verified_snapshot() -> ProfileSnapshot:
         library_files = library["files"]
         if type(library_files) is not dict:
             raise ValueError("invalid library file inventory")
-        library_total = 0
         for name, metadata in library_files.items():
             _validate_profile_id(name)
             if not _valid_metadata(metadata):
                 raise ValueError("invalid library file metadata")
-            contents = _read_bounded(static.joinpath(name), RUNTIME_MANIFEST_BYTES)
-            actual = {
-                "bytes": len(contents),
-                "sha256": hashlib.sha256(contents).hexdigest(),
-            }
-            if actual != metadata:
-                raise ValueError("library file integrity mismatch")
-            library_total += len(contents)
+        library_total = sum(map(len, owned.library_files.values()))
         if library_total != library["bytes"]:
             raise ValueError("library byte inventory mismatch")
 
@@ -271,6 +279,7 @@ def _load_verified_snapshot() -> ProfileSnapshot:
             library_bytes=library_total,
         )
         records.append(record)
+        owned_assets.append(owned)
         build_projection.append(
             {
                 "library": library,
@@ -305,6 +314,7 @@ def _load_verified_snapshot() -> ProfileSnapshot:
         policy_id=catalog["policy_id"],
         profiles=tuple(records),
         default_diagram_profile=default,
+        _runtime_assets=tuple(owned_assets),
     )
 
 
@@ -354,6 +364,18 @@ def resolve_profile(
     return ProfileResolution(record.profile_id, record.executable, record.reason)
 
 
+def runtime_assets_for(
+    snapshot: ProfileSnapshot, profile_id: str
+) -> CanvasProfileRuntimeAssets | None:
+    """Return exact bytes already owned by ``snapshot`` without performing I/O."""
+
+    _validate_profile_id(profile_id)
+    return next(
+        (asset for asset in snapshot._runtime_assets if asset.profile_id == profile_id),
+        None,
+    )
+
+
 def runtime_snapshot_id(snapshot: ProfileSnapshot) -> str:
     """Return the canonical source-free cross-process identity for ``snapshot``."""
 
@@ -386,5 +408,6 @@ __all__ = [
     "ProfileSnapshot",
     "load_profile_snapshot",
     "resolve_profile",
+    "runtime_assets_for",
     "runtime_snapshot_id",
 ]
