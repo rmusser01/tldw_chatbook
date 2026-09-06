@@ -482,3 +482,34 @@ formatting, diff checks and ancestry verification pass. Diagnostic manifest and
 pins are unchanged; the earlier 327-test evidence was not rerun on this new base.
 Wider failure families, aggregate resource warnings and the two pending task-ID
 decisions are still open. This remains a draft, not full-suite qualification.
+
+## Watchlists off-loop evidence and atomic project-context promotion
+
+TASK-31796 replaces the obsolete post-insert getter spy with real batch,
+transaction and result-materialization thread observations for creation and
+exact-source reuse. Positive work assertions and actual durable source data are
+checked; a process-local inline-offload mutation failed both variants. The test
+owns its function-scoped loop and drains executor threads before verifying all
+database handles closed. Production Watchlists code is unchanged.
+
+TASK-31797 removes a redundant project-context write after temporary-chat
+promotion. The same state already commits in the atomic bundle; the original
+transaction assertion reproduced `[True, False]` and now remains exactly
+`[True]`, with durable reopen verification added. Ordinary first persistence,
+explicit control changes, scope callbacks and staged context-policy flushing
+are retained, as is complete-bundle rollback coverage.
+
+Five complete off-loop/service/project-context/atomic-promotion files pass
+**143 tests in 28.90 seconds**, with two existing dependency warnings
+(`/private/tmp/tldw-offloop-promotion-final.xml`). Scoped Ruff/format and diff
+checks pass; independent review is clear.
+
+The fork-transition census was separately reproduced: **24 passed / 3 failed**
+(`/private/tmp/tldw-fork-census-baseline.xml`). Three boundary-owning methods
+are missing from its direct-route inventory: endpoint adoption and the endpoint
+and settings replacement rollback methods. Its mutation scan additionally
+reports eight settings/persistence/publication/user-name owners, including
+`commit_console_settings_live` and `rebind_persisted_conversation`, whose guard
+contracts still need audit. The controller now has three transient-send rollback
+calls versus the two expected by its old inventory. No classification, exclusion
+or count was changed; these are not yet established as test-only drift.
