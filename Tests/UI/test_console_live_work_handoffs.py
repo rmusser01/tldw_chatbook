@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceReference,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     LocalRagContextResult,
     capture_console_staged_evidence_for_chat,
@@ -34,9 +35,10 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Console_Modules.retrieval import source_mentions_rag
+from tldw_chatbook.UI.Console_Modules.wiring import build_console_settings_controllers
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
@@ -2010,31 +2012,23 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     """
     from Tests.UI.console_controller_stubs import (
         NO_APP,
-        stub_fleet_controller,
         stub_image_controller,
-        stub_library_activity_controller,
         stub_message_controller,
     )
 
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
+    # This unmounted restore shell must not attach to or replace the live
+    # app's runtime/view. Its store is local to this direct round-trip test.
+    screen._console_runtime_ref = ConsoleRuntime(None)
+    build_console_settings_controllers(screen)
     # Three of the six call sites pass no app at all -- they exercise restore
     # paths that read `app_instance` only through `getattr(..., None)`. The
     # stub factories refuse to INFER a missing app (an inferred `None`
     # snapshot is a silent-default hole), so the absence is declared once
-    # here and handed to all three. task-3024/2769.
+    # here and handed to both projection stubs. task-3024/2769.
     resolved_app = app_instance if app_instance is not None else NO_APP
     screen._retrieval = SimpleNamespace(_capture_console_staged_rag=Mock())
-    # Precede the `_console_chat_store` assignment: that setter reaches
-    # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`, which
-    # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
-    # `self._library_activity.build_provider` (TASK-23144) unguarded.
-    stub_fleet_controller(screen, context="live work handoffs screen")
-    stub_library_activity_controller(
-        screen,
-        context="live work handoffs screen",
-        app_instance=resolved_app,
-    )
     screen._console_chat_store = ConsoleChatStore()
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._console_visible_draft_session_id = None
@@ -2164,7 +2158,12 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
         )
         app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, newer_launch)
 
+        live_runtime = screen1._console_runtime()
+        live_store = live_runtime.chat_store
         screen2 = _bare_console_screen_for_restore(app)
+        assert screen2._console_runtime() is not live_runtime
+        assert live_runtime.view is screen1
+        assert live_runtime.chat_store is live_store
         screen2._restore_native_console_state(saved)
 
         # The restore itself is complete and faithful, newer store entry or
@@ -2713,9 +2712,9 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
     ``_frame_console_region`` styles the tray IN PLACE (adds a class and an
     inline border, returns the same widget -- no wrapper container), so the
     tray is a direct child of the inspector rail body, mounted right after
-    the task-9 Environment/Tasks sections. Live-work cards keep anchoring
-    after the run-inspector block at the bottom. This drives the real swap
-    seam both directions.
+    Environment/Tasks/Subagents sections. The stable Live Work root anchors
+    after the run-inspector block; cards swap inside its bounded viewport.
+    This drives the real swap seam both directions.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2728,12 +2727,22 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         rail_body = screen.query_one("#console-inspector-rail-body")
         tray = screen.query_one("#console-staged-context-tray")
         run_inspector = screen.query_one("#console-run-inspector")
+        live_work = screen.query_one("#console-live-work-section")
+        bounded = screen.query_one("#console-bounded-section-live-work")
+        viewport = bounded.viewport
         # Ancestry evidence: the framed tray is a DIRECT child of the rail
         # body (no frame wrapper), composed right after the task-9
-        # Environment/Tasks sections.
+        # Environment/Tasks/Subagents sections.
         assert tray.parent is rail_body
         assert tray.has_class("console-frame-quiet")
-        assert list(rail_body.children).index(tray) == 2
+        assert list(rail_body.children)[:4] == [
+            screen.query_one("#console-environment-section"),
+            screen.query_one("#console-tasks-section"),
+            screen.query_one("#console-agent-section-subagents"),
+            tray,
+        ]
+        assert live_work.parent is rail_body
+        assert bounded.parent is live_work
 
         # Readiness -> pending-launch swap mounts after the run inspector.
         screen._retrieval._stage_console_library_rag_launch(
@@ -2743,9 +2752,13 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
         card = screen.query_one("#console-pending-launch-card")
         children = list(rail_body.children)
-        assert card.parent is rail_body
+        assert card.parent is viewport
+        assert screen.query_one("#console-live-work-section") is live_work
+        assert screen.query_one("#console-bounded-section-live-work") is bounded
         assert (
-            children.index(tray) < children.index(run_inspector) < children.index(card)
+            children.index(tray)
+            < children.index(run_inspector)
+            < children.index(live_work)
         )
 
         # Pending-launch -> readiness swap (launch resolved) re-anchors too.
@@ -2756,11 +2769,13 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         assert len(screen.query("#console-pending-launch-card")) == 0
         readiness = screen.query_one("#console-live-work-source-readiness")
         children = list(rail_body.children)
-        assert readiness.parent is rail_body
+        assert readiness.parent is viewport
+        assert screen.query_one("#console-live-work-section") is live_work
+        assert screen.query_one("#console-bounded-section-live-work") is bounded
         assert (
             children.index(tray)
             < children.index(run_inspector)
-            < children.index(readiness)
+            < children.index(live_work)
         )
 
 
@@ -3121,5 +3136,5 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b
         launch = screen._pending_console_launch_context
         assert launch is not None
         assert isinstance(launch.payload.get("evidence_bundle"), dict)
-        assert chat_screen_module._source_mentions_rag(launch.source) is False
+        assert source_mentions_rag(launch.source) is False
         assert screen._submission._console_send_blocked_reason() == ""
