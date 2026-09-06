@@ -22,7 +22,7 @@ fills the center of the screen.
 ```text
 Wide (Media)
 
-+ Library ----+›+ Items ------+›+ Reader ---------------------------+
++ Library ----+‹+ Items ------+‹+ Reader ---------------------------+
 | Browse       | Filter        | title · source · date              |
 | Media        | item rows     | Find · Read later · Use in Console |
 | ...          | ...           | Read · Analysis · Highlights · Info|
@@ -30,11 +30,12 @@ Wide (Media)
 
 Narrow (Media)
 
-+›+›+ Reader ------------------------------------------------------+
++›+›+ Reader -------------------------------------------------------+
 | both pane grips remain reachable; Reader gets the available width |
 ```
 
-Media's two grips are one column each — the `›` above. Conversations and
+Media's two grips are one column each — the `‹` (open pane) and `›`
+(collapsed pane) above. Conversations and
 the other Library destinations keep the wider `+--->+` grip.
 
 Media has three stable roles:

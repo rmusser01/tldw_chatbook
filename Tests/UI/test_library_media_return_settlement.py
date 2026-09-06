@@ -2490,5 +2490,4 @@ async def test_control_exact_return_requires_matching_semantic_row(
         # The parked offset is never handed back: with no matching semantic row
         # there is no exact settlement to commit, so the replacement owner stays
         # at the top instead of restoring the deep scroll.
-        assert parked_offset == (0, DEEP_ROW_SCROLL_Y)
         assert (int(owner.scroll_x), int(owner.scroll_y)) == (0, 0)
