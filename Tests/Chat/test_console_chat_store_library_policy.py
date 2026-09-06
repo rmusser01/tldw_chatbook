@@ -42,12 +42,17 @@ def test_new_session_captures_current_defaults_without_following_later_changes()
     store.set_library_policy_defaults(_defaults(automatic=False, allowed=False))
     second = store.create_session()
 
-    assert first.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
+    assert (
+        first.library_policy_holder.snapshot.auto_retrieve
+        is ConsoleAutoRetrieve.AUTOMATIC
+    )
     assert (
         first.library_policy_holder.snapshot.assistant_access
         is ConsoleAssistantLibraryAccess.ALLOWED
     )
-    assert second.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
+    assert (
+        second.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
+    )
     assert (
         second.library_policy_holder.snapshot.assistant_access
         is ConsoleAssistantLibraryAccess.BLOCKED
@@ -104,16 +109,15 @@ def test_first_persistence_inserts_even_unedited_policy_and_publishes_after_comm
 
     monkeypatch.setattr(store, "publish_committed_identity", observe_publish)
 
-    with pytest.raises(
-        RuntimeError, match="injected first-persistence policy failure"
-    ):
+    with pytest.raises(RuntimeError, match="injected first-persistence policy failure"):
         store.persist_session_if_needed(session.id)
 
     assert session.persisted_conversation_id is None
     assert session.title == "Atomic policy"
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM conversations"
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection().execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        == 0
+    )
     assert publish_observations == []
 
     conversation_id = store.persist_session_if_needed(session.id)
@@ -125,9 +129,10 @@ def test_first_persistence_inserts_even_unedited_policy_and_publishes_after_comm
     assert row.snapshot.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
     assert row.snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
     assert session.library_policy_holder.snapshot == row.snapshot
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM conversations"
-    ).fetchone()[0] == 1
+    assert (
+        db.get_connection().execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        == 1
+    )
     assert publish_observations == [
         (
             "before",
@@ -168,7 +173,10 @@ def test_restored_missing_policy_is_fail_closed_and_write_free_until_explicit_sa
     assert snapshot.source == "missing"
     assert snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
     assert snapshot.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
-    assert service.console_library_policy_repository.read(conversation_id).durable_policy is None
+    assert (
+        service.console_library_policy_repository.read(conversation_id).durable_policy
+        is None
+    )
 
     store.stage_session_library_policy(
         session.id,
@@ -240,8 +248,13 @@ def test_every_store_creation_reads_current_defaults_without_mutating_existing()
     current = _defaults(automatic=False, allowed=False)
     second = store.create_session()
 
-    assert first.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
-    assert second.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
+    assert (
+        first.library_policy_holder.snapshot.auto_retrieve
+        is ConsoleAutoRetrieve.AUTOMATIC
+    )
+    assert (
+        second.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
+    )
 
 
 def test_real_runtime_store_captures_current_future_session_defaults():
@@ -261,9 +274,17 @@ def test_real_runtime_store_captures_current_future_session_defaults():
         first.library_policy_holder.snapshot.auto_retrieve
         is ConsoleAutoRetrieve.AUTOMATIC
     )
-    assert first.library_policy_holder.snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
-    assert second.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
-    assert second.library_policy_holder.snapshot.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
+    assert (
+        first.library_policy_holder.snapshot.assistant_access
+        is ConsoleAssistantLibraryAccess.ALLOWED
+    )
+    assert (
+        second.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
+    )
+    assert (
+        second.library_policy_holder.snapshot.assistant_access
+        is ConsoleAssistantLibraryAccess.BLOCKED
+    )
 
 
 def test_rollback_created_session_unregisters_holder(tmp_path):
@@ -305,7 +326,9 @@ def test_restore_state_replaces_holder_bindings_without_stale_publication(tmp_pa
     registered = store.library_policy_coordinator._holders
     assert registered["overlap"].holder is store.sessions()[0].library_policy_holder
     assert registered["overlap"].holder is not stale.library_policy_holder
-    assert registered["overlap"].conversation_id == replacement.persisted_conversation_id
+    assert (
+        registered["overlap"].conversation_id == replacement.persisted_conversation_id
+    )
     assert removed.id not in registered
     store.stage_session_library_policy(
         "overlap",
@@ -320,7 +343,9 @@ def test_restore_state_replaces_holder_bindings_without_stale_publication(tmp_pa
     assert store.sessions()[0].library_policy_holder.snapshot == result.snapshot
 
 
-def test_restored_policy_starts_fail_closed_and_hydrates_off_loop(tmp_path, monkeypatch):
+def test_restored_policy_starts_fail_closed_and_hydrates_off_loop(
+    tmp_path, monkeypatch
+):
     db = CharactersRAGDB(tmp_path / "async-hydrate.db", "policy-test")
     service = ChatPersistenceService(db)
     conversation_id = service.create_conversation(conversation_title="Hydrate")
@@ -340,7 +365,9 @@ def test_restored_policy_starts_fail_closed_and_hydrates_off_loop(tmp_path, monk
         read_threads.append(threading.get_ident())
         return original_read(target)
 
-    monkeypatch.setattr(service.console_library_policy_repository, "read", recording_read)
+    monkeypatch.setattr(
+        service.console_library_policy_repository, "read", recording_read
+    )
     session = store.restore_persisted_session(
         title="Hydrate",
         workspace_id=None,
@@ -349,10 +376,16 @@ def test_restored_policy_starts_fail_closed_and_hydrates_off_loop(tmp_path, monk
     )
 
     assert read_threads == []
-    assert session.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
+    assert (
+        session.library_policy_holder.snapshot.auto_retrieve
+        is ConsoleAutoRetrieve.NEVER
+    )
     asyncio.run(store.hydrate_session_library_policy(session.id))
     assert read_threads and all(thread != caller_thread for thread in read_threads)
-    assert session.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
+    assert (
+        session.library_policy_holder.snapshot.auto_retrieve
+        is ConsoleAutoRetrieve.AUTOMATIC
+    )
 
 
 def test_blocked_hydration_yields_event_loop_and_rebinds_without_stale_publication(
@@ -427,8 +460,14 @@ def test_blocked_hydration_yields_event_loop_and_rebinds_without_stale_publicati
         current = store.sessions()[0]
         assert current.persisted_conversation_id == new_id
         assert current.library_policy_holder.snapshot.source == "durable"
-        assert current.library_policy_holder.snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
-        assert current.library_policy_holder.snapshot.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
+        assert (
+            current.library_policy_holder.snapshot.auto_retrieve
+            is ConsoleAutoRetrieve.NEVER
+        )
+        assert (
+            current.library_policy_holder.snapshot.assistant_access
+            is ConsoleAssistantLibraryAccess.BLOCKED
+        )
         assert current.library_policy_hydrated is False
 
     asyncio.run(scenario())

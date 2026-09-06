@@ -114,6 +114,15 @@ explicit user selection and confirmation; and commits through compare-and-set.
 Context, `Ctrl+K`, and Roleplay may navigate to that flow but cannot repair.
 Names never select or preselect a repair target.
 
+Task4 release clarification (2026-09-05): unavailable inspection and unavailable
+browse deep links originate only from Console Context and retain its Character
+return anchor. Both their typed objects and wire payloads reject other origins;
+their native return action is **Back to Console**. Incumbent repair continues to
+accept its existing Console and Roleplay return targets. This scopes the two
+new Task4 routes, not future navigation origins; later delivery must explicitly
+define any extension. Returning reveals Character transiently and does not write
+manual disclosure preferences.
+
 Surface roles remain distinct:
 
 - Console Context owns a bounded ambient Character section directly after

@@ -1,5 +1,23 @@
 # Lessons: verifying against the real thing
 
+## A mount-started worker may run before is_mounted becomes true
+
+**TASK-31645 post-merge UAT, 2026-09-05.** Normal real-terminal Library entry
+stayed on Loading local recovery through reopening and restart, despite the
+earlier mounted-test passes. Temporary tracing observed the Lab load worker
+enter and exit with `is_mounted=False`, its message widget present and no
+coordinator. Textual sets the mounted flag after Mount dispatch; an inherited
+handler can yield while a worker started by the subclass already runs. The
+worker's teardown guard silently rejected this valid initialization attempt.
+A yielding inherited Mount-handler regression failed with readiness timeout;
+deferring lazy dispatch with `call_after_refresh` made it pass while retaining
+teardown protection. Real A/B, local save and force-kill recovery then worked.
+
+**What to do.** Schedule mount-sensitive background initialization after the
+mount boundary, and keep its teardown guard. Test a yielding Mount handler,
+not just an immediately completing fixture. Verify real route entry; passing
+tests that await an already-mounted screen cannot alone qualify that ordering.
+
 ## Send synthetic Paste through the app, not directly to TextArea
 
 **TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an
@@ -40,6 +58,28 @@ The subsequent UAT retention loop also sent Enter twice within Textual Button's
 waiting only for completion misreported a ten-minute operation timeout. Wait for
 the control to accept keyboard input and separately bound operation admission;
 do not infer that a server request exists just because the harness sent a key.
+
+---
+
+## Opaque-origin module-worker policy must be proven in the target browser
+
+**TASK-31226, 2026-09-03.** The Canvas renderer's first implementation used the
+obvious `new Worker(new URL("worker.js", import.meta.url), {type: "module"})`
+inside an iframe sandboxed without `allow-same-origin`. Unit reasoning said the
+worker was a packaged same-site asset, but real Chromium rejected the constructor
+because the iframe's effective origin was opaque. Wrapping that URL in a blob
+module failed for the same reason. A fixed `data:` module bootstrap could import
+the packaged CORS-enabled worker, but the next real run showed that QuickJS's
+embedded WASM also required the narrower CSP token `wasm-unsafe-eval`. Neither
+failure was visible to source checks or Python unit tests.
+
+**What to do.** Qualify worker construction and WASM compilation from the exact
+production iframe sandbox and response CSP in every mandatory browser. Record
+all startup requests before acknowledging generated execution. When a trusted
+bootstrap is unavoidable, keep its bytes and imported URL entirely renderer-owned,
+scope CSP to the minimum scheme, and prove generated input cannot influence it.
+Do not infer opaque-origin behavior from same-origin pages or substitute
+`unsafe-eval` for `wasm-unsafe-eval`.
 
 ---
 
@@ -1759,22 +1799,31 @@ every corrected config value. Moving the server to an unused port (`:8010`, a
 `server_id` with no keyring entry) made the identical client and identical config
 authenticate on the first request.
 
-**What to do.** `TLDW_CONFIG_PATH` isolates the config *file*; it does not isolate
-the keyring, and neither does `users_name`. For a live server run: pick a
-`server_id` (host:port) no other profile on the machine has used, or clear the
-entry first — `KeyringServerCredentialStore().clear_server("<base_url>")`. Clear
-the entries you created when you are done; they hold a live credential. And treat
-"the wire carries the right key but the server says 401" as evidence that the app
-is not reading the credential you edited, not as a server problem.
-
-**The sibling trap that seeded it.** A scratch `[tldw_api]` written with only
-`api_key = <real>` comes back from the first boot with the app's own
-`auth_token = "default-secret-key-for-single-user"` added beside it — and
-`build_runtime_api_client` resolves `auth_token or api_key or bearer_token`, so the
-placeholder wins. `config.py` screens *provider* keys for placeholder values
-(`resolve_provider_api_key`); the `[tldw_api]` token gets no such check. Write
-`auth_token`, not `api_key`, in a scratch profile, and re-read the file after the
-first boot to see what the app made of it.
+**Fixed (task-31416, task-31417).** Both root causes are closed now, not worked
+around. `RuntimeServerContextProvider` takes a `credential_profile_id` and every
+credential read/write goes through `ServerCredentialScope` keyed on
+`(server_profile_id, normalized_origin, purpose)` instead of the bare `server_id`.
+`app.py` wires `default_server_credential_profile_id()`: the default
+(un-retargeted) config path keeps `server_profile_id == server_id` — byte-for-byte
+the old unscoped behavior, so an existing single-profile install needs no
+re-entry — but a `TLDW_CONFIG_PATH`-retargeted profile gets `server_profile_id =
+str(get_cli_config_path())`, its own namespace distinct from every other
+profile's, even at the same base URL. A scratch profile's first-boot import can
+no longer seed an entry that outranks another profile's corrected config.
+Separately, `_legacy_config_token` now screens `auth_token` through
+`config.py`'s `resolve_tldw_api_auth_token` (reusing `resolve_provider_api_key` +
+`TLDW_API_PLACEHOLDER_AUTH_TOKEN`) before letting it beat `api_key`/
+`bearer_token`, so the boot-rewrite placeholder falls through to a real
+`api_key` instead of winning. Both the credential-store import and the
+placeholder-screened fallback now log which source was chosen
+(`Imported [tldw_api] config credential...`; `auth_token is the boot-rewrite
+placeholder; using api_key instead...`), so "the wire carries the right key but
+the server says 401" is diagnosable from the log, not just from reading the
+resolver. **If you still hit this on a live run**, you are on code that predates
+the fix; the port-picking workaround (`:8010`, a fresh `server_id`) and writing
+`auth_token` instead of `api_key` still apply there, but treat them as pre-fix
+workarounds, not the current guidance — verify `credential_profile_id` is wired
+in `app.py`'s `_wire_server_context_provider` first.
 
 ---
 

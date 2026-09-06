@@ -24,11 +24,13 @@ import pytest
 import pytest_asyncio
 from PIL import Image
 from textual.app import ComposeResult
+from textual.pilot import Pilot
+from textual.screen import Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
@@ -246,6 +248,67 @@ async def personas_editor_with_bound_pack(mock_app_instance, monkeypatch, expr_d
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         yield app, screen, expr_db, char_id, preview_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pending", (False, True))
+async def test_discard_keeps_saved_pack_and_pending_load_across_cached_return(
+    personas_editor_with_bound_pack, monkeypatch, pending
+):
+    app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    pilot = Pilot(app)
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    browser = editor.query_one(PersonasVisualIdentityPackWidget)
+    pack = browser.pack
+    started = Event()
+    release = Event()
+    original_read = VisualIdentityRepository.get_active_actor_pack
+
+    def delayed_read(repository, actor_kind, actor_id):
+        started.set()
+        assert release.wait(10)
+        return original_read(repository, actor_kind, actor_id)
+
+    try:
+        if pending:
+            monkeypatch.setattr(
+                VisualIdentityRepository, "get_active_actor_pack", delayed_read
+            )
+            screen.post_message(EditCharacterRequested(str(char_id)))
+            assert await asyncio.to_thread(started.wait, 2)
+        token = editor.visual_identity_session_token
+        before = editor.get_character_data()
+        editor.query_one("#personas-char-editor-name", Input).value = "Discard me"
+        editor.query_one("#personas-char-editor-description", TextArea).text = "Draft"
+        await pilot.pause()
+        assert screen.state.has_unsaved_changes
+        decision = screen.run_worker(screen.confirm_navigation())
+        await pilot.pause()
+        await pilot.click("#roleplay-draft-discard-continue")
+        assert await decision.wait() is True
+        await app.push_screen(Screen())
+        await app.pop_screen()
+        release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.screen is screen
+        assert editor.get_character_data() == before
+        assert not screen.state.has_unsaved_changes
+        assert editor.query_one("#personas-char-editor-visual-identity-host").display
+        assert not editor.query_one("#personas-char-editor-legacy-expressions").display
+        current_browser = editor.query_one(PersonasVisualIdentityPackWidget)
+        assert current_browser.pack == pack
+        if not pending:
+            assert current_browser is browser
+        assert editor.visual_identity_session_token == token
+        assert (
+            VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+            is not None
+        )
+    finally:
+        release.set()
+        await app.workers.wait_for_complete()
 
 
 @pytest.mark.asyncio

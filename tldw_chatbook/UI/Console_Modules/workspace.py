@@ -17,7 +17,7 @@ DOM or reach through sibling controllers.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -26,10 +26,12 @@ from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 from datetime import datetime, timezone
 import inspect
+import re
 import time
 
 from loguru import logger
 from rich.markup import escape as escape_markup
+from textual.css.query import NoMatches
 
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
@@ -60,6 +62,9 @@ from ...Chat.console_conversation_hydration import (
     ConsoleGenerationSettingsHydration,
     hydrate_console_session,
     load_console_conversation_tree,
+)
+from ...Character_Chat.character_conversation_navigation import (
+    LocalCharacterConversationTarget,
 )
 from ...Chat.console_session_settings import blank_console_session_settings
 from ...Chat.rag_scope import RagScope
@@ -117,6 +122,12 @@ from ..character_display_text import sanitize_character_display_label
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_controller import ConsoleChatController
+    from ...Chat.console_conversation_activation import (
+        CharacterConversationActivationRequest,
+        ConsoleActivationCommit,
+        ConsoleActivationResultKind,
+        ConsoleConversationActivationResult,
+    )
     from ...Widgets.Console.console_workspace_files_modal import (
         ConsoleWorkspaceFilesModal,
         WorkspaceFilesAttention,
@@ -488,6 +499,7 @@ class ConsoleWorkspaceController:
         set_conversation_row_loading: Callable[[str, bool], None] | None = None,
         mark_conversation_row_broken: Callable[[str], None] | None = None,
         rail_body_height_accessor: Callable[[], int | None] | None = None,
+        notify_character_navigation: Callable[..., None] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -548,6 +560,7 @@ class ConsoleWorkspaceController:
                 available space.
         """
         self._screen = screen
+        self._notify_character_navigation = notify_character_navigation
         self.app_instance = app_instance
         self._chat_store_accessor = chat_store_accessor
         self._current_chat_store_accessor = current_chat_store_accessor
@@ -665,6 +678,34 @@ class ConsoleWorkspaceController:
         # current truth before toggling), never race two pool threads into
         # a stale double-star.
         self._console_star_toggle_lock = asyncio.Lock()
+        self._character_conversation_activation_coordinator = None
+
+    @property
+    def _character_conversation_activation(self):
+        """Create the exact activation owner on the first activation, not boot."""
+        from ...Chat.console_conversation_activation import (
+            ConsoleConversationActivationCoordinator,
+        )
+
+        if self._character_conversation_activation_coordinator is None:
+            self._character_conversation_activation_coordinator = ConsoleConversationActivationCoordinator[
+                str | None
+            ](
+                capture_state=lambda: (
+                    self._ensure_console_chat_store().active_session_id
+                ),
+                revalidate=self._revalidate_character_conversation_target,
+                open_target=self._open_character_conversation_activation,
+                rollback_opened_target=self._rollback_character_conversation_activation,
+                restore_state=self._restore_character_conversation_prior_session,
+                exact_target_visible=self._character_conversation_target_visible,
+                mutation_lock=getattr(
+                    getattr(self.app_instance, "console_runtime", None),
+                    "character_conversation_activation_lock",
+                    None,
+                ),
+            )
+        return self._character_conversation_activation_coordinator
 
     @property
     def _console_conversation_browser_query(self) -> str:
@@ -4648,6 +4689,414 @@ class ConsoleWorkspaceController:
             )
 
     # -- Resuming a persisted conversation ------------------------------------
+
+    async def activate_character_conversation(
+        self,
+        target: LocalCharacterConversationTarget
+        | CharacterConversationActivationRequest,
+        cancellation: asyncio.Event | None = None,
+    ) -> ConsoleConversationActivationResult:
+        """Open one exact typed target through the canonical Console coordinator."""
+
+        return await self._character_conversation_activation.activate(
+            target, cancellation
+        )
+
+    async def _revalidate_character_conversation_target(
+        self,
+        request: LocalCharacterConversationTarget
+        | CharacterConversationActivationRequest,
+    ) -> ConsoleActivationResultKind | None:
+        """Atomically recheck revision, authority, row, and card before commit."""
+
+        return await asyncio.to_thread(
+            self._revalidate_character_conversation_target_sync, request
+        )
+
+    def _revalidate_character_conversation_target_sync(
+        self,
+        request: LocalCharacterConversationTarget
+        | CharacterConversationActivationRequest,
+    ) -> ConsoleActivationResultKind | None:
+        """Synchronous database half of exact activation revalidation."""
+        from ...Chat.console_conversation_activation import (
+            CharacterConversationActivationRequest,
+            ConsoleActivationResultKind,
+        )
+
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return ConsoleActivationResultKind.FAILED
+        target = request.target if isinstance(
+            request, CharacterConversationActivationRequest
+        ) else request
+        try:
+            with db.transaction() as connection:
+                authority_row = connection.execute(
+                    "SELECT local_authority_id FROM rag_identity_context "
+                    "WHERE context_name = 'default' LIMIT 2"
+                ).fetchone()
+                authority = (
+                    str(authority_row[0]) if authority_row is not None else ""
+                )
+                if authority != target.character.data_authority_id:
+                    return ConsoleActivationResultKind.DATA_PROFILE_CHANGED
+                record = connection.execute(
+                    "SELECT c.deleted, c.runtime_backend, c.assistant_kind, "
+                    "c.assistant_authority_id, c.character_id, "
+                    "card.id AS live_card_id, card.deleted AS card_deleted "
+                    "FROM conversations AS c "
+                    "LEFT JOIN character_cards AS card ON card.id = c.character_id "
+                    "WHERE c.id = ?",
+                    (target.conversation_id,),
+                ).fetchone()
+                if isinstance(request, CharacterConversationActivationRequest):
+                    revision_row = connection.execute(
+                        "SELECT data_revision FROM "
+                        "character_conversation_search_revision "
+                        "WHERE singleton_id = 1"
+                    ).fetchone()
+                    revision = int(revision_row[0]) if revision_row else 0
+            if record is None or bool(record["deleted"]):
+                return ConsoleActivationResultKind.NOT_FOUND
+            if (
+                record["runtime_backend"] != "local"
+                or record["assistant_kind"] != "character"
+                or str(record["assistant_authority_id"] or "") != authority
+                or str(record["character_id"] or "")
+                != str(target.character.character_id)
+                or record["live_card_id"] is None
+                or bool(record["card_deleted"])
+            ):
+                return ConsoleActivationResultKind.CHARACTER_UNAVAILABLE
+            if (
+                isinstance(request, CharacterConversationActivationRequest)
+                and revision != request.data_revision
+            ):
+                # The search revision is global: an unrelated conversation
+                # may have changed while this exact row/card remained valid.
+                # FAILED truthfully requests a new immutable results snapshot;
+                # CHARACTER_UNAVAILABLE is reserved for the exact checks above.
+                return ConsoleActivationResultKind.FAILED
+        except Exception:  # noqa: BLE001 - exact revalidation fails closed across DB adapters
+            logger.opt(exception=True).warning(
+                "Unable to revalidate character conversation target"
+            )
+            return ConsoleActivationResultKind.FAILED
+        return None
+
+    async def preflight_character_conversation_activation(
+        self,
+        request: CharacterConversationActivationRequest,
+    ) -> ConsoleActivationResultKind | None:
+        """Run the Console-owned read-only check while Roleplay stays current."""
+
+        return await self._revalidate_character_conversation_target(request)
+
+    def apply_character_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Accept typed activation and validated return focus on the destination."""
+        from ...Chat.console_conversation_activation import (
+            CharacterConversationActivationRequest,
+        )
+        from ...Constants import (
+            CHARACTER_NAV_CONTEXT_RETURN_FOCUS,
+            CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET,
+        )
+        from ..Navigation.character_conversation_navigation import (
+            deserialize_roleplay_character_conversation_link,
+        )
+
+        screen = self._screen
+        payload = context.get(CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET)
+        if isinstance(payload, Mapping):
+            try:
+                link = deserialize_roleplay_character_conversation_link(payload)
+                if link.conversation_id is not None:
+                    screen._pending_character_conversation_target = (
+                        CharacterConversationActivationRequest(
+                            target=LocalCharacterConversationTarget(
+                                link.character, link.conversation_id
+                            ),
+                            data_authority_id=link.character.data_authority_id,
+                            data_revision=link.data_revision,
+                        )
+                    )
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Rejected invalid character-conversation navigation payload"
+                )
+        focus_id = context.get(CHARACTER_NAV_CONTEXT_RETURN_FOCUS)
+        if isinstance(focus_id, str) and re.fullmatch(
+            r"[A-Za-z][A-Za-z0-9_-]{0,127}", focus_id
+        ):
+            screen._pending_character_return_focus_id = focus_id
+
+    def restore_character_navigation_focus(self) -> None:
+        """Consume the return anchor only when its mounted destination owns focus."""
+        screen = self._screen
+        focus_id = screen._pending_character_return_focus_id
+        if focus_id is None or screen.app.screen is not screen:
+            return
+        if focus_id == "console-context-character":
+            screen._character_context.return_reveal = True
+            rail_state = screen._current_console_rail_state()
+            screen._sync_console_rail_visibility_if_changed(rail_state)
+            if not rail_state.left_open:
+                self._focus_composer_if_needed_fn(force=True)
+                return
+            # Rail reveal restores saved child display flags. Apply the
+            # transient disclosure afterwards, without persisting a gesture.
+            screen.query_one("#console-left-rail").sync_sections(rail_state)
+            focus_id = "console-character-search"
+        try:
+            target = screen.query_one(f"#{focus_id}")
+            screen.set_focus(target)
+            target.scroll_visible(animate=False)
+        except NoMatches:
+            return
+        screen._pending_character_return_focus_id = None
+
+    async def open_character_navigation_target(
+        self, target: CharacterConversationActivationRequest
+    ) -> bool:
+        """Open an accepted target and retain failed intent with recoverable copy."""
+        from ...Chat.console_conversation_activation import ConsoleActivationResultKind
+
+        result = await self.activate_character_conversation(target)
+        if result.kind is ConsoleActivationResultKind.OPENED:
+            return True
+        self._screen._failed_character_conversation_target = target
+        notify = self._notify_character_navigation or self.app_instance.notify
+        notify(
+            {
+                ConsoleActivationResultKind.NOT_FOUND: "Conversation is no longer available.",
+                ConsoleActivationResultKind.DATA_PROFILE_CHANGED: "The active Data Profile changed. Return to Roleplay and try again.",
+                ConsoleActivationResultKind.CHARACTER_UNAVAILABLE: "The saved character is unavailable. Open Library to repair it.",
+            }.get(result.kind, "The conversation could not be opened."),
+            severity="warning",
+        )
+        return False
+
+    async def activate_character_conversation_after_commit(
+        self,
+        request: CharacterConversationActivationRequest,
+        *,
+        finalize_visible: Callable[[], Awaitable[None]] | None = None,
+    ) -> ConsoleConversationActivationResult:
+        """Hydrate on the surviving screen, re-fence, and prove exact visibility."""
+        from ...Chat.console_conversation_activation import (
+            ConsoleActivationResultKind,
+            ConsoleConversationActivationResult,
+        )
+
+        prior_session_id = self._ensure_console_chat_store().active_session_id
+        owned_runtime: object | None = None
+        failure_kind = ConsoleActivationResultKind.FAILED
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            opened = await self._open_character_conversation_activation(request)
+            owned_runtime = opened.owned_runtime_token
+            if opened.opened:
+                validation = await self._revalidate_character_conversation_target(
+                    request
+                )
+                if validation is None and self._character_conversation_target_visible(
+                    request
+                ):
+                    if finalize_visible is not None:
+                        await finalize_visible()
+                    return ConsoleConversationActivationResult(
+                        ConsoleActivationResultKind.OPENED,
+                        request.target,
+                        True,
+                    )
+                if validation is not None:
+                    failure_kind = validation
+        except asyncio.CancelledError as error:
+            cancellation = error
+        except Exception:  # noqa: BLE001 - committed adapters must enter exact-runtime rollback
+            logger.bind(
+                operation_id=id(request),
+                workspace_token=id(self),
+                target_type="local_character_conversation",
+                stage="open_target",
+            ).opt(exception=True).warning(
+                "Committed character-conversation activation failed"
+            )
+
+        async def settle_failed_activation() -> None:
+            """Remove this attempt's runtime and restore the exact prior one."""
+
+            if owned_runtime is not None:
+                try:
+                    await self._rollback_character_conversation_activation(
+                        owned_runtime
+                    )
+                except Exception:  # noqa: BLE001 - failed owned-runtime removal must still restore prior
+                    logger.bind(
+                        operation_id=id(request),
+                        workspace_token=id(self),
+                        target_type="local_character_conversation",
+                        stage="remove_owned_runtime",
+                        runtime_token=id(owned_runtime),
+                    ).opt(exception=True).error(
+                        "Could not remove owned Console session after committed failure"
+                    )
+            try:
+                await self._restore_character_conversation_prior_session(
+                    prior_session_id
+                )
+            except Exception:  # noqa: BLE001 - report prior-session recovery without replacing outcome
+                logger.bind(
+                    operation_id=id(request),
+                    workspace_token=id(self),
+                    target_type="local_character_conversation",
+                    stage="restore_prior_runtime",
+                ).opt(exception=True).error(
+                    "Could not restore prior Console session after committed failure"
+                )
+
+        cleanup = asyncio.create_task(
+            settle_failed_activation(),
+            name="character_conversation_activation_rollback",
+        )
+        while True:
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError as error:
+                if cleanup.cancelled():
+                    raise
+                cancellation = cancellation or error
+                continue
+            break
+        if cancellation is not None:
+            raise cancellation
+        return ConsoleConversationActivationResult(
+            failure_kind,
+            request.target,
+            True,
+        )
+
+    async def _open_character_conversation_activation(
+        self,
+        request: LocalCharacterConversationTarget
+        | CharacterConversationActivationRequest,
+    ) -> ConsoleActivationCommit:
+        """Open a target and capture only a runtime session created by this call."""
+        from ...Chat.console_conversation_activation import (
+            CharacterConversationActivationRequest,
+            ConsoleActivationCommit,
+        )
+
+        target = request.target if isinstance(
+            request, CharacterConversationActivationRequest
+        ) else request
+        store = self._ensure_console_chat_store()
+        before = {session.id: session for session in store.sessions()}
+        opened = bool(
+            await self.open_console_workspace_conversation(target.conversation_id)
+        )
+        owned = next(
+            (
+                session
+                for session in store.sessions()
+                if session.id not in before
+                and str(session.persisted_conversation_id or "")
+                == target.conversation_id
+            ),
+            None,
+        )
+        if opened:
+            # Widget.focus() is queued by Textual. This committed Character
+            # boundary must establish focus before the immediate exact-visible
+            # proof, including when activation began in a Context row.
+            try:
+                self._screen.set_focus(
+                    self._screen.query_one("#console-native-composer")
+                )
+            except Exception:  # noqa: BLE001 - preserve the owned token for rollback
+                logger.opt(exception=True).warning(
+                    "Could not focus the committed character conversation"
+                )
+                opened = False
+        return ConsoleActivationCommit(opened=opened, owned_runtime_token=owned)
+
+    async def _rollback_character_conversation_activation(
+        self, owned_runtime: object
+    ) -> None:
+        """Remove only the exact hydrated runtime owned by this activation."""
+
+        session_id = getattr(owned_runtime, "id", None)
+        if not isinstance(session_id, str) or not session_id:
+            return
+        store = self._ensure_console_chat_store()
+        store.rollback_restored_session(
+            session_id,
+            expected_session=owned_runtime,
+            prior_active_session_id=None,
+        )
+
+    async def _restore_character_conversation_prior_session(
+        self, prior_active_session_id: str | None
+    ) -> None:
+        await self._restore_console_session_after_failed_open(
+            self._ensure_console_chat_store(), prior_active_session_id
+        )
+
+    def _character_conversation_target_visible(
+        self,
+        request: LocalCharacterConversationTarget
+        | CharacterConversationActivationRequest,
+    ) -> bool:
+        """Require exact store, mounted screen, transcript, and composer focus."""
+        from ...Chat.console_conversation_activation import (
+            CharacterConversationActivationRequest,
+        )
+
+        target = request.target if isinstance(
+            request, CharacterConversationActivationRequest
+        ) else request
+        store = self._ensure_console_chat_store()
+        active = next(
+            (
+                session
+                for session in store.sessions()
+                if session.id == store.active_session_id
+            ),
+            None,
+        )
+        if (
+            active is None
+            or str(active.persisted_conversation_id or "")
+            != target.conversation_id
+            or not self._screen.is_mounted
+            or self._screen.app.screen is not self._screen
+        ):
+            return False
+        try:
+            composer = self._screen.query_one("#console-native-composer")
+            transcript = self._screen.query_one("#console-native-transcript")
+            focused = self._screen.focused
+            transcript_owner = getattr(transcript, "_session_identity", None)
+            transcript_settled = bool(
+                getattr(self._screen, "_last_native_transcript_refresh_key", None)
+                is not None
+                and getattr(
+                    self._screen, "_last_native_transcript_session_id", None
+                )
+                == active.id
+            )
+            return (
+                bool(getattr(transcript, "display", True))
+                and transcript_owner == active.id
+                and transcript_settled
+                and (
+                    focused is composer
+                    or (focused is not None and composer in focused.ancestors)
+                )
+            )
+        except NoMatches:
+            return False
 
     def _console_session_id_for_workspace_conversation(
         self,

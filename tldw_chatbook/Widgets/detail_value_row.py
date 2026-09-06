@@ -119,6 +119,7 @@ class DetailValueRow(Vertical):
         value_id: str | None = None,
         row_key: str | None = None,
         can_focus: bool = False,
+        tooltip: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -126,6 +127,13 @@ class DetailValueRow(Vertical):
         self._initial_value = value
         self._affordance = affordance
         self._value_id = value_id
+        #: Hover explanation for the value (31712 AC#1): a permanently
+        #: read-only row with no affordance glyph otherwise looks like a
+        #: silently-inconsistent sibling of an editable row of the same
+        #: name elsewhere in the pane -- a caller passes this to say why.
+        #: Applied to the value `Static` in `compose()` below (Textual
+        #: resolves a hovered widget's OWN `tooltip`, never an ancestor's).
+        self._tooltip_text = tooltip
         self._error_id = f"{value_id}-error" if value_id else None
         self._value_static: Static | None = None
         self._error_static: Static | None = None
@@ -154,6 +162,8 @@ class DetailValueRow(Vertical):
                 markup=False,
                 id=self._value_id,
             )
+            if self._tooltip_text:
+                self._value_static.tooltip = self._tooltip_text
             yield self._value_static
             # Always mounted, shown/hidden by the `affordance` property
             # (final-review F13.1): PR-3 flips a row between read-only and

@@ -230,7 +230,14 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         stop=Mock(), button=SimpleNamespace(skill_name=None)
     )
     prompt_screen = SimpleNamespace(
-        _library_prompts_mutation_in_flight=False,
+        _prompts_state=SimpleNamespace(
+            mutation_in_flight=False,
+            detail=None,
+            detail_selected_name="",
+            selected_prompt_id=None,
+            select_mode=False,
+            view="list",
+        ),
         _library_prompt_browse_controller=SimpleNamespace(freshness="fresh"),
         _flush_library_prompt_save=permitted,
         _acknowledge_library_destination_change=Mock(),
@@ -238,12 +245,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         _clear_library_prompt_selection=Mock(),
         _reset_library_prompt_editor_state=Mock(),
         _refresh_library_prompt_detail=Mock(return_value=object()),
-        _library_prompt_detail=None,
-        _library_prompt_detail_selected_name="",
-        _selected_prompt_id=None,
-        _library_prompt_select_mode=False,
         _library_selected_row_id="",
-        _library_prompts_view="list",
         run_worker=Mock(),
     )
     prompt_event = SimpleNamespace(
@@ -260,7 +262,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
 
     assert kinds == ["skills", "prompts"]
     assert skill_screen._skills_state.view == "editor"
-    assert prompt_screen._library_prompts_view == "editor"
+    assert prompt_screen._prompts_state.view == "editor"
 
 
 @pytest.mark.asyncio
@@ -401,8 +403,10 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
     prompt_screen = SimpleNamespace(
         is_mounted=True,
         _library_selected_row_id=library_screen_module.LIBRARY_ROW_BROWSE_PROMPTS,
-        _library_prompts_mutation_in_flight=False,
-        _library_prompts_import_status="",
+        _prompts_state=SimpleNamespace(
+            mutation_in_flight=False,
+            import_status="",
+        ),
         query_one=Mock(return_value=prompt_line),
     )
     prompt_screen.app = SimpleNamespace(screen=prompt_screen)
@@ -439,7 +443,7 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
 
     prompt_line.update.assert_called_once_with("2 imported")
     skill_line.update.assert_called_once_with("Imported")
-    assert prompt_screen._library_prompts_import_status == "2 imported"
+    assert prompt_screen._prompts_state.import_status == "2 imported"
     assert skill_screen._library_skills_import_status == "Imported after navigation"
 
 

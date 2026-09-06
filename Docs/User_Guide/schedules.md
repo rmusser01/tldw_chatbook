@@ -1,4 +1,4 @@
-# Schedules — When jobs, watchlists, and workflows run
+# Schedules — When scheduled tasks fire and recurring questions run
 
 ## Recurring Watchlists briefings
 
@@ -21,7 +21,7 @@ If creation is accepted but no completed briefing appears, inspect the exact bri
 
 ## What this screen is for
 
-Schedules controls when jobs, watchlists, and workflows run. It is a
+Schedules controls when scheduled tasks fire and recurring questions run. It is a
 **single surface**: one list of everything scheduled, a detail pane for
 whatever is highlighted, and an inspector — no tabs. A one-line
 scheduler-liveness indicator sits above them, and a status strip (sync
@@ -308,11 +308,19 @@ target and only changes through **Edit in full…** or the create form.
 ## Creating a scheduled task
 
 Press **n**, or click **Create ▾** in the rail header. Both ask which
-kind of task you want — **Reminder…** or **Recurring question…** —
+kind of task you want — **Scheduled task…** or **Recurring question…** —
 since a recurring question is a different kind of definition, not just
 another schedule shape. The form scrolls when the terminal is short; the
 live "Runs: …" preview, validation, and Save/Cancel stay pinned at the
 bottom while you edit.
+
+*Copy synced with code — task-31710, 2026-09-05: the chooser's other
+button was **Reminder…**, and the page title/intro sentence said "When
+jobs, watchlists, and workflows run" — both stale (watchlist/briefing
+projections never enter this screen's list; the button and this page's
+own vocabulary now match "Scheduled task" everywhere else it appears).
+Text-parity fix only, not independently re-verified live in the TUI for
+this pass.*
 
 Every create/edit form also has a **Runs on** selector — **This device**
 or **Server (\<id\>)** when a scheduling server is connected — defaulting
@@ -561,6 +569,18 @@ transfer** / **Cancel transfer** pair.
 
 **A disabled server reminder stays disabled** when it is released to this
 device — the release moves the task, not its on/off state.
+
+**A recurring question's run/result history does not follow a
+server → local release.** A local → server move keeps the same task
+identity (this device's row just gains a server link), so its run and
+result history stays visible under either id, before and after the
+move. A server → local release is different: it creates a brand-new,
+independent local row rather than converting the existing one, so the
+findings and run history the automation built up while server-owned
+stay attached to the now-archived server-owned row and do not carry
+over to the new one. The new row starts a clean history from the
+moment it arms. There is currently no way to view or reattach the prior
+history from the new row.
 
 ## Creating a recurring question
 

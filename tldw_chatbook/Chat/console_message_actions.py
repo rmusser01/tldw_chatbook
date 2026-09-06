@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from hashlib import sha256
+from typing import TYPE_CHECKING, Literal
 
+from markdown_it import MarkdownIt
+
+from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Canvas.compiler import CanvasCompileError
 
 ConsoleActionStatus = Literal[
     "completed",
@@ -20,6 +26,8 @@ ConsoleActionStatus = Literal[
     "continue_requested",
     "edit_requested",
     "fork_requested",
+    "canvas_open_requested",
+    "canvas_repair_requested",
 ]
 ConsoleSpeechPresentationState = Literal[
     "idle",
@@ -38,6 +46,90 @@ class ConsoleMessageAction:
     label: str
     enabled: bool = True
     disabled_reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleCanvasHtmlBlock:
+    """One parsed assistant HTML-fence candidate for a Canvas action.
+
+    Compatibility is deliberately deferred to the bounded import service.
+    The optional fields remain for compatibility with existing consumers.
+    """
+
+    index: int
+    identity: str
+    html: str
+    compatible: bool | None = None
+    compatibility_codes: tuple[str, ...] = ()
+
+
+def assistant_canvas_html_blocks(
+    message: ConsoleChatMessage,
+) -> tuple[ConsoleCanvasHtmlBlock, ...]:
+    """Parse Canvas-eligible HTML fences without inspecting rendered Markdown."""
+
+    if (
+        message.role is not ConsoleMessageRole.ASSISTANT
+        or message.status != "complete"
+    ):
+        return ()
+    blocks: list[ConsoleCanvasHtmlBlock] = []
+    for token in MarkdownIt("commonmark").parse(message.content):
+        language = (
+            token.info.strip().split(maxsplit=1)[0].casefold() if token.info else ""
+        )
+        if token.type != "fence" or language != "html":
+            continue
+        index = len(blocks)
+        blocks.append(
+            ConsoleCanvasHtmlBlock(
+                index=index,
+                identity=f"{message.id}:canvas-html:{index}",
+                html=token.content,
+            )
+        )
+    return tuple(blocks)
+
+
+def canvas_block_origin_turn_id(
+    message: ConsoleChatMessage,
+    block_index: int,
+) -> str:
+    """Return a restart-stable, source-free identity for one Canvas import.
+
+    A hydrated persisted turn identity is preferred when the message owns one.
+    Ordinary persisted assistant rows currently do not, so their persisted
+    message id plus parsed block position is the deterministic fallback.
+    Hashing keeps the storage-facing identifier bounded and prevents either
+    identity from leaking into incidental diagnostics. Temporary messages
+    remain scoped to their in-memory turn/message identity and session lifecycle.
+    """
+
+    if message.persisted_message_id is not None:
+        stable_owner = message.trace_turn_id or message.persisted_message_id
+        digest = sha256(
+            f"{stable_owner}\0{block_index}".encode("utf-8")
+        ).hexdigest()
+        return f"canvas-import-{digest}"
+    return message.turn_id or message.trace_turn_id or message.id
+
+
+def resolve_canvas_html_block(
+    message: ConsoleChatMessage, reference: ConsoleCanvasBlockReference
+) -> ConsoleCanvasHtmlBlock | None:
+    """Resolve one exact parsed block at the immediate trusted consumer seam."""
+
+    if message.id != reference.message_id:
+        return None
+    return next(
+        (
+            block
+            for block in assistant_canvas_html_blocks(message)
+            if block.index == reference.block_index
+            and block.identity == reference.identity
+        ),
+        None,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +205,16 @@ def resolve_console_header_speech(
 
 
 @dataclass(frozen=True)
+class ConsoleCanvasBlockReference:
+    """Source-free identity resolved only by the immediate Console consumer."""
+
+    message_id: str
+    block_index: int
+    identity: str
+    create_new: bool
+
+
+@dataclass(frozen=True)
 class ConsoleActionResult:
     """Result of dispatching a Console selected-message action."""
 
@@ -123,6 +225,31 @@ class ConsoleActionResult:
     target_message_id: str | None = None
     target_content: str | None = None
     target_invocation_id: str | None = None
+    canvas_block_ref: ConsoleCanvasBlockReference | None = None
+
+
+def canvas_compile_repair_result(
+    action_id: str,
+    message: ConsoleChatMessage,
+    reference: ConsoleCanvasBlockReference,
+    error: CanvasCompileError,
+) -> ConsoleActionResult:
+    """Return bounded repair guidance after off-loop import validation fails."""
+
+    codes = ", ".join(issue.code for issue in error.issues) or "unsupported input"
+    return ConsoleActionResult(
+        action_id=action_id,
+        status="canvas_repair_requested",
+        visible_copy="Prepared a Canvas compatibility repair request.",
+        target_message_id=message.id,
+        target_content=(
+            "Please rewrite HTML block "
+            f"{reference.block_index + 1} from your previous response as one "
+            "self-contained Canvas V1 HTML document with inline CSS and "
+            f"JavaScript only. Resolve these compatibility issues: {codes}."
+        ),
+        target_invocation_id=reference.identity,
+    )
 
 
 @dataclass(frozen=True)
@@ -299,9 +426,34 @@ class ConsoleMessageActionService:
         *,
         available_save_destinations: set[str] | None = None,
         unavailable_save_reasons: dict[str, str] | None = None,
+        canvas_enabled_reader: Callable[[], bool] | None = None,
     ) -> None:
         self.available_save_destinations = set(available_save_destinations or ())
         self.unavailable_save_reasons = dict(unavailable_save_reasons or {})
+        if canvas_enabled_reader is None:
+            from tldw_chatbook.config import get_canvas_execution_enabled
+
+            canvas_enabled_reader = get_canvas_execution_enabled
+        self._canvas_enabled_reader = canvas_enabled_reader
+        self._canvas_disabled_latched = not self._read_canvas_enabled()
+
+    def _read_canvas_enabled(self) -> bool:
+        """Read the configured switch without changing the restart latch."""
+
+        try:
+            return self._canvas_enabled_reader() is True
+        except Exception:  # noqa: BLE001 - action availability fails closed
+            return False
+
+    def _canvas_enabled(self) -> bool:
+        """Return availability, latching an observed disable until restart."""
+
+        if self._canvas_disabled_latched:
+            return False
+        if not self._read_canvas_enabled():
+            self._canvas_disabled_latched = True
+            return False
+        return True
 
     @classmethod
     def _base_actions_with(
@@ -415,6 +567,14 @@ class ConsoleMessageActionService:
             )
         if getattr(message, "video_metadata", None) is not None:
             completed_actions = completed_actions + list(self._VIDEO_ACTIONS)
+        if self._canvas_enabled():
+            for block in assistant_canvas_html_blocks(message):
+                completed_actions.extend(
+                    (
+                        (f"canvas-open-{block.index}", "Open in Canvas"),
+                        (f"canvas-open-new-{block.index}", "Open as new"),
+                    )
+                )
         if not self._is_forkable_row(message):
             completed_actions = [
                 (action_id, label)
@@ -615,6 +775,8 @@ class ConsoleMessageActionService:
                         action.disabled_reason,
                     )
                 )
+            elif action.action_id.startswith("canvas-open"):
+                overflow.append(action)
         return tuple(overflow)
 
     def selected_row_actions(
@@ -722,6 +884,46 @@ class ConsoleMessageActionService:
                 action_id=action_id,
                 status="blocked",
                 visible_copy=self._disabled_reason(message),
+            )
+        if action_id.startswith("canvas-open-"):
+            if not self._canvas_enabled():
+                return ConsoleActionResult(
+                    action_id=action_id,
+                    status="blocked",
+                    visible_copy=(
+                        "Canvas is disabled. Restart Chatbook after re-enabling it."
+                    ),
+                    target_message_id=message.id,
+                )
+            try:
+                block_index = int(action_id.rsplit("-", 1)[1])
+            except (ValueError, IndexError):
+                block_index = -1
+            blocks = assistant_canvas_html_blocks(message)
+            block = next((item for item in blocks if item.index == block_index), None)
+            if block is None:
+                return ConsoleActionResult(
+                    action_id=action_id,
+                    status="blocked",
+                    visible_copy="That HTML block is no longer available.",
+                    target_message_id=message.id,
+                )
+            create_new = action_id.startswith("canvas-open-new-")
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="canvas_open_requested",
+                visible_copy=(
+                    "Opening HTML as a new Canvas."
+                    if create_new
+                    else "Opening HTML in Canvas."
+                ),
+                target_message_id=message.id,
+                canvas_block_ref=ConsoleCanvasBlockReference(
+                    message_id=message.id,
+                    block_index=block.index,
+                    identity=block.identity,
+                    create_new=create_new,
+                ),
             )
         if (
             action_id in {"feedback-up", "feedback-down"}

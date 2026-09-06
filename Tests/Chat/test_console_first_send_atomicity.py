@@ -369,7 +369,9 @@ async def test_normal_first_send_atomically_persists_staged_settings_and_reopens
         reopened.settings.temperature,
         reopened.settings.streaming,
     ) == ("openai", "first-send-model", pytest.approx(0.61), False)
-    assert reopened.context_policy_overrides.compaction_mode is ContextCompactionMode.OFF
+    assert (
+        reopened.context_policy_overrides.compaction_mode is ContextCompactionMode.OFF
+    )
 
 
 @pytest.mark.asyncio
@@ -432,17 +434,18 @@ async def test_identity_publication_retry_preserves_newer_settings_lineage(
     ]
     conversation_id = session.persisted_conversation_id
     assert conversation_id is not None
-    context_before_retry = persistence.get_conversation_context_policy(
-        conversation_id
-    )
+    context_before_retry = persistence.get_conversation_context_policy(conversation_id)
 
     resumed = await controller.resume_durable_postcommit(first.preparation_id)
 
     assert resumed.accepted is True
     assert publication_attempts == 2
-    assert session.settings_persistence_failures[
-        ConsoleSettingsComponent.GENERATION_SETTINGS
-    ] == newer_failure
+    assert (
+        session.settings_persistence_failures[
+            ConsoleSettingsComponent.GENERATION_SETTINGS
+        ]
+        == newer_failure
+    )
     assert ConsoleSettingsComponent.CONTEXT_POLICY not in (
         session.settings_persistence_failures
     )
@@ -620,9 +623,7 @@ async def test_first_send_persists_revision_zero_new_chat_default(
     assert isinstance(persistence, ChatPersistenceService)
     conversation_id = session.persisted_conversation_id
     assert conversation_id is not None
-    persisted = persistence.get_conversation_generation_settings(
-        conversation_id
-    )
+    persisted = persistence.get_conversation_generation_settings(conversation_id)
     assert persisted.status is ConsoleGenerationSettingsReadStatus.VALID
     assert persisted.snapshot is not None
     assert (
@@ -677,9 +678,7 @@ async def test_first_send_context_write_failure_rolls_back_the_whole_turn(
         "BEGIN SELECT RAISE(ABORT, 'injected context failure'); END"
     )
 
-    result = await controller.submit_draft(
-        "must remain atomic", session_id="session-1"
-    )
+    result = await controller.submit_draft("must remain atomic", session_id="session-1")
 
     assert result.accepted is False
     assert gateway.calls == 0
@@ -695,9 +694,10 @@ async def test_first_send_context_write_failure_rolls_back_the_whole_turn(
         "messages",
         "console_dispatch_checkpoints",
     ):
-        assert db.get_connection().execute(
-            f"SELECT COUNT(*) FROM {table}"
-        ).fetchone()[0] == 0
+        assert (
+            db.get_connection().execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            == 0
+        )
 
 
 @pytest.mark.asyncio

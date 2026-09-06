@@ -21,9 +21,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Button, DataTable
+from textual.widgets import Button, DataTable, Static
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import rendered_row_cells
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services import SchedulingService
@@ -119,6 +119,63 @@ def test_solved_eligibility_gates_kind_and_resolution_state():
 class _BareResultsApp(ConsolidatedCSSApp):
     def compose(self):
         yield ResultsTab(id="scheduling-results")
+
+
+class _BareResultsAppBundled(ConsolidatedCSSApp):
+    """`_BareResultsApp` twin with `CSS_PATH` pinned to the app bundle
+    (`_BareTaskDetailApp`'s own pattern) -- used only by the geometry
+    test below, which must measure `ResultsTab`'s real `BUNDLED_CSS`
+    (lifted into `css/widget_defaults_scoped.tcss`), not a bare `App`'s
+    Textual-native `Horizontal`/`Static` defaults."""
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    def compose(self):
+        yield ResultsTab(id="scheduling-results")
+
+
+@pytest.mark.asyncio
+async def test_results_tab_table_is_bounded_and_detail_pane_fills_the_rest():
+    """31713 AC#4: same fix as `ConflictsTab`'s table -- a `height: 1fr`
+    DataTable used to dominate the pane with blank background below a
+    handful of result rows, while the detail pane stayed capped at 14
+    rows regardless of free space. The table now bounds itself to its
+    own content and the detail pane grows to fill what the table no
+    longer claims.
+
+    Revert-check: against the pre-fix CSS (`table height: 1fr`, `detail
+    height: auto; max-height: 14`) the table would dominate a 40-row
+    screen and the detail pane would be capped at 14 regardless of free
+    space -- the opposite of both assertions below.
+    """
+    async with _BareResultsAppBundled().run_test(size=(100, 40)) as pilot:
+        tab = pilot.app.query_one(ResultsTab)
+        await pilot.pause()
+        tab.populate(
+            [
+                {
+                    "id": "res-1",
+                    "kind": "finding",
+                    "title": "Result 1",
+                },
+                {
+                    "id": "res-2",
+                    "kind": "finding",
+                    "title": "Result 2",
+                },
+            ]
+        )
+        await pilot.pause()
+
+        table = tab.query_one("#scheduling-results-table", DataTable)
+        detail = tab.query_one("#scheduling-results-detail", Static)
+
+        # 2 rows + header, comfortably under the 15-row cap -- not the
+        # ~35-row `1fr` fill the old CSS produced.
+        assert table.region.height <= 5, table.region
+        # The freed vertical space goes to the detail pane, not to blank
+        # DataTable background.
+        assert detail.region.height > 15, detail.region
 
 
 @pytest.mark.asyncio

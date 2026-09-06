@@ -93,9 +93,7 @@ def test_write_refuses_to_clobber_future_owned_version():
 
 
 def test_v2_merge_preserves_siblings_and_removes_empty_owned_object():
-    raw = json.dumps(
-        {"active_dictionaries": [4], "pinned_response_prefill": "Yes"}
-    )
+    raw = json.dumps({"active_dictionaries": [4], "pinned_response_prefill": "Yes"})
 
     merged = json.loads(
         merge_console_roleplay_context(

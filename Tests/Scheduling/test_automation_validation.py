@@ -216,3 +216,68 @@ def test_validate_recurring_question_config_reduces_scope_warnings_to_codes():
     # only the "code" string survives into this function's own warnings list
     # (a real server behavior, ported as-is -- see the docstring).
     assert warnings == ["source_unavailable"]
+
+
+# --- task-31414: mode="update" must not backfill unset config keys -----------
+
+
+def _config_missing_the_trio() -> dict:
+    """A config whose ``config`` sub-dict never carried the trio -- the
+    genuinely-absent shape a stored row can have (task-31414's scenario),
+    not the create/edit modal's always-explicit payload."""
+    return {
+        "name": "Daily stand-up",
+        "config": {},
+        "input": {"question": "What did you work on?"},
+    }
+
+
+def test_validate_recurring_question_config_create_mode_still_backfills_unset_keys():
+    """AC2: a create needs concrete config -- explicit `mode="create"`
+    (the default) backfills exactly as before this task."""
+    normalized, errors, warnings = validate_recurring_question_config(
+        _config_missing_the_trio(), mode="create"
+    )
+    assert errors == []
+    assert normalized["config"] == {
+        "scope": {"mode": "all_searchable_library", "resolved_sources": ["media_db", "notes", "chats"]},
+        "finding_policy": {"preset": "balanced_findings"},
+        "retention_policy": {"mode": "default"},
+        "generation_mode": "optional",
+    }
+
+
+def test_validate_recurring_question_config_update_mode_leaves_unset_keys_absent():
+    """AC1: an edit payload that never carried scope/finding_policy/
+    retention_policy/generation_mode must not have them invented."""
+    normalized, errors, warnings = validate_recurring_question_config(
+        _config_missing_the_trio(), mode="update"
+    )
+    assert errors == []
+    assert normalized["config"] == {}
+
+
+def test_validate_recurring_question_config_update_mode_only_backfills_supplied_key():
+    """A key the edit payload DID carry is still normalized; a sibling
+    key it didn't carry stays absent -- editing one field must not touch
+    the others (task-31414's core claim)."""
+    config = _config_missing_the_trio()
+    config["config"]["generation_mode"] = "required"
+    normalized, errors, warnings = validate_recurring_question_config(config, mode="update")
+    assert errors == []
+    assert normalized["config"] == {"generation_mode": "required"}
+
+
+def test_validate_recurring_question_config_update_mode_still_rejects_invalid_supplied_value():
+    """AC5: validation strictness is unchanged -- a supplied-but-invalid
+    value is rejected identically in update mode."""
+    config = _config_missing_the_trio()
+    config["config"]["generation_mode"] = "bogus"
+    normalized, errors, warnings = validate_recurring_question_config(config, mode="update")
+    assert {
+        "field": "config.generation_mode",
+        "code": "unsupported",
+        "message": "Unsupported generation mode: bogus",
+    } in errors
+    # Still absent, not silently dropped or defaulted away from the bad value.
+    assert normalized["config"]["generation_mode"] == "bogus"

@@ -232,3 +232,102 @@ async def test_wide_chat_uses_grid_except_two_fixed_reveal_handles() -> None:
         assert sources_handle.region.width == 4
         assert studio_handle.region.width == 4
         assert chat.region.width == grid.content_region.width - 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(220, 50), (120, 30), (80, 24)])
+async def test_production_runs_view_lays_out_vertically_with_usable_regions(
+    size: tuple[int, int],
+) -> None:
+    """TASK-31795 regression: the global ``.window`` rule forces
+    ``layout: horizontal``, which crushed the (Vertical-subclassing)
+    ResearchWindow's five sections into one squashed row -- toolbar and
+    create-row at width 1, ``#research-body`` pushed off-screen entirely.
+    The Runs view must stack vertically and give the run list + detail
+    body the remaining height."""
+    app = _ProductionRunsHarness()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = app.screen_stack[-1]
+        content = screen.query_one("#screen-content")
+        window = screen.query_one("#research-window")
+        toolbar = screen.query_one("#research-toolbar")
+        create_row = screen.query_one("#research-create-row")
+        body = screen.query_one("#research-body")
+        run_list = screen.query_one("#research-run-list")
+        detail = screen.query_one("#research-detail-panel")
+
+        # Vertical stacking: each section starts below the previous one.
+        assert create_row.region.y >= toolbar.region.bottom, (size, create_row.region)
+        assert body.region.y >= create_row.region.bottom, (size, body.region)
+
+        # Full-width rows with usable heights -- the bug left them 1 cell wide.
+        for section in (toolbar, create_row, body):
+            assert section.region.width == window.content_region.width, (
+                size,
+                section.region,
+            )
+            assert section.region.height > 0, (size, section.region)
+        assert content.content_region.contains_region(body.region), (
+            size,
+            content.content_region,
+            body.region,
+        )
+
+        # The list/detail split owns the remaining height and stays on screen
+        # (the bug parked #research-body at x=239 on a 220-column terminal).
+        assert body.region.height >= 5, (size, body.region)
+        assert run_list.region.width > 0 and detail.region.width > 0, (
+            size,
+            run_list.region,
+            detail.region,
+        )
+        assert detail.region.x >= run_list.region.right, (
+            size,
+            run_list.region,
+            detail.region,
+        )
+
+
+@pytest.mark.asyncio
+async def test_production_runs_view_paints_create_and_detail_controls() -> None:
+    """TASK-31795 regression: with the collapsed layout nothing was
+    reachable. Assert the create-run controls and the detail-panel action
+    rows paint on screen with clickable regions at a roomy size."""
+    app = _ProductionRunsHarness()
+    async with app.run_test(size=(220, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen_stack[-1]
+        painted = _painted_text(app.export_screenshot(simplify=True))
+        for text in (
+            "Research Sessions",
+            "Refresh",
+            "Research question",
+            "Create Run",
+            "No research run selected",
+            "Resume",
+            "Approve Checkpoint",
+        ):
+            assert text in painted, (text, painted)
+
+        content_region = screen.query_one("#screen-content").content_region
+        for widget_id in (
+            "research-source-select",
+            "research-refresh-runs",
+            "research-query-input",
+            "research-create-run",
+            "research-run-list",
+            "research-run-detail",
+            "research-resume-run",
+            "research-followup-input",
+        ):
+            widget = screen.query_one(f"#{widget_id}")
+            assert widget.region.width > 0 and widget.region.height > 0, (
+                widget_id,
+                widget.region,
+            )
+            assert content_region.contains_region(widget.region), (
+                widget_id,
+                content_region,
+                widget.region,
+            )

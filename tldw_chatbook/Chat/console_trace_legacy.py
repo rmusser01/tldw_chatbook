@@ -171,12 +171,9 @@ class LegacyTraceNormalizer:
             raise ValueError("exchange_id")
         if type(message_id) is not str or not message_id:
             raise ValueError("message_id")
-        if (
-            max_decoded_bytes is not None
-            and (
-                type(max_decoded_bytes) is not int
-                or not 1 <= max_decoded_bytes <= CAPTURE_JSON_MAX_BYTES
-            )
+        if max_decoded_bytes is not None and (
+            type(max_decoded_bytes) is not int
+            or not 1 <= max_decoded_bytes <= CAPTURE_JSON_MAX_BYTES
         ):
             raise ValueError("max_decoded_bytes")
         if oversized_policy not in {"defer", "omit"}:
@@ -188,10 +185,7 @@ class LegacyTraceNormalizer:
                 max_decoded_bytes=max_decoded_bytes,
             )
             decoded_bytes = len(_canonical_bytes(self._capture_payload(capture)))
-            if (
-                max_decoded_bytes is not None
-                and decoded_bytes > max_decoded_bytes
-            ):
+            if max_decoded_bytes is not None and decoded_bytes > max_decoded_bytes:
                 raise CaptureDecodeLimitError("legacy decoded-byte limit")
         except CaptureDecodeLimitError as exc:
             if max_decoded_bytes is not None and oversized_policy == "defer":
@@ -1061,9 +1055,7 @@ class LegacyTraceNormalizer:
             value = json.loads(capture.usage_json)
         except (TypeError, ValueError):
             value = None
-        if not isinstance(value, Mapping) or any(
-            type(key) is not str for key in value
-        ):
+        if not isinstance(value, Mapping) or any(type(key) is not str for key in value):
             omitted_keys = tuple(
                 dict.fromkeys((*capture.omitted_keys, _USAGE_OMISSION))
             )

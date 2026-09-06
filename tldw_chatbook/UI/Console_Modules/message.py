@@ -138,7 +138,10 @@ from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 from ...Chat.console_message_actions import (
     ConsoleActionResult,
+    ConsoleCanvasBlockReference,
     ConsoleMessageActionService,
+    canvas_compile_repair_result,
+    resolve_canvas_html_block,
 )
 from ...Chat.console_save_targets import (
     console_chatbook_artifact_payload,
@@ -236,6 +239,10 @@ class ConsoleMessageController:
         save_console_video_copy: Callable[[str], Any] | None = None,
         regenerate_console_video_message: Callable[[str], Any] | None = None,
         request_console_chat_fork: Callable[[str], Any] | None = None,
+        open_canvas_block: (
+            Callable[[ConsoleCanvasBlockReference, str], Any] | None
+        ) = None,
+        prefill_canvas_repair: Callable[[str], Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -385,6 +392,8 @@ class ConsoleMessageController:
         self._request_console_chat_fork_fn = request_console_chat_fork or (
             lambda _message_id: None
         )
+        self._open_canvas_block_fn = open_canvas_block
+        self._prefill_canvas_repair_fn = prefill_canvas_repair
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -392,7 +401,9 @@ class ConsoleMessageController:
         # `_console_speaking_message_id`) or a staying screen method still
         # reads/writes -- see `chat_screen.py`'s own "Message cluster state"
         # comment block for the exact list.
-        self._console_message_action_service = ConsoleMessageActionService()
+        self._console_message_action_service = ConsoleMessageActionService(
+            canvas_enabled_reader=self._canvas_enabled
+        )
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
         self._console_original_attempt_previews: Dict[str, str] = {}
@@ -405,6 +416,18 @@ class ConsoleMessageController:
         self._pending_console_swipe_selection: str | None = None
 
     # -- Framework services (live-read via `@property`) --------------------
+
+    def _canvas_enabled(self) -> bool:
+        """Read the app-owned restart-latched Canvas execution gate."""
+
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        reader = getattr(runtime, "canvas_enabled", None)
+        if not callable(reader):
+            return False
+        try:
+            return reader() is True
+        except Exception:  # noqa: BLE001 - message actions fail closed
+            return False
 
     @property
     def run_worker(self) -> Any:
@@ -1481,6 +1504,53 @@ class ConsoleMessageController:
             and result.target_content is not None
         ):
             result = replace(result, target_content=presentation.content)
+        if result.status == "canvas_repair_requested":
+            repair = result.target_content
+            if repair is None or self._prefill_canvas_repair_fn is None:
+                self.app_instance.notify(
+                    "Canvas repair is unavailable in this Console.", severity="warning"
+                )
+                return True
+            applied = self._prefill_canvas_repair_fn(repair)
+            if inspect.isawaitable(applied):
+                await applied
+            self._last_console_action = replace(result, target_content=None)
+            return True
+        if result.status == "canvas_open_requested":
+            reference = result.canvas_block_ref
+            block = (
+                resolve_canvas_html_block(message, reference)
+                if reference is not None
+                else None
+            )
+            if block is None or self._open_canvas_block_fn is None:
+                self.app_instance.notify(
+                    "That HTML block is no longer available.", severity="warning"
+                )
+                return True
+            from ...Canvas.compiler import CanvasCompileError
+
+            try:
+                opened = self._open_canvas_block_fn(reference, block.html)
+                if inspect.isawaitable(opened):
+                    await opened
+            except CanvasCompileError as exc:
+                result = canvas_compile_repair_result(
+                    action_id, message, reference, exc
+                )
+                repair = result.target_content
+                if repair is None or self._prefill_canvas_repair_fn is None:
+                    self.app_instance.notify(
+                        "Canvas repair is unavailable in this Console.",
+                        severity="warning",
+                    )
+                    return True
+                applied = self._prefill_canvas_repair_fn(repair)
+                if inspect.isawaitable(applied):
+                    await applied
+                result = replace(result, target_content=None)
+            self._last_console_action = result
+            return True
         self._last_console_action = result
         if action_id == "fork" and result.status == "fork_requested":
             requested = self._request_console_chat_fork_fn(message_id)

@@ -294,9 +294,13 @@ def plan_pinning_files() -> dict[str, set[str]]:
         rel = str(path.relative_to(REPO_ROOT))
         for text in _plan_evidence_strings(tree):
             stripped = _strip_sql_comments(text)
-            for name in set(_CREATE_INDEX.findall(stripped)) | set(
+            names = set(_CREATE_INDEX.findall(stripped)) | set(
                 _INDEX_IDENTIFIER.findall(text)
-            ):
+            )
+            # Literal index names need not use the conventional idx_/uq_ prefix.
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", text):
+                names.add(text)
+            for name in names:
                 pins.setdefault(name, set()).add(rel)
     return pins
 

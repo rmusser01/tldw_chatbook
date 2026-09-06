@@ -7,22 +7,18 @@ from collections import Counter, OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import TYPE_CHECKING
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from tldw_chatbook.Chat.console_trace_regex_worker import (
-    CustomPIIWorkerLimits,
-    run_custom_pii_batch,
-)
 from tldw_chatbook.Chat.console_trace_redaction import (
     BUILTIN_PII_RULESET_REVISION_ID,
 )
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_trace_redaction import PIIValueRedactionResult
+    from tldw_chatbook.Chat.console_trace_regex_worker import CustomPIIWorkerLimits
 
 CUSTOM_PII_RULESET_VERSION = 1
 CUSTOM_PII_DETECTOR_VERSION = "custom-pii-v1"
@@ -287,8 +283,7 @@ def validate_custom_pii_rules_config(value: object) -> CustomPIIRulesValidation:
         elif any(item["loc"] == ("revision_id",) for item in details):
             code = "invalid_revision_id"
         elif any(
-            item["loc"] == ("rules",) and item["type"] == "too_long"
-            for item in details
+            item["loc"] == ("rules",) and item["type"] == "too_long" for item in details
         ):
             code = "rule_count_limit"
         else:
@@ -388,6 +383,8 @@ def redact_pii_value_with_custom_rules(
         raise TypeError("ruleset")
     if not ruleset.runnable_rules:
         return redact_pii_value(value)
+    from tldw_chatbook.Chat.console_trace_regex_worker import run_custom_pii_batch
+
     custom = run_custom_pii_batch(
         value,
         ruleset.runnable_rules,

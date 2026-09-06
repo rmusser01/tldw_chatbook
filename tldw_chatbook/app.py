@@ -749,7 +749,10 @@ from tldw_chatbook.runtime_policy.bootstrap import (  # noqa: E402
 from tldw_chatbook.runtime_policy.server_capabilities import (  # noqa: E402
     ActiveServerCapabilityService,
 )
-from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider  # noqa: E402
+from tldw_chatbook.runtime_policy.server_context import (  # noqa: E402
+    RuntimeServerContextProvider,
+    default_server_credential_profile_id,
+)
 from tldw_chatbook.runtime_policy.server_credentials import (  # noqa: E402
     CredentialStoreUnavailable,
     UnavailableServerCredentialStore,
@@ -2047,7 +2050,11 @@ class SetupWizardProvider(Provider):
 
                 self.app.push_screen(
                     FirstRunSetupWizard(self.app, rerun=True),
-                    self.app.handle_first_run_wizard_result,
+                    # TASK-31813: a re-run's cancellation must return to
+                    # Settings, not route to the Console.
+                    lambda result: self.app._handle_first_run_wizard_result(
+                        result, cancel_to_console=False
+                    ),
                 )
         except Exception as e:
             self.app.notify(f"Failed to open setup wizard: {e}", severity="error")
@@ -7592,6 +7599,37 @@ class TldwCli(
 
         super().__init__()
 
+        # A textual-serve child receives a one-use, per-AppService control
+        # capability through its spawn environment. Native terminal launches
+        # have no such variables and need not import the served transport.
+        canvas_control_keys = (
+            "CHATBOOK_CANVAS_CONTROL_HOST",
+            "CHATBOOK_CANVAS_CONTROL_PORT",
+            "CHATBOOK_CANVAS_CONTROL_CHILD_ID",
+            "CHATBOOK_CANVAS_CONTROL_SECRET",
+            "CHATBOOK_CANVAS_CONTROL_VERSION",
+        )
+        self.served_canvas_handler = None
+        self.served_canvas_control = None
+        if any(key in os.environ for key in canvas_control_keys):
+            from .Canvas.control_protocol import (
+                CanvasControlClient,
+                ControlProtocolError,
+            )
+            from .Canvas.gateway import ServedCanvasControlHandler
+
+            self.served_canvas_handler = ServedCanvasControlHandler()
+            try:
+                self.served_canvas_control = CanvasControlClient.from_environment(
+                    os.environ,
+                    handler=self.served_canvas_handler.handle,
+                )
+            except ControlProtocolError:
+                loguru_logger.warning(
+                    "Served Canvas control disabled code=invalid_spawn_environment"
+                )
+        self._served_canvas_control_start_task: asyncio.Task[None] | None = None
+
         # TASK-21115: a consolidated (BUNDLED_CSS) class adds no stylesheet
         # source at first mount, so a dynamic first mount can resolve against
         # a stale parse in which a base class's defaults still carry
@@ -8471,6 +8509,7 @@ class TldwCli(
             target_store=self.unified_mcp_target_store,
             credential_store_factory=lambda: self.server_credential_store,
             app_config=self.app_config,
+            credential_profile_id=default_server_credential_profile_id(),
         )
 
     def _build_local_skill_trust_service(self) -> Any:
@@ -9271,6 +9310,23 @@ class TldwCli(
                     "Actor Pack recovery retained quarantined intents: "
                     "actor_pack_recovery_blocked"
                 )
+
+        if self.actor_pack_recovery_error is None:
+            service = getattr(self, "local_character_persona_service", None)
+            if service is not None:
+                try:
+                    from .Persona_Visual.builtin_pixel_migu import (
+                        ensure_builtin_pixel_migu_buddy,
+                    )
+
+                    ensure_builtin_pixel_migu_buddy(
+                        service, coordinator, profile_root=get_user_data_dir()
+                    )
+                except Exception:
+                    self.loguru_logger.warning(
+                        "Built-in pixel-migu Buddy installation failed; "
+                        "will retry on next Personas read"
+                    )
 
     def ensure_actor_pack_staging_sweep(self) -> None:
         """Run the Actor Pack staging crash-sweep once per session (task-22216).
@@ -12243,6 +12299,314 @@ class TldwCli(
             self._reusable_screen_instances = cache
         cache[current_tab_value] = (runtime_identity, screen)
 
+    async def activate_character_conversation_from_roleplay(
+        self,
+        request: object,
+        cancellation: asyncio.Event,
+        phase_changed: Callable[[str], None],
+    ) -> object:
+        """Own an exact Roleplay-to-Console activation without losing its caller.
+
+        The reusable Console workspace performs cancellable preflight while
+        Roleplay remains the current screen. Once that check settles, the
+        operation enters its non-cancellable finishing phase and mounts Console
+        for the final atomic revalidation/hydration.  Failure restores the exact
+        mounted Roleplay caller; only ``OPENED`` replaces it.
+        """
+
+        from tldw_chatbook.Chat.console_conversation_activation import (
+            CharacterConversationActivationRequest,
+            ConsoleActivationResultKind,
+            ConsoleConversationActivationResult,
+        )
+
+        if not isinstance(request, CharacterConversationActivationRequest):
+            raise TypeError("request must be a character activation request")
+        cancelled_result = ConsoleConversationActivationResult(
+            ConsoleActivationResultKind.CANCELLED_PRECOMMIT,
+            request.target,
+            False,
+        )
+        if cancellation.is_set():
+            return cancelled_result
+        runtime = getattr(self, "console_runtime", None)
+        lane = getattr(runtime, "character_conversation_activation_lock", None)
+        if not isinstance(lane, asyncio.Lock):
+            raise RuntimeError("Console activation lane is unavailable")  # noqa: TRY004 - unavailable runtime ownership, not a public input type check
+        admission: asyncio.Task[bool] | None = None
+        cancelled: asyncio.Task[bool] | None = None
+        preflight: asyncio.Task[Any] | None = None
+        lane_acquired = False
+        commit_started = False
+        candidate = None
+        try:
+            # These children are owned from creation: cancellation of this
+            # outer worker must never leave an orphan that later acquires the
+            # app-lifetime lane.
+            admission = asyncio.create_task(lane.acquire())
+            cancelled = asyncio.create_task(cancellation.wait())
+            done, _pending = await asyncio.wait(
+                {admission, cancelled}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancelled in done and cancellation.is_set():
+                return cancelled_result
+            lane_acquired = bool(await admission)
+            if cancellation.is_set():
+                return cancelled_result
+
+            _, _, screen_class = self._resolve_screen_navigation_target(TAB_CHAT)
+            if screen_class is None:
+                return ConsoleConversationActivationResult(
+                    ConsoleActivationResultKind.FAILED, request.target, False
+                )
+            runtime_identity = self._current_runtime_identity()
+            candidate = self._reusable_navigation_screen(TAB_CHAT, runtime_identity)
+            if candidate is None:
+                candidate = self._create_navigation_screen(TAB_CHAT, screen_class)
+            preflight = asyncio.create_task(
+                candidate._workspace.preflight_character_conversation_activation(
+                    request
+                )
+            )
+            if cancelled is not None and not cancelled.done():
+                cancelled.cancel()
+                await asyncio.gather(cancelled, return_exceptions=True)
+            cancelled = asyncio.create_task(cancellation.wait())
+            done, _pending = await asyncio.wait(
+                {preflight, cancelled}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancelled in done and cancellation.is_set():
+                preflight.cancel()
+                await asyncio.gather(preflight, return_exceptions=True)
+                return cancelled_result
+            cancelled.cancel()
+            await asyncio.gather(cancelled, return_exceptions=True)
+            preflight_result = await preflight
+            if preflight_result is not None:
+                return ConsoleConversationActivationResult(
+                    preflight_result, request.target, False
+                )
+            if cancellation.is_set():
+                return cancelled_result
+
+            # The app-wide lane and final revalidation are both owned here.
+            # Publishing Finishing is the atomic commit acknowledgement; only
+            # after it is visible does the surviving Console touch the stack.
+            phase_changed("finishing")
+            commit_started = True
+            caller = self.screen
+            post_commit = asyncio.create_task(
+                TldwCli._complete_character_conversation_post_commit(
+                    self, candidate, caller, request, runtime_identity
+                ),
+                name="character_conversation_post_commit",
+            )
+            return await TldwCli._await_character_conversation_post_commit(
+                post_commit
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - admission failures return typed outcomes and drain owned tasks
+            logger.opt(exception=True).warning(
+                "Roleplay character-conversation activation failed"
+            )
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.FAILED,
+                request.target,
+                commit_started,
+            )
+        finally:
+            children = tuple(
+                task
+                for task in (admission, cancelled, preflight)
+                if task is not None
+            )
+            for child in children:
+                if not child.done():
+                    child.cancel()
+            child_results = (
+                await asyncio.gather(*children, return_exceptions=True)
+                if children
+                else ()
+            )
+            if not lane_acquired and admission is not None:
+                admission_index = children.index(admission)
+                lane_acquired = child_results[admission_index] is True
+            if lane_acquired:
+                lane.release()
+
+    @staticmethod
+    async def _await_character_conversation_post_commit(
+        operation: asyncio.Task[Any],
+    ) -> Any:
+        """Delay caller cancellation until app-owned commit work settles."""
+
+        cancellation: asyncio.CancelledError | None = None
+        while True:
+            try:
+                result = await asyncio.shield(operation)
+            except asyncio.CancelledError as error:
+                if operation.cancelled():
+                    raise
+                cancellation = cancellation or error
+                continue
+            break
+        if cancellation is not None:
+            raise cancellation
+        return result
+
+    async def _complete_character_conversation_post_commit(
+        self,
+        candidate: Any,
+        caller: Any,
+        request: Any,
+        runtime_identity: Any,
+    ) -> Any:
+        """Mount, hydrate, transfer, or roll back one committed activation."""
+
+        from tldw_chatbook.Chat.console_conversation_activation import (
+            ConsoleActivationResultKind,
+            ConsoleConversationActivationResult,
+        )
+
+        transferred = False
+
+        async def finalize_visible() -> None:
+            nonlocal transferred
+            await TldwCli._transfer_pushed_console_to_content(
+                self, candidate, caller
+            )
+            transferred = True
+
+        # A cached Console resumes instead of mounting. Its ordinary registry
+        # reconciliation must not compete with this exact target's transaction.
+        prior_resume_gate = getattr(
+            candidate, "_resume_navigation_startup_in_progress", False
+        )
+        candidate._resume_navigation_startup_in_progress = True
+        try:
+            await self.push_screen(candidate)
+            result = (
+                await candidate._workspace.activate_character_conversation_after_commit(
+                    request,
+                    finalize_visible=finalize_visible,
+                )
+            )
+            if result.kind is ConsoleActivationResultKind.OPENED and transferred:
+                if not self.is_screen_installed(candidate):
+                    self._retain_reusable_navigation_screen(
+                        TAB_CHAT, runtime_identity, candidate
+                    )
+                self.current_tab = TAB_CHAT
+                return result
+            if getattr(self, "screen", None) is candidate:
+                await self.pop_screen()
+            if result.kind is ConsoleActivationResultKind.OPENED:
+                return ConsoleConversationActivationResult(
+                    ConsoleActivationResultKind.FAILED, request.target, True
+                )
+            return result
+        except Exception:  # noqa: BLE001 - restore caller after any committed mount or transfer failure
+            logger.bind(
+                operation_id=id(request), candidate_token=id(candidate),
+                caller_token=id(caller), stage="commit_screen",
+            ).opt(exception=True).warning(
+                "Committed Roleplay character-conversation activation failed"
+            )
+            if getattr(self, "screen", None) is candidate:
+                try:
+                    await self.pop_screen()
+                except Exception:  # noqa: BLE001 - report caller restoration without losing typed outcome
+                    logger.bind(
+                        operation_id=id(request), candidate_token=id(candidate),
+                        caller_token=id(caller), stage="restore_caller",
+                    ).opt(exception=True).error(
+                        "Could not restore Roleplay after Console mount failure"
+                    )
+            return ConsoleConversationActivationResult(
+                ConsoleActivationResultKind.FAILED, request.target, True
+            )
+        finally:
+            candidate._resume_navigation_startup_in_progress = prior_resume_gate
+
+    async def _transfer_pushed_console_to_content(
+        self,
+        candidate: Any,
+        caller: Any,
+    ) -> None:
+        """Promote the proved pushed Console while replacing its Roleplay caller."""
+
+        stack = self._screen_stack
+        if (
+            len(stack) < 2
+            or stack[-1] is not candidate
+            or stack[-2] is not caller
+        ):
+            raise RuntimeError("Console activation stack ownership changed")
+
+        original_stack = tuple(stack)
+        candidate_callbacks = tuple(candidate._result_callbacks)
+        caller_callbacks = tuple(caller._result_callbacks)
+
+        # The proved candidate is already current, mounted, and owns its push
+        # callback. Remove only the caller beneath it; unlike switch_screen,
+        # this never exposes a state where Textual has popped both screens.
+        try:
+            stack.pop(-2)
+            caller._pop_result_callback()
+            await self._remove_promoted_screen_caller(caller)
+        except BaseException:
+            # Restore exact membership/callback ownership even if the removal
+            # seam failed after changing the current stack. A normal pop then
+            # resumes Roleplay and unmounts the attempt-owned candidate.
+            stack[:] = original_stack
+            candidate._result_callbacks[:] = candidate_callbacks
+            caller._result_callbacks[:] = caller_callbacks
+            try:
+                if not caller.is_running:
+                    restored_caller, await_mount = self._get_screen(caller)
+                    if restored_caller is not caller:
+                        raise RuntimeError("Roleplay screen identity changed during restore")
+                    await await_mount
+                await self.pop_screen()
+            except BaseException:  # noqa: BLE001 - fallback restores ownership even when cleanup is cancelled
+                logger.bind(
+                    candidate_token=id(candidate), caller_token=id(caller),
+                    stage="restore_caller",
+                ).opt(exception=True).error(
+                    "Could not atomically restore Roleplay after Console promotion"
+                )
+                stack[:] = original_stack[:-1]
+                caller._result_callbacks[:] = caller_callbacks
+                candidate._result_callbacks[:] = candidate_callbacks[:-1]
+                try:
+                    if not caller.is_running:
+                        restored_caller, await_mount = self._get_screen(caller)
+                        if restored_caller is not caller:
+                            raise RuntimeError(
+                                "Roleplay screen identity changed during fallback restore"
+                            )
+                        await await_mount
+                    if (
+                        candidate.is_running
+                        and candidate.parent is self
+                        and not self.is_screen_installed(candidate)
+                    ):
+                        await candidate.remove()
+                except BaseException:  # noqa: BLE001 - final attempt-owned cleanup must not replace original failure
+                    logger.bind(
+                        candidate_token=id(candidate), caller_token=id(caller),
+                        stage="cleanup_candidate",
+                    ).opt(exception=True).error(
+                        "Could not clean failed Console promotion candidate"
+                    )
+            raise
+
+    async def _remove_promoted_screen_caller(self, caller: Any) -> None:
+        """Unmount the former content screen after its stack slot is removed."""
+
+        await caller.remove()
+
     def prepare_personal_context_interview_request(
         self,
         *,
@@ -14527,6 +14891,10 @@ class TldwCli(
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._start_persona_buddy_overlay()
+        runtime = self.console_runtime
+        if runtime is not None:
+            runtime.start_async_lifecycles()
+        self._start_served_canvas_control()
         self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
             local_service=self.local_watchlists_service,
             briefing_db=self.subscriptions_db,
@@ -14849,6 +15217,42 @@ class TldwCli(
         # nothing waits on and that resume from a frontier in their own
         # database, so they belong in the staggered tier -- see
         # `Utils/boot_worker_policy.py` and `_start_staggered_boot_workers`.
+
+    def _start_served_canvas_control(self) -> None:
+        """Attach this authoritative child to its parent transport."""
+
+        client = self.served_canvas_control
+        if client is None or self._served_canvas_control_start_task is not None:
+            return
+        task = asyncio.create_task(
+            client.start(), name="start_served_canvas_control"
+        )
+        self._served_canvas_control_start_task = task
+
+        def observe(completed: asyncio.Task[None]) -> None:
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as error:
+                self.loguru_logger.warning(
+                    "Served Canvas control unavailable type={} code=connection_failed",
+                    type(error).__name__,
+                )
+
+        task.add_done_callback(observe)
+
+    async def _stop_served_canvas_control(self) -> None:
+        """Close the private child channel without affecting terminal exit."""
+
+        task = self._served_canvas_control_start_task
+        self._served_canvas_control_start_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        client = self.served_canvas_control
+        if client is not None:
+            await client.aclose()
 
     def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
         """Build the disk-backed model catalog cache for startup (ADR-020).
@@ -15432,8 +15836,14 @@ class TldwCli(
         for key in delete_keys.get("first_run", ()):
             first_run.pop(key, None)
 
-    def _handle_first_run_wizard_result(self, result: dict | None) -> None:
-        """Optionally chain personalization before the existing continuation."""
+    def _handle_first_run_wizard_result(
+        self, result: dict | None, *, cancel_to_console: bool = True
+    ) -> None:
+        """Optionally chain personalization before the existing continuation.
+
+        ``cancel_to_console`` is forwarded for cancellation routing
+        (TASK-31813); dict results are unaffected by it.
+        """
 
         if type(result) is dict and result.get("offer_profile_interview") is True:
             completed = result.get("completed")
@@ -15450,7 +15860,9 @@ class TldwCli(
             if eligible:
 
                 def continuation() -> None:
-                    TldwCli._continue_first_run_wizard_result(self, result)
+                    TldwCli._continue_first_run_wizard_result(
+                        self, result, cancel_to_console=cancel_to_console
+                    )
 
                 try:
                     request = self.prepare_personal_context_interview_request(
@@ -15481,13 +15893,39 @@ class TldwCli(
 
                 launch_profile_interview_after_commit(self, request, continuation)
                 return
-        TldwCli._continue_first_run_wizard_result(self, result)
+        TldwCli._continue_first_run_wizard_result(
+            self, result, cancel_to_console=cancel_to_console
+        )
 
-    def _continue_first_run_wizard_result(self, result: dict | None) -> None:
-        """Preserve the pre-interview first-run result handling byte-for-byte."""
+    def _continue_first_run_wizard_result(
+        self, result: dict | None, *, cancel_to_console: bool = True
+    ) -> None:
+        """Preserve the pre-interview first-run result handling byte-for-byte.
+
+        TASK-31813: the cancel branch changed. Esc-exiting the boot-offered
+        wizard used to strand the user on Home (the screen the wizard was
+        pushed over, per the first-run startup route); cancelling now lands
+        on the Console workbench. Settings/command-palette RE-RUNS opt out
+        via ``cancel_to_console=False`` so cancelling a re-run leaves the
+        caller's screen alone.
+        """
 
         if type(result) is not dict:
-            return  # cancelled / finish-later: recovery state handles next launch
+            # Cancelled / finish-later: recovery state handles the NEXT
+            # launch; this landing is for the user pressing Esc now.
+            if not cancel_to_console:
+                return
+            # task-18812 parity: consume a deferred focus request under the
+            # same Chat-route rule the completed paths use.
+            if getattr(self, "_deferred_focus_request", False):
+                self._deferred_focus_request = False
+                self.focus_mode = True
+            from tldw_chatbook.UI.Navigation.main_navigation import (
+                NavigateToScreen,
+            )
+
+            self.post_message(NavigateToScreen(TAB_CHAT, {}))
+            return
         exit_route = result.get("exit_route")
         completed = result.get("completed")
         exit_context = result.get("exit_context")
@@ -17550,6 +17988,13 @@ class TldwCli(
         # monotonic: a signal-armed watchdog already holds a tighter
         # deadline and this call leaves it alone.
         arm_exit_watchdog(reason="app unmount")
+        try:
+            await self._stop_served_canvas_control()
+        except Exception as error:
+            self.loguru_logger.warning(
+                "Served Canvas control close failed type={} code=close_failed",
+                type(error).__name__,
+            )
         # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
         # line is app_started ended abruptly. Wrapped, and deliberately so:
         # this line sits ABOVE the entire shutdown sequence -- DB closes,

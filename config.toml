@@ -12,6 +12,40 @@ base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
 # Default auth token can be stored here, or leave empty if user must always provide
 auth_token = "default-secret-key-for-single-user"
 
+[canvas]
+# Effective preference order is a non-empty environment override, then this
+# saved TOML value, then the default. TLDW_CANVAS_ENABLED and
+# TLDW_CANVAS_AUTO_OPEN_ON_CREATE accept only true or false (case-insensitive);
+# malformed non-empty values fail closed. Hard quotas have no env overrides.
+# Global execution/delivery/tool-advertisement kill switch. Stored revisions
+# and Chatbook export/import data remain intact when this is off.
+enabled = true
+# Auto-open only after a successful assistant canvas_create. Updates hot-reload
+# an already-open preview and explicit user Open actions remain manual.
+auto_open_on_create = true
+
+[web_server]
+# Browser-served Chatbook defaults to loopback and needs no token ceremony there.
+enabled = true
+host = "localhost"
+port = 8000
+title = "tldw chatbook"
+font_size = 12
+debug = false
+# Remote access uses only this dedicated credential, resolved as
+# TLDW_CHATBOOK_WEB_ACCESS_TOKEN -> this field -> OS keyring service
+# "tldw_chatbook_web", account "access_token". Never reuse provider/MCP/API keys.
+access_token = ""
+# For remote use, set the exact HTTPS browser origin and either set both direct
+# TLS files below or put Chatbook behind a TLS reverse proxy whose literal peer
+# address is allowlisted. Forwarded headers from all other peers are ignored.
+public_url = ""
+tls_certificate = ""
+tls_private_key = ""
+trusted_proxy_addresses = []
+# Development only: remote plaintext exposes credentials and conversation data.
+allow_insecure_remote_http = false
+
 [splash_screen]
 # Splash screen configuration for startup animations
 enabled = true  # Enable/disable splash screen
