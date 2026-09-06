@@ -121,8 +121,10 @@ touched file/mechanism: `test_schedules_new_button.py::test_new_button_row_flatt
 (CSS layout height, `schedules_workbench.py` untouched here), the 6 known
 `test_console_modal_dismissal.py` reds (all `ConsoleModelPopover` constructor-arity
 drift, unrelated file), and 2 `test_library_media_return_settlement.py` failures
-("Local prompt backend is unavailable" — a Prompts-service fixture/env issue, not
-an on_mount/mount-order issue).
+(a scroll-offset assertion, `(0, 45) == (0, 42)` — the "Local prompt backend is
+unavailable" ValueError seen alongside is unrelated setup noise; root cause
+corrected per the task review, which reproduced both failures identically at
+base `f811d6903` — pre-existing either way, not a mount-order issue).
 
 Modified files: skill_import_choice_modal.py, profile_interview_screen.py,
 change_review_screen.py, new_task_choice_modal.py, actor_pack_import_review.py,
