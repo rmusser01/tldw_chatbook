@@ -4379,7 +4379,24 @@ class SchedulesWorkbench(BaseAppScreen):
                     "empty", "Local only — no server connection"
                 )
             elif getattr(service, "server_reachable", True) is None:
-                self._sync_header_status("loading", "Checking sync status…")
+                # task-31798: `server_reachable` stays `None` ONLY after the
+                # mount-time probe hit `ServerClientPolicyError` -- the local
+                # runtime policy refused the capabilities round trip before it
+                # ever reached the wire (a fresh LOCAL profile whose
+                # placeholder `[tldw_api]` URL makes `active_server_id` truthy).
+                # That path always sets `server_permission_denied`, so it is
+                # the exact signal for "the probe COMPLETED and could not
+                # establish a usable server connection" as opposed to "a probe
+                # is still genuinely in flight". Left un-distinguished, the
+                # header sat on the transient "Checking sync status…" copy
+                # forever while the footer correctly read local-only; resolve
+                # it to the same local-only status the footer shows.
+                if getattr(service, "server_permission_denied", False):
+                    self._sync_header_status(
+                        "empty", "Local only — no server connection"
+                    )
+                else:
+                    self._sync_header_status("loading", "Checking sync status…")
             else:
                 self._sync_header_status(
                     "empty", "Server configured but not reachable"

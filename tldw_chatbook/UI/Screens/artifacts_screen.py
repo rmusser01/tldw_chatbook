@@ -35,6 +35,7 @@ from ...Subscriptions.briefing_export import (
     default_briefing_filename,
 )
 from ...Subscriptions.briefing_keep import KeepRefused, keep_briefing
+from ...Subscriptions.daily_reports_view import format_report_timestamp
 from ...Subscriptions.briefing_service import (
     STATUS_COMPLETE,
     STATUS_EMPTY,
@@ -69,6 +70,15 @@ CHATBOOK_OUTCOME_TRANSIENT = "transient"
 #: named constant driving the slice, the overflow check, and the "+ N more"
 #: count -- previously three separate `5` literals that could drift).
 REPORT_DISPLAY_LIMIT = 5
+#: Shared tooltip for the Daily Report demo control -- rendered both as the
+#: empty-state "Create Your First Daily Report" CTA and, after a failed brief
+#: (TASK-31801), as the "Run the Daily Report demo again" retry affordance
+#: that the failure toast ("...then run the demo again") points users to.
+DAILY_REPORT_DEMO_TOOLTIP = (
+    "Seeds a 'Daily Brief' watchlist from live RSS, drafts a text brief with "
+    "your configured LLM provider, and records audio when a TTS voice profile "
+    "exists. Uses live sources and your provider's API quota."
+)
 ARTIFACTS_EMPTY_CHATBOOK_RECOVERY = DestinationRecoveryState(
     status_label="Select an artifact",
     unavailable_what="Console launch for Chatbook artifacts",
@@ -275,6 +285,25 @@ class ArtifactsScreen(BaseAppScreen):
     # --- TASK-21514: previewing one Daily Report in the detail pane ---------
 
     @property
+    def _latest_report_failed(self) -> bool:
+        """True when the most recent Daily Report ended in failure.
+
+        Drives the retry-CTA gate (TASK-31801). The demo failure toast points
+        at "run the demo again", so the retry affordance must track the
+        RELEVANT state -- the newest report -- not "any report ever
+        completed" (Qodo #4 on PR #2460: an older success followed by a fresh
+        failure kept the toast but lost the CTA). `_daily_reports` is ordered
+        newest-first (`list_recent_briefings` ORDER BY created_at DESC, id
+        DESC), so index 0 is the latest run: the CTA shows exactly when that
+        run is `failed`, and a later success (or an empty/generating run)
+        removes it.
+        """
+        if not self._daily_reports:
+            return False
+        newest = self._daily_reports[0]
+        return str(newest.get("status") or "").strip().lower() == STATUS_FAILED
+
+    @property
     def _previewed_report_complete(self) -> bool:
         """True when the previewed report's status is `complete`."""
         report = self._previewed_report
@@ -380,7 +409,7 @@ class ArtifactsScreen(BaseAppScreen):
         header.append(strip_control_characters(watchlist_name), style="bold")
         header.append(" · ")
         header.append(
-            strip_control_characters(str(row.get("created_at") or "unknown time"))
+            strip_control_characters(format_report_timestamp(row.get("created_at")))
         )
         header.append(" · ")
         header.append(strip_control_characters(status or "unknown status"))
@@ -929,6 +958,17 @@ class ArtifactsScreen(BaseAppScreen):
                             disabled=not self._previewed_report_complete,
                             tooltip=export_tooltip,
                         )
+                        # TASK-31801: a failed run leaves a report row (so the
+                        # empty-state branch below is gone), yet the failure
+                        # toast tells the user to "run the demo again". Keep
+                        # that retry affordance reachable while the NEWEST run
+                        # is failed (Qodo #4: not "any report ever completed").
+                        if self._latest_report_failed:
+                            yield Button(
+                                "Run the Daily Report demo again",
+                                id="artifacts-daily-report-demo",
+                                tooltip=DAILY_REPORT_DEMO_TOOLTIP,
+                            )
                     else:
                         yield Static(
                             "  Reports: none yet", id="artifacts-list-reports"
@@ -936,12 +976,7 @@ class ArtifactsScreen(BaseAppScreen):
                         yield Button(
                             "Create Your First Daily Report",
                             id="artifacts-daily-report-demo",
-                            tooltip=(
-                                "Seeds a 'Daily Brief' watchlist from live RSS, drafts "
-                                "a text brief with your configured LLM provider, and "
-                                "records audio when a TTS voice profile exists. Uses "
-                                "live sources and your provider's API quota."
-                            ),
+                            tooltip=DAILY_REPORT_DEMO_TOOLTIP,
                         )
                     yield Static(
                         "  Datasets: none available", id="artifacts-list-datasets"
@@ -970,6 +1005,15 @@ class ArtifactsScreen(BaseAppScreen):
                         id="artifacts-import-artifact",
                         disabled=True,
                         tooltip="Artifact import is a later-stage path for this shell.",
+                    )
+                    # TASK-31802: the Import control is permanently disabled,
+                    # so state its precondition inline rather than leaving the
+                    # empty-state copy to advertise an action the user cannot
+                    # take (the copy below no longer says "import an artifact").
+                    yield Static(
+                        "Import Artifact is not yet available in this shell.",
+                        id="artifacts-import-note",
+                        classes="destination-purpose",
                     )
                     yield Static(
                         "Generated outputs from local and server output services will appear here.",
@@ -1030,7 +1074,7 @@ class ArtifactsScreen(BaseAppScreen):
                         )
                     else:
                         yield Static(
-                            "No artifact selected. Create a Chatbook in Console, import an artifact, "
+                            "No artifact selected. Create a Chatbook in Console, "
                             "or use Library sources to generate outputs.",
                             id="artifacts-detail-empty",
                         )
@@ -1365,7 +1409,7 @@ class ArtifactsScreen(BaseAppScreen):
         )
 
     async def _run_daily_report_demo(self, service: Any) -> None:
-        """Start the app-owned demo task, then refresh whatever lands.
+        """Start the app-owned demo task, then refresh on start AND on finish.
 
         Qodo #10: the demo itself runs as a SERVICE-owned task
         (`run_demo_detached`), never inside this screen worker -- Textual
@@ -1373,9 +1417,18 @@ class ArtifactsScreen(BaseAppScreen):
         orchestration mid-flight after its persistent seed state had already
         committed. The worker only starts the task and refreshes; stage and
         completion notifications arrive through the dispatch service.
+
+        Qodo #5 (PR #2460 review): the detached task runs for minutes, so the
+        immediate refresh below only shows the freshly-seeded `generating`
+        row. Without a completion refresh, a retry that SUCCEEDS while
+        Artifacts stays open left the stale `failed` row and its retry CTA on
+        screen until an unrelated refresh or a screen resume fired. Attaching
+        a done-callback to the returned task closes that: it re-reads the rows
+        on the event loop when the demo terminates (guarded by `is_attached`).
         """
+        task = None
         try:
-            service.run_demo_detached()
+            task = service.run_demo_detached()
         except Exception:  # noqa: BLE001 - a worker crash exits the app
             logger.warning("Daily report demo failed to start")
             self.app_instance.notify(
@@ -1383,8 +1436,23 @@ class ArtifactsScreen(BaseAppScreen):
                 severity="error",
             )
         finally:
+            # `run_demo_detached` returns None when a demo is already running;
+            # only a real task carries a completion to refresh on.
+            if task is not None:
+                task.add_done_callback(self._on_demo_task_done)
             if self.is_attached:
                 self._start_daily_reports_refresh()
+
+    def _on_demo_task_done(self, _task: Any) -> None:
+        """Refresh the Reports rows when the detached demo task terminates.
+
+        Runs on the event loop (asyncio done-callback), the same thread
+        Textual drives, so the refresh is dispatched directly. A screen that
+        unmounted mid-demo must not recompose, hence the `is_attached` guard.
+        """
+        if not self.is_attached:
+            return
+        self._start_daily_reports_refresh()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Dynamic-id dispatch for per-report Play/View/Open buttons.

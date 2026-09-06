@@ -435,6 +435,9 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
             button = Button(
                 self._action_label(),
                 id="console-settings-open",
+                # `console-rail-focus-carrier` keys the focus-edge rule
+                # (TASK-31663); see `console_inspector_section.py`'s toggle.
+                classes="console-rail-focus-carrier",
                 tooltip=self._action_tooltip(),
                 compact=True,
             )

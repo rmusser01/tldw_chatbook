@@ -947,6 +947,18 @@ class ConsoleComposerBar(Horizontal):
         recovery.styles.display = "block" if visible else "none"
         undo.disabled = not visible
         review.disabled = not visible
+        # TASK-31663 AC#3: focusability follows the row's display, explicitly.
+        # The 2026-09-05 critique blamed "Tab never reaches the rail" on a
+        # hidden-but-focusable blank widget labelled "Review changes"; measured,
+        # that widget is `#console-prompt-improvement-review` HERE (not the left
+        # rail), and the only things keeping it out of the composer's Tab ring
+        # were `disabled` and the parent row's `display: none`. Both are
+        # incidental: enable one of these buttons without showing the row and a
+        # blank stop appears in the ring. The second half of this pair is
+        # `compose`, which builds them non-focusable because the row starts
+        # hidden.
+        undo.can_focus = visible
+        review.can_focus = visible
         self._improvement_recovery_visible = visible
         self._refresh_visible_draft()
 
@@ -6207,6 +6219,13 @@ class ConsoleComposerBar(Horizontal):
                 disabled=True,
             )
             undo_button.styles.line_pad = 0
+            # TASK-31663 AC#3: the row above is `display: none` until an
+            # improvement lands, so neither button may hold a Tab stop yet.
+            # `_sync_improvement_recovery` is the other half of this pair and
+            # flips `can_focus` back with the row's display; its early-return
+            # equality guard means it never runs while the state is unchanged,
+            # so the hidden starting state has to be built correct here.
+            undo_button.can_focus = False
             yield undo_button
             review_button = self._bounded_button(
                 "Review changes",
@@ -6217,4 +6236,5 @@ class ConsoleComposerBar(Horizontal):
                 disabled=True,
             )
             review_button.styles.line_pad = 0
+            review_button.can_focus = False
             yield review_button

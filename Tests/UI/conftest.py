@@ -466,6 +466,79 @@ def mock_app_with_notes(mock_notes_service):
 
 
 @pytest.fixture
+def tmp_media_db(tmp_path):
+    """A real, on-disk, per-test `MediaDatabase` (repo convention: real
+    SQLite, never a mock, for DB tests -- Task 8, meeting speaker rename)."""
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    db = MediaDatabase(str(tmp_path / "media_test.sqlite"), "test_client")
+    yield db
+    db.close_connection()
+
+
+@pytest.fixture
+def meeting_folder_media_item(tmp_path, tmp_media_db):
+    """Build a meeting folder (`meeting.json` + `transcript.jsonl`) and the
+    Library `Media` row that points at its `mixed.wav`, exactly as a real
+    finished meeting recording leaves them (Task 8's Interfaces section).
+
+    Returns a factory: ``factory(names: dict, segments: list[tuple[str,
+    str]], content: str | None) -> (media_id, folder)``, where each segment
+    tuple is ``(speaker_id, text)``.
+
+    `Media.content` defaults to the meeting's OWN render of those segments --
+    what a meeting-produced Library item holds, and what
+    `rename_meeting_speaker` requires before it will rewrite anything (fix
+    C2). Pass `content=` to stand in for an item whose transcript came from
+    somewhere else (the ingest's offline pass, say).
+    """
+    import json as _json
+
+    def _factory(*, names: dict, segments: list[tuple[str, str]], content: str | None = None):
+        folder = tmp_path / f"meeting-{len(segments)}-{id(segments)}"
+        folder.mkdir()
+        (folder / "mixed.wav").write_bytes(b"")
+        (folder / "meeting.json").write_text(_json.dumps({"speaker_names": dict(names)}))
+        lines = []
+        for seq, (speaker_id, text) in enumerate(segments):
+            lines.append(
+                _json.dumps(
+                    {
+                        "seq": seq,
+                        "t_audio_start": float(seq),
+                        "t_audio_end": float(seq) + 1.0,
+                        "t_wall_start": 0.0,
+                        "t_wall_end": 0.0,
+                        "label": "others",
+                        "text": text,
+                        "speaker_id": speaker_id,
+                    }
+                )
+            )
+        (folder / "transcript.jsonl").write_text("\n".join(lines) + ("\n" if lines else ""))
+        if content is None:
+            from tldw_chatbook.Widgets.Library.library_media_canvas import (
+                _read_meeting_transcript_segments,
+                _render_meeting_transcript,
+            )
+
+            content = _render_meeting_transcript(
+                _read_meeting_transcript_segments(folder), dict(names)
+            )
+        media_id, _uuid, _msg = tmp_media_db.add_media_with_keywords(
+            url=str(folder / "mixed.wav"),
+            title="Test Meeting",
+            media_type="audio",
+            content=content,
+            overwrite=False,
+        )
+        assert media_id is not None, _msg
+        return media_id, folder
+
+    return _factory
+
+
+@pytest.fixture
 def sample_notes_data():
     """Provide sample notes data for tests."""
     return [

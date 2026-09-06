@@ -254,7 +254,12 @@ destination, or leaving the Import canvas cancels pending consent.
 
 1. **Import one file** — Click "Import…", press "Browse…", pick the
    file, wait for the type breakdown, then press "Start import". When the
-   row reads "✓ done", press "Open in Library" to view it.
+   row reads "✓ done", press "Open in Library" to view it. The reader opens
+   on the new item and the middle Items list lands populated alongside it.
+
+*Verified against fix/library-uat-31796-31797 — 2026-09-06 (task-31797: the
+"Open in Library" deep-link now loads the Items page instead of leaving it on
+"0 of 0 · type: None / No page loaded").*
 2. **Import a whole folder** — Type or paste the folder's path into the
    path field (the "Browse…" picker selects single files only). Review the
    breakdown and size estimate — folder scans stop at 1,000 files and note

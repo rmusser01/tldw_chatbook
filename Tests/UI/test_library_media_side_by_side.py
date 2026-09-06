@@ -1204,6 +1204,11 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 lambda: (
                     bool(controller.error_copy)
                     and bool(screen.query("#library-media-retry"))
+                    # task-31632: the Retry mounts INSIDE the failure callout,
+                    # which composes before the row scroll -- so its presence
+                    # no longer implies the retained rows have remounted, and
+                    # the row count below raced the mount (whole-file red).
+                    and len(screen.query(".library-media-row")) == 20
                 ),
                 message="Compact page failure never exposed retained Retry.",
             )

@@ -32,7 +32,10 @@ Where this page's controls live:
   "Chat Context" viewer this modal replaced.
 - **The Inspector rail** (right edge), top to bottom — the Project
   Instructions status row, then the pinned "What happens if I send now?"
-  summary (these two never scroll), then the scrolling body: the
+  summary (these two never scroll; on a short terminal the summary shrinks
+  to its heading and the **Run** line so the body below keeps room for a
+  whole section — see [Sessions, tabs & workspaces](sessions-tabs-workspaces.md)),
+  then the scrolling body: the
   **Environment**, **Tasks**, and **Agents** sections (see [The Environment
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the
@@ -188,17 +191,23 @@ on the **active workspace's change-review root** (the same tree the
 `Review changes` action opens), so the rail and Change Review can never
 describe different trees. Rows, top to bottom:
 
+A trailing marker on each row's own text says what Enter does to it, since
+the rows otherwise look alike: a `▸` (or `▾` once expanded) means Enter
+expands the row in place; a trailing `…` means Enter opens another surface —
+Change Review or the OS browser; a leading `+` means Enter pastes text into
+the composer draft. A row with none of these is inert — Enter does nothing.
+
 | Row | Shows | Enter expands to | Actions |
 | --- | --- | --- | --- |
-| **Changes** | `+adds −dels` for the working tree vs `HEAD` | one row per changed file with its own ± counts (long lists end with "… N more — Review opens all") | **Review in Change Review** |
-| **Local** | the execution target for this instance | `Local instance ✓` and a greyed `Remote tldw_server — not configured` | none — remote execution is a placeholder, not a feature |
-| **branch** | the branch name, plus `↑n ↓n` divergence and a `wt:<name>` marker inside a linked worktree | the full branch name and `upstream <ref> (↑↓ vs last fetch)`, plus the worktree name and its path | none |
-| **Commit or push** | `Commit or push · N files` when the tree is dirty, `Push ↑n` when it is only ahead — **absent when the tree is clean and in sync** | — | opens Change Review directly on its working-tree mode |
-| **PR** | `PR #N · Open` / `· Draft` / `· Merged`, with `Merged 6d ago` beside a merged one | the PR title with its ± counts | **Open in browser**, **Add to chat** (pastes a PR summary into the composer) |
-| **checks** | `3 failing checks`, `2 pending checks`, or `12 checks passed` | the failing check names | **Fix — add failure summary to chat** (pastes the failing check names and their details URLs into the composer) |
+| **Changes ▸** | `+adds −dels` for the working tree vs `HEAD` | one row per changed file with its own ± counts (long lists end with "… N more — Review opens all") | **Review in Change Review…** |
+| **Local ▸** | the execution target for this instance | `Local instance ✓` and a greyed `Remote tldw_server — not configured` (both inert) | none — remote execution is a placeholder, not a feature |
+| **branch ▸** | the branch name, plus `↑n ↓n` divergence and a `wt:<name>` marker inside a linked worktree | the full branch name and `upstream <ref> (↑↓ vs last fetch)`, plus the worktree name and its path (inert) | none |
+| **Review & commit… · N files** | shown when the tree is dirty; `Push ↑n…` when it is only ahead — **absent when the tree is clean and in sync** | — | opens Change Review directly on its working-tree mode |
+| **PR ▸** | `PR #N · Open` / `· Draft` / `· Merged`, with `Merged 6d ago` beside a merged one | the PR title with its ± counts (inert) | **Open in browser…**, **+ Add to chat** (pastes a PR summary into the composer) |
+| **checks ▸** | `3 failing checks`, `2 pending checks`, or `12 checks passed` | the failing check names (inert) | **+ Fix — add failure summary to chat** (pastes the failing check names and their details URLs into the composer) |
 
 Large counts compact rather than wrap: a seven-digit pair reads
-`+1.7M −278k` in the rail's 34-column budget, and the exact figures stay one
+`+1.7M −278k` in the rail's 30-column width, and the exact figures stay one
 Enter away in the expansion.
 
 Two honesty notes worth knowing:
@@ -213,10 +222,14 @@ Two honesty notes worth knowing:
 
 **Tasks** — the `backlog/` directory in the same root. When the branch name
 carries a task id (`feat/task-3401-…`, and subtask ids like `task-3401.6`
-count) the collapsed line is that task: `task-3401 · In Progress`, with
-`4/9 ACs · <title>` beside it. With no branch-linked task it reports counts
-instead — `3 in progress · 12 to do`. Enter expands the full list,
-In-Progress first, capped with a "… N more" row; **Add task to chat** pastes
+count) the collapsed line is that task: `task-3401 · In Progress ▸`, with
+`4/9 ACs · <title>` beside it. With no branch-linked task the section header
+carries the counts (`3 doing · 12 todo`) **while the section is collapsed** —
+expanding it hides that summary, because the rows below then say the same
+thing — and the row beneath is the handle onto the list — **Backlog ▸**, with
+how many tasks it holds. Enter expands the
+full list (its entries are inert),
+In-Progress first, capped with a "… N more" row; **+ Add task to chat** pastes
 the branch task's title and file path into the composer. The list is
 read-only — the rail never edits a task file. The scan runs off the UI
 thread and finishes in well under a second even on a cold cache, so the
@@ -237,18 +250,23 @@ local sources (git, backlog) about every 10 seconds, and also refreshes
 right after an agent turn finishes and when the terminal regains focus, so
 the numbers are freshest exactly when they just changed. PR and check data
 is cached for 60 seconds; the **Refresh** action on the Environment header
-forces a fresh fetch past that cache.
+forces a fresh fetch past that cache — the button reads **Refreshing…**
+until the fetch lands, even when it comes back unchanged, so pressing it
+never looks like a dead control while the network call is in flight.
 
 **When things are missing.** Absence is quiet by design — an unavailable
 source never renders as an error:
 
 | Situation | What you see |
 | --- | --- |
-| No git repo behind the workspace (or none bound) | one muted **No git workspace** row; no Tasks, PR, or check rows |
+| Nothing has been checked yet (cold start, or the rail has only just opened) | one muted **Checking workspace…** row — the panel never claims anything before a source has answered |
+| The rail cannot work out which workspace to read (no conversation open yet, or the lookup itself failed), and that stays true | after ~30 seconds, two muted rows: **Workspace not determined.** and **Open a chat in a Workspace, or press Refresh to retry.** — the panel stops promising a check that nothing is performing. It names no cause, because more than one produces this state. A brief hiccup never reaches it, and a panel that already has real data keeps showing that instead |
+| Changes aren't tracked for this workspace (no folder bound, Change Review not enabled for a bound folder, or the consent check itself failed — the rail can't always tell which) | two muted rows saying so, and that this is *not* a report that nothing changed, plus where to fix it (bind a folder and enable Change Review in Settings ▸ Workspaces); no counts, no commit/push row, no Tasks/PR/check rows |
+| A folder is bound but it is not a git repo | one muted **No git workspace** row; no Tasks, PR, or check rows |
 | `gh` not installed, not authenticated, or the remote isn't GitHub | the PR and check rows are simply absent — the git rows still work |
 | No open or recent PR for the branch | same: no PR row |
 | No `backlog/` directory | no Tasks section |
-| A source errors or times out after previously working | the last good data stays, with a quiet stale marker — no toast, no flashing |
+| A source errors or times out after previously working | the last good data stays, marked `(stale)` in the row's own text (not color alone) — no toast, no flashing |
 | A source fails three times running | it stops polling until you press **Refresh** or switch workspace, so a broken tool can't produce a 10-second flap loop |
 
 `gh` is optional throughout. Nothing about the Environment panel requires
@@ -956,3 +974,82 @@ terminal size), expanding a row keeps keyboard focus on that row, an errored
 git tier now says "Environment unavailable — Refresh to retry" instead of
 "No git workspace", and the Refresh action revives a backed-off local tier —
 which is what "until manual refresh or scope change" above always promised.*
+
+*Amended — 2026-09-05 (TASK-31660, state honesty): the table above gained two
+rows because "No git workspace" used to be shown for three different
+situations, only one of which it described. It now means exactly one thing —
+"we looked, and the bound folder is not a git repository". Before any source
+has answered the panel says **Checking workspace…** (it used to assert "No git
+workspace" for the ~20s until the first `git status` landed, inside a real
+worktree), and when the conversation's workspace binds no folder at all it
+says so in Change Review's own words — including that this is not a report
+that nothing changed. Switching to an unbound workspace now clears the
+previous repository's branch, counts and **Commit or push** offer within one
+10-second poll instead of leaving them painted indefinitely, and pressing
+**Refresh** in that state re-checks the binding rather than doing nothing.
+Code-level pass (pure projection, deferred-fake controller, and screen-wiring
+suites); not re-driven live.*
+
+*Amended — 2026-09-05 (TASK-31662, rail density): rows in these three
+sections now take ONE line unless they genuinely need two. A row with no
+detail text no longer paints a blank second line, and a row whose detail
+fits beside its label (a **Changes** row and its `+10 −2`, a file row and
+its counts) puts the detail flush right on the same line; only a pair too
+wide for the rail's 27-column row width — a fleet row's task summary, a
+long file path with its counts — still stacks. Measured on the real
+Console: the Environment section at rest went from eleven lines to seven at
+80x24. Two related changes: an OPEN Environment or Tasks section no longer
+repeats itself in its own header (the summary is what a COLLAPSED section
+shows, and standing it down is what lets "Environment" paint in full at
+80x24 instead of "Environm…"), and the Tasks row without a branch task
+stopped restating the header's counts in different words. The rail's real
+content width is 30 columns at 80x24 and 36 at 200x50; the "34 columns at
+every size" reading in the previous amendment was a width no supported
+terminal produces, and the summary budgets are now derived from the
+measured 30. Code-level pass (widget-geometry, projection, and screen-wiring
+suites, plus a live-geometry probe of the real Console at both sizes); not
+re-driven by hand in tmux.*
+
+*Amended — 2026-09-05 (TASK-31664, affordance and consequence legibility):
+every row's own text now carries a trailing marker naming what Enter does to
+it (`▸`/`▾` expand in place, `…` opens Change Review or the browser, a
+leading `+` pastes into the composer draft; an inert row carries none),
+since Enter previously had five different outcomes on visually identical
+rows. **Commit or push · N files** is renamed **Review & commit… · N files**
+(and the ahead-only **Push ↑n** row gained the same `…`), matching the `…`
+Change Review's own **Commit…**/**Push…** actions already use. Pressing
+**Refresh** now flips its label to **Refreshing…** immediately, closing a gap
+where a fetch that came back unchanged (measured ~12s for a fresh `gh` call)
+looked identical to a dead control. A stale source's row now says `(stale)`
+in its own text, not only in color — the color alone previously matched the
+row's own error hue closely enough to be misread as a failure. The
+"no folder is bound" copy (both here and in Change Review's empty state) is
+now cause-agnostic: the same empty signal can also mean Change Review isn't
+enabled for an otherwise-bound folder, so the panel now says only what is
+always true (changes aren't tracked) and names both fixes (bind AND enable).
+Code-level pass (pure projection, widget, and screen-wiring suites); not
+re-driven live.*
+
+*Amended — 2026-09-05 (TASK-31665, minors batch): the Environment section's
+**Refresh** now sits flush under its last row instead of floating a blank
+line away from it, and its tooltip names its scope (**Refresh — Environment**).
+Rows revealed by expanding another row are indented under it, so a block of
+file rows or task entries reads as belonging to the row above it. Task rows
+show the title the task file's own frontmatter carries rather than the
+hyphenated filename slug. Task ROWS now use the backlog's own vocabulary --
+each entry's status reads **In Progress** / **To Do**, matching the task
+files themselves. The collapsed Tasks header keeps its compact
+**N doing · M todo** summary — it is a one-line teaser, and both counts fit
+there at every width, which the canonical words would not. The collapsed rail
+handles read **Context ▸** and **◂ Inspect**, the same arrow vocabulary the
+open rails' own collapse controls use (`>` / `<` in ASCII-glyph mode). Both
+**Changes** actions — **Review in Change Review…** and
+**Review & commit… · N files** — now open the same working-tree view; a
+Change Review opened from a run (the run inspector's button, a turn card's
+**Review**) still opens that run's recorded turn. Change Review no longer
+flashes "No file changes recorded for this conversation." for a moment on
+entry while it is still looking, and its header says "1 file", not "1 files".
+Code-level pass (compositor contrast sweep at 80x24 and 200x50, pure
+projection, widget, controller and screen-wiring suites) plus a live
+`tmux` capture at 235x52 for the background diagnosis; not re-driven live
+for the rest.*

@@ -73,6 +73,11 @@ NESTED_BANNER_NAMED_LIMIT = 5
 #: standing for "the real working tree" rather than a recorded turn. Run ids
 #: are UUIDs, so this literal can never collide with one.
 CURRENT_MODE_SENTINEL = "__git_current__"
+#: Copy shown while repo detection is still in flight and no snapshot turn
+#: exists (TASK-31665 AC#7). Says what is happening; asserts nothing about
+#: whether anything changed. `_settle_empty_history_copy` replaces it with
+#: `_empty_history_copy()` the moment detection finishes empty-handed.
+CHECKING_FOR_CHANGES_COPY = "Checking for changes…"
 
 #: The pseudo-entry's label stem; the branch state is appended per repo.
 CURRENT_MODE_LABEL = "Working tree (current)"
@@ -216,10 +221,17 @@ def _window_labels(rows: "Sequence[dict]") -> dict[int, str]:
 
 
 def _file_count_noun(count: int, *, repeated_root: bool) -> str:
-    """Name an aggregate without calling repeated paths unique files."""
+    """Name an aggregate without calling repeated paths unique files.
+
+    TASK-31665 AC#6: the non-repeated-root branch returned the plural
+    unconditionally, so a one-file turn read "1 files" in the header and
+    the turn selector while the Inspect rail's own row for the same fact
+    read "1 file". The repeated-root branch already pluralized correctly;
+    this makes the two branches agree.
+    """
     if repeated_root:
         return "file change" if count == 1 else "file changes"
-    return "files"
+    return "file" if count == 1 else "files"
 
 
 @dataclass(frozen=True)
@@ -1635,7 +1647,20 @@ class ChangeReviewScreen(Screen):
             # every turn twice -- doubled git work per open).
             select.value = wanted or self._turns[0].run_id
         else:
-            self._show_empty(self._empty_history_copy())
+            # TASK-31665 AC#7: NOT the empty-history claim yet. Snapshot
+            # turns are read synchronously here, but the `current`
+            # working-tree view is not -- it arrives from the off-thread
+            # `gh`-free git detection dispatched at the bottom of this
+            # method. Every Console opener that lands on the working tree
+            # (`Review & commit…`, `Review in Change Review`) therefore has
+            # no turns at this instant, and painting the empty state here
+            # made "No file changes recorded for this conversation." flash
+            # for the measured <=0.5s before the real diff replaced it -- a
+            # false negative about the user's own uncommitted work, and
+            # exactly the dishonest-empty-state class this screen's spec
+            # forbids. `_land_git_detection` lands the real empty copy if
+            # detection finds nothing.
+            self._show_empty(CHECKING_FOR_CHANGES_COPY)
         self._refresh_untracked_writable_banner()
         self._update_banner()
         self._refresh_mode_affordances()
@@ -1644,6 +1669,32 @@ class ChangeReviewScreen(Screen):
         # this open path byte-compatible, and off-thread because probing a
         # real repository spawns git subprocesses.
         self._dispatch_git_detection()
+        # Detection can decline synchronously (kill switch off, or no
+        # candidate roots) -- in which case nothing is coming and the
+        # loading copy above would be the flash, inverted. Settle it now.
+        self._settle_empty_history_copy()
+
+    def _settle_empty_history_copy(self) -> None:
+        """Replace the AC#7 loading copy once nothing more can arrive.
+
+        Called from every end of the detection round-trip -- the
+        synchronous decline in ``_initialize_turns`` and both branches of
+        ``_land_git_detection`` -- so the transient "Checking for changes…"
+        can never outlive the thing it was waiting for. Trading one
+        permanent dishonest empty state for another (a loading copy that
+        never resolves) would be no improvement: a clean bound repo opened
+        WITHOUT ``initial_current_mode`` settles here too, because nothing
+        is going to load over it.
+
+        No-ops while a turn is loaded (it owns the pane) or while detection
+        is still out. The caller decides whether the working-tree view is
+        about to take over -- this method cannot tell, because
+        ``_land_git_detection`` consumes the one-shot
+        ``_initial_current_mode`` flag as part of arming it.
+        """
+        if self._turns or not self._git_detection_settled:
+            return
+        self._show_empty(self._empty_history_copy())
 
     # -- `current` mode: detection (TASK-16801 arc B, spec §4) ------------
 
@@ -1767,6 +1818,14 @@ class ChangeReviewScreen(Screen):
         self._git_refusal_banners = refusals
         if refusals:
             self._update_banner()
+        if not infos or not self._initial_current_mode:
+            # TASK-31665 AC#7: detection is over, and either it found
+            # nothing to show or nothing is going to open on what it found
+            # (this screen was not asked for the working-tree view). NOW
+            # the empty-history claim is the true one, so the loading copy
+            # `_initialize_turns` painted gives way to it. Checked BEFORE
+            # the one-shot `_initial_current_mode` is consumed below.
+            self._settle_empty_history_copy()
         if not infos:
             return
         try:
@@ -3421,11 +3480,21 @@ class ChangeReviewScreen(Screen):
         """
         if self._workspace_roots:
             return "No file changes recorded for this conversation."
+        # TASK-31664 AC#5: `self._workspace_roots` empty does not mean ONLY
+        # "no folder is bound" -- the identical signal also occurs when
+        # Change Review's consent is not ENABLED for an otherwise-bound
+        # folder (the common default) or when the consent service is
+        # absent/raises (see `console_environment_state.py`'s matching
+        # rewording for the full reasoning). Cause-agnostic for the same
+        # reason: naming "no folder is bound" was confidently wrong in
+        # those cases. The remediation also used to name only the BIND
+        # half of the fix; restored the ENABLE half here too, since binding
+        # alone does not turn tracking on.
         return (
-            "No folder is bound to this conversation's workspace, so file "
-            "changes are not tracked here — this is not a report that "
-            "nothing changed. Chats still work in private scratch. To track "
-            "an external folder, bind it in Settings ▸ Workspaces and use a "
+            "Changes aren't tracked for this workspace — this is not a "
+            "report that nothing changed. Chats still work in private "
+            "scratch. To track an external folder, bind it and enable "
+            "Change Review for it in Settings ▸ Workspaces, then use a "
             "chat in that named Workspace."
         )
 

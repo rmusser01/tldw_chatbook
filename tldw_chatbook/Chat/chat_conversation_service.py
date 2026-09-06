@@ -1133,6 +1133,7 @@ class ChatConversationService:
         offset: int = 0,
         order_by_timestamp: str = "ASC",
         include_rag_context: bool = True,
+        read_only: bool = False,
         **_: Any,
     ) -> list[dict[str, Any]]:
         if not hasattr(self.db, "get_messages_for_conversation"):
@@ -1149,6 +1150,7 @@ class ChatConversationService:
             view = migration.read_conversation(
                 str(conversation_id),
                 verify_canonical=True,
+                **({"read_only": True} if read_only else {}),
             )
             conversation_store = view.records
             provenance_state = view.state.value

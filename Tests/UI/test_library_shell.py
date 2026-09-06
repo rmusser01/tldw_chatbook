@@ -12653,6 +12653,9 @@ async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls()
                 lambda: (
                     bool(controller.error_copy)
                     and len(screen.query("#library-media-retry")) == 1
+                    # task-31632: the callout (and its Retry) composes before
+                    # the row scroll; wait for the retained rows too.
+                    and len(screen.query(".library-media-row")) == 20
                 ),
                 message="Page 2 failure never exposed the retained Retry state.",
             )

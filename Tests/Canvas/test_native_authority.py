@@ -63,6 +63,36 @@ def _branch_scope(
     )
 
 
+@pytest.mark.parametrize("invalidate", ["reincarnate", "dispose", "branch"])
+def test_assistant_selection_capture_refuses_stale_native_authority(invalidate):
+    controller = ConsoleCanvasController()
+    controller.activate_session("selection-owner")
+    current = _scope("selection-owner")
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _session: current,
+        canvas_controller=controller,
+    )
+    created = authority.import_html(
+        session_id=current.session_id,
+        source="<p>owned selection</p>",
+    )
+    authority.gateway_scope(
+        session_id=current.session_id,
+        browser_session_id="selection-browser",
+        canvas_id=created.canvas_id,
+        revision_id=created.revision_id,
+        follow_latest=False,
+    )
+    if invalidate == "reincarnate":
+        controller.activate_session(current.session_id)
+    elif invalidate == "dispose":
+        authority.dispose()
+    else:
+        current = replace(current, active_message_ids=("unrelated-message",))
+    with pytest.raises((RuntimeError, ValueError)):
+        controller.capture_selected_scope(replace(current, run_id="next-run"))
+
+
 def test_temporary_exact_left_revision_is_unreachable_from_right_sibling_branch():
     session_id = "temporary-siblings"
     conversation_id = "temporary-siblings"
@@ -625,7 +655,7 @@ def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
     tmp_path,
 ):
     db = CharactersRAGDB(tmp_path / "canvas-native-promotion.sqlite", "canvas-native")
-    controller = ConsoleCanvasController()
+    controller = ConsoleCanvasController(durable_service=CanvasService(db))
     store = ConsoleChatStore(
         persistence=ChatPersistenceService(db),
         canvas_promotion_participant=controller,
@@ -672,6 +702,16 @@ def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
         ).persisted_message_id
         assert conversation_id is not None
         assert persisted_message_id is not None
+        scopes[session.id] = replace(
+            scopes[session.id],
+            conversation_id=conversation_id,
+            active_message_ids=(persisted_message_id,),
+            run_id="next-promoted-run",
+        )
+        authority.sync_live_context(session.id)
+        next_scope = controller.capture_selected_scope(scopes[session.id])
+        assert next_scope.selected_canvas_id == created.canvas_id
+        assert next_scope.selected_revision_id == renamed.scope.revision_id
 
         rows = (
             db.get_connection()
