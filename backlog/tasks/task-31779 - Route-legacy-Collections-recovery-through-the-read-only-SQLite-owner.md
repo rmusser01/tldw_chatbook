@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-05 23:52'
-updated_date: '2026-09-06 00:02'
+updated_date: '2026-09-06 00:09'
 labels: []
 dependencies: []
 ---
@@ -33,4 +33,6 @@ The SQLite inventory detects a raw recovery connection. Keep legacy inspection n
 
 <!-- SECTION:NOTES:BEGIN -->
 Routed path-only recovery through library.legacy_recovery, a read-only/source-mode-preserving owner with no backup authority, and added C56 without raw-site exclusions. Setup/rollback cleanup now always closes the handle. Initial regressions reproduced symlink replacement, unsafe parent and setup-leak failures (3 failed / 2 passed); source bytes/modes and enforced read-only access remain checked. Independent review caught pre-seam Path.resolve erasing initial aliases; added leaf/parent entry tests, watched both fail, and retained the lexical absolute path. Disappearance fixture now injects at the retained is_file boundary. Final seven complete recovery/SQLite/quiescence/compaction files:434 passed,2 Windows-only skips,2 dependency warnings in88.89s. XML:/private/tmp/tldw-sqlite-recovery-backup-reviewed.xml. Whole changed-file Ruff check/format and diff-check pass; independent re-review clear. Lessons entry records the constructor canonicalization incident. ADR required:no, existing ADR-029 read-only boundary adopted; no new schema, authority or backup policy.
+
+Third rebase onto dev2b4973971e preserved this repair byte-for-byte. Fresh eight-file SQLite/recovery/compaction/regeneration qualification:440 passed,2 Windows-only skips in104.16s, XML:/private/tmp/tldw-third-rebase-sqlite-regeneration.xml. Scoped Ruff/format and diff checks pass; broader review remains open.
 <!-- SECTION:NOTES:END -->

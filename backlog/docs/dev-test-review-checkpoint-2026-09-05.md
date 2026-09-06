@@ -458,3 +458,27 @@ with two existing dependency warnings. Evidence:
 `/private/tmp/tldw-sqlite-recovery-backup-reviewed.xml`. Whole changed-file Ruff
 and formatting, diff checks and independent re-review pass. These results
 precede any subsequent dev rebase and do not close broader review failures.
+
+## Third dev rebase qualification
+
+Rebased all 149 review commits onto fetched dev
+`2b4973971e5dcf101c5a6ddcc55aa082ff22f814`. The pushed pre-rebase checkpoint
+`00a86a8a65452494d1e21ee33c1ca7bd4fa7a56c` is retained at
+`codex/dev-test-review-before-third-rebase-20260905`. Documentation conflicts
+retain every review lesson and the new upstream index-plan lesson (relocated
+without rewriting it). The sole code conflict was formatter overlap in the
+regeneration test; its real SQLite persistence assertions and cleanup survive.
+That final file and all files in the SQLite repair selection are byte-identical
+to the saved checkpoint. Range comparison accounts for all 149 review commits;
+other changed patches are documentation/context and overlapping vLLM import
+deferral. No task identities were renumbered in this rebase.
+
+Fresh post-rebase qualification: **440 passed / 2 Windows-only skips in
+104.16 seconds** across eight complete SQLite/recovery/compaction/regeneration
+files (`/private/tmp/tldw-third-rebase-sqlite-regeneration.xml`), plus **1 passed**
+for the vLLM first-use import guard (`/private/tmp/tldw-third-rebase-vllm-import.xml`).
+Two existing dependency warnings remain in each run. Scoped whole-file Ruff,
+formatting, diff checks and ancestry verification pass. Diagnostic manifest and
+pins are unchanged; the earlier 327-test evidence was not rerun on this new base.
+Wider failure families, aggregate resource warnings and the two pending task-ID
+decisions are still open. This remains a draft, not full-suite qualification.
