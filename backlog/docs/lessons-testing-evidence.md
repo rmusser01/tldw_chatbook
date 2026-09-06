@@ -63,6 +63,22 @@ readiness is not proof that the layout fits the terminal. Bound the wait and fai
 explicitly if the rendered state never arrives; a temporarily absent replacement
 belongs in that same readiness poll, not an unconditional `query_one`.
 
+## A readiness check does not survive an extra asynchronous yield
+
+**Dev test review / TASK-31733, 2026-09-05.** The combined workbench/right-rail
+run passed the Live Work geometry predicate, then failed the same assertion after
+an extra `pilot.pause()`: demand, viewport and hint were correct, but a new outer
+reconciliation was pending. The unchanged right-rail file passed in isolation.
+Injecting a real geometry reconciliation as that pause returned reproduced the
+failure in all four initial/swapped and forward/reverse cases; the two ordinary
+cases passed.
+
+**What to do.** Put optional paint pauses before the final bounded readiness
+wait, and consume its qualified state without another yield. Preserve actual
+geometry, widget identity and logical owner-pass assertions. Reproduce late work
+through the real scheduler rather than clearing its flags or extending timeouts;
+an isolated pass alone does not explain an intermittent failure.
+
 ## A prepended script directory cannot override an already imported sibling name
 
 **TASK-31654, 2026-09-05.** The broader test sweep failed Terminal qualification
