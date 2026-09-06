@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -32,6 +32,7 @@ class FakeSession:
             levels=lambda: (0.5, 0.25), audio_position_s=65.0, mode=mode, system_source_state="running"
         )
         self._result = None
+        self._diarizer = None
 
     def subscribe(self, listener):
         self.listeners.append(listener)
@@ -43,8 +44,8 @@ class FakeSession:
         for listener in list(self.listeners):
             listener(kind, payload)
 
-    def add_segment(self, text, label):
-        seg = MeetingSegment(len(self.segments), 0.0, 2.0, 0.0, 2.0, label, text)
+    def add_segment(self, text, label, speaker_id=None):
+        seg = MeetingSegment(len(self.segments), 0.0, 2.0, 0.0, 2.0, label, text, speaker_id=speaker_id)
         self.segments.append(seg)
         self.emit("segment", seg)
         return seg
@@ -112,6 +113,48 @@ class FakeOwner:
 
     def cleanup_raw_tracks_if_done(self):
         return False
+
+
+class FakeDiarizer:
+    """Stands in for a real `Diarizer`'s `pin` (Task 7 -- most backends won't
+    have one; `_apply_rename` must check with `hasattr` rather than assume)."""
+
+    def __init__(self):
+        self.pinned: list[str] = []
+
+    def pin(self, cluster_id: str) -> None:
+        self.pinned.append(cluster_id)
+
+
+@pytest.fixture
+def meetings_screen_with_session(tmp_path):
+    """A `MeetingsScreen` wired to a running `FakeSession`, never mounted.
+
+    Mirrors `test_unmounted_screen_never_subscribes_or_touches_widgets`'s
+    style: `_apply_rename` and the segment bookkeeping it depends on must
+    work correctly (map update, persistence, diarizer pin) whether or not
+    the screen has a widget tree, so the fixture never mounts one.
+    """
+
+    def _make(*, segments=(), with_diarizer=False):
+        app = _build_test_app()
+        owner = FakeOwner(tmp_path)
+        app.meeting_session_owner = owner
+        screen = MeetingsScreen(app)
+        folder = tmp_path / "2026-09-04_1430"
+        folder.mkdir(parents=True, exist_ok=True)
+        session = FakeSession(folder)
+        if with_diarizer:
+            session._diarizer = FakeDiarizer()
+        screen._session = session
+        for label, speaker_id, text in segments:
+            seg = MeetingSegment(len(session.segments), 0.0, 2.0, 0.0, 2.0, label, text, speaker_id=speaker_id)
+            session.segments.append(seg)
+            screen._note_speaker(seg)
+            screen.rendered_lines.append(screen._line_for_segment(seg))
+        return screen
+
+    return _make
 
 
 class Host(ConsolidatedCSSApp):
@@ -441,7 +484,7 @@ def test_unmounted_screen_never_subscribes_or_touches_widgets(tmp_path):
 
     session = FakeSession(tmp_path / "2026-09-04_1430")
     screen._on_started(session)
-    assert session.listeners == [] and screen._attached is None
+    assert session.listeners == [] and screen._session is None
 
     # None of these may raise (they would, on a screen with no widgets).
     screen._show_prepare_error("no transcriber")
@@ -462,3 +505,73 @@ async def test_device_selects_apply_choice(tmp_path):
         screen.query_one("#meetings-system-select").value = "BlackHole 2ch"
         await pilot.pause(0.1)
         assert owner.choices == [("system", "BlackHole 2ch")]
+
+
+def test_rename_updates_map_and_rerenders(meetings_screen_with_session):
+    screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
+    screen._apply_rename("S1", "Alice")
+    assert screen._session.meta.speaker_names["S1"] == "Alice"
+    assert "Alice:" in screen._rendered_transcript_text()
+
+
+def test_rename_pins_the_cluster_when_diarizer_present(meetings_screen_with_session):
+    screen = meetings_screen_with_session(segments=[("others", "S1", "hi")], with_diarizer=True)
+    screen._apply_rename("S1", "Bob")
+    assert screen._session._diarizer.pinned == ["S1"]
+
+
+def test_rename_persists_to_meeting_json(meetings_screen_with_session):
+    """`_apply_rename` must survive the screen being torn down: the name map
+    has to reach disk, not just the in-memory `meta.speaker_names`."""
+    from tldw_chatbook.Audio.meeting_session import read_meeting_json
+
+    screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
+    screen._apply_rename("S1", "Alice")
+    assert read_meeting_json(screen._session.meta.folder)["speaker_names"] == {"S1": "Alice"}
+
+
+def test_empty_rename_removes_the_map_entry(meetings_screen_with_session):
+    screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
+    screen._apply_rename("S1", "Alice")
+    screen._apply_rename("S1", "")
+    assert "S1" not in screen._session.meta.speaker_names
+    assert "Speaker 1:" in screen._rendered_transcript_text()
+
+
+def test_apply_rename_on_unmounted_screen_does_not_raise(meetings_screen_with_session):
+    """Phase-1 rule: a rename triggered on a screen that has since been
+    unmounted (navigation raced the Input.Submitted event) must update the
+    session and persist without touching any widget."""
+    screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
+    assert screen.is_mounted is False
+    screen._apply_rename("S1", "Alice")  # must not raise
+    assert screen._session.meta.speaker_names["S1"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_legend_row_mounts_and_rename_input_updates_ui(tmp_path):
+    """End-to-end through the real widget tree: a segment with a
+    `speaker_id` mounts one legend row; submitting its rename Input updates
+    both the legend label and the live transcript log."""
+    (tmp_path / "2026-09-04_1430").mkdir()
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        owner.session.add_segment("hello", "others", speaker_id="S1")
+        await pilot.pause(0.1)
+        assert screen.rendered_lines == ["[00:00:00] Speaker 1: hello"]
+        label = screen.query_one("#speaker-label-S1", Static)
+        assert _text(label) == "Speaker 1"
+        rename_input = screen.query_one("#speaker-input-S1", Input)
+        rename_input.focus()
+        await pilot.pause(0.05)
+        for ch in "Alice":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert _text(screen.query_one("#speaker-label-S1", Static)) == "Alice"
+        assert screen.rendered_lines == ["[00:00:00] Alice: hello"]
+        assert owner.session.meta.speaker_names["S1"] == "Alice"

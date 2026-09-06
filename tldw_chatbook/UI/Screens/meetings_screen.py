@@ -14,10 +14,17 @@ from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, ProgressBar, RichLog, Select, Static
+from textual.css.query import NoMatches
+from textual.widgets import Button, Input, ProgressBar, RichLog, Select, Static
 
 from ...Audio.meeting_owner import PrepareResult, recover_folder
-from ...Audio.meeting_session import MeetingResult, MeetingSegment, format_clock
+from ...Audio.meeting_session import (
+    MeetingResult,
+    MeetingSegment,
+    format_clock,
+    render_label,
+    update_meeting_json,
+)
 from ...Constants import LIBRARY_NAV_CONTEXT_INGEST, TAB_LIBRARY
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -35,7 +42,7 @@ class MeetingsScreen(BaseAppScreen):
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "meetings", **kwargs)
         self._owner = getattr(app_instance, "meeting_session_owner", None)
-        self._attached: Any | None = None
+        self._session: Any | None = None
         self._level_timer = None
         self._transcribing = False
         # True while a user-initiated Stop is in flight: `owner.stop()`
@@ -54,6 +61,9 @@ class MeetingsScreen(BaseAppScreen):
         # once the first prepare cycle has settled.
         self._syncing_pickers = True
         self.rendered_lines: list[str] = []
+        # Cluster ids (segment.speaker_id) seen so far this meeting, each
+        # backing one row in the speaker legend (task 7). Reset on Start.
+        self._seen_speakers: set[str] = set()
         # Set once per session the first time the tap reports "lost" (spec
         # §7); reset on Start so a NEW session's tap gets its own chance to
         # show the indicator rather than being permanently suppressed by a
@@ -103,6 +113,8 @@ class MeetingsScreen(BaseAppScreen):
                         tooltip="Recover the unfinished meeting recording found in this folder.",
                     )
                 with Vertical(id="meetings-canvas", classes="destination-workbench-pane"):
+                    yield Static("Speakers", id="meetings-speaker-legend-title", classes="destination-section")
+                    yield Vertical(id="meetings-speaker-legend")
                     yield RichLog(id="meetings-transcript", wrap=True, highlight=False, markup=False)
                     # markup=False: transcripts carry Whisper's own bracket
                     # tokens ("[BLANK_AUDIO]", "[Music]"), and folder paths
@@ -131,19 +143,19 @@ class MeetingsScreen(BaseAppScreen):
         owner = self._owner
         if owner is None or not owner.is_active or owner.session is None:
             return
-        self._attached = owner.session
-        self._attached.subscribe(self._on_session_event)
-        for segment in list(self._attached.segments):
+        self._session = owner.session
+        self._session.subscribe(self._on_session_event)
+        for segment in list(self._session.segments):
             self._render_segment(segment)
-        self._set_buttons(self._attached.state)
+        self._set_buttons(self._session.state)
 
     def _detach(self) -> None:
-        if self._attached is not None:
+        if self._session is not None:
             try:
-                self._attached.unsubscribe(self._on_session_event)
+                self._session.unsubscribe(self._on_session_event)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("meetings detach: {}", exc)
-            self._attached = None
+            self._session = None
 
     # ---- prepare (worker) -------------------------------------------------
     @work(exclusive=True, group="meetings-prepare", thread=True)
@@ -244,6 +256,8 @@ class MeetingsScreen(BaseAppScreen):
         self.query_one("#meetings-transcript", RichLog).clear()
         self.query_one("#meetings-footer", Static).update("")
         self.query_one("#meetings-open-library", Button).disabled = True
+        self._seen_speakers.clear()
+        self.query_one("#meetings-speaker-legend", Vertical).remove_children()
         self._start_worker()
 
     @work(exclusive=True, group="meetings-start", thread=True)
@@ -270,13 +284,13 @@ class MeetingsScreen(BaseAppScreen):
         # `_attach_if_running` replays `session.segments` on the next mount.
         if not self.is_mounted:
             return
-        self._attached = session
+        self._session = session
         session.subscribe(self._on_session_event)
         self._set_buttons(session.state)
 
     @on(Button.Pressed, "#meetings-pause")
     def _pause_pressed(self) -> None:
-        session = self._attached
+        session = self._session
         if session is None:
             return
         if session.state == "paused":
@@ -373,7 +387,7 @@ class MeetingsScreen(BaseAppScreen):
                 partial.update("")
         elif kind == "state":
             self._set_buttons(str(payload))
-            if payload == "stopped" and self._attached is not None and not self._stop_requested:
+            if payload == "stopped" and self._session is not None and not self._stop_requested:
                 # Ended by the watchdog or shutdown, not by our Stop button
                 # (a user-initiated stop is already being finalised by
                 # `_stop_worker`'s own `call_from_thread(self._on_stopped,
@@ -384,14 +398,116 @@ class MeetingsScreen(BaseAppScreen):
                 # `session.stop()` is idempotent and returns the cached
                 # result -- never read `owner.last_result` here, it may not
                 # be assigned yet.
-                session = self._attached
+                session = self._session
                 self._on_stopped(session.stop())
 
     def _render_segment(self, segment: MeetingSegment) -> None:
-        stamp = f"[{format_clock(segment.t_audio_start)}]"
-        line = f"{stamp} {LABELS.get(segment.label, segment.label)}: {segment.text}" if segment.label else f"{stamp} {segment.text}"
+        self._note_speaker(segment)
+        line = self._line_for_segment(segment)
         self.rendered_lines.append(line)
         self.query_one("#meetings-transcript", RichLog).write(line)
+
+    # ---- speaker legend + rename (task 7) ----------------------------------
+    def _user_display_name(self) -> str:
+        """The name that stands in for "you" in the transcript and legend.
+
+        Deliberately NOT `chat_defaults.user_display_name`: that section's
+        own factory default is the literal string ``"User"`` (see
+        `config.py`'s `CONFIG_TOML_CONTENT`), so a fresh install has no way
+        to tell "never touched this setting" apart from "chose User" --
+        wiring it in here would silently turn every untouched install's
+        "You:" rows into "User:" rows. `LABELS["you"]` is Meetings' own,
+        already-shipped default; a per-meeting override is future scope.
+        """
+        return LABELS["you"]
+
+    def _line_for_segment(self, segment: MeetingSegment) -> str:
+        stamp = f"[{format_clock(segment.t_audio_start)}]"
+        names = self._session.meta.speaker_names if self._session is not None else {}
+        label = render_label(segment, names, self._user_display_name())
+        return f"{stamp} {label}: {segment.text}" if label else f"{stamp} {segment.text}"
+
+    def _speaker_label(self, cluster_id: str) -> str:
+        """The legend row's current display name for `cluster_id`."""
+        names = self._session.meta.speaker_names if self._session is not None else {}
+        placeholder = MeetingSegment(0, 0.0, 0.0, 0.0, 0.0, "others", "", speaker_id=cluster_id)
+        return render_label(placeholder, names, self._user_display_name()) or cluster_id
+
+    def _note_speaker(self, segment: MeetingSegment) -> None:
+        """Track a newly-seen `speaker_id`, mounting its legend row once."""
+        cluster_id = segment.speaker_id
+        if not cluster_id or cluster_id in self._seen_speakers:
+            return
+        self._seen_speakers.add(cluster_id)
+        if not self.is_mounted:
+            return
+        row = Horizontal(
+            Static(self._speaker_label(cluster_id), id=f"speaker-label-{cluster_id}"),
+            Input(placeholder="Rename…", id=f"speaker-input-{cluster_id}"),
+            classes="meetings-speaker-row",
+        )
+        self.query_one("#meetings-speaker-legend", Vertical).mount(row)
+
+    @on(Input.Submitted, "#meetings-speaker-legend Input")
+    def _speaker_rename_submitted(self, event: Input.Submitted) -> None:
+        prefix = "speaker-input-"
+        widget_id = event.input.id or ""
+        if not widget_id.startswith(prefix):
+            return
+        cluster_id = widget_id[len(prefix):]
+        self._apply_rename(cluster_id, event.value)
+        event.input.value = ""
+
+    def _apply_rename(self, cluster_id: str, name: str) -> None:
+        """Rename `cluster_id` to `name` (blank removes it from the map).
+
+        Updates the session's live name map, pins the cluster with the
+        diarizer when it offers `pin` (most backends won't -- this is
+        optional by design), persists to `meeting.json`, and re-renders the
+        transcript. The state work below runs unconditionally so a rename
+        racing screen teardown still lands and persists; only the widget
+        refresh is `is_mounted`-guarded (phase-1 rule).
+        """
+        session = self._session
+        if session is None:
+            return
+        name = name.strip()
+        if name:
+            session.meta.speaker_names[cluster_id] = name
+        else:
+            session.meta.speaker_names.pop(cluster_id, None)
+        diarizer = getattr(session, "_diarizer", None)
+        if diarizer is not None and hasattr(diarizer, "pin"):
+            diarizer.pin(cluster_id)
+        try:
+            update_meeting_json(session.meta.folder, speaker_names=dict(session.meta.speaker_names))
+        except Exception as exc:  # noqa: BLE001 - a rename must not crash the screen
+            logger.debug("meetings rename persist failed: {}", exc)
+        self._rerender_transcript()
+        if not self.is_mounted:
+            return
+        try:
+            label_widget = self.query_one(f"#speaker-label-{cluster_id}", Static)
+        except NoMatches:
+            return
+        label_widget.update(self._speaker_label(cluster_id))
+
+    def _rerender_transcript(self) -> None:
+        """Recompute `rendered_lines` from `self._session.segments` and, when
+        mounted, rewrite the transcript log to match (a rename can change
+        every line naming that speaker, not just the newest one)."""
+        session = self._session
+        self.rendered_lines = [self._line_for_segment(seg) for seg in (session.segments if session else [])]
+        if not self.is_mounted:
+            return
+        log = self.query_one("#meetings-transcript", RichLog)
+        log.clear()
+        for line in self.rendered_lines:
+            log.write(line)
+
+    def _rendered_transcript_text(self) -> str:
+        """Test hook: the transcript as currently rendered, one line each."""
+        return "\n".join(self.rendered_lines)
 
     def _set_buttons(self, state: str) -> None:
         active = state in ("starting", "recording", "paused", "stopping")
@@ -403,7 +519,7 @@ class MeetingsScreen(BaseAppScreen):
         pause.label = "Resume" if state == "paused" else "Pause"
 
     def _tick(self) -> None:
-        session = self._attached
+        session = self._session
         if session is None or not self.is_mounted:
             return
         try:
