@@ -139,7 +139,8 @@ async def test_scheduler_missing_handler_is_no_op(db):
 @pytest.mark.asyncio
 async def test_scheduler_run_stop_lifecycle(db):
     _create_reminder(db, "Lifecycle", "2026-01-01T00:00:00+00:00")
-    handler = AsyncMock()
+    dispatched = asyncio.Event()
+    handler = AsyncMock(side_effect=lambda _task: dispatched.set())
     loop = SchedulerLoop(
         db,
         handlers={"reminder": handler},
@@ -148,9 +149,11 @@ async def test_scheduler_run_stop_lifecycle(db):
     )
 
     task = asyncio.create_task(loop.run())
-    await asyncio.sleep(0.01)
-    loop.stop()
-    await asyncio.wait_for(task, timeout=1.0)
+    try:
+        await asyncio.wait_for(dispatched.wait(), timeout=1.0)
+    finally:
+        loop.stop()
+        await asyncio.wait_for(task, timeout=1.0)
     handler.assert_awaited()
 
 

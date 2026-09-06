@@ -8752,10 +8752,18 @@ class ConsoleChatController:
             raise TraceProvenancePersistenceError() from None
 
         saved_by_position = dict(zip(saved_positions, saved, strict=True))
+        system_end = 0
+        while (
+            system_end < len(visible_messages)
+            and visible_messages[system_end].get("role") == "system"
+        ):
+            system_end += 1
         descriptors = tuple(
             saved_by_position.get(index)
             or ProviderArtifactTraceProvenance(
-                TraceProvenanceSource.ACTIVE_REQUEST,
+                TraceProvenanceSource.RENDERED_SYSTEM
+                if index < system_end
+                else TraceProvenanceSource.ACTIVE_REQUEST,
                 policy,
             )
             for index in range(len(visible_messages))
@@ -15013,10 +15021,13 @@ class ConsoleChatController:
         if persisted_sibling is not None and persisted_sibling.status == "failed":
             active_messages = self.store.messages_for_session(session_id)
             failure_row = active_messages[-1] if active_messages else None
+            # Agent results carry partial answer text, whereas the owning
+            # session's terminal state carries the displayed failure notice.
+            failure_copy = self.run_state_for(session_id).visible_copy
             if (
                 failure_row is not None
                 and failure_row.role is ConsoleMessageRole.SYSTEM
-                and failure_row.content == result.visible_copy
+                and failure_row.content == failure_copy
             ):
                 # Provider failure rows are transcript-only. Re-home the row
                 # from beneath the failed sibling onto the restored original
@@ -15027,9 +15038,9 @@ class ConsoleChatController:
             if (
                 failure_row is not None
                 and failure_row.role is ConsoleMessageRole.SYSTEM
-                and failure_row.content == result.visible_copy
+                and failure_row.content == failure_copy
             ):
-                self._append_failure_system_row(session_id, result.visible_copy)
+                self._append_failure_system_row(session_id, failure_copy)
         replacement_event_id = (
             f"message:{persisted_sibling.persisted_message_id}"
             if persisted_sibling is not None
@@ -18409,7 +18420,7 @@ class ConsoleChatController:
                     version=version,
                     role=message.role.value,
                     content=content,
-                    parent_message_id=message.parent_message_id,
+                    parent_message_id=self.store.durable_parent_for_message(native_id),
                     status=message.status,
                     deleted=False,
                     provider_visible=provider_visible,
@@ -21087,18 +21098,29 @@ class ConsoleChatController:
         def settle_thinking(outcome: Literal["complete", "stopped", "failed"]) -> None:
             project_thinking(thinking_capture.settle(outcome))
 
+        dispatch_boundary_failed = False
+
         async def enter_provider_dispatch() -> None:
-            await self._wait_for_trace_maintenance_dispatch()
-            self._trace_last_provider_activity = time.monotonic()
-            if before_provider_dispatch is not None:
-                await before_provider_dispatch()
-                return
-            if preparation_id is not None and not self._transition_preparation(
-                preparation_id,
-                ConsoleTurnPreparationState.ACCEPTED,
-                ConsoleTurnPreparationState.DISPATCH_STARTED,
-            ):
-                raise RuntimeError("Prepared turn changed before provider dispatch.")
+            nonlocal dispatch_boundary_failed
+            dispatch_boundary_failed = False
+            try:
+                await self._wait_for_trace_maintenance_dispatch()
+                self._trace_last_provider_activity = time.monotonic()
+                if before_provider_dispatch is not None:
+                    await before_provider_dispatch()
+                elif preparation_id is not None and not self._transition_preparation(
+                    preparation_id,
+                    ConsoleTurnPreparationState.ACCEPTED,
+                    ConsoleTurnPreparationState.DISPATCH_STARTED,
+                ):
+                    raise RuntimeError(
+                        "Prepared turn changed before provider dispatch."
+                    )
+            except Exception:
+                dispatch_boundary_failed = True
+                raise
+            else:
+                dispatch_boundary_failed = False
 
         try:
             if self._teardown_refuses_turn(owner_id):
@@ -21371,6 +21393,10 @@ class ConsoleChatController:
         except TraceCallPersistenceError:
             raise
         except Exception as exc:
+            # Generic gateways sanitize callback exceptions across their worker
+            # boundary. Keep that failed admission out of provider settlement.
+            if dispatch_boundary_failed:
+                raise
             # Provider failures are surfaced as run status plus a transcript
             # system row; they must never be written into assistant message
             # content, which is persisted and replayed as model context.

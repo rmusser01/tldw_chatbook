@@ -1235,6 +1235,13 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
         assert not sources.hint.region.overlaps(outer_hint.region)
         assert inspector.region.contains_region(outer_hint.region)
 
+        # At the shorter size, earlier Live Work sections put Sources below
+        # the outer fold. Reveal its cue through the real scroll owner before
+        # asking the compositor to hit it; the outer cue stays pinned.
+        outer_body = inspector.query_one("#console-inspector-rail-body")
+        outer_body.scroll_to_widget(sources.hint, animate=False)
+        await pilot.pause()
+        assert outer_body.content_region.contains_region(sources.hint.region)
         local_point = (
             sources.hint.region.x + 1,
             sources.hint.region.y,
@@ -2074,7 +2081,7 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
             owner._on_reconcile = observe_outer
             state = replace(owner.state, model_row="Model: screen-path-probe")
             monkeypatch.setattr(
-                screen, "_build_console_settings_summary_state", lambda: state
+                screen._context_cost, "_build_console_settings_summary_state", lambda: state
             )
             screen._sync_console_settings_summary()
         else:

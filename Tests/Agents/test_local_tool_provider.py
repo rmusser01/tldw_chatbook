@@ -3808,8 +3808,8 @@ def test_timeout_for_falls_back_on_malformed_deep_search_timeout_s(
 # --- TASK-28238 phase 1: stale-write guard -- record-on-read ---
 
 def _guard_provider(tmp_path):
-    """Real-executor provider rooted at tmp_path for guard tests."""
-    return make_provider(root=tmp_path, use_default_executor=True, allow_write=True)
+    """In-process protocol provider rooted at tmp_path for guard tests."""
+    return make_provider(root=tmp_path, allow_write=True)
 
 
 def test_fs_read_records_whole_file_hash(tmp_path):

@@ -8,6 +8,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
@@ -25,7 +29,6 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.app_factory import attach_chachanotes_db
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -42,6 +45,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
+from tldw_chatbook.UI.Console_Modules.wiring import build_console_submission_controller
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleCommandPopup, ConsoleComposerBar
 from tldw_chatbook.Widgets.Console import console_composer_bar as composer_module
@@ -146,7 +150,8 @@ class _StagedPromptConsoleHarness(ConsolidatedCSSApp):
 
 
 class _RawCliComposerHarness(ConsolidatedCSSApp):
-    CSS_PATH = [str(BUNDLED_STYLESHEET)]
+    # No ChatScreen is pushed here to load its Console-owned rules.
+    CSS_PATH = [str(BUNDLED_STYLESHEET), *ChatScreen.CSS_PATH]
 
     def compose(self):
         yield ConsoleComposerBar(id="console-native-composer")
@@ -442,7 +447,7 @@ async def test_raw_cli_visible_send_consumes_same_trusted_stash_as_enter() -> No
         start_user_command = Mock(return_value=True)
         console._raw_cli.start_user_command = start_user_command
         dispatch = AsyncMock(return_value=True)
-        console._dispatch_console_draft_send = dispatch
+        console._submission._dispatch_console_draft_send = dispatch
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause()
@@ -544,7 +549,11 @@ async def test_escaped_chat_stash_keeps_segment_payload_and_restore_consistent()
         _answer_pending_question_with_draft=lambda draft: False,
     )
 
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is True
+    build_console_submission_controller(screen)
+    screen._submission._console_pending_image_attachment = screen._console_pending_image_attachment
+    screen._submission._dispatch_console_draft_send = screen._dispatch_console_draft_send
+    screen._submission._console_pending_send_stash = screen._console_pending_send_stash
+    assert await screen._submission._send_console_message_from_visible_action() is True
     assert len(dispatched) == 1
     dispatched_text, escaped = dispatched[0]
     assert escaped is not None
@@ -650,10 +659,12 @@ async def test_raw_cli_completed_prefix_survives_focus_detour() -> None:
 
 
 @pytest.mark.asyncio
-async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry() -> (
-    None
-):
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry(
+    theme: str,
+) -> None:
     host = _RawCliComposerHarness()
+    host.theme = theme
 
     async with host.run_test(size=(120, 20)) as pilot:
         composer = host.query_one("#console-native-composer", ConsoleComposerBar)
@@ -676,8 +687,8 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
         semantic_error_color = composer.query_one(
             "#console-raw-cli-status", Static
         ).styles.color
-        # Production $ds-status-error-readable resolves to this AA-safe foreground.
-        readable_error_color = Color.parse("#ff8fa3")
+        # TASK-31264: the semantic error foreground follows theme polarity.
+        readable_error_color = Color.parse(host.get_css_variables()["text-error"])
         assert semantic_error_color == readable_error_color
         assert semantic_error_color != ordinary_presentation[0]
 
@@ -1025,7 +1036,7 @@ async def test_console_prompt_command_dispatches_insert_prompt_stub():
         composer.load_draft("/prompt")
         submit_spy = await _spy_submit_draft(console)
         insert_prompt_spy = AsyncMock()
-        console._console_command_insert_prompt = insert_prompt_spy
+        console._prompts._console_command_insert_prompt = insert_prompt_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.1)
@@ -1050,7 +1061,7 @@ async def test_console_system_command_dispatches_apply_system_stub():
         composer.load_draft("/system helpful")
         submit_spy = await _spy_submit_draft(console)
         apply_system_spy = AsyncMock()
-        console._console_command_apply_system = apply_system_spy
+        console._prompts._console_command_apply_system = apply_system_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.1)
@@ -1131,7 +1142,7 @@ async def test_console_prompt_replacement_resyncs_stale_command_popup(tmp_path):
         composer.load_draft("/prompt Summarize")
         assert popup.is_open is True
 
-        await console._console_command_insert_prompt(SimpleNamespace(args="Summarize"))
+        await console._prompts._console_command_insert_prompt(SimpleNamespace(args="Summarize"))
 
         assert composer.draft_text() == "Body."
         assert popup.is_open is False
@@ -1162,7 +1173,7 @@ async def test_console_prompt_command_captures_before_resolution_and_refuses_sta
 
         console._prompts._resolve_console_prompt_by_name = resolve_after_edit
 
-        await console._console_command_insert_prompt(SimpleNamespace(args="Slow"))
+        await console._prompts._console_command_insert_prompt(SimpleNamespace(args="Slow"))
         await pilot.pause()
 
         assert composer.draft_text() == "/prompt Slow changed"
@@ -1192,7 +1203,7 @@ async def test_console_prompt_slash_fallback_threads_dispatch_snapshot_to_picker
         console._prompts._resolve_console_prompt_by_name = resolve_after_edit
         console._prompts._open_console_prompt_picker_for_insert = picker
 
-        await console._console_command_insert_prompt(SimpleNamespace(args="ambiguous"))
+        await console._prompts._console_command_insert_prompt(SimpleNamespace(args="ambiguous"))
 
         picker.assert_awaited_once()
         assert picker.await_args.args == ("ambiguous",)
@@ -1297,7 +1308,7 @@ async def test_prompt_replacement_exposes_generic_undo_and_restores_exact_snapsh
         composer.select_all_draft()
         before = composer.capture_draft_snapshot()
 
-        await console._console_command_insert_prompt(SimpleNamespace(args="Undo"))
+        await console._prompts._console_command_insert_prompt(SimpleNamespace(args="Undo"))
         await pilot.pause()
         assert composer.draft_text() == "replacement"
         assert composer.improvement_undo_available is True
@@ -1343,7 +1354,7 @@ async def test_console_prompt_dialog_applies_shared_value_to_authorized_system(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/prompt Both")
 
-        await console._console_command_insert_prompt(SimpleNamespace(args="Both"))
+        await console._prompts._console_command_insert_prompt(SimpleNamespace(args="Both"))
         await pilot.pause()
         dialog = host.screen_stack[-1]
         assert isinstance(dialog, PromptVariablesDialog)
@@ -1382,7 +1393,7 @@ async def test_console_prompt_system_only_requires_opt_in_and_clears_snapshot(tm
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/prompt SystemOnly")
 
-        await console._console_command_insert_prompt(SimpleNamespace(args="SystemOnly"))
+        await console._prompts._console_command_insert_prompt(SimpleNamespace(args="SystemOnly"))
         await pilot.pause()
         dialog = host.screen_stack[-1]
         assert isinstance(dialog, PromptVariablesDialog)
@@ -1430,7 +1441,7 @@ async def test_console_prompt_dialog_cancel_preserves_exact_snapshot_and_refocus
         composer.load_draft("/prompt Cancel")
         before = composer.capture_draft_snapshot()
 
-        await console._console_command_insert_prompt(SimpleNamespace(args="Cancel"))
+        await console._prompts._console_command_insert_prompt(SimpleNamespace(args="Cancel"))
         await pilot.pause()
         assert isinstance(host.screen_stack[-1], PromptVariablesDialog)
         await pilot.click(f"#{VARIABLES_CANCEL_BUTTON_ID}")
@@ -1882,7 +1893,7 @@ async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_inser
             HandoffChannel.CONSOLE_PROMPT_INSERT,
             _library_prompt_application(console, "inserted body"),
         )
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "inserted body"
         assert not app.pending_handoffs.has_pending(
@@ -1909,7 +1920,7 @@ async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft(
             HandoffChannel.CONSOLE_PROMPT_INSERT,
             _library_prompt_application(console, "inserted body"),
         )
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         draft = composer.draft_text()
         assert draft.startswith("abc")
@@ -1940,7 +1951,7 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
             HandoffChannel.CONSOLE_PROMPT_INSERT,
             _library_prompt_application(console, large_body),
         )
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == f"abc\n{large_body}"
         assert "Pasted text |" in composer._display_draft_text()
@@ -1971,7 +1982,7 @@ async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast(
             HandoffChannel.CONSOLE_PROMPT_INSERT,
             _library_prompt_application(console, "inserted body"),
         )
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "abc"
         notify_spy.assert_called_once_with(
@@ -2001,7 +2012,7 @@ async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending(
         assert not app.pending_handoffs.has_pending(
             HandoffChannel.CONSOLE_PROMPT_INSERT
         )
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "abc"
         notify_spy.assert_not_called()
@@ -2026,7 +2037,7 @@ async def test_console_rejects_empty_user_only_append_as_noop():
         notify_spy = Mock()
         app.notify = notify_spy
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "settled draft"
         assert not app.pending_handoffs.has_pending(
@@ -2052,7 +2063,7 @@ async def test_console_library_append_targets_draft_at_consumption_and_preserves
 
         composer.load_draft("draft changed after Library authorization")
         composer.set_pending_attachment_label("evidence.txt", count=1, total=5)
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == (
             "draft changed after Library authorization\nsettled append"
@@ -2081,8 +2092,8 @@ async def test_console_library_append_expired_claim_warns_once_and_discards():
             ),
         )
 
-        await console._consume_pending_console_prompt_insert()
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "keep"
         app.notify.assert_called_once_with(
@@ -2116,7 +2127,7 @@ async def test_console_library_append_latest_wins_and_wrong_session_is_discarded
         )
         app.notify = Mock()
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == ""
         app.notify.assert_called_once_with(
@@ -2149,7 +2160,7 @@ async def test_console_library_append_stale_system_discards_before_draft_mutatio
             ),
         )
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "keep"
         app.notify.assert_called_once_with(
@@ -2172,11 +2183,11 @@ async def test_console_library_append_missing_composer_releases_for_retry():
         real_accessor = console._prompts._composer_accessor
         console._prompts._composer_accessor = lambda: None
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_PROMPT_INSERT)
         console._prompts._composer_accessor = real_accessor
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         assert composer.draft_text() == "retry me"
 
@@ -2220,8 +2231,8 @@ async def test_console_library_append_expiry_during_transient_release_warns_once
             console._prompts._composer_accessor = expire_before_missing_composer
 
         app.notify = Mock()
-        await console._consume_pending_console_prompt_insert()
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         app.notify.assert_called_once_with(
             "This Prompt insertion expired. Open the Prompt and retry.",
@@ -2258,7 +2269,7 @@ async def test_console_library_append_expiry_during_cancelled_sync_warns_once():
         app.notify = Mock()
 
         with pytest.raises(asyncio.CancelledError):
-            await console._consume_pending_console_prompt_insert()
+            await console._prompts._consume_pending_console_prompt_insert()
 
         app.notify.assert_called_once_with(
             "This Prompt insertion expired. Open the Prompt and retry.",
@@ -2301,7 +2312,7 @@ async def test_console_library_system_only_leaves_draft_and_warns_on_persistence
             ),
         )
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "unchanged"
         assert store.session_settings(store.active_session_id).system_prompt == (
@@ -2358,7 +2369,7 @@ async def test_console_library_append_rolls_back_draft_when_system_mutation_rais
             ),
         )
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         after = composer.capture_draft_snapshot()
         assert after.segments == before.segments
@@ -2407,7 +2418,7 @@ async def test_console_library_append_rolls_back_when_paste_mutates_then_raises(
             _library_prompt_application(console, "append"),
         )
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         after = composer.capture_draft_snapshot()
         assert after.segments == before.segments
@@ -2441,7 +2452,7 @@ async def test_console_library_system_only_replaces_stale_prompt_undo(
                 apply_system=True,
             ),
         )
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "prior Prompt change"
         assert composer.improvement_undo_available is False
@@ -2467,7 +2478,7 @@ async def test_console_library_system_only_replaces_stale_prompt_undo(
                 apply_system=True,
             ),
         )
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
 
         assert composer.draft_text() == "newer Prompt change"
         assert composer.improvement_undo_available is True

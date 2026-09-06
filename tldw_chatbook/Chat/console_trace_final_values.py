@@ -831,7 +831,10 @@ def verify_provider_request_shadow(
         ),
         endpoint_identity=(endpoint.value if isinstance(endpoint.value, str) else None),
         overlays=(
-            *_provider_overlays(actual.value),
+            *_provider_overlays(
+                actual.value,
+                credential_resolved=actual_values.get("api_key_resolved") is True,
+            ),
             *extra_overlays,
             *(
                 (
@@ -1111,6 +1114,8 @@ def _intent(descriptor: TraceProvenance) -> FinalValueIntent:
 
 def _provider_overlays(
     values: Mapping[str, object],
+    *,
+    credential_resolved: bool,
 ) -> tuple[ProviderOverlayProvenance, ...]:
     endpoint = str(values.get("api_endpoint") or "")
     overlays = [
@@ -1137,6 +1142,6 @@ def _provider_overlays(
         overlays.append(ProviderOverlayProvenance("transport_retry_policy", "explicit"))
     if values.get("provider_continuations"):
         overlays.append(ProviderOverlayProvenance("provider_continuation", "explicit"))
-    if values.get("api_key_resolved") is True:
+    if credential_resolved:
         overlays.append(ProviderOverlayProvenance("credential_decision", "resolved"))
     return tuple(overlays)

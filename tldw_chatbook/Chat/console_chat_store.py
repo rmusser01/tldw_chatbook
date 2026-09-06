@@ -7772,6 +7772,7 @@ class ConsoleChatStore:
             raise
         return session
 
+    @_fork_session_transition
     def publish_first_persisted_conversation(
         self,
         session_id: str,
@@ -7791,6 +7792,7 @@ class ConsoleChatStore:
         )
         return session
 
+    @_fork_session_transition
     def rebind_persisted_conversation(
         self,
         session_id: str,
@@ -7951,7 +7953,7 @@ class ConsoleChatStore:
                 current_settings.pinned_prefill if current_settings is not None else None
             ),
         )
-        with self._preparation_lock:
+        with self._fork_source_transition(session.id), self._preparation_lock:
             current = self._sessions.get(submission.origin.session_id)
             if current is not session or not validate_console_settings_origin(
                 submission.origin,
@@ -11759,7 +11761,8 @@ class ConsoleChatStore:
 
         This method owns every live store and session mutation and must remain
         on the event-loop owner thread.  Only the returned immutable plan is
-        safe to consume from a worker thread.
+        safe to consume from a worker thread. Its fork-transition lease must be
+        released by accepting the persistence result or abandoning the plan.
         """
         if not isinstance(commit, ConsoleSettingsLiveCommit):
             raise TypeError("commit must be ConsoleSettingsLiveCommit")
@@ -11774,28 +11777,34 @@ class ConsoleChatStore:
         normalized = normalize_chat_display_name(value, blank_means_none=True)
         if session.user_display_name_override == normalized:
             return session, None
-        session.user_display_name_override = normalized
-        self._bump_identity_revision(session.id)
-        context_write = self._snapshot_roleplay_context_write(session)
-        plan = self._materialize_roleplay_projections_live(
-            session.id,
-            global_default=global_default,
-        )
-        if plan is None:
-            plan = ConsoleRoleplayProjectionPersistencePlan(
-                session_id=session.id,
-                generation=session.identity_revision,
-                persisted_conversation_id=session.persisted_conversation_id,
-                conversation_binding_revision=(
-                    session.conversation_binding_revision
-                ),
-                system_prompt_write=None,
-                message_writes=(),
-                context_write=context_write,
+        with self._fork_source_transition(session.id):
+            session.user_display_name_override = normalized
+            self._bump_identity_revision(session.id)
+            context_write = self._snapshot_roleplay_context_write(session)
+            plan = self._materialize_roleplay_projections_live(
+                session.id,
+                global_default=global_default,
             )
-        else:
-            plan = replace(plan, context_write=context_write)
-        return session, plan
+            if plan is None:
+                plan = ConsoleRoleplayProjectionPersistencePlan(
+                    session_id=session.id,
+                    generation=session.identity_revision,
+                    persisted_conversation_id=session.persisted_conversation_id,
+                    conversation_binding_revision=(
+                        session.conversation_binding_revision
+                    ),
+                    system_prompt_write=None,
+                    message_writes=(),
+                    context_write=context_write,
+                )
+            else:
+                plan = replace(plan, context_write=context_write)
+            transition_token = str(uuid4())
+            plan = replace(plan, fork_transition_token=transition_token)
+            self._begin_fork_source_transition(session.id)
+            with self._fork_source_lock:
+                self._roleplay_fork_transition_leases[transition_token] = session.id
+            return session, plan
 
     @_fork_session_transition
     def refresh_session_roleplay_projections(
@@ -15989,8 +15998,12 @@ class ConsoleChatStore:
                 canvas_settlement = candidate
                 if candidate.contribution is not None:
                     canvas_contributions = (candidate.contribution,)
+        session = self._sessions[self._message_session_index[message.id]]
+        if session.ephemeral:
+            self._settle_provider_trace_settlements(message.id, None)
+            return
         try:
-            if not (
+            if (
                 message.role is ConsoleMessageRole.ASSISTANT
                 and self.persist_selected_generation(
                     message.id,
@@ -16003,7 +16016,12 @@ class ConsoleChatStore:
                     if canvas_settlement is not None
                     else None,
                 )
-            ) and not self._persist_existing_message(
+            ):
+                # The paired writer bypasses the ordinary content-write hook
+                # that flushes legacy, local-only exchange captures.
+                if message.exchanges:
+                    self._persist_exchanges_only(message)
+            elif not self._persist_existing_message(
                 message, preserve_provider_continuation=True
             ):
                 raise RuntimeError("Terminal generation persistence did not commit.")
@@ -17107,6 +17125,13 @@ class ConsoleChatStore:
             session_id,
             (None, None),
         )
+        # ADR-095: explicitly staged settings use the post-promotion writer
+        # and its failure ledger. Inherited policy remains part of the bundle.
+        bundled_context_policy = (
+            session.context_policy_overrides
+            if session.context_policy_revision == 0
+            else None
+        )
         committed_policy = self.persistence.promote_console_conversation_bundle(
             conversation_id=identity.conversation_id,
             policy_candidate=ConsoleLibraryPolicyCandidate(
@@ -17129,7 +17154,7 @@ class ConsoleChatStore:
             project_context_json=encode_project_context_json(
                 session.project_instruction_state
             ),
-            context_policy_overrides=session.context_policy_overrides,
+            context_policy_overrides=bundled_context_policy,
             contributions=contributions,
             trace_boundary=session.fork_trace_boundary,
         )
@@ -17149,6 +17174,11 @@ class ConsoleChatStore:
                 raise RuntimeError("Temporary chat identity changed during save.")
             session.ephemeral = False
             self.publish_committed_identity(session_id, identity)
+            if bundled_context_policy is not None:
+                # Match the fresh conversation's durable acceptance revision.
+                session.context_policy_durable_revision = (
+                    None if bundled_context_policy.is_empty else 1
+                )
             if staged_generation_snapshot is not None:
                 session.generation_durable_snapshot = staged_generation_snapshot
             session.library_policy_holder.snapshot = committed_policy
@@ -17207,7 +17237,6 @@ class ConsoleChatStore:
                 self.on_scope_flushed(identity.conversation_id, held_scope)
             except Exception:
                 logger.exception("on_scope_flushed callback failed after promotion.")
-        self._persist_project_instruction_state(session)
         self._flush_context_policy_on_first_persist(session)
         return identity.conversation_id
 

@@ -439,7 +439,19 @@ class _RecordingGateway:
     async def resolve_for_send(self, _selection):
         return provider_resolution(max_tokens=128)
 
-    async def stream_chat(self, _resolution, messages, signals=None):
+    async def stream_chat(
+        self,
+        _resolution,
+        messages,
+        signals=None,
+        *,
+        route=None,
+        route_actor_id=None,
+        route_chain_id=None,
+        capture_mode=None,
+        ephemeral=False,
+        before_provider_dispatch=None,
+    ):
         if self.builder_ref is not None:
             assert self.builder_ref() is not None
         self.messages_seen = messages
@@ -538,6 +550,13 @@ class _ScriptedCitationGateway:
         messages,
         tools=_OMITTED,
         signals=_OMITTED,
+        *,
+        route=None,
+        route_actor_id=None,
+        route_chain_id=None,
+        capture_mode=None,
+        ephemeral=False,
+        before_provider_dispatch=None,
     ):
         call_index = len(self.calls)
         self.calls.append(
@@ -546,6 +565,12 @@ class _ScriptedCitationGateway:
                 "messages": messages,
                 "tools": tools,
                 "signals": signals,
+                "route": route,
+                "route_actor_id": route_actor_id,
+                "route_chain_id": route_chain_id,
+                "capture_mode": capture_mode,
+                "ephemeral": ephemeral,
+                "before_provider_dispatch": before_provider_dispatch,
             }
         )
         if self.on_call is not None:
@@ -587,6 +612,13 @@ class _ControlledCitationGateway(_ScriptedCitationGateway):
         messages,
         tools=_OMITTED,
         signals=_OMITTED,
+        *,
+        route=None,
+        route_actor_id=None,
+        route_chain_id=None,
+        capture_mode=None,
+        ephemeral=False,
+        before_provider_dispatch=None,
     ):
         call_index = len(self.calls)
         self.calls.append(
@@ -595,6 +627,12 @@ class _ControlledCitationGateway(_ScriptedCitationGateway):
                 "messages": messages,
                 "tools": tools,
                 "signals": signals,
+                "route": route,
+                "route_actor_id": route_actor_id,
+                "route_chain_id": route_chain_id,
+                "capture_mode": capture_mode,
+                "ephemeral": ephemeral,
+                "before_provider_dispatch": before_provider_dispatch,
             }
         )
         script = self.scripts[call_index]
@@ -1702,7 +1740,7 @@ async def test_citation_repair_missing_owner_privacy_scrubs_session() -> None:
     assert repair_session.resolution is None
 
 
-@pytest.mark.parametrize("failure_seam", ("compaction", "window-bound"))
+@pytest.mark.parametrize("failure_seam", ("memory-preflight", "window-bound"))
 @pytest.mark.asyncio
 async def test_citation_repair_predispatch_exception_privacy_scrubs_session(
     failure_seam: str,
@@ -1731,11 +1769,14 @@ async def test_citation_repair_predispatch_exception_privacy_scrubs_session(
     def fail(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError(_REPAIR_PROVIDER_EXCEPTION_SENTINEL)
 
-    if failure_seam == "compaction":
+    if failure_seam == "memory-preflight":
+        async def fail_async(*_args: object, **_kwargs: object) -> object:
+            raise RuntimeError(_REPAIR_PROVIDER_EXCEPTION_SENTINEL)
+
         monkeypatch.setattr(
             controller,
-            "_apply_context_summary_compaction",
-            fail,
+            "_apply_conversation_memory_preflight",
+            fail_async,
         )
     else:
         monkeypatch.setattr(controller_module, "bound_messages_to_window", fail)
@@ -2739,14 +2780,6 @@ def _controlled_citation_repair(
     return controller, store, gateway, bridge, initial_body, repaired_body
 
 
-async def _wait_for_citation_checking(controller: ConsoleChatController) -> None:
-    for _ in range(1_000):
-        if controller.run_state.status is ConsoleRunStatus.CHECKING_CITATIONS:
-            return
-        await asyncio.sleep(0)
-    raise AssertionError("citation checking was not observable")
-
-
 def _sanitize_selected_persistence(
     persistence: _ReadyCitationPersistence,
     selected_body: str,
@@ -3052,7 +3085,10 @@ async def test_citation_repair_stop_during_initial_generation_keeps_ordinary_sto
 
 @pytest.mark.parametrize("agent", (False, True), ids=("direct", "agent"))
 @pytest.mark.asyncio
-async def test_citation_repair_stop_while_checking_cancels_before_dispatch(agent: bool):
+async def test_citation_repair_stop_while_checking_cancels_before_dispatch(
+    agent: bool,
+    monkeypatch: pytest.MonkeyPatch,
+):
     persistence = _ReadyCitationPersistence() if not agent else None
     controller, store, gateway, _bridge, initial_body, _repaired_body = (
         _controlled_citation_repair(
@@ -3060,8 +3096,17 @@ async def test_citation_repair_stop_while_checking_cancels_before_dispatch(agent
             persistence=persistence,
         )
     )
+    checking_started = asyncio.Event()
+    set_run_state = controller._set_run_state
+
+    def observe_run_state(state, *args, **kwargs):
+        set_run_state(state, *args, **kwargs)
+        if state.status is ConsoleRunStatus.CHECKING_CITATIONS:
+            checking_started.set()
+
+    monkeypatch.setattr(controller, "_set_run_state", observe_run_state)
     task = asyncio.create_task(controller.submit_draft("question"))
-    await _wait_for_citation_checking(controller)
+    await asyncio.wait_for(checking_started.wait(), timeout=5.0)
 
     blocked = await controller.submit_draft("must stay blocked")
     assert blocked.accepted is False

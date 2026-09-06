@@ -254,11 +254,21 @@ async def _press_generate(screen, pilot, app, watchlist_id, *, timeout: float = 
         await pilot.pause(0.02)
     while time.monotonic() < deadline:
         await pilot.pause(0.02)
-        table = screen.query_one(
-            "#watchlists-artifacts-pane", ArtifactsPane
-        ).query_one("#artifacts-table", DataTable)
-        if table.row_count == len(db.list_briefings(watchlist_id)):
+        tables = screen.query("#watchlists-artifacts-pane #artifacts-table")
+        if not tables:
+            continue
+        table = tables.first(DataTable)
+        # Recomposition populates rows before the replacement table mounts
+        # and receives a layout. Row agreement alone is not painted readiness.
+        if (
+            table.row_count == len(db.list_briefings(watchlist_id))
+            and table.is_mounted
+            and table.display
+            and table.region.width > 0
+            and table.region.height > 0
+        ):
             return
+    raise AssertionError("Generated briefings did not reach mounted table geometry")
 
 
 def _briefing_rows(app, watchlist_id) -> list[dict]:
@@ -343,10 +353,19 @@ async def _press_cast(screen, pilot, app, briefing_id, *, timeout: float = 20.0)
         await pilot.pause(0.02)
     while time.monotonic() < deadline:
         await pilot.pause(0.02)
-        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
-        table = pane.query_one("#artifacts-scripts-table", DataTable)
-        if table.row_count == len(db.list_briefing_scripts(briefing_id)):
+        tables = screen.query("#watchlists-artifacts-pane #artifacts-scripts-table")
+        if not tables:
+            continue
+        table = tables.first(DataTable)
+        if (
+            table.row_count == len(db.list_briefing_scripts(briefing_id))
+            and table.is_mounted
+            and table.display
+            and table.region.width > 0
+            and table.region.height > 0
+        ):
             return
+    raise AssertionError("Cast scripts did not reach mounted table geometry")
 
 
 def _render_to_console(renderable, *, width: int = 100) -> tuple[str, str]:
@@ -559,7 +578,10 @@ async def test_generate_records_a_complete_briefing_and_renders_its_body(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monkeypatch):
+@pytest.mark.parametrize("coordinated", [False, True])
+async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(
+    monkeypatch, coordinated
+):
     """Generation reconciliation and manual refresh share one load group."""
     app = _build_test_app()
     watchlist_id = _seed_watchlist(app)
@@ -578,8 +600,28 @@ async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monke
 
     monkeypatch.setattr(screen_module, "generate_briefing", held_generate)
 
+    if coordinated:
+
+        class Coordinator:
+            async def accept_briefing(self, requested_watchlist_id, preset_id):
+                return await held_generate(
+                    db, requested_watchlist_id, preset_id=preset_id
+                )
+
+        app.watchlists_operation_coordinator = Coordinator()
+
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
         real_list_briefings = db.list_briefings
+        real_load_briefings = screen._load_briefings
+        loader_groups = []
+
+        async def observed_load_briefings(**kwargs):
+            from textual.worker import get_current_worker
+
+            loader_groups.append(get_current_worker().group)
+            await real_load_briefings(**kwargs)
+
+        screen._load_briefings = observed_load_briefings
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
         pane.query_one("#artifacts-generate-button", Button).press()
         async with asyncio.timeout(10):
@@ -633,6 +675,8 @@ async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monke
         assert [row["id"] for row in recorded] == [newest_snapshot[0]["id"]]
         assert screen._loaded_briefings == newest_snapshot
         assert pane.briefings == newest_snapshot
+        assert len(loader_groups) >= 2
+        assert set(loader_groups) == {"wl-briefings-load"}
 
 
 @pytest.mark.asyncio
@@ -1601,6 +1645,45 @@ async def test_the_list_the_button_and_the_body_are_all_on_screen(size, monkeypa
             f"Artifacts is {artifacts_width} columns wide where Sources gets "
             f"{sources_width} on the same {size[0]}x{size[1]} terminal"
         )
+
+
+@pytest.mark.parametrize("table_id", ["artifacts-table", "artifacts-scripts-table"])
+@pytest.mark.asyncio
+async def test_generation_geometry_waits_for_replacement_table_layout(
+    monkeypatch, table_id
+):
+    """Populated rows must not count as ready before the replacement is laid out."""
+    original_update = WatchlistsCollectionsScreen._on_timer_update
+    release_at = None
+    deferred_updates = 0
+
+    def delay_populated_table_layout(screen):
+        nonlocal release_at, deferred_updates
+        if release_at is None:
+            tables = list(screen.query(f"#watchlists-artifacts-pane #{table_id}"))
+            if tables and tables[0].row_count and not tables[0].region.width:
+                # Fault injection only: keep the first populated replacement
+                # between composition and layout for a bounded interval.
+                release_at = time.monotonic() + 0.2
+        if release_at is not None and time.monotonic() < release_at:
+            deferred_updates += 1
+            return
+        return original_update(screen)
+
+    monkeypatch.setattr(
+        WatchlistsCollectionsScreen, "_on_timer_update", delay_populated_table_layout
+    )
+    if table_id == "artifacts-table":
+        await test_the_list_the_button_and_the_body_are_all_on_screen(
+            size=(160, 42), monkeypatch=monkeypatch
+        )
+    else:
+        await (
+            test_casting_a_complete_briefing_writes_a_script_row_and_the_table_shows_it(
+                monkeypatch
+            )
+        )
+    assert deferred_updates > 0, "the replacement-table layout fault must be exercised"
 
 
 # --- 6. Toolbar pickers: selection mode, default preset, Presets… (Task 4) -
@@ -3745,8 +3828,8 @@ async def _press_synthesize(screen, pilot, app, script_id, *, timeout: float = 2
     answered. Mirrors `_press_cast` exactly, scoped to one script's audio
     rather than one briefing's scripts -- there is no dedicated audio
     TABLE to wait on (the audio state is folded into the script detail
-    Static), so the final settle condition is the audio row count/a toast,
-    same observable-state discipline as every sibling `_press_*` helper.
+    Static), so wait for both the audio row count/a toast and mounted detail
+    geometry, the same readiness discipline as every sibling `_press_*` helper.
     """
     db = app.watchlist_bundle_service.db
     rows_before = len(db.list_briefing_audio(script_id))
@@ -3768,11 +3851,22 @@ async def _press_synthesize(screen, pilot, app, script_id, *, timeout: float = 2
         await pilot.pause(0.02)
     while time.monotonic() < deadline:
         await pilot.pause(0.02)
+        details = screen.query("#watchlists-artifacts-pane #artifacts-script-detail")
+        if not details:
+            continue
+        detail = details.first(Static)
         if (
-            len(db.list_briefing_audio(script_id)) != rows_before
-            or getattr(app.notify, "call_count", 0) > notes_before
+            (
+                len(db.list_briefing_audio(script_id)) != rows_before
+                or getattr(app.notify, "call_count", 0) > notes_before
+            )
+            and detail.is_mounted
+            and detail.display
+            and detail.region.width > 0
+            and detail.region.height > 0
         ):
             return
+    raise AssertionError("Synthesized audio did not reach mounted detail geometry")
 
 
 @pytest.mark.asyncio

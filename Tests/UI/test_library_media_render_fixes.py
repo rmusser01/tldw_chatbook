@@ -710,7 +710,7 @@ async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
             analyzed.append(media_id)
             return True
 
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 library_screen_module,
@@ -771,14 +771,14 @@ async def test_analyze_run_that_dies_with_the_screen_says_where_it_stopped():
                 raise
             return True
 
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 library_screen_module,
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
-            screen._start_library_media_analyze(("a", "b", "c"), overwrite=True)
+            screen._media_analysis_controller._start_library_media_analyze(("a", "b", "c"), overwrite=True)
         worker = next(
             candidate
             for candidate in host.workers
@@ -822,14 +822,14 @@ async def test_analyze_run_cancelled_before_a_total_is_known_says_so_honestly():
             await release.wait()
             return media_ids
 
-        screen._library_media_unanalyzed_ids = _blocked_unanalyzed
+        screen._media_analysis_controller._library_media_unanalyzed_ids = _blocked_unanalyzed
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 library_screen_module,
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
-            screen._start_library_media_analyze(("a", "b"), overwrite=False)
+            screen._media_analysis_controller._start_library_media_analyze(("a", "b"), overwrite=False)
         worker = next(
             candidate
             for candidate in host.workers
@@ -888,7 +888,7 @@ async def test_analyze_bulk_action_follows_the_selection_in_place():
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "No analysis provider is configured.",
             )
-            screen._library_media_analyze_reason_cache = None
+            screen._media_analysis_controller._library_media_analyze_reason_cache = None
             screen.query_one("#library-media-row-0").press()
             await pilot.pause()
             gated = screen.query_one("#library-media-analyze-selected", Button)
@@ -1882,7 +1882,7 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
         assert str(generate.tooltip) == "No analysis provider is configured."
         # Belt and braces: the handler refuses with the same sentence.
         warnings: list[str] = []
-        screen._notify_library_media_analysis_warning = warnings.append
+        screen._media_analysis_controller._notify_library_media_analysis_warning = warnings.append
         screen.handle_library_media_analysis_generate(
             SimpleNamespace(stop=lambda: None)
         )

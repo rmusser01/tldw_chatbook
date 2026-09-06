@@ -227,6 +227,7 @@ def test_controller_composes_raw_provider_only_while_all_live_gates_are_open(
     turn_context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": local},
         scratch_space=SimpleNamespace(root=tmp_path),
+        tool_policy_profile_id="default",
     )
 
     provider, hook = controller._compose_raw_shell_provider(

@@ -299,6 +299,15 @@ def test_ui_job_is_sharded_to_fit_its_time_budget() -> None:
     assert "name: ui-test-results-${{ matrix.shard }}" in ui_job
 
 
+def test_ui_job_installs_the_root_project_before_pytest() -> None:
+    """Bundled project packages must exist before UI autouse fixtures import them."""
+    ui_job = _ui_tests_job_block()
+    install_command = "pip install -e ."
+
+    assert install_command in ui_job
+    assert ui_job.index(install_command) < ui_job.index("pytest Tests/UI")
+
+
 def _shard_ids(job_block: str) -> list[int]:
     """The `shard: [...]` id list declared inside one job block."""
     line = job_block[job_block.index("shard: [") :].splitlines()[0]

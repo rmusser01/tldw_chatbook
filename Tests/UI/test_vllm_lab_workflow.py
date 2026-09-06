@@ -8,10 +8,11 @@ from pathlib import Path
 
 import pytest
 from textual import on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static, TextArea
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
@@ -71,7 +72,9 @@ def _no_splash(monkeypatch):
     monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
 
 
-class _VllmHost(App[None]):
+class _VllmHost(ConsolidatedCSSApp):
+    CSS_PATH = list(APP_STYLESHEETS)
+
     def __init__(self) -> None:
         super().__init__()
         self.profile_events = []
@@ -385,7 +388,9 @@ async def test_profile_buttons_post_exact_actions_and_raw_arguments_are_launch_o
             "#vllm-profile-duplicate-button",
             "#vllm-profile-delete-button",
         ):
-            await pilot.click(selector)
+            app.query_one(selector).scroll_visible(animate=False)
+            await pilot.pause()
+            assert await pilot.click(selector)
             await pilot.pause()
 
         assert [type(message) for message in app.profile_events] == [
@@ -1910,7 +1915,7 @@ async def test_source_specific_controls_and_mode_drafts_are_preserved():
         await pilot.click("#vllm-start-local-button")
         assert app.query_one("#vllm-hf-model", Input).value == "org/kept-model"
 
-        await pilot.click("#vllm-local-model-source-button")
+        assert await pilot.click("#vllm-local-model-source-button")
         assert local_input.display
         assert not hf_input.display
         assert app.query_one(
@@ -2126,7 +2131,8 @@ async def test_numeric_action_revalidates_forged_hydration_without_echo():
             profiles_ready=True,
         )
 
-        await pilot.click("#vllm-check-setup")
+        await pilot.pause()
+        assert await pilot.click("#vllm-check-setup")
         await pilot.pause()
 
         assert app.action_events == []
@@ -2426,7 +2432,10 @@ async def _mount_vllm_screen(
     for _ in range(12):
         await pilot.pause()
         views = list(screen.query(VllmSetupView))
-        if views:
+        if views and views[0].is_mounted:
+            # Lazy composition exposes the node before its mount projection
+            # and the window's lifecycle message have settled.
+            await pilot.pause()
             return screen, window, views[0]
     raise AssertionError("vLLM setup view did not mount")
 

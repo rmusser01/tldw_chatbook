@@ -599,7 +599,7 @@ def test_checkpoint_normalization_does_not_construct_arbitrary_sequences() -> No
         (
             "custom-openai-api",
             {"api_key_resolved": True},
-            {"api_key_resolved": True},
+            {"input_data": [{"role": "user", "content": "hello"}]},
             "credential_decision",
         ),
     ],
@@ -644,7 +644,37 @@ def test_provider_shape_matrix_is_sanitized_and_projected(
     if expected_overlay is not None:
         assert expected_overlay in {item.kind for item in result.overlays}
     if endpoint == "custom-openai-api":
+        # Dispatch retains the keyless decision; trace credential filtering does
+        # not expose credential-named kwargs, even when their value is boolean.
+        raw_handler = _chatbook_project(dict(actual))
+        assert raw_handler["api_key_resolved"] is True
+        assert "api_key_resolved" not in result.handler_kwargs
+        assert "api_key_resolved" not in result.boundary_kwargs
+        assert result.redacted is True
         assert result.credential_source is ProviderCredentialSource.EXPLICIT_KEYLESS
+
+
+@pytest.mark.parametrize("flag", [None, False, 1, "true"])
+def test_credential_decision_overlay_requires_explicit_boolean(flag) -> None:
+    actual = {
+        "api_endpoint": "custom-openai-api",
+        "messages_payload": [{"role": "user", "content": "hello"}],
+        "model": "model",
+    }
+    if flag is not None:
+        actual["api_key_resolved"] = flag
+    result = verify_provider_request_shadow(
+        actual_kwargs=actual,
+        expected_kwargs=dict(actual),
+        provenance=_provenance(),
+        project_handler_kwargs=_chatbook_project,
+    )
+
+    assert result.available is True
+    assert "credential_decision" not in {item.kind for item in result.overlays}
+    assert result.credential_source is ProviderCredentialSource.NOT_SUPPLIED
+    assert "api_key_resolved" not in result.handler_kwargs
+    assert "api_key_resolved" not in result.boundary_kwargs
 
 
 def test_verified_bundle_values_are_recursively_immutable() -> None:

@@ -20,6 +20,11 @@ from unittest.mock import AsyncMock
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_console_command_composer import _spy_submit_draft
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
@@ -193,7 +198,7 @@ async def test_skills_command_named_run_form_shows_dollar_hint_for_unknown_name(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/skills unknownskill")
         submit_spy = AsyncMock()
-        console._submit_console_native_draft = submit_spy
+        console._submission._submit_console_native_draft = submit_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
@@ -224,7 +229,7 @@ async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_name(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/skills sketchy-skill")
         submit_spy = AsyncMock()
-        console._submit_console_native_draft = submit_spy
+        console._submission._submit_console_native_draft = submit_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
@@ -254,7 +259,7 @@ async def test_skills_command_exact_trusted_name_shows_hint_and_never_runs():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/skills code-review fix it")
         submit_spy = AsyncMock()
-        console._submit_console_native_draft = submit_spy
+        console._submission._submit_console_native_draft = submit_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
@@ -279,6 +284,7 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
     with the bare `/name` dispatch it served (fix-wave branch (a)), so no
     TOOL row of any kind appears for a `$name` send."""
     app = _build_test_app()
+    attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     skills = FakeSkillsScopeService(
         available_skills=[_skill("code-review", "Reviews a diff.")]
@@ -345,7 +351,7 @@ async def test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_h
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/code-review fix it")
         submit_spy = AsyncMock()
-        console._submit_console_native_draft = submit_spy
+        console._submission._submit_console_native_draft = submit_spy
 
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)

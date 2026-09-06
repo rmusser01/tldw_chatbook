@@ -9,23 +9,22 @@ that arrive mid-capture rather than out of a blocking call.
 
 from __future__ import annotations
 
-from pathlib import Path
 import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictation import (
     _mounted_console,
-    _ready_host,
+    _ready_host as _build_ready_host,
     _wait_for_mic_label,
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -39,6 +38,17 @@ from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
+from Tests.UI.app_factory import _build_test_app
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+
+
+def _ready_host():
+    return _build_ready_host(_build_test_app)
+
+
 # `_ready_host()`/`ConsoleHarness` (used by every other test in this module)
 # deliberately mounts without the production CSS_PATH for speed -- a bare
 # `App` subclass with no CSS_PATH set never loads `_agentic_terminal.tcss`'s
@@ -48,17 +58,10 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 # established for this in `test_console_composer_collapse.py`: a minimal App
 # mounting `ConsoleComposerBar` directly with `CSS_PATH` pointed at the
 # generated bundle.
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
-
-
 class _ComposerCSSApp(ConsolidatedCSSApp):
     """Mount the composer with the production stylesheet for visual assertions."""
 
-    CSS_PATH = [
-        str(_BUNDLED_STYLESHEET),
-        str(_REPO_ROOT / "tldw_chatbook/css/screen_agentic_console.tcss"),
-    ]
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         yield ConsoleComposerBar(id="console-native-composer")
@@ -358,7 +361,9 @@ async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
     service.start_gate = threading.Event()
     _patch_availability(monkeypatch, provider="parakeet-onnx")
     _install_streaming_session(monkeypatch, service)
-    monkeypatch.setattr(ConsoleHarness, "CSS_PATH", str(_BUNDLED_STYLESHEET))
+    monkeypatch.setattr(
+        ConsoleHarness, "CSS_PATH", [str(path) for path in APP_STYLESHEETS]
+    )
     _, host = _ready_host()
 
     try:
@@ -432,7 +437,9 @@ async def test_busy_parakeet_mic_stays_reachable_with_staged_attachments(
     service.start_gate = threading.Event()
     _patch_availability(monkeypatch, provider="parakeet-onnx")
     _install_streaming_session(monkeypatch, service)
-    monkeypatch.setattr(ConsoleHarness, "CSS_PATH", str(_BUNDLED_STYLESHEET))
+    monkeypatch.setattr(
+        ConsoleHarness, "CSS_PATH", [str(path) for path in APP_STYLESHEETS]
+    )
     _, host = _ready_host()
 
     try:
@@ -726,7 +733,7 @@ async def test_one_failure_draining_before_the_stop_worker_shows_one_toast(monke
 
         # The stop is requested first, but the mid-capture failure drains
         # before the worker gets its first tick.
-        console._request_console_dictation_stop()
+        console._dictation._request_console_dictation_stop()
         console._handle_console_dictation_event(
             chat_screen_module.ConsoleDictationEvent(
                 session,
@@ -767,7 +774,7 @@ async def test_one_failure_draining_during_the_stop_worker_shows_one_toast(monke
         await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_dictation_session
 
-        console._request_console_dictation_stop()
+        console._dictation._request_console_dictation_stop()
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and not service.stop_entered.is_set():
             await pilot.pause(0.01)
@@ -2201,7 +2208,7 @@ async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch)
 
             # `discard_gate` is deliberately still closed: an inline release
             # would sit here for the full 2s wait.
-            console._request_console_dictation_cancel()
+            console._dictation._request_console_dictation_cancel()
 
             assert console._console_dictation_state == "idle"
             assert console._console_dictation_session is None
@@ -3323,7 +3330,7 @@ async def test_a_command_finalizing_during_its_own_transcribe_window_still_queue
 
             # Something else (the wall timer, in production) stops the
             # capture before the trailing "send" is recognized.
-            console._request_console_dictation_stop()
+            console._dictation._request_console_dictation_stop()
             deadline = time.monotonic() + 4
             while time.monotonic() < deadline and not service.stop_entered.is_set():
                 await pilot.pause(0.01)
@@ -4037,7 +4044,7 @@ async def test_starting_capture_stops_any_in_flight_playback_before_opening_mic(
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
-        console._request_console_dictation_start()
+        console._dictation._request_console_dictation_start()
 
         # No event-loop turn has happened yet: the worker cannot have run.
         assert service.start_calls == 0
@@ -4299,7 +4306,7 @@ async def test_a_late_discard_is_acknowledged_instead_of_silently_ignored(
             session = console._console_dictation_session
 
             service.emit_final("dictated words")
-            console._request_console_dictation_stop()
+            console._dictation._request_console_dictation_stop()
             deadline = time.monotonic() + 4
             while time.monotonic() < deadline and not service.stop_entered.is_set():
                 await pilot.pause(0.01)

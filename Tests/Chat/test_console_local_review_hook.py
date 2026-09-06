@@ -490,6 +490,7 @@ def _bare_controller(app):
     """A controller instance with only what _compose_local_provider touches."""
     controller = object.__new__(ConsoleChatController)
     controller.app = app
+    controller.set_pending_question = None
     controller._agent_bridge = None
     controller._pending_approval_event = None
     controller._pending_approval_decisions = None

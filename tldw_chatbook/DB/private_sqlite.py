@@ -156,6 +156,12 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "ChaChaNotes owns private file and in-memory primary databases.",
     ),
+    "chat.trace_maintenance": SQLiteOwnerPolicy(
+        "tldw_chatbook/Chat/console_trace_maintenance",
+        _PRIVATE_FILE,
+        "Physical trace maintenance reopens the existing private conversation "
+        "database under its compaction lease; no separate backup authority.",
+    ),
     "db.evals": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Evals_DB",
         _PRIVATE_OR_MEMORY,
@@ -212,6 +218,13 @@ _SQLITE_OWNER_POLICIES = {
         "tldw_chatbook/Kanban_Interop/local_kanban_db",
         _PRIVATE_OR_MEMORY,
         "Local Kanban supports private files and exact in-memory targets.",
+    ),
+    "library.legacy_recovery": SQLiteOwnerPolicy(
+        "tldw_chatbook/Library/collections_legacy_recovery",
+        _READ_ONLY_URI,
+        "Legacy recovery reads an existing Collections database without "
+        "creating or migrating it, preserving the source owner's file modes.",
+        preserve_read_only_source_mode=True,
     ),
     "notes.file_notes_replica": SQLiteOwnerPolicy(
         "tldw_chatbook/Notes/file_notes_replica",

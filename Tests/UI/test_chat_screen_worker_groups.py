@@ -45,9 +45,7 @@ def _guarded_paths() -> list[Path]:
     """
     assert CHAT_SCREEN_PATH.exists(), f"{CHAT_SCREEN_PATH} not found."
     modules = sorted(
-        path
-        for path in _CONSOLE_MODULES_DIR.glob("*.py")
-        if path.name != "__init__.py"
+        path for path in _CONSOLE_MODULES_DIR.glob("*.py") if path.name != "__init__.py"
     )
     assert modules, (
         f"no modules found in {_CONSOLE_MODULES_DIR}; this guard's scope "
@@ -144,6 +142,110 @@ def _group_family(group_node: ast.AST | None) -> str | None:
     return None
 
 
+def _enclosing_function(node, parents):
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node
+    return None
+
+
+def _conditional_callable_names(node):
+    if isinstance(node, ast.Attribute):
+        return {node.attr}
+    if isinstance(node, ast.IfExp):
+        return _conditional_callable_names(node.body) | _conditional_callable_names(
+            node.orelse
+        )
+    raise AssertionError(f"Unsupported worker alias expression: {ast.dump(node)}")
+
+
+def _worker_coroutine_targets(first, parents):
+    """Follow one explicit local callable selection, never guess unknown aliases."""
+    if not isinstance(first, ast.Call):
+        return set()
+    if isinstance(first.func, ast.Attribute):
+        return {first.func.attr}
+    if not isinstance(first.func, ast.Name):
+        return set()
+    scope = _enclosing_function(first, parents)
+    if first.func.id == "partial":
+        target = first.args[0]
+        assert isinstance(target, (ast.Name, ast.Attribute))
+        return {target.attr if isinstance(target, ast.Attribute) else target.id}
+    assignments = (
+        [
+            node
+            for node in ast.walk(scope)
+            if isinstance(node, ast.Assign)
+            and _enclosing_function(node, parents) is scope
+            and any(
+                isinstance(target, ast.Name) and target.id == first.func.id
+                for target in node.targets
+            )
+        ]
+        if scope is not None
+        else []
+    )
+    if not assignments:
+        assert scope is not None and any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == first.func.id
+            and _enclosing_function(node, parents) is scope
+            for node in ast.walk(scope)
+        ), f"Unresolved worker callable: {first.func.id}"
+        return {first.func.id}
+    assert len(assignments) == 1, f"Ambiguous worker alias: {first.func.id}"
+    value = assignments[0].value
+    # The existing Save-as dispatcher selects from an explicit local table.
+    # Include every table destination rather than silently skipping that alias.
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "get"
+        and isinstance(value.func.value, ast.Name)
+    ):
+        tables = [
+            node.value
+            for node in ast.walk(scope)
+            if isinstance(node, ast.Assign)
+            and _enclosing_function(node, parents) is scope
+            and any(
+                isinstance(target, ast.Name) and target.id == value.func.value.id
+                for target in node.targets
+            )
+        ]
+        assert len(tables) == 1 and isinstance(tables[0], ast.Dict)
+        return set().union(
+            *(_conditional_callable_names(item) for item in tables[0].values)
+        )
+    return _conditional_callable_names(value)
+
+
+def test_conditional_worker_alias_guards_both_summary_branches():
+    tree = ast.parse(
+        "def dispatch(self, from_here):\n"
+        "    worker = self._summarize_console_from if from_here else self._summarize_console_up_to\n"
+        "    self.run_worker(worker(), group='console-run')\n"
+    )
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    dispatch = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _call_name(node) == "run_worker"
+    )
+    assert _worker_coroutine_targets(dispatch.args[0], parents) == {
+        "_summarize_console_from",
+        "_summarize_console_up_to",
+    }
+    with pytest.raises(AssertionError, match="Unsupported worker alias"):
+        _conditional_callable_names(ast.parse("choose_worker()", mode="eval").body)
+
+
 def test_console_run_and_sync_workers_use_disjoint_groups():
     """Pin the separation this fix exists for: the sync kicks must never share
     a group with the run workers. The names-a-group guard alone would pass if
@@ -160,6 +262,7 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
         # family (`_apply_console_rewind_choice`) -- missing from this set
         # let it go unguarded by the disjointness assertion below.
         "_summarize_console_up_to",
+        "_summarize_console_from",
     }
     SYNC_COROUTINE = "_sync_native_console_chat_ui"
     run_groups: set[str] = set()
@@ -167,20 +270,25 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
     seen_run_targets: set[str] = set()
     for path in _guarded_paths():
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and _call_name(node) == "run_worker"):
                 continue
             if not node.args:
                 continue
             first = node.args[0]
-            target = _call_name(first) if isinstance(first, ast.Call) else ""
+            targets = _worker_coroutine_targets(first, parents)
             keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
             group = keywords.get("group")
             group_name = _group_family(group)
-            if target in RUN_COROUTINES:
+            if targets & RUN_COROUTINES:
                 run_groups.add(group_name)
-                seen_run_targets.add(target)
-            elif target == SYNC_COROUTINE:
+                seen_run_targets.update(targets & RUN_COROUTINES)
+            if SYNC_COROUTINE in targets:
                 sync_groups.add(group_name)
     # Every named run coroutine must actually be FOUND somewhere in scope.
     # Without this the set above degrades gracefully as sites move out of
@@ -205,8 +313,6 @@ class TestTextualExclusiveGroupSemantics:
 
     @staticmethod
     def _make_app(results: dict):
-        from textual.app import App
-
         class Probe(ConsolidatedCSSApp):
             async def long_run(self):
                 try:

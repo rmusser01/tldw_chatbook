@@ -16,7 +16,7 @@ class SkillImportChoiceModal(SafeModalDismissMixin, ModalScreen[str | None]):
 
     BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
     SAFE_MODAL_CONTENT = "#skill-import-choice"
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     SkillImportChoiceModal {
         align: center middle;
         background: $background 75%;
@@ -80,7 +80,6 @@ class SkillImportChoiceModal(SafeModalDismissMixin, ModalScreen[str | None]):
                 yield Button("Cancel", id="skill-import-choice-cancel")
 
     def on_mount(self) -> None:
-        super().on_mount()
         choices = self.query_one("#skill-import-choice-list", OptionList)
         choices.highlighted = 0
         choices.focus()

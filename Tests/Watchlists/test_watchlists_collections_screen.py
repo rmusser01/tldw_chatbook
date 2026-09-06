@@ -1580,6 +1580,7 @@ async def test_items_reload_scopes_to_watchlist():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
+        await host.workers.wait_for_complete()
         screen = host.screen_stack[-1]
         service = app.watchlist_bundle_service
         db = service._db
@@ -1594,6 +1595,9 @@ async def test_items_reload_scopes_to_watchlist():
         service.add_source(watchlist["id"], member)
         _seed_item(db, member, "Member item")
         _seed_item(db, outsider, "Outsider item")
+        # Direct DB seeds bypass the normal write flow's rail refresh.
+        # Publish them before selecting a scope the startup tree did not know.
+        await screen._load_tree_data().wait()
 
         screen._apply_tree_scope(
             TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
@@ -4054,32 +4058,9 @@ async def test_the_verbs_are_disabled_when_the_bundle_service_is_missing():
             assert "unavailable" in str(button.tooltip)
 
 
-def test_every_watchlist_bundle_service_method_has_a_production_caller():
-    """AC #6, enforced rather than asserted once by hand.
-
-    Five of these methods were complete, tested, and reachable from nothing
-    at all before this task. A future slice that quietly drops the last
-    caller of one should fail here rather than be rediscovered as dead code
-    with a green suite.
-
-    Resolved through the AST rather than by grepping for `.create(`: a plain
-    text scan matches `completions.create(` in `OCR_Backends` and
-    `os.rename(` in `Chat_Functions`, so it would report a caller for
-    `create` and `rename` even with every real call deleted -- verified by
-    mutation. This instead follows the two ways the service is actually
-    reached (`self._watchlist_bundle_service()` and the
-    `watchlist_bundle_service` attribute on the app) plus any local bound to
-    one of them, so `self._controller.list_sources(...)` -- a different
-    object with a colliding method name, in the same file -- is not counted.
-    """
+def _watchlist_bundle_method_references(source: str) -> set[str]:
+    """Find service calls through the production service provenance seams."""
     import ast
-    import inspect
-    import warnings
-    from pathlib import Path
-
-    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
-        WatchlistBundleService,
-    )
 
     class _BundleServiceCalls(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -4124,7 +4105,63 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
         def visit_Call(self, node: ast.Call) -> None:
             if isinstance(node.func, ast.Attribute) and self._is_service(node.func.value):
                 self.called.add(node.func.attr)
+            for argument in (*node.args, *(keyword.value for keyword in node.keywords)):
+                if isinstance(argument, ast.Attribute) and self._is_service(
+                    argument.value
+                ):
+                    self.called.add(argument.attr)
             self.generic_visit(node)
+
+    visitor = _BundleServiceCalls()
+    visitor.visit(ast.parse(source))
+    return visitor.called
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "wire(callback=self.watchlist_bundle_service.update_sources)",
+            {"update_sources"},
+        ),
+        (
+            "service = self._watchlist_bundle_service()\nwire(service.update_sources)",
+            {"update_sources"},
+        ),
+        ("wire(callback=self._controller.update_sources)", set()),
+        ("self._controller.create()\nwire(callback=completions.create)", set()),
+    ],
+)
+def test_watchlist_bundle_caller_audit_tracks_only_service_callbacks(source, expected):
+    assert _watchlist_bundle_method_references(source) == expected
+
+
+def test_every_watchlist_bundle_service_method_has_a_production_caller():
+    """AC #6, enforced rather than asserted once by hand.
+
+    Five of these methods were complete, tested, and reachable from nothing
+    at all before this task. A future slice that quietly drops the last
+    caller of one should fail here rather than be rediscovered as dead code
+    with a green suite.
+
+    Resolved through the AST rather than by grepping for `.create(`: a plain
+    text scan matches `completions.create(` in `OCR_Backends` and
+    `os.rename(` in `Chat_Functions`, so it would report a caller for
+    `create` and `rename` even with every real call deleted -- verified by
+    mutation. This instead follows the two ways the service is actually
+    reached (`self._watchlist_bundle_service()` and the
+    `watchlist_bundle_service` attribute on the app) plus any local bound to
+    one of them, including bound callbacks passed to another call, so
+    `self._controller.list_sources(...)` -- a different
+    object with a colliding method name, in the same file -- is not counted.
+    """
+    import inspect
+    import warnings
+    from pathlib import Path
+
+    from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
+        WatchlistBundleService,
+    )
 
     service_file = Path(inspect.getfile(WatchlistBundleService)).resolve()
     package_root = service_file.parents[1]
@@ -4139,9 +4176,9 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
         for path in package_root.rglob("*.py"):
             if path.resolve() == service_file:
                 continue
-            visitor = _BundleServiceCalls()
-            visitor.visit(ast.parse(path.read_text(encoding="utf-8")))
-            called |= visitor.called
+            called |= _watchlist_bundle_method_references(
+                path.read_text(encoding="utf-8")
+            )
 
     public_methods = {
         name

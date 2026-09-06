@@ -1007,9 +1007,17 @@ async def test_forced_cleanup_reports_failures_and_only_finalizes_reaped_registr
         assert client.servers == {"server": {"command": "fake"}}
 
 
+@pytest.mark.parametrize(
+    "wait_delivery_delay",
+    [
+        pytest.param(0.0, id="immediate"),
+        pytest.param(0.02, id="delayed"),
+    ],
+)
 @pytest.mark.asyncio
 async def test_disconnect_retains_live_real_child_after_kill_permission_error_and_retries(
     monkeypatch: pytest.MonkeyPatch,
+    wait_delivery_delay: float,
 ) -> None:
     child = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -1025,6 +1033,7 @@ async def test_disconnect_retains_live_real_child_after_kill_permission_error_an
         def __init__(self) -> None:
             self.stdin = child.stdin
             self.kill_calls = 0
+            self.kill_succeeded = False
 
         @property
         def returncode(self) -> int | None:
@@ -1038,9 +1047,13 @@ async def test_disconnect_retains_live_real_child_after_kill_permission_error_an
             if self.kill_calls == 1:
                 raise PermissionError(sentinel)
             child.kill()
+            self.kill_succeeded = True
 
         async def wait(self) -> int:
-            return await child.wait()
+            returncode = await child.wait()
+            if self.kill_succeeded:
+                await asyncio.sleep(wait_delivery_delay)
+            return returncode
 
     process = Process()
 
@@ -1058,7 +1071,7 @@ async def test_disconnect_retains_live_real_child_after_kill_permission_error_an
     client.servers["server"] = server_record
     logged: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.25)
     monkeypatch.setattr(
         client_module.logger,
         "error",

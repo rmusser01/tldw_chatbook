@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
@@ -196,14 +197,6 @@ def test_source_proof_rejects_illegal_nonassistant_persisted_state(tmp_path) -> 
             }
         )
         assert message_id is not None
-        with db.transaction() as connection:
-            connection.execute("DROP TRIGGER messages_sync_update")
-            connection.execute(
-                "UPDATE messages SET assistant_generation_state = 'accepted' "
-                "WHERE id = ?",
-                (message_id,),
-            )
-
         payload_hash = canonical_payload_hash(
             {
                 "assistant_generation_state": None,
@@ -211,11 +204,51 @@ def test_source_proof_rejects_illegal_nonassistant_persisted_state(tmp_path) -> 
                 "role": "user",
             }
         )
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=1,
-            payload_hash=payload_hash,
-        ) is None
+        assert (
+            db.read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is not None
+        )
+        corrupt_statement = (
+            "UPDATE messages SET assistant_generation_state = 'accepted' WHERE id = ?"
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="semantic mutation"):
+            with db.transaction() as cursor:
+                cursor.execute(corrupt_statement, (message_id,))
+        with db.transaction() as cursor:
+            cursor.execute("DROP TRIGGER messages_sync_update")
+            # Deliberately inject an invalid persisted row, not a supported
+            # application write. Keep the guard installed and scope the fixture
+            # authorization to this message and this transaction only.
+            authorization = db._semantic_mutation_authorization_for_coordinator(
+                cursor.connection
+            )
+            with authorization._authorize(
+                message_id=message_id, operations={"message_update"}
+            ):
+                cursor.execute(corrupt_statement, (message_id,))
+            with pytest.raises(sqlite3.IntegrityError, match="semantic mutation"):
+                cursor.execute(
+                    "UPDATE messages SET assistant_generation_state = NULL WHERE id = ?",
+                    (message_id,),
+                )
+
+        db.close_connection()
+        row = db.get_message_by_id(message_id)
+        assert row["role"] == "user"
+        assert row["assistant_generation_state"] == "accepted"
+        assert row["version"] == 1
+        assert (
+            db.read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is None
+        )
     finally:
         db.close_connection()
 

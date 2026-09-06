@@ -1092,7 +1092,6 @@ class LibrarySkillsController:
         if (
             result.request_token != controller.result.request_token
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
-            or self._library_skills_view != "list"
         ):
             return LibraryEntryReconcileResult.SUPERSEDED
 
@@ -1145,6 +1144,7 @@ class LibrarySkillsController:
             "skills",
             then=restore_focus,
             allow_screen_fallback=False,
+            sync_skill_work=False,
         ):
             return LibraryEntryReconcileResult.APPLIED
         return LibraryEntryReconcileResult.FAILED
@@ -1184,10 +1184,7 @@ class LibrarySkillsController:
             )
         else:
             controller.invalidate(refresh_scope)
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
-            and self._library_skills_view == "list"
-        ):
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
             self._request_library_skills_browse(refresh_scope)
 
     async def _load_library_skills_trust_posture(

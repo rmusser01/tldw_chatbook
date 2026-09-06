@@ -10,6 +10,10 @@ from typing import Any
 
 import pytest
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
+
 from Tests.Chat.test_console_automatic_library_preparation import (
     _PolicyCoordinator,
     _StreamingFence,
@@ -34,6 +38,9 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatStore,
     ConsoleDispatchSettlementError,
+)
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpointState,
 )
 from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
 from tldw_chatbook.Chat.console_prompt_queue import (
@@ -448,6 +455,14 @@ async def test_postcommit_settlement_rollback_uses_issued_generation_token(
 
     async def fail_after_token(*_args: Any, **kwargs: Any):
         assistant_id = str(kwargs["assistant_message_id"])
+        await kwargs["before_provider_dispatch"]()
+        recovery = store.dispatch_recovery_for_session("session-1")
+        assert recovery is not None and recovery.in_flight
+        assert recovery.assistant_message_id == assistant_id
+        assert recovery.checkpoint is not None
+        assert (
+            recovery.checkpoint.state is ConsoleDispatchCheckpointState.DISPATCH_STARTED
+        )
         issued["assistant_id"] = assistant_id
         issued["replacement"] = store.begin_generation_attempt(assistant_id)
         issued["newer"] = (
@@ -597,6 +612,17 @@ def _install_real_effect_failure(
 
         async def stream(*args: Any, **kwargs: Any):
             if should_fail():
+                # The fault must follow the actual dispatch boundary, not
+                # merely entry to the stream wrapper that precedes it.
+                await kwargs["before_provider_dispatch"]()
+                recovery = store.dispatch_recovery_for_session("session-1")
+                assert recovery is not None and recovery.in_flight
+                assert recovery.assistant_message_id == kwargs["assistant_message_id"]
+                assert recovery.checkpoint is not None
+                assert (
+                    recovery.checkpoint.state
+                    is ConsoleDispatchCheckpointState.DISPATCH_STARTED
+                )
                 raise RuntimeError("injected provider_entry")
             result = await original_stream(*args, **kwargs)
             counts["successes"] += 1

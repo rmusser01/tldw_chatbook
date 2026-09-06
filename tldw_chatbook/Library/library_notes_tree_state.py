@@ -20,6 +20,7 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
     NotesLoadDirection,
     NotesSliceKind,
 )
+from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
 
 LibraryNotesTreeRowKind = Literal["folder", "note", "unfiled", "pager"]
 LibraryNotesTreeSemanticStatus = Literal["normal", "connected", "needs_attention"]
@@ -131,6 +132,21 @@ class LibraryNotesTreeReceipt:
     preferred_folder_id: str | None = None
     preferred_membership_id: str | None = None
 
+    @property
+    def focus_identity(self) -> LibraryNotesFocusIdentity:
+        """Project the retained semantic target without retaining any widgets."""
+        return LibraryNotesFocusIdentity(
+            stage="notes",
+            region="navigator",
+            note_id=self.selected_note_id or None,
+            semantic_role=(
+                f"{self.focus_role}:{self.focus_semantic_id}"
+                if self.focus_semantic_id
+                else self.focus_role or "filter"
+            ),
+            scroll_offset=self.scroll_offset,
+        )
+
 
 @dataclass(frozen=True)
 class LibraryNotesFilterState:
@@ -217,9 +233,7 @@ class LibraryNotesFilterState:
             self,
             requested_direction=direction,
             requested_offset=self.requested_offset or 0,
-            requested_limit=(
-                self.requested_limit or LIBRARY_NOTES_TREE_PAGE_SIZE
-            ),
+            requested_limit=(self.requested_limit or LIBRARY_NOTES_TREE_PAGE_SIZE),
             loading=True,
         )
         return fail_library_notes_filter_load(

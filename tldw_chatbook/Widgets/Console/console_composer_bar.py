@@ -351,17 +351,16 @@ class _DraftLineSlice:
 #: near-miss hit nothing.
 MIC_SEND_GAP = 2
 
-#: Fixed cell width of the composer action row at rest: Send(6) + gap(2) +
-#: Dictate(11) + Stop(6). Stop is display-toggled rather than removed, so it is
-#: budgeted even while hidden. The overflow-menu button ("Menu", 6) moved
+#: Fixed cell width of the composer action row: Send(6) + gap(2) + Dictate(11)
+#: + Stop(6). Redirect adds 10 cells only while the run is active.
+#: The overflow-menu button ("Menu", 6) moved
 #: out of this row to sit left of the draft, beside Composer ▾; Attach(10)
 #: and Save(8) live behind it because this row is width-bounded and every
 #: always-present button is space the draft never gets back. CN-01
 #: (TASK-2154.13): Dictate needs 11 for its longest lifecycle label
 #: ("Dictating", 9 visible cells + padding); Send and Stop tightened from 8
 #: to 6 -- exactly their 4-cell labels + button padding, the same width the
-#: "Menu" button already uses -- so the row ends one cell UNDER the old 26
-#: instead of three over, and the draft keeps its 32-cell floor.
+#: "Menu" button already uses.
 BASE_ACTIONS_WIDTH = 6 + MIC_SEND_GAP + 11 + 6
 
 #: Width while an attachment is staged, adding the ✕ clear control (4).
@@ -783,6 +782,7 @@ class ConsoleComposerBar(Horizontal):
             attachment_visible = self._pending_attachment_label is not None
         return (
             BASE_ACTIONS_WIDTH
+            + (10 if self._run_active else 0)
             + (self._send_button_width - 6)
             + (4 if attachment_visible else 0)
         )
@@ -2094,6 +2094,7 @@ class ConsoleComposerBar(Horizontal):
         setup_blocked_reason = setup_blocked_reason.strip()
         ephemeral = bool(ephemeral)
         setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
+        run_active_changed = self._run_active != run_active
         self._run_active = run_active
         self._send_blocked = send_blocked
         self._setup_blocked_reason = setup_blocked_reason
@@ -2240,9 +2241,10 @@ class ConsoleComposerBar(Horizontal):
 
         if setup_reason_changed and not self.draft_text().strip():
             self._refresh_visible_draft()
-        if reason_changed and self.draft_text().strip():
-            # The reason strip's width comes out of the 1fr draft's cells,
-            # so a reason (dis)appearance re-windows the draft -- but only
+        self._sync_attachment_indicator_width()
+        if (reason_changed or run_active_changed) and self.draft_text().strip():
+            # Reasons and run controls take cells from the 1fr draft, so
+            # their state transitions must re-window the draft -- but only
             # after the pending layout has actually moved the draft's
             # region. A synchronous `_refresh_visible_draft()` here would
             # still read the PRE-toggle width (same reason
@@ -3637,6 +3639,7 @@ class ConsoleComposerBar(Horizontal):
         # TASK-24415: the reason strip's width cap is a function of the live
         # row width -- a resize must re-derive it, or a strip sized for the
         # old width keeps starving the draft at the new one.
+        self._sync_attachment_indicator_width()
         self._sync_send_disabled_reason(
             self._send_disabled_reason, muted=not self._send_blocked
         )
@@ -5684,6 +5687,30 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
 
+    def _sync_attachment_indicator_width(self) -> None:
+        """Let the optional filename yield before it clips an action button."""
+        if not self._pending_attachment_label:
+            return
+        try:
+            row = self.query_one("#console-composer-expanded", Horizontal)
+            indicator = self.query_one("#console-attachment-indicator", Static)
+        except NoMatches:
+            return
+        width = row.content_region.width
+        # Preserve the existing eight-cell narrow draft floor and its
+        # one-cell right margin. Wider rows retain the existing 28 cap.
+        indicator.styles.max_width = (
+            max(
+                0,
+                min(
+                    28,
+                    width - self.LEFT_CLUSTER_WIDTH - self._actions_row_width() - 8 - 1,
+                ),
+            )
+            if width
+            else 28
+        )
+
     def set_pending_attachment_label(
         self,
         label: str | None,
@@ -5719,9 +5746,9 @@ class ConsoleComposerBar(Horizontal):
         # rest and burying it would hide the way to undo a visible thing.
         if normalized:
             indicator.update(escape(resolve_glyph_text(f"📎 {normalized}")))
+            indicator.tooltip = normalized
             indicator.styles.display = "block"
             indicator.styles.width = "auto"
-            indicator.styles.max_width = 28
             clear_button.styles.display = "block"
             self._set_actions_row_width(
                 actions, self._actions_row_width(attachment_visible=True)
@@ -5734,6 +5761,7 @@ class ConsoleComposerBar(Horizontal):
                 clear_button.tooltip = "Remove the pending attachment."
         else:
             indicator.update("")
+            indicator.tooltip = None
             indicator.styles.display = "none"
             indicator.styles.width = 0
             clear_button.styles.display = "none"
@@ -5742,6 +5770,7 @@ class ConsoleComposerBar(Horizontal):
             )
         if self._voice_full_width_preparing:
             self._sync_full_width_voice_presentation(True)
+        self._sync_attachment_indicator_width()
 
     def set_voice_status(
         self,
@@ -6143,11 +6172,9 @@ class ConsoleComposerBar(Horizontal):
                 # Attach and Save Chatbook moved into the composer Menu: this
                 # row is width-bounded, so every always-present button here is
                 # space the draft never gets back. What remains is Send,
-                # Dictate, and the two CONDITIONAL controls (Stop while a run
-                # is active, ✕ while an attachment is staged) -- those cost
-                # nothing at rest, are time-critical when shown, and sit
-                # AFTER Dictate in Stop's budgeted slot so toggling them never
-                # shifts Send or Dictate.
+                # Dictate, and the conditional controls (Redirect/Stop while
+                # a run is active, ✕ while an attachment is staged). They sit
+                # after Dictate in their budgeted slots.
                 clear_attachment = self._bounded_button(
                     resolve_glyph("✕"),
                     width=4,

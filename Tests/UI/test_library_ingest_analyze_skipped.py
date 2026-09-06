@@ -27,6 +27,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
+from tldw_chatbook.UI.Library_Modules import library_media_analysis_controller as media_analysis_module
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from Tests.Library.test_library_ingest_state import _skipped_job
 from Tests.UI.test_library_ingest_retry_last import _ingest_screen, _pilot_app
@@ -42,11 +43,19 @@ def _ready_provider(monkeypatch) -> None:
     monkeypatch.setattr(
         library_screen_module, "analysis_unavailable_reason", lambda *_a, **_k: ""
     )
+    monkeypatch.setattr(
+        media_analysis_module, "analysis_unavailable_reason", lambda *_a, **_k: ""
+    )
 
 
 def _unready_provider(monkeypatch) -> None:
     monkeypatch.setattr(
         library_screen_module,
+        "analysis_unavailable_reason",
+        lambda *_a, **_k: "No analysis provider is configured.",
+    )
+    monkeypatch.setattr(
+        media_analysis_module,
         "analysis_unavailable_reason",
         lambda *_a, **_k: "No analysis provider is configured.",
     )
@@ -112,7 +121,7 @@ async def test_pressing_analyze_skipped_runs_the_worker_over_exactly_those_ids(
         await pilot.pause()
 
         calls = []
-        screen._start_library_media_analyze = (
+        screen._media_analysis_controller._start_library_media_analyze = (
             lambda media_ids, **kwargs: calls.append((media_ids, kwargs))
         )
         button = await _wait_for_selector(
@@ -174,8 +183,8 @@ async def test_analyze_skipped_run_paints_per_item_outcomes_on_their_own_rows(
         async def _one(media_id, *, resolution):
             return media_id == "7"
 
-        screen._library_media_unanalyzed_ids = _unanalyzed
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._library_media_unanalyzed_ids = _unanalyzed
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
 
         button = await _wait_for_selector(
             screen, pilot, "#library-ingest-analyze-skipped"
@@ -244,8 +253,8 @@ async def test_second_analyze_skipped_press_while_running_gets_the_existing_noti
             await release.wait()
             return True
 
-        screen._library_media_unanalyzed_ids = _unanalyzed
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._library_media_unanalyzed_ids = _unanalyzed
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
 
@@ -307,7 +316,7 @@ async def test_pressing_analyze_skipped_does_not_toggle_media_select_mode(
         async def _one(media_id, *, resolution):
             return True
 
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
         button = await _wait_for_selector(
             screen, pilot, "#library-ingest-analyze-skipped"
         )
@@ -364,8 +373,8 @@ async def test_press_over_a_mixed_set_auto_skips_already_analysed_and_notifies(
             analyzed.append(media_id)
             return True
 
-        screen._library_media_unanalyzed_ids = _unanalyzed
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._library_media_unanalyzed_ids = _unanalyzed
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
 
@@ -419,8 +428,8 @@ async def test_press_over_an_entirely_already_analysed_set_notifies_and_runs_not
             analyzed.append(media_id)
             return True
 
-        screen._library_media_unanalyzed_ids = _unanalyzed
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._library_media_unanalyzed_ids = _unanalyzed
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
 
@@ -463,8 +472,8 @@ async def test_analyze_outcome_reports_a_raised_exceptions_own_message(monkeypat
         async def _one(media_id, *, resolution):
             raise RuntimeError("provider timeout")
 
-        screen._library_media_unanalyzed_ids = _unanalyzed
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._library_media_unanalyzed_ids = _unanalyzed
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
 
@@ -528,8 +537,8 @@ async def test_import_run_that_dies_with_the_screen_names_the_import_run(
                 raise
             return True
 
-        screen._library_media_unanalyzed_ids = _unanalyzed
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._library_media_unanalyzed_ids = _unanalyzed
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
 
@@ -706,8 +715,8 @@ async def test_auto_skipped_ids_are_resolved_not_left_actionable_forever(
         async def _one(media_id, *, resolution):
             return True
 
-        screen._library_media_unanalyzed_ids = _unanalyzed
-        screen._analyze_one_library_media_item = _one
+        screen._media_analysis_controller._library_media_unanalyzed_ids = _unanalyzed
+        screen._media_analysis_controller._analyze_one_library_media_item = _one
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
 
@@ -741,4 +750,3 @@ async def test_auto_skipped_ids_are_resolved_not_left_actionable_forever(
             "the auto-skipped row must show a resolved receipt"
         )
         assert "analyzed · b.txt" in canvas_text
-

@@ -8,7 +8,7 @@ import os
 import stat
 from collections import deque
 from functools import partial
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from textual import on
 from textual.app import ComposeResult
@@ -19,17 +19,7 @@ from textual.widgets import Button, Input, Select, Static, TextArea
 from tldw_chatbook.Chunking import lab_state
 from tldw_chatbook.Chunking.lab_models import RunResult
 from tldw_chatbook.Chunking.lab_preflight import current_local_runtime, prepare_recipe
-from tldw_chatbook.Chunking.lab_recovery import (
-    MAX_ENVELOPE_BYTES,
-    export_recovery,
-    parse_recovery,
-)
-from tldw_chatbook.RAG_Admin.chunking_lab_service import (
-    ExpectedTemplate,
-    save_lab_template,
-)
 from tldw_chatbook.UI.Chunking_Lab_Modules import ChunkingTemplatesChanged
-from tldw_chatbook.UI.Chunking_Lab_Modules.dialogs import LabDialog, TemplateDialog
 from tldw_chatbook.UI.Chunking_Lab_Modules.editor_region import EditorRegion
 from tldw_chatbook.UI.Chunking_Lab_Modules.results_region import ResultsRegion
 from tldw_chatbook.UI.Chunking_Lab_Modules.sample_region import (
@@ -47,6 +37,9 @@ from tldw_chatbook.Utils.private_paths import (
     atomic_private_write_bytes,
     open_private_binary,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.UI.Chunking_Lab_Modules.dialogs import LabDialog
 
 
 def _validation(draft: dict) -> str:
@@ -149,6 +142,11 @@ def _write_selected_file(selected: str, payload: bytes, overwrite: bool) -> None
 
 def _inspect_recovery(selected: str) -> tuple[bytes, str]:
     """Read and validate once for bounded inspection, with no store authority."""
+    from tldw_chatbook.Chunking.lab_recovery import (
+        MAX_ENVELOPE_BYTES,
+        parse_recovery,
+    )
+
     path = validate_path_simple(selected, require_exists=True)
     if not path.is_file():
         raise ValueError("Choose a regular recovery JSON file")
@@ -739,6 +737,8 @@ class ChunkingLabScreen(BaseAppScreen):
         await self._refresh_session()
 
     async def _pin(self) -> None:
+        from tldw_chatbook.UI.Chunking_Lab_Modules.dialogs import LabDialog
+
         await self.drain_edits()
         replace = any(
             c["role"] == "A" for c in self.coordinator.session.candidates.values()
@@ -781,6 +781,8 @@ class ChunkingLabScreen(BaseAppScreen):
         return ChunkingInteropService(database)
 
     async def _save(self, role: str) -> None:
+        from tldw_chatbook.UI.Chunking_Lab_Modules.dialogs import LabDialog
+
         await self.drain_edits()
         captured_session = self.coordinator.session
         body, fields, expected, candidate_id = await asyncio.to_thread(
@@ -858,6 +860,11 @@ class ChunkingLabScreen(BaseAppScreen):
         captured=None,
     ) -> dict:
         """Save captured authored B or pinned authored/effective A through the catalog."""
+        from tldw_chatbook.RAG_Admin.chunking_lab_service import (
+            ExpectedTemplate,
+            save_lab_template,
+        )
+
         await self.drain_edits()
         session = self.coordinator.session
         if captured is None:
@@ -915,6 +922,8 @@ class ChunkingLabScreen(BaseAppScreen):
             )
         source = {"kind": "local_media", "local_media_id": media_id}
         if await asyncio.to_thread(lambda: len(text.encode("utf-8"))) > SAMPLE_BYTES:
+            from tldw_chatbook.UI.Chunking_Lab_Modules.dialogs import LabDialog
+
             choice = await self._dialog(
                 LabDialog(
                     "Choose a Library excerpt",
@@ -952,6 +961,11 @@ class ChunkingLabScreen(BaseAppScreen):
         self.run_worker(self._safe(self._menu_action(action)), exit_on_error=False)
 
     async def _menu_action(self, action: str) -> None:
+        from tldw_chatbook.UI.Chunking_Lab_Modules.dialogs import (
+            LabDialog,
+            TemplateDialog,
+        )
+
         await self.drain_edits()
         if self.coordinator is None and action != "restore":
             raise ValueError("Retry loading local recovery before authoring")
@@ -1030,6 +1044,8 @@ class ChunkingLabScreen(BaseAppScreen):
         await self.drain_edits()
         selected = choice["path"]
         if action == "restore":
+            from tldw_chatbook.UI.Chunking_Lab_Modules.dialogs import LabDialog
+
             payload, summary = await asyncio.to_thread(_inspect_recovery, selected)
             owner = self.coordinator
             unavailable = self._replacement_unavailable()
@@ -1073,6 +1089,8 @@ class ChunkingLabScreen(BaseAppScreen):
             await self.drain_edits()
         elif action in {"export-recovery", "export-template"}:
             if action == "export-recovery":
+                from tldw_chatbook.Chunking.lab_recovery import export_recovery
+
                 payload = await asyncio.to_thread(
                     export_recovery, self.coordinator.session
                 )

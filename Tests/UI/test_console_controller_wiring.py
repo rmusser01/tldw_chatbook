@@ -451,7 +451,7 @@ def test_realtime_controller_is_wired_late_bound_with_empty_owned_state() -> Non
 
     dictation_stop_calls: list[None] = []
     pipeline_loop_calls: list[bool] = []
-    screen._request_console_dictation_stop = lambda: dictation_stop_calls.append(None)
+    screen._dictation._request_console_dictation_stop = lambda: dictation_stop_calls.append(None)
     screen._hands_free = SimpleNamespace(
         _console_pipeline_hands_free_blocker=lambda: pipeline_blocker,
         _enter_console_hands_free_pipeline_loop=(

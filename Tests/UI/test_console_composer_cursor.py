@@ -590,7 +590,7 @@ async def test_console_prompt_insert_appends_at_end_regardless_of_caret():
         await pilot.pause(0.1)
         assert composer.cursor_index == 0
 
-        assert console._insert_prompt_text_into_composer("resolved body", replace=False)
+        assert console._commands._insert_prompt_text_into_composer("resolved body", replace=False)
 
         assert composer.draft_text() == "existing draft\nresolved body"
         assert composer.cursor_index == len("existing draft\nresolved body")

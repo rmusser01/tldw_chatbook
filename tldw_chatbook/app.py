@@ -12096,11 +12096,13 @@ class TldwCli(
 
     def on_base_app_screen_contents_rebuilt(self, message: Any) -> None:
         """Restore app-owned presentation after the active screen rebuilds."""
-        if message.screen is self.screen:
+        if self.screen_stack and message.screen is self.screen:
             self._schedule_persona_buddy_overlay()
 
     def _schedule_persona_buddy_overlay(self, _screen: Any = None) -> None:
         """Skip disabled work and coalesce presentation updates on the app."""
+        if not self.screen_stack:
+            return
         owner = getattr(self, "_persona_buddy_overlay", None)
         if owner is not None and owner.closed:
             return

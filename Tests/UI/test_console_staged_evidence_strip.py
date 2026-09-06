@@ -797,7 +797,7 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
 
-        baseline = screen._active_console_settings_context_estimate()
+        baseline = screen._context_cost._active_console_settings_context_estimate()
         assert baseline.used_tokens is not None
 
         large_source = EvidenceReference(
@@ -825,7 +825,7 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
         screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
-        staged = screen._active_console_settings_context_estimate()
+        staged = screen._context_cost._active_console_settings_context_estimate()
         assert staged.used_tokens is not None
         assert staged.used_tokens > baseline.used_tokens
         assert "1 source staged" in staged.label
@@ -930,7 +930,7 @@ async def test_console_send_blocked_reason_sendable_for_library_staged_one_ref()
         screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
-        assert screen._console_send_blocked_reason() == ""
+        assert screen._submission._console_send_blocked_reason() == ""
 
 
 @pytest.mark.asyncio
@@ -961,7 +961,7 @@ async def test_console_send_blocked_reason_blocks_for_library_staged_zero_availa
         screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
-        reason = screen._console_send_blocked_reason()
+        reason = screen._submission._console_send_blocked_reason()
         assert (
             # task-15791: same TASK-2154 rename as the chip ("RAG" -> "Library
             # search") reached this blocked-reason copy.

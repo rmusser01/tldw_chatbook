@@ -2208,7 +2208,16 @@ async def test_management_scope_invalidates_reader_return_to_read_failure_is_hon
         assert pane.items == []
         assert pane.new_items_note == ""
         assert pane.page_loading is False
-        assert pane.display is False
+        assert pane.display is True
+        for selector in (
+            "#items-search-input",
+            "#items-status-select",
+            "#items-page-label",
+        ):
+            control = pane.query_one(selector)
+            assert control.visible
+            assert control.region.width > 0
+            assert control.region.height > 0
         assert _static_text(
             screen.query_one("#watchlists-items-retry-state")
         ) == "Couldn't load Unassigned. Retry to load Feed Items."

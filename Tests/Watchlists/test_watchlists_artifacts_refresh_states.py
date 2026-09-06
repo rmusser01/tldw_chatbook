@@ -602,6 +602,7 @@ async def test_coordinated_briefing_follow_releases_ui_when_receipt_stays_genera
         assert screen._briefing_in_flight is False
         assert screen._briefing_in_flight_watchlist_id is None
         assert screen._durable_briefing_reload_target == (watchlist_id, accepted_id)
+        await host.workers.wait_for_complete()
         reload_briefings.assert_awaited_once_with(
             select_briefing_id=accepted_id,
             expect_durable_receipt=True,

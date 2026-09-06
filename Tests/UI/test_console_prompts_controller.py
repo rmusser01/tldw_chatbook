@@ -15,26 +15,31 @@ behaviour that must survive the move unchanged:
 * the Library "Use in Console" staged-insert handoff;
 * the lazily-created shared prompt-history store.
 
-The final section pins the extraction's own contract: the controller is
-wired in `ChatScreen.__init__`, owns zero DOM, and every screen-level name
-a staying caller or a pre-existing test reaches by is still a real
-delegation onto it.
+The final section pins current ownership: the controller is wired in
+`ChatScreen.__init__`, owns zero DOM, and approved retired facades retain
+their exact owner routes in staying callers and command callbacks.
 """
 
 from __future__ import annotations
 
 import ast
 import inspect
+from textwrap import dedent
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App
+
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
+from Tests.Architecture.test_console_private_delegate_cleanup import DELEGATES
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -44,6 +49,7 @@ from tldw_chatbook.Prompt_Management.prompt_variables import (
     fingerprint_system_text,
 )
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
+from tldw_chatbook.UI.Console_Modules.wiring import build_console_commands_controller
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
@@ -190,7 +196,7 @@ async def test_prompts_modal_open_persists_the_reviewed_system_selection() -> No
         session_id = store.active_session_id
         assert session_id is not None
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsolePromptsModal)
@@ -232,7 +238,7 @@ async def test_prompts_modal_apply_refuses_when_the_system_prompt_moved() -> Non
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
 
@@ -271,7 +277,7 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
         console._open_console_provider_recovery = recovery
         console._console_provider_blocker_copy = lambda: "No provider configured."
 
-        console._open_console_prompts_modal()
+        console._prompts._open_console_prompts_modal()
         await pilot.pause()
         modal = host.screen_stack[-1]
 
@@ -356,7 +362,7 @@ class _CountingResolutionGateway:
 
 
 async def _open_prompts_modal(host, pilot, console) -> ConsolePromptsModal:
-    console._open_console_prompts_modal()
+    console._prompts._open_console_prompts_modal()
     await pilot.pause()
     modal = host.screen_stack[-1]
     assert isinstance(modal, ConsolePromptsModal)
@@ -583,7 +589,7 @@ async def test_prompt_command_replaces_the_draft_with_the_resolved_body() -> Non
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_text("/prompt Summarize")
 
-        await console._console_command_insert_prompt(SimpleNamespace(args="Summarize"))
+        await console._prompts._console_command_insert_prompt(SimpleNamespace(args="Summarize"))
         await pilot.pause()
 
         assert composer.draft_text() == "Summarize the following."
@@ -1055,7 +1061,7 @@ async def test_system_command_applies_and_persists_the_resolved_system_part() ->
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
 
-        await console._console_command_apply_system(SimpleNamespace(args="Summarize"))
+        await console._prompts._console_command_apply_system(SimpleNamespace(args="Summarize"))
         await pilot.pause()
 
         assert store.session_settings(session_id).system_prompt == "You are terse."
@@ -1146,10 +1152,10 @@ async def test_prompt_history_store_is_lazy_shared_and_factory_seamed() -> None:
     app.console_prompt_history_factory = lambda: sentinel
     screen = ChatScreen(app)
 
-    first = screen._ensure_console_prompt_history()
+    first = screen._prompts._ensure_console_prompt_history()
 
     assert first is sentinel
-    assert screen._ensure_console_prompt_history() is sentinel
+    assert screen._prompts._ensure_console_prompt_history() is sentinel
 
 
 @pytest.mark.asyncio
@@ -1176,7 +1182,7 @@ async def test_library_prompt_insert_handoff_appends_onto_the_live_draft() -> No
             _append_application(session_id, "staged body"),
         )
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
         await pilot.pause()
 
         assert composer.draft_text() == "existing\nstaged body"
@@ -1213,7 +1219,7 @@ async def test_library_prompt_insert_handoff_is_blocked_before_setup_completes()
             _append_application(session_id, "staged body"),
         )
 
-        await console._consume_pending_console_prompt_insert()
+        await console._prompts._consume_pending_console_prompt_insert()
         await pilot.pause()
 
         assert composer.draft_text() == ""
@@ -1258,28 +1264,77 @@ def test_prompts_controller_owns_no_dom() -> None:
     assert dom_calls == []
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "_open_console_prompts_modal",
-        "_ensure_console_prompt_history",
-        "_console_command_insert_prompt",
-        "_console_command_apply_system",
-        "_open_console_system_prompt_editor",
-        "_consume_pending_console_prompt_insert",
-    ],
-)
-def test_screen_keeps_a_real_delegation_for_every_outside_caller(name: str) -> None:
-    """These six are reached from outside the cluster -- by a staying screen
-    method, by Textual's `action_*` resolution, by the command-registry dict,
-    or by a pre-existing test that replaces the exact screen attribute. Each
-    must stay a thin forwarder onto the controller, never a re-implementation
-    and never absent."""
-    method = getattr(ChatScreen, name)
-    body = inspect.getsource(method)
+PROMPT_OWNER_ROUTES = {
+    "_open_console_prompts_modal": (
+        "_handle_console_composer_menu_choice",
+        "self._prompts._open_console_prompts_modal()",
+        "eval",
+    ),
+    "_ensure_console_prompt_history": (
+        "console_view_hooks",
+        "self._prompts._ensure_console_prompt_history() "
+        "if prompts is not None else None",
+        "eval",
+    ),
+    "_console_command_insert_prompt": (
+        None,
+        "lambda *args, **kwargs: "
+        "screen._prompts._console_command_insert_prompt(*args, **kwargs)",
+        "eval",
+    ),
+    "_console_command_apply_system": (
+        None,
+        "lambda *args, **kwargs: "
+        "screen._prompts._console_command_apply_system(*args, **kwargs)",
+        "eval",
+    ),
+    "_open_console_system_prompt_editor": (
+        "action_open_console_system_prompt_editor",
+        "self.run_worker(self._prompts._open_console_system_prompt_editor(), "
+        "exclusive=False)",
+        "eval",
+    ),
+    "_consume_pending_console_prompt_insert": (
+        "_consume_resume_navigation_startup",
+        "await self._prompts._consume_pending_console_prompt_insert()",
+        "exec",
+    ),
+}
 
-    assert "self._prompts." + name in body
-    assert len(body.splitlines()) <= 4
+
+@pytest.mark.parametrize("name", PROMPT_OWNER_ROUTES)
+def test_retired_screen_prompt_facades_keep_exact_current_owner_routes(
+    name: str,
+) -> None:
+    """Pin each approved facade's real owner and invocation-phase caller."""
+    assert len(DELEGATES) == 64
+    assert DELEGATES[name] == ("prompts", "ConsolePromptsController", name)
+    assert name in ConsolePromptsController.__dict__
+
+    caller_name, snippet, mode = PROMPT_OWNER_ROUTES[name]
+    caller = (
+        build_console_commands_controller
+        if caller_name is None
+        else getattr(ChatScreen, caller_name)
+    )
+    caller_tree = ast.parse(dedent(inspect.getsource(caller)))
+    parsed_snippet = ast.parse(snippet, mode=mode)
+    expected = parsed_snippet.body if mode == "eval" else parsed_snippet.body[0]
+    if caller_name is None:
+        matches = [
+            node
+            for node in ast.walk(caller_tree)
+            if isinstance(node, ast.keyword)
+            and node.arg == name
+            and ast.dump(node.value) == ast.dump(expected)
+        ]
+    else:
+        matches = [
+            node
+            for node in ast.walk(caller_tree)
+            if ast.dump(node) == ast.dump(expected)
+        ]
+    assert len(matches) == 1
 
 
 def test_moved_methods_are_gone_from_the_screen() -> None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.UI.Library_Modules.library_media_reader_controller import LibraryMediaReaderController
+
 import asyncio
 import threading
 from types import MethodType, SimpleNamespace
@@ -130,11 +132,21 @@ async def test_media_global_f6_reaches_content_scroller() -> None:
 
 
 async def _wait_for_detail_call(
-    service: ControlledDetailMediaService, backing_id: int
+    service: ControlledDetailMediaService, backing_id: int, *, pilot=None
 ) -> None:
+    entered = service.detail_entered.setdefault(backing_id, threading.Event())
+    if pilot is not None:
+        # A debounced selection may still be awaiting Textual's next pump.
+        await _wait_for_condition(
+            pilot,
+            entered.is_set,
+            timeout=2.0,
+            message=f"Detail call for backing id {backing_id} did not start.",
+        )
+        return
     try:
         started = await asyncio.to_thread(
-            service.detail_entered.setdefault(backing_id, threading.Event()).wait,
+            entered.wait,
             2,
         )
         if not started:
@@ -269,6 +281,7 @@ async def _load_row_0(screen, service, pilot):
         lambda: screen._library_media_reader_session.loaded_id == row_0_id,
         message="Row 0 never settled in the Reader.",
     )
+    await _wait_for_selector(screen, pilot, "#library-media-reader-find")
     return row_0_id
 
 
@@ -341,7 +354,7 @@ async def test_prev_item_binding_disabled_at_the_first_item():
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        row_0_id = await _load_row_0(screen, service, pilot)
+        await _load_row_0(screen, service, pilot)
         # Row 0 is the first (top) item: no previous exists.
         assert screen.check_action("library_media_prev_item", ()) is False
         assert screen.check_action("library_media_next_item", ()) is True
@@ -949,7 +962,7 @@ async def test_stale_detail_never_writes_progress_under_new_selected_id():
     fake._run_library_service_call = run_service_call
     _bind_progress_methods(fake)
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaReaderController._capture_library_media_loaded_progress(fake)
     await workers[0]
     stale_cached = LibraryScreen._cache_library_media_reading_progress(
         fake,
@@ -989,7 +1002,7 @@ def test_progress_restores_after_loaded_content_mounts():
         ),
     )
 
-    LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:7")
+    LibraryMediaReaderController._restore_library_media_loaded_progress(fake, "local:media:7")
 
     assert calls == [{"x": 2, "y": 19, "animate": False, "force": True}]
 
@@ -1065,14 +1078,14 @@ def test_mode_change_preserves_per_item_read_scroll_for_session():
         query_one=lambda *_args, **_kwargs: body,
     )
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaReaderController._capture_library_media_loaded_progress(fake)
     fake._library_media_reader_session = set_mode(
         fake._library_media_reader_session, "analysis"
     )
     fake._library_media_reader_session = set_mode(
         fake._library_media_reader_session, "read"
     )
-    LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:4")
+    LibraryMediaReaderController._restore_library_media_loaded_progress(fake, "local:media:4")
 
     assert restored == [{"x": 0, "y": 23, "animate": False, "force": True}]
 
@@ -1095,7 +1108,7 @@ def test_external_server_detail_does_not_use_local_progress_seam():
         run_worker=lambda *_args, **_kwargs: pytest.fail("local progress worker ran"),
     )
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaReaderController._capture_library_media_loaded_progress(fake)
 
     assert queried == []
 
@@ -1176,7 +1189,7 @@ def _escape_fake(
     )
     # task-31237: Escape's find branch routes through the shared close seam.
     fake._close_library_media_find = MethodType(
-        LibraryScreen._close_library_media_find, fake
+        LibraryMediaReaderController._close_library_media_find, fake
     )
     # task-31271 seam (a): Escape and its footer label read one seam now.
     fake._library_media_find_state = MethodType(
@@ -1365,7 +1378,7 @@ def _bind_progress_methods(fake) -> None:
         "_drain_library_media_progress_writes",
         "_library_media_progress_write_is_current",
     ):
-        method = getattr(LibraryScreen, name, None)
+        method = getattr(LibraryMediaReaderController, name, None)
         if method is not None:
             setattr(fake, name, MethodType(method, fake))
 
@@ -1434,7 +1447,7 @@ async def test_identical_consecutive_captures_settle_a_single_progress_write():
     )
 
     for _ in range(30):
-        LibraryScreen._capture_library_media_loaded_progress(fake)
+        LibraryMediaReaderController._capture_library_media_loaded_progress(fake)
     for worker in workers:
         await worker
 
@@ -1468,7 +1481,7 @@ async def test_offset_burst_settles_only_the_newest_value_per_item():
 
     for scroll_y in (5, 9, 17):
         scroller.scroll_y = scroll_y
-        LibraryScreen._capture_library_media_loaded_progress(fake)
+        LibraryMediaReaderController._capture_library_media_loaded_progress(fake)
     # The drainer had no chance to run during the burst (the fake
     # run_worker defers); drain now and require last-write-wins.
     for worker in workers:
@@ -1506,7 +1519,7 @@ async def test_capture_outside_read_never_persists_the_analysis_body_offset():
         fake._library_media_reader_session, "analysis"
     )
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaReaderController._capture_library_media_loaded_progress(fake)
 
     assert workers == []
     assert calls == []
@@ -1546,16 +1559,16 @@ def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
         _focus_library_media_content_search_input=lambda: None,
     )
     fake._reset_library_media_search_on_mode_change = MethodType(
-        LibraryScreen._reset_library_media_search_on_mode_change, fake
+        LibraryMediaReaderController._reset_library_media_search_on_mode_change, fake
     )
     fake._close_library_media_find = MethodType(
-        LibraryScreen._close_library_media_find, fake
+        LibraryMediaReaderController._close_library_media_find, fake
     )
     # Qodo on #2378: the handler refuses when the tab has nothing to search.
     fake._library_media_find_unavailable_reason = MethodType(
-        LibraryScreen._library_media_find_unavailable_reason, fake
+        LibraryMediaReaderController._library_media_find_unavailable_reason, fake
     )
-    LibraryScreen.handle_library_media_reader_find(
+    LibraryMediaReaderController.handle_library_media_reader_find(
         fake, SimpleNamespace(stop=lambda: None)
     )
     assert fake._library_media_reader_session.mode == "analysis"
@@ -1582,7 +1595,7 @@ def test_media_content_matches_scopes_corpus_to_the_active_reader_mode():
     )
 
     # Read tab -> transcript corpus ("alpha" on lines 0 and 2).
-    assert LibraryScreen._library_media_content_matches(fake) == (0, 2)
+    assert LibraryMediaReaderController._library_media_content_matches(fake) == (0, 2)
     memo_after_read = fake._library_media_content_match_memo
     assert memo_after_read is not None and memo_after_read[3] == "read"
 
@@ -1592,7 +1605,7 @@ def test_media_content_matches_scopes_corpus_to_the_active_reader_mode():
     fake._library_media_reader_session = set_mode(
         fake._library_media_reader_session, "analysis"
     )
-    assert LibraryScreen._library_media_content_matches(fake) == (1,)
+    assert LibraryMediaReaderController._library_media_content_matches(fake) == (1,)
     assert fake._library_media_content_match_memo[3] == "analysis"
 
 
@@ -1627,7 +1640,7 @@ def test_capture_matching_fetched_progress_skips_the_write():
         session, session.request_generation, "local:media:3"
     )
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaReaderController._capture_library_media_loaded_progress(fake)
 
     for coro in workers:
         coro.close()
@@ -1837,7 +1850,7 @@ def test_l_key_starts_read_later_toggle():
     fake = SimpleNamespace(
         _start_library_media_read_later_toggle=lambda: started.append(1)
     )
-    LibraryScreen.action_library_media_read_later(fake)
+    LibraryMediaReaderController.action_library_media_read_later(fake)
     assert started == [1]
 
 

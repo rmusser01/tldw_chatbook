@@ -386,9 +386,14 @@ async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose(
             machine_memory_monotonic_clock=lambda: observed_monotonic,
         )
         await app.push_screen(screen)
-        assert await _wait_for(lambda: bool(screen.query(LLMManagementWindow)), pilot)
+        # A queried window may still be composing. Selecting before its target
+        # pane exists cannot schedule that pane's first population.
         assert await _wait_for(
-            lambda: screen.query_one(LLMManagementWindow).is_mounted, pilot
+            lambda: any(
+                window.is_mounted and bool(window.query("#llm-view-remote"))
+                for window in screen.query(LLMManagementWindow)
+            ),
+            pilot,
         )
         screen.query_one(LLMManagementWindow).active_view = "remote"
         assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)

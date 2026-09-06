@@ -15,7 +15,11 @@ from textual.css.query import NoMatches
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
-from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
+from Tests.UI.test_destination_shells import (
+    DestinationHarness,
+    _CssTrueDestinationHarness,
+    _wait_for_selector,
+)
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.citation_evidence_models import (
@@ -23,6 +27,7 @@ from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceReference,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     LocalRagContextResult,
     capture_console_staged_evidence_for_chat,
@@ -30,9 +35,10 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Console_Modules.retrieval import source_mentions_rag
+from tldw_chatbook.UI.Console_Modules.wiring import build_console_settings_controllers
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
@@ -1177,7 +1183,8 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
         )
     )
     app.open_active_home_item_in_console = Mock()
-    host = DestinationHarness(app, "watchlists_collections")
+    # The app bundle owns the Inspector's scroll rule; lifted defaults do not.
+    host = _CssTrueDestinationHarness(app, "watchlists_collections")
 
     async with host.run_test(size=(180, 40)) as pilot:
         await pilot.pause(0.1)
@@ -1188,6 +1195,9 @@ async def test_watchlists_destination_routes_latest_active_run_to_console():
         assert "Daily security feed" in str(button.label)
         assert "failed" in _screen_static_text(screen)
 
+        # Console actions can be below this terminal's Inspector viewport.
+        button.scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#watchlists-follow-in-console")
         await pilot.pause(0.1)
 
@@ -2002,31 +2012,23 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
     """
     from Tests.UI.console_controller_stubs import (
         NO_APP,
-        stub_fleet_controller,
         stub_image_controller,
-        stub_library_activity_controller,
         stub_message_controller,
     )
 
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = app_instance
+    # This unmounted restore shell must not attach to or replace the live
+    # app's runtime/view. Its store is local to this direct round-trip test.
+    screen._console_runtime_ref = ConsoleRuntime(None)
+    build_console_settings_controllers(screen)
     # Three of the six call sites pass no app at all -- they exercise restore
     # paths that read `app_instance` only through `getattr(..., None)`. The
     # stub factories refuse to INFER a missing app (an inferred `None`
     # snapshot is a silent-default hole), so the absence is declared once
-    # here and handed to all three. task-3024/2769.
+    # here and handed to both projection stubs. task-3024/2769.
     resolved_app = app_instance if app_instance is not None else NO_APP
     screen._retrieval = SimpleNamespace(_capture_console_staged_rag=Mock())
-    # Precede the `_console_chat_store` assignment: that setter reaches
-    # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`, which
-    # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
-    # `self._library_activity.build_provider` (TASK-23144) unguarded.
-    stub_fleet_controller(screen, context="live work handoffs screen")
-    stub_library_activity_controller(
-        screen,
-        context="live work handoffs screen",
-        app_instance=resolved_app,
-    )
     screen._console_chat_store = ConsoleChatStore()
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._console_visible_draft_session_id = None
@@ -2075,7 +2077,7 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
     Once D3 made it survive, the leftover store entry was not a decoy at
     all -- it was the user's newest "Use in Console" click, left invisible
     and later spent on an unrelated message (see
-    ``_supersede_resident_console_launch_from_store``). The store entry is
+    ``_stage_pending_console_launch_from_store``). The store entry is
     now claimed and staged, and the assertions below are inverted to match:
     the newer launch becomes resident and the channel is drained.
 
@@ -2156,7 +2158,12 @@ async def test_console_staged_launch_with_evidence_bundle_survives_screen_recrea
         )
         app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, newer_launch)
 
+        live_runtime = screen1._console_runtime()
+        live_store = live_runtime.chat_store
         screen2 = _bare_console_screen_for_restore(app)
+        assert screen2._console_runtime() is not live_runtime
+        assert live_runtime.view is screen1
+        assert live_runtime.chat_store is live_store
         screen2._restore_native_console_state(saved)
 
         # The restore itself is complete and faithful, newer store entry or
@@ -2329,26 +2336,18 @@ async def test_console_restored_launch_does_not_touch_an_empty_handoff_channel()
         assert screen._consume_pending_console_launch().title == "Later handoff"
 
 
+@pytest.mark.parametrize("resident", [True, False], ids=["resident", "empty"])
+@pytest.mark.parametrize("new_handoff", [True, False], ids=["new", "no-new"])
 @pytest.mark.asyncio
-async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch():
-    """PR-T1 C1 pilot regression: the real stage A -> leave -> stage B flow.
+async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_launch(
+    resident, new_handoff
+):
+    """Warm return stages fresh evidence, or preserves state if none arrived.
 
-    Drives the exact user path the final review reconstructed, through the
-    production navigation machinery rather than direct restore calls:
-
-    1. A "Use in Console" handoff (A) lands and Console displays it.
-    2. The user navigates away; ``save_state`` persists A (D3).
-    3. A second handoff (B) is staged while Console is not mounted.
-    4. The user returns to Console.
-
-    Before the fix, ``restore_state`` (which runs BEFORE compose) made A
-    resident, compose's consume returned A, and B was never displayed --
-    the second click looked dead. B then sat in the store until some later
-    send claimed it from inside a send gate and silently prepended it to an
-    unrelated message.
-
-    Asserted here: B is what the rebuilt Console displays AND stages, and
-    the channel is empty afterwards so nothing is left to ambush a send.
+    TASK-31520 keeps the same installed Console across navigation: compose
+    does not run again, so pending handoffs must be consumed on resume.
+    Both initial-empty and resident-launch paths must refresh real widgets,
+    settle the claim, and leave suspended Console untouched until return.
     """
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
 
@@ -2361,20 +2360,34 @@ async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_
         recovery="Review citations before sending.",
         action_label="Review evidence in Console",
     )
-    app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_a)
+    if resident:
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_a)
 
     async with app.run_test(size=(180, 40)) as pilot:
         screen1 = await _wait_for_production_chat_screen(app, pilot)
-        await _wait_for_selector(screen1, pilot, "#console-pending-launch-card")
-        assert screen1._pending_console_launch_context.title == (
-            "Launch A (stale survivor)"
-        )
+        if resident:
+            await _wait_for_selector(screen1, pilot, "#console-pending-launch-card")
+            assert (
+                screen1._pending_console_launch_context.title
+                == "Launch A (stale survivor)"
+            )
+        else:
+            assert screen1._pending_console_launch_context is None
+        before = screen1._pending_console_launch_context
+        screen1._console_evidence_sent_notice = 5
 
-        # Leave Console. `save_state` persists A onto the app's per-screen
-        # state, which the next Console instance restores before compose.
+        # Qualify the actual intermediate destination, not elapsed pauses.
         app.post_message(NavigateToScreen("library"))
-        await pilot.pause()
-        await pilot.pause()
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline:
+            if (
+                type(app.screen).__name__ == "LibraryScreen"
+                and not app._screen_navigation_in_progress()
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            pytest.fail("Console did not finish navigating to Library")
 
         # The user stages a SECOND result while standing in Library.
         launch_b = ConsoleLiveWorkLaunch.from_values(
@@ -2385,25 +2398,63 @@ async def test_console_stage_then_navigate_then_stage_again_displays_the_newest_
             recovery="Review citations before sending.",
             action_label="Review evidence in Console",
         )
-        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_b)
+        if new_handoff:
+            app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_b)
+        await pilot.pause(0.2)
+        assert screen1._pending_console_launch_context is before
+        assert screen1._console_evidence_sent_notice == 5
+        assert (
+            app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+            is new_handoff
+        )
 
         app.post_message(NavigateToScreen("chat"))
         await pilot.pause()
         screen2 = await _wait_for_production_chat_screen(app, pilot)
-        await _wait_for_selector(screen2, pilot, "#console-pending-launch-card")
+        assert screen2 is screen1
+
+        expected_title = (
+            "Launch B (the click that must not die)"
+            if new_handoff
+            else "Launch A (stale survivor)"
+            if resident
+            else None
+        )
+        if expected_title is not None:
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                tray = screen2.query_one("#console-staged-context-tray")
+                if expected_title in _screen_static_text(tray):
+                    break
+                await pilot.pause(0.02)
+            else:
+                pytest.fail(f"Returned Console did not render {expected_title!r}")
 
         staged = screen2._pending_console_launch_context
-        assert staged is not None
-        assert staged.title == "Launch B (the click that must not die)"
+        if expected_title is None:
+            assert staged is None
+        else:
+            assert staged is not None
+            assert staged.title == expected_title
 
-        # Displayed, not merely staged.
+        # Retain the display-state contract as well as mounted-widget evidence.
         strip_state = screen2._build_console_staged_evidence_strip_state(staged)
         assert strip_state.visible is True
-        tray_state = screen2._build_console_staged_context_state(staged)
-        assert "Launch B (the click that must not die)" in tray_state.summary
+        if expected_title is not None:
+            tray_state = screen2._build_console_staged_context_state(staged)
+            assert expected_title in tray_state.summary
+        assert screen2._console_evidence_sent_notice == (None if new_handoff else 5)
+        if not new_handoff:
+            assert staged is before
 
         # And A is not lurking in the store to be spent on a later send.
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK) is None
+        # An unacknowledged claim would prevent the next handoff being claimed.
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_LIVE_WORK, launch_a)
+        next_claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+        assert next_claim is not None
+        app.pending_handoffs.acknowledge(next_claim)
 
 
 @pytest.mark.asyncio
@@ -2705,9 +2756,9 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
     ``_frame_console_region`` styles the tray IN PLACE (adds a class and an
     inline border, returns the same widget -- no wrapper container), so the
     tray is a direct child of the inspector rail body, mounted right after
-    the task-9 Environment/Tasks sections. Live-work cards keep anchoring
-    after the run-inspector block at the bottom. This drives the real swap
-    seam both directions.
+    Environment/Tasks/Subagents sections. The stable Live Work root anchors
+    after the run-inspector block; cards swap inside its bounded viewport.
+    This drives the real swap seam both directions.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2720,12 +2771,22 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         rail_body = screen.query_one("#console-inspector-rail-body")
         tray = screen.query_one("#console-staged-context-tray")
         run_inspector = screen.query_one("#console-run-inspector")
+        live_work = screen.query_one("#console-live-work-section")
+        bounded = screen.query_one("#console-bounded-section-live-work")
+        viewport = bounded.viewport
         # Ancestry evidence: the framed tray is a DIRECT child of the rail
         # body (no frame wrapper), composed right after the task-9
-        # Environment/Tasks sections.
+        # Environment/Tasks/Subagents sections.
         assert tray.parent is rail_body
         assert tray.has_class("console-frame-quiet")
-        assert list(rail_body.children).index(tray) == 2
+        assert list(rail_body.children)[:4] == [
+            screen.query_one("#console-environment-section"),
+            screen.query_one("#console-tasks-section"),
+            screen.query_one("#console-agent-section-subagents"),
+            tray,
+        ]
+        assert live_work.parent is rail_body
+        assert bounded.parent is live_work
 
         # Readiness -> pending-launch swap mounts after the run inspector.
         screen._retrieval._stage_console_library_rag_launch(
@@ -2735,9 +2796,13 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
         card = screen.query_one("#console-pending-launch-card")
         children = list(rail_body.children)
-        assert card.parent is rail_body
+        assert card.parent is viewport
+        assert screen.query_one("#console-live-work-section") is live_work
+        assert screen.query_one("#console-bounded-section-live-work") is bounded
         assert (
-            children.index(tray) < children.index(run_inspector) < children.index(card)
+            children.index(tray)
+            < children.index(run_inspector)
+            < children.index(live_work)
         )
 
         # Pending-launch -> readiness swap (launch resolved) re-anchors too.
@@ -2748,11 +2813,13 @@ async def test_console_live_work_card_swap_keeps_tray_on_top_and_cards_at_bottom
         assert len(screen.query("#console-pending-launch-card")) == 0
         readiness = screen.query_one("#console-live-work-source-readiness")
         children = list(rail_body.children)
-        assert readiness.parent is rail_body
+        assert readiness.parent is viewport
+        assert screen.query_one("#console-live-work-section") is live_work
+        assert screen.query_one("#console-bounded-section-live-work") is bounded
         assert (
             children.index(tray)
             < children.index(run_inspector)
-            < children.index(readiness)
+            < children.index(live_work)
         )
 
 
@@ -3113,5 +3180,5 @@ async def test_console_send_blocked_reason_sendable_for_media_handoff_with_new_b
         launch = screen._pending_console_launch_context
         assert launch is not None
         assert isinstance(launch.payload.get("evidence_bundle"), dict)
-        assert chat_screen_module._source_mentions_rag(launch.source) is False
-        assert screen._console_send_blocked_reason() == ""
+        assert source_mentions_rag(launch.source) is False
+        assert screen._submission._console_send_blocked_reason() == ""

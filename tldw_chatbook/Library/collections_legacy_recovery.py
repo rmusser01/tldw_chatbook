@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 
@@ -141,7 +142,6 @@ class LegacyCollectionsRecovery:
             try:
                 if not path.is_absolute() or not path.is_file():
                     raise LegacyCollectionsRecoveryError("legacy_database_unavailable")
-                resolved = path.resolve(strict=True)
             except LegacyCollectionsRecoveryError:
                 raise
             except (OSError, ValueError):
@@ -149,7 +149,8 @@ class LegacyCollectionsRecovery:
                     "legacy_database_unavailable"
                 ) from None
             self._database = None
-            self._database_path = resolved
+            # Preserve aliases for the private seam's no-follow validation.
+            self._database_path = path
         else:
             raise LegacyCollectionsRecoveryError("legacy_database_unavailable")
         if not callable(clock):
@@ -737,21 +738,27 @@ class LegacyCollectionsRecovery:
         database_path = self._database_path
         if database_path is None:
             raise LegacyCollectionsRecoveryError("legacy_database_unavailable")
-        uri = f"{database_path.as_uri()}?mode=ro"
         try:
-            connection = sqlite3.connect(uri, uri=True)
-        except sqlite3.Error:
+            connection = connect_private_sqlite(
+                "library.legacy_recovery",
+                database_path,
+                read_only=True,
+                must_exist=True,
+            )
+        except (OSError, ValueError, sqlite3.Error):
             raise LegacyCollectionsRecoveryError(
                 "legacy_database_unavailable"
             ) from None
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA query_only = ON")
-        connection.execute("BEGIN DEFERRED")
         try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("BEGIN DEFERRED")
             yield connection
         finally:
-            connection.rollback()
-            connection.close()
+            try:
+                connection.rollback()
+            finally:
+                connection.close()
 
     @staticmethod
     def _require_legacy_schema(connection: sqlite3.Connection) -> None:

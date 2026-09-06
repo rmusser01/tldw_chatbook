@@ -5232,3 +5232,153 @@ instead of by reading diffs.
    mount/node growth each of them attributed to "ordinary Media/Notes churn
    on dev" is now MEASURED, because the wave-6 base tree already reads the
    higher counts.
+## 22. Media analysis and Reader interactions (tasks 31648, 31649)
+
+The rebased review tree had grown to 42,558 Library lines and 1,319 screen
+methods, beyond the existing 41,574/1,302 ceilings. Two separately attributable
+controllers move coherent ownership out of the screen:
+
+- `library_media_analysis_controller.py`: Reader analysis generation/saving,
+  bulk partition/overwrite/retry, and receipt state. The in-flight flag remains
+  shared shell state because Import also reads it; per-item Import outcomes
+  remain on Import. Provider dispatch and provider-reason rendering retain their
+  screen seams.
+- `library_media_reader_controller.py`: content search, display-state memo,
+  reading-position coalescing/draining, and read-later operations. The Reader
+  session identity and detail remain screen-provided named ports; the controller
+  owns the transient search, progress, and memo fields.
+
+Moved bodies keep their original operations and names. Explicit keyword wiring
+binds sibling callbacks and shell reads at call time; only real framework state
+is read through the screen handle. The stable app identity is documented as the
+existing snapshot exception. No DOM ids, nesting, or CSS moved.
+
+Compatibility state declarations use `ControllerState`, the exact read/write
+descriptor shape already used by Console. Each declaration names one controller
+and one field; it installs no catch-all proxy. This avoids inflating the screen
+method census with duplicated getter/setter bodies while preserving assignment
+behavior. Private method callers move to their owner; DOM handlers remain screen
+entry points. The shared canvas checkbox updater still calls
+`_library_media_analyze_reason`, so that named screen delegator is retained.
+
+The new controllers are born governed at their measured sizes. The screen is
+41,325 lines / 1,301 methods after the extraction and private-call cleanup, a
+reduction of 1,233 lines / 18 methods from the actual rebased starting point.
+No existing ceiling increases. New ADR required: no; this directly applies the
+approved screen decomposition design and `DESIGN.md` section 7.
+
+The separate task 31658 follow-up fixes a pre-existing Media entry-focus race
+exposed by the combined characterization run. A facet settlement queued an
+entry-focus callback with guard cleanup, then a page settlement replaced that
+callback with ordinary control focus before recomposition. The latest-wins
+callback queue therefore dropped the cleanup as well as the obsolete intent;
+the lingering guard suppressed real arrow selection indefinitely. Three focused
+regressions fail before the fix and cover accepted replacement, suppressed
+replacement, and an initially suppressed entry sync. Each new browse sync now
+owns its current guard, releasing it when synchronization is suppressed. No stale
+callback is replayed. The screen measures 41,324 lines / 1,301 methods afterward.
+
+## 21. Keep controller execution payload behind construction (task 31720)
+
+Controller extraction alone does not reduce route-discovery import cost if the
+screen still imports every implementation at module scope. The Notes sync
+controller imported its execution runtime, executor, coordinator and support
+modules during the whole-registry preimport pass, even before Library opened.
+Moving its existing import block into `LibraryScreen.__init__` preserves both
+original classes, all constructor ports and the app-owned runtime lifecycle.
+There is no new lazy proxy or lifecycle owner.
+
+Fresh-process Library marginal payload fell from 188 modules / 146,804 lines to
+178 modules / 130,426 lines: 10 modules / 16,378 lines deferred. Screen size stays
+41,324 lines / 1,301 methods. The isolated packaging regression first proves
+the execution closure absent after app, Chat and Library route imports, then
+constructs a real screen and checks exact controller and runtime identity.
+This applies existing ADR-097; global budget tightening and snapshot refresh
+must use the final combined census, because concurrent route changes affect
+the aggregate and marginal attribution is route-order dependent.
+
+## 22. Retained action policy and blocking snapshot adapters (tasks 31667, 31668)
+
+The destination tests exposed two runtime defects after minimal timeout fixtures
+were given their required `app_config`. Conversation snapshot listing lacked the
+worker-isolation option already used by Notes and Media: a blocking async adapter
+took 0.2075 seconds against the unchanged 0.05-second timeout check. Supplying that
+same option restored the deadline; a thread-identity regression also checks that
+all three source families preserve their result records and counts off the UI
+thread.
+
+Separately, retained rail synchronization updated error text but left the
+workspace handoff button's initial empty-source tooltip behind. The policy itself
+was already correct. Its pure derivation now lives in workspace display state,
+with the existing screen adapter used by both initial composition and the three
+retained rail-sync callsites. Only the derived blocked/tooltip value crosses into
+the rail; it patches the existing button without composing temporary widgets or
+replacing DOM. A regression checks available, failure, custom-policy and restored
+availability states while retaining exact button identity. The original failure
+and custom-tooltip assertions remain unchanged; the screen stays within its
+41,325-line / 1,301-method ceilings (measured 41,324 / 1,301 after both fixes).
+
+## 23. Evidence settlement is not layout settlement (task 31682)
+
+Both production-CSS Starter geometry sizes reached settled empty evidence while
+the replacement rail button still had a zero-sized region. The test now waits
+for the current widgets at its existing required selectors to reach the
+compositor before reading geometry. Every original screen-bound, visibility,
+keyboard-order and painted-copy assertion remains in place. No production timing,
+DOM or CSS changed; 21 Starter/graduation checks and an independent two-size
+geometry rerun pass.
+
+## 24. Re-query test controls after yielding to the Pilot (task 31689)
+
+The shared selector helper captured a widget, awaited `pilot.pause()`, then
+returned the old owner even when a same-ID replacement had mounted during that
+await. Prompt history retry could therefore press an orphaned button. A real
+remove/mount regression proves the stale return before the fix; the helper now
+requires the post-pause query to resolve to the same attached owner before it
+returns. `is_mounted` alone is insufficient: Textual keeps it true after removal.
+
+The stale-search caret test also began its newer action while loading recompose
+had cleared focus. It now gates that real recompose and waits for the current
+filter's loading-phase caret before editing. Final stale-request, caret, retry,
+collapse and no-change assertions remain unchanged. A conflict restore waits for
+detail adoption and notification, not merely the earlier SQLite version write.
+
+## 25. Source admission must not repaint the retained authority (task 31724)
+
+Files admission called Notes navigation invalidation with its default rendering
+enabled. That reached the shared canvas synchronizer and recomposed the outgoing
+Database Work pane before it was hidden, replacing the editor, its undo history
+and the remembered focus target. A refresh-stack probe located this exact call;
+the regression now counts outgoing Work-pane recompositions and checks original
+editor identity immediately after Files opens, before any return.
+
+The source handoff uses the existing `render=False` invalidation option. Pending
+navigation still becomes stale, while both retained authorities keep their own
+widgets. Eight identity, typing, focus and guarded-return cases pass. Responsive
+scroll receipts are independently verified; this change does not claim to fix
+their outstanding offset mismatches.
+
+## 26. Finish private ownership and keep assembly explicit (tasks 31734, 31735)
+
+The review rebase restored Library to 41,651 lines / 1,309 methods, over both
+existing ceilings. Eight Conversations methods were already pure forwards into
+their controller. Their remaining screen callers now address that owner directly;
+the sole direct UI-test invocation was retargeted with every behavioral assertion
+unchanged. The existing pruned-name guard checks all 17 removed private names are
+absent while their controller implementations remain present. No event handler,
+public action, descriptor semantics, or controller body changed.
+
+The next move puts the contiguous six-controller assembly in
+`UI/Library_Modules/wiring.py`, following DESIGN section 7's Console precedent.
+All six constructor call ASTs match the pre-move source after only normalizing
+`self` to `screen`; order, named keyword lambdas, initialization position, and
+canonical controller identities stay unchanged. Real-screen characterization
+checks replacement state and sibling lookups remain late-bound. The new helper
+is imported during construction, so relocation does not add a module to the
+guarded preimport phase; the original canonical controller imports retain their
+existing phase and compatibility names.
+
+The resulting screen is 41,303 lines / 1,301 methods; assembly is governed at
+338 lines. Statement-level diagnostic comparison is unchanged: 100 screen
+statements before/after, zero in the new assembly. Unrelated Notes/Skills/RAG
+failures found in wider verification are kept separate from the pure move.

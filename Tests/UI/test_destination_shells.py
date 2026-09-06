@@ -228,6 +228,43 @@ class StaticLibraryNotesScopeService:
             matches = matches[:limit]
         return matches
 
+    async def search_note_tree_placements(
+        self, *, scope, query, limit, offset=0, user_id=None, **kwargs
+    ):
+        """Return an exact unfiled placement page for the current tree filter."""
+        self.search_calls.append(
+            {
+                "scope": scope,
+                "query": query,
+                "limit": limit,
+                "offset": offset,
+                "user_id": user_id,
+                **kwargs,
+            }
+        )
+        needle = str(query or "").strip().casefold()
+        matches = [
+            note
+            for note in self.notes
+            if needle
+            and (
+                needle in str(note.get("title") or "").casefold()
+                or needle in str(note.get("content") or "").casefold()
+            )
+        ]
+        page = matches[offset : offset + limit]
+        next_offset = offset + len(page)
+        return NotePlacementPage(
+            placements=tuple(
+                NotePlacementRecord(note=dict(note), folder_id=None, membership=None)
+                for note in page
+            ),
+            total_placements=len(matches),
+            start_offset=offset,
+            previous_offset=max(0, offset - limit) if offset else None,
+            next_offset=next_offset if next_offset < len(matches) else None,
+        )
+
     async def get_note_detail(self, *, scope, note_id, user_id=None, **kwargs):
         self.detail_calls.append(
             {"scope": scope, "note_id": note_id, "user_id": user_id, **kwargs}
@@ -4354,6 +4391,8 @@ async def test_models_shell_keeps_external_paths_inside_the_dedicated_edit_view(
     async with app.run_test(size=(100, 32)) as pilot:
         screen = LLMScreen(app)
         await app.push_screen(screen)
+        await _wait_for_selector(screen, pilot, "#llm-view-external", timeout=30.0)
+        screen.query_one(LLMManagementWindow).active_view = "external"
         await _wait_for_selector(screen, pilot, "#external-models-view", timeout=30.0)
         external = screen.query_one(ExternalModelView)
         path_nodes = [

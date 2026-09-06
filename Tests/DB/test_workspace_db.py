@@ -346,7 +346,9 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
         versions = connection.execute(
             "SELECT version FROM schema_version ORDER BY version"
         ).fetchall()
-        assert [row[0] for row in versions] == [1, 2, 3, 4, 5, 6]
+        assert [row[0] for row in versions] == list(
+            range(1, WorkspaceDB._CURRENT_SCHEMA_VERSION + 1)
+        )
         kept = connection.execute(
             "SELECT name, description FROM workspace_records WHERE workspace_id = ?",
             ("local-kept",),
@@ -425,7 +427,7 @@ def test_genuine_v3_upgrade_adds_payload_free_receipts_and_drops_unverifiable_le
 
     db = WorkspaceDB(path)
 
-    assert db.get_schema_version() == 6
+    assert db.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     with db.connection() as connection:
         columns = {
             row[1]
@@ -495,7 +497,7 @@ def test_early_branch_v4_upgrade_quarantines_only_unsafe_receipts(
 
     db = WorkspaceDB(path)
 
-    assert db.get_schema_version() == 6
+    assert db.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     migration_path = (
         Path(__file__).parents[2]
         / "tldw_chatbook/DB/migrations/workspaces_v4_to_v5_quick_note_receipts.sql"

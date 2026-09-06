@@ -10,7 +10,48 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
-from tldw_chatbook.DB.base_db import SQLiteConnectionQuiescenceRegistry
+from tldw_chatbook.DB.base_db import (
+    SQLiteConnectionQuiescenceRegistry,
+    _QuiescentSQLiteConnection,
+)
+
+
+@pytest.mark.parametrize("abort", [False, True])
+def test_backup_holds_quiescence_reservation_and_releases_after_exit(
+    abort: bool,
+) -> None:
+    registry = SQLiteConnectionQuiescenceRegistry()
+    source = sqlite3.connect(":memory:", factory=_QuiescentSQLiteConnection)
+    destination = sqlite3.connect(":memory:")
+    source.attach_quiescence_registry(registry)
+    callbacks = []
+
+    def progress(status: int, remaining: int, total: int) -> None:
+        callbacks.append((status, remaining, total))
+        with pytest.raises(TimeoutError, match="connection_quiescence_timeout"):
+            registry.begin_quiescence(timeout_seconds=0.001)
+        if abort:
+            raise RuntimeError("injected backup cancellation")
+
+    try:
+        source.execute("CREATE TABLE payload(value INTEGER)").close()
+        source.execute("INSERT INTO payload VALUES (42)").close()
+        source.commit()
+        if abort:
+            with pytest.raises(RuntimeError, match="injected backup cancellation"):
+                source.backup(destination, pages=1, progress=progress, sleep=0)
+        else:
+            source.backup(destination, pages=1, progress=progress, sleep=0)
+            assert destination.execute("SELECT value FROM payload").fetchall() == [
+                (42,)
+            ]
+        assert callbacks
+        token = registry.begin_quiescence(timeout_seconds=0.01)
+        registry.end_quiescence(token)
+        assert source.execute("SELECT value FROM payload").fetchall() == [(42,)]
+    finally:
+        source.close()
+        destination.close()
 
 
 def test_acquisition_started_before_barrier_registers_then_is_closed() -> None:

@@ -11548,6 +11548,8 @@ class PersonasScreen(BaseAppScreen):
             or not resolution.content_type
         ):
             raise ValueError("visual_identity_reference_changed")
+        from ...Image_Generation.capabilities import ResolvedReferenceImage
+
         return ResolvedReferenceImage(
             file_id=resolution.asset_id or f"pack-{snapshot.pack_version_id}",
             filename=None,

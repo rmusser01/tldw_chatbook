@@ -978,6 +978,102 @@ class ConsoleMessageController:
             body = getattr(message, "content", "")
         return body if isinstance(body, str) else ""
 
+    def _console_citation_modal_request_is_current(
+        self,
+        *,
+        native_message_id: str,
+        persisted_message_id: str,
+        current_body: str,
+        repository: Any,
+        repository_token: tuple[str, int, int, int],
+    ) -> bool:
+        """Return whether one open modal still targets the active message."""
+
+        current_token, current_repository = (
+            self._console_citation_repository_readiness()
+        )
+        if current_repository is not repository or current_token != repository_token:
+            return False
+        matching_messages = [
+            message
+            for message in self._native_console_messages()
+            if getattr(message, "id", None) == native_message_id
+        ]
+        if len(matching_messages) != 1:
+            return False
+        message = matching_messages[0]
+        return (
+            getattr(message, "role", None) is ConsoleMessageRole.ASSISTANT
+            and getattr(message, "status", None) == "complete"
+            and getattr(message, "persisted_message_id", None) == persisted_message_id
+            and self._console_citation_message_body(message) == current_body
+        )
+
+    def _console_citation_signature(
+        self,
+        messages: list[Any],
+    ) -> tuple[str | None, tuple[tuple[str, str, str, str], ...]]:
+        """Return the active-session signature for eligible citation lookups."""
+        store = self._ensure_console_chat_store()
+        eligible: list[tuple[str, str, str, str]] = []
+        for message in messages:
+            if (
+                getattr(message, "role", None) is not ConsoleMessageRole.ASSISTANT
+                or getattr(message, "status", None) != "complete"
+            ):
+                continue
+            native_message_id = getattr(message, "id", None)
+            persisted_message_id = getattr(message, "persisted_message_id", None)
+            if (
+                not isinstance(native_message_id, str)
+                or not native_message_id
+                or not isinstance(persisted_message_id, str)
+                or not persisted_message_id
+            ):
+                continue
+            eligible.append(
+                (
+                    native_message_id,
+                    persisted_message_id,
+                    self._console_citation_message_body(message),
+                    "complete",
+                )
+            )
+        return (store.active_session_id, tuple(eligible))
+
+    def _console_citation_repository_readiness(
+        self,
+    ) -> tuple[tuple[str, int, int, int], Any | None]:
+        """Return a bounded repository identity token and a valid repository."""
+        repository = getattr(
+            self.app_instance,
+            "citation_trace_repository",
+            None,
+        )
+        if repository is None:
+            return (("missing", 0, 0, 0), None)
+        app_db = getattr(self.app_instance, "chachanotes_db", None)
+        repository_db = getattr(repository, "db", None)
+        if repository_db is not app_db:
+            return (
+                (
+                    "mismatch",
+                    id(repository),
+                    id(repository_db),
+                    id(app_db),
+                ),
+                None,
+            )
+        return (
+            (
+                "valid",
+                id(repository),
+                id(repository_db),
+                id(app_db),
+            ),
+            repository,
+        )
+
     async def _append_native_console_system_message(
         self, message: str, *, session_id: str | None = None
     ) -> None:

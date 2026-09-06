@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 from loguru import logger as loguru_logger
 from rich.markup import escape as escape_markup
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -127,7 +126,12 @@ class EvalsHarness(ConsolidatedCSSApp):
     is also loaded.
     """
 
-    CSS_PATH = _BUNDLED_CSS_PATH
+    # Production routing loads Evals' split stylesheet on navigation. This
+    # harness pushes the screen directly and must include that same CSS.
+    CSS_PATH = [
+        _BUNDLED_CSS_PATH,
+        str(Path(tldw_chatbook.__file__).parent / "css" / "screen_feature_evals.tcss"),
+    ]
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()

@@ -370,7 +370,7 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
         name="generate-image",
         args=":comfyui preserve  internal   spacing",
     )
-    task = asyncio.create_task(screen._console_command_generate_image(parse))
+    task = asyncio.create_task(screen._image._console_command_generate_image(parse))
     assert await asyncio.to_thread(started.wait, 2)
     operation = screen.app_instance.console_image_edit_operations.active(session.id)
     assert operation is not None
@@ -432,7 +432,7 @@ async def test_h3_refusals_happen_before_generic_preparation_or_generation(
     async def _append(copy: str, *, session_id: str | None = None) -> None:
         system_copy.append(copy)
 
-    screen._append_native_console_system_message = _append
+    screen._message._append_native_console_system_message = _append
     monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
         image_module,
@@ -450,7 +450,7 @@ async def test_h3_refusals_happen_before_generic_preparation_or_generation(
         lambda **_k: (_ for _ in ()).throw(AssertionError("generation called")),
     )
 
-    await screen._console_command_generate_image(
+    await screen._image._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=args)
     )
 
@@ -494,7 +494,7 @@ async def test_h3_source_header_read_runs_off_loop_while_pump_remains_responsive
     )
 
     command = asyncio.create_task(
-        screen._console_command_generate_image(
+        screen._image._console_command_generate_image(
             CommandParse(
                 kind="command", name="generate-image", args=":comfyui change it"
             )
@@ -545,8 +545,8 @@ async def test_h3_oversize_source_is_rejected_before_decode_or_dispatch(monkeypa
     async def _append(message: str, *, session_id: str | None = None) -> None:
         copy.append(message)
 
-    screen._append_native_console_system_message = _append
-    await screen._console_command_generate_image(
+    screen._message._append_native_console_system_message = _append
+    await screen._image._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
 
@@ -606,7 +606,7 @@ async def test_h3_canonical_validation_performs_the_only_full_source_decode(
         return BatchResult(successes=[], errors=["canonical-only"])
 
     monkeypatch.setattr(image_module, "run_generation_batch", _canonical_batch)
-    await screen._console_command_generate_image(
+    await screen._image._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
     operation = screen.app_instance.console_image_edit_operations.active(session.id)
@@ -686,7 +686,7 @@ async def test_h3_warning_band_is_rejected_by_canonical_ceiling_before_full_deco
         return BatchResult(successes=[], errors=["canonical-refusal"])
 
     monkeypatch.setattr(image_module, "run_generation_batch", _canonical_batch)
-    await screen._console_command_generate_image(
+    await screen._image._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
     operation = screen.app_instance.console_image_edit_operations.active(session.id)
@@ -723,7 +723,7 @@ async def test_stop_before_adapter_success_is_expected_and_retains_source(monkey
 
     monkeypatch.setattr(image_module, "run_generation_batch", _cancelled_batch)
     task = asyncio.create_task(
-        screen._console_command_generate_image(
+        screen._image._console_command_generate_image(
             CommandParse(
                 kind="command", name="generate-image", args=":comfyui change it"
             )
@@ -805,7 +805,7 @@ async def test_app_owned_task_cancellation_drains_linearized_runner_before_rerai
         return message
 
     monkeypatch.setattr(store, "append_generation_message", _durable_append)
-    await screen._console_command_generate_image(
+    await screen._image._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
     operation = screen.app_instance.console_image_edit_operations.active(session.id)
@@ -886,7 +886,7 @@ async def test_terminal_generation_never_syncs_stale_origin_screen(monkeypatch):
 
     monkeypatch.setattr(store, "append_generation_message", _durable_append)
     caller = asyncio.create_task(
-        screen._console_command_generate_image(
+        screen._image._console_command_generate_image(
             CommandParse(
                 kind="command", name="generate-image", args=":comfyui change it"
             )
@@ -953,9 +953,9 @@ async def test_persistence_failure_retains_source_and_emits_sanitized_copy(monke
     async def _append(copy: str, *, session_id: str | None = None) -> None:
         system_copy.append(copy)
 
-    screen._append_native_console_system_message = _append
+    screen._message._append_native_console_system_message = _append
 
-    await screen._console_command_generate_image(
+    await screen._image._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
     operation = screen.app_instance.console_image_edit_operations.active(session.id)
@@ -1026,7 +1026,7 @@ async def test_failure_guidance_persistence_error_falls_back_without_masking_pri
 
     monkeypatch.setattr(store, "append_message", _append_with_durable_failure)
 
-    await screen._console_command_generate_image(
+    await screen._image._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
     operation = screen.app_instance.console_image_edit_operations.active(session.id)
@@ -1122,9 +1122,9 @@ async def test_postcommit_consume_exception_keeps_success_and_logs_only_type(
     async def _append(copy: str, *, session_id: str | None = None) -> None:
         system_copy.append(copy)
 
-    screen._append_native_console_system_message = _append
+    screen._message._append_native_console_system_message = _append
 
-    await screen._console_command_generate_image(
+    await screen._image._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
     operation = screen.app_instance.console_image_edit_operations.active(session.id)

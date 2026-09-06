@@ -87,8 +87,7 @@ def test_library_reservation_is_one_derived_immutable_union():
     reserved = _reservation()
 
     assert isinstance(reserved, frozenset)
-    assert len(LIBRARY_TOOL_DESCRIPTORS) == 24
-    assert len(reserved) == 25
+    assert len(reserved) == len(LIBRARY_TOOL_DESCRIPTORS) + 1
     assert reserved == frozenset((*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME))
 
 

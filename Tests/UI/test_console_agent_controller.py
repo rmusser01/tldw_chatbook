@@ -362,7 +362,8 @@ def test_agent_bridge_is_built_from_the_sibling_run_store_and_memoized(tmp_path)
 
     screen = ChatScreen(_build_test_app())
     screen.app_instance.chachanotes_db = SimpleNamespace(
-        db_path=str(tmp_path / "chacha.db")
+        db_path=str(tmp_path / "chacha.db"),
+        get_message_exchanges=lambda _message_id: [],
     )
 
     bridge = screen._ensure_console_agent_bridge()
@@ -385,7 +386,10 @@ def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
     strand every such screen without an agent runtime for its whole life.
     """
     screen = ChatScreen(_build_test_app())
-    screen.app_instance.chachanotes_db = SimpleNamespace(db_path=":memory:")
+    screen.app_instance.chachanotes_db = SimpleNamespace(
+        db_path=":memory:",
+        get_message_exchanges=lambda _message_id: [],
+    )
 
     assert screen._ensure_console_agent_bridge() is None
     assert screen._console_agent_bridge is None
@@ -396,7 +400,8 @@ def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
 
     # A durable path appears afterwards: the next call builds for real.
     screen.app_instance.chachanotes_db = SimpleNamespace(
-        db_path=str(tmp_path / "chacha.db")
+        db_path=str(tmp_path / "chacha.db"),
+        get_message_exchanges=lambda _message_id: [],
     )
     assert screen._ensure_console_agent_bridge() is not None
 

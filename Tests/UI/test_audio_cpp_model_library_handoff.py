@@ -2106,6 +2106,8 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
             lambda: (
                 screen.llm_window is not None
                 and screen.llm_window.active_view == "curated"
+                and any(view.is_mounted for view in screen.query(CuratedView))
+                and bool(attempts)
             ),
             pilot,
         )

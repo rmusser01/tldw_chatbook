@@ -7,14 +7,18 @@ from unittest.mock import MagicMock
 import pytest
 from textual.worker import WorkerState
 
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
+from Tests.UI.app_factory import _build_test_app
+
 pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
 async def test_worker_error_records_worker_failed(monkeypatch):
     from textual.worker import Worker
-
-    from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
     monkeypatch.setattr(
@@ -55,8 +59,6 @@ async def test_successful_worker_records_nothing(monkeypatch):
     """Only failures persist. A start/success event per transition would emit a
     line per keystroke-triggered search across 500+ worker sites."""
     from textual.worker import Worker
-
-    from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
     monkeypatch.setattr(
@@ -102,15 +104,13 @@ async def test_screen_navigation_worker_transition_does_not_warn_unhandled():
     from loguru import logger as loguru_root_logger
     from textual.worker import Worker
 
-    from Tests.UI.app_factory import _build_test_app
-
     warnings: list[str] = []
-    sink_id = loguru_root_logger.add(
-        lambda message: warnings.append(str(message)), level="WARNING"
-    )
-    try:
-        app = _build_test_app()
-        async with app.run_test(size=(120, 40)) as pilot:
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        sink_id = loguru_root_logger.add(
+            lambda message: warnings.append(str(message)), level="WARNING"
+        )
+        try:
             worker = MagicMock(spec=Worker)
             worker.name = "handle_screen_navigation"
             worker.group = "screen-navigation"
@@ -122,8 +122,8 @@ async def test_screen_navigation_worker_transition_does_not_warn_unhandled():
                 Worker.StateChanged(worker, WorkerState.SUCCESS)
             )
             await pilot.pause()
-    finally:
-        loguru_root_logger.remove(sink_id)
+        finally:
+            loguru_root_logger.remove(sink_id)
 
     assert not [
         w
@@ -168,15 +168,13 @@ async def test_fresh_boot_fire_and_forget_worker_does_not_warn_unhandled(
     from loguru import logger as loguru_root_logger
     from textual.worker import Worker
 
-    from Tests.UI.app_factory import _build_test_app
-
     warnings: list[str] = []
-    sink_id = loguru_root_logger.add(
-        lambda message: warnings.append(str(message)), level="WARNING"
-    )
-    try:
-        app = _build_test_app()
-        async with app.run_test(size=(120, 40)) as pilot:
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        sink_id = loguru_root_logger.add(
+            lambda message: warnings.append(str(message)), level="WARNING"
+        )
+        try:
             for state in (
                 WorkerState.PENDING,
                 WorkerState.RUNNING,
@@ -187,12 +185,10 @@ async def test_fresh_boot_fire_and_forget_worker_does_not_warn_unhandled(
                 worker.group = worker_group
                 worker.error = None
                 worker.description = f"{worker_name}=<probe>"
-                await app.on_worker_state_changed(
-                    Worker.StateChanged(worker, state)
-                )
+                await app.on_worker_state_changed(Worker.StateChanged(worker, state))
             await pilot.pause()
-    finally:
-        loguru_root_logger.remove(sink_id)
+        finally:
+            loguru_root_logger.remove(sink_id)
 
     assert not [
         w for w in warnings if "No handler found" in w and worker_name in w
@@ -224,15 +220,13 @@ async def test_unknown_worker_group_still_warns_unhandled():
     from loguru import logger as loguru_root_logger
     from textual.worker import Worker
 
-    from Tests.UI.app_factory import _build_test_app
-
     warnings: list[str] = []
-    sink_id = loguru_root_logger.add(
-        lambda message: warnings.append(str(message)), level="WARNING"
-    )
-    try:
-        app = _build_test_app()
-        async with app.run_test(size=(120, 40)) as pilot:
+    app = _build_test_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        sink_id = loguru_root_logger.add(
+            lambda message: warnings.append(str(message)), level="WARNING"
+        )
+        try:
             worker = MagicMock(spec=Worker)
             worker.name = "mystery_worker"
             worker.group = "task-2726-unknown-group"
@@ -241,8 +235,8 @@ async def test_unknown_worker_group_still_warns_unhandled():
                 Worker.StateChanged(worker, WorkerState.SUCCESS)
             )
             await pilot.pause()
-    finally:
-        loguru_root_logger.remove(sink_id)
+        finally:
+            loguru_root_logger.remove(sink_id)
 
     assert [
         w

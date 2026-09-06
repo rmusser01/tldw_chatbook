@@ -450,14 +450,10 @@ async def _async_noop() -> None:
 def _attach_message_controller(screen: ChatScreen) -> None:
     """Give a bypassed-``__init__`` screen shell its ``_message`` controller.
 
-    The citation cluster stays screen-owned, but several members it reaches
-    moved to ``ConsoleMessageController`` (wave-3 console decomposition,
-    task 1) and are reached here through ``ChatScreen``'s delegations/proxy
-    properties: ``_native_console_messages``,
-    ``_console_citation_message_body``, and the
-    ``_console_original_attempt_previews``/``_pending_console_swipe_
-    selection`` state these tests assign directly. ``ChatScreen.__new__``
-    skips the construction ``__init__`` would do, so it is done here.
+    Citation UI and workers stay screen-owned; identity and eligibility
+    policy live beside the message helpers in ``ConsoleMessageController``.
+    The screen still proxies original-attempt and swipe-selection state.
+    ``ChatScreen.__new__`` skips controller construction, so it is done here.
 
     Only the store accessors are wired for real -- that is all
     ``_native_console_messages`` reads.
@@ -516,7 +512,10 @@ def _bare_screen(
     screen._console_annotation_loaded_conversation = None
     # Dev's turn-activity line (task-17652 era): the sync path reads
     # self._agent.console_turn_activity() every tick.
-    screen._agent = SimpleNamespace(console_turn_activity=lambda: "")
+    screen._agent = SimpleNamespace(
+        console_turn_activity=lambda: "",
+        console_turn_activity_abandon_action=lambda: "",
+    )
     screen._console_citation_resolved_signatures = {}
     screen._console_citation_input_signature = None
     screen._console_citation_repository_token = None
@@ -591,7 +590,7 @@ async def test_discovery_queries_only_complete_persisted_assistants_with_two_arg
     ]
     repository = _FakeRepository(_active_result(_trace()))
     screen = _bare_screen(messages, repository)
-    signature = screen._console_citation_signature(messages)
+    signature = screen._message._console_citation_signature(messages)
     screen._console_citation_input_signature = signature
     screen._console_citation_request_generation = 1
 
@@ -711,13 +710,41 @@ async def test_discovery_requires_active_summary_and_repository_verification(
     repository = _FakeRepository(result, verified=verified)
     messages = [_message("assistant", persisted_message_id="persisted")]
     screen = _bare_screen(messages, repository)
-    signature = screen._console_citation_signature(messages)
+    signature = screen._message._console_citation_signature(messages)
     screen._console_citation_input_signature = signature
     screen._console_citation_request_generation = 1
 
     await screen._discover_console_citation_counts(repository, signature, 1)
 
     assert screen._console_citation_counts == {"assistant": 0}
+
+
+def test_citation_currentness_observes_replaced_store_and_repository() -> None:
+    """A modal must not keep authority captured before a store/repository swap."""
+    app_db = object()
+    repository = _FakeRepository(_active_result(_trace()), db=app_db)
+    message = _message("assistant", persisted_message_id="persisted")
+    screen = _bare_screen([message], repository, app_db=app_db)
+    token, _ = screen._message._console_citation_repository_readiness()
+    request = dict(
+        native_message_id="assistant",
+        persisted_message_id="persisted",
+        current_body="Answer [S1].",
+        repository=repository,
+        repository_token=token,
+    )
+    assert screen._message._console_citation_modal_request_is_current(**request)
+
+    screen._console_chat_store = _FakeStore([], session_id="replacement")
+    assert screen._message._console_citation_signature([]) == ("replacement", ())
+    assert not screen._message._console_citation_modal_request_is_current(**request)
+
+    screen._console_chat_store = _FakeStore([message])
+    assert screen._message._console_citation_modal_request_is_current(**request)
+    screen.app_instance.citation_trace_repository = _FakeRepository(
+        _active_result(_trace()), db=app_db
+    )
+    assert not screen._message._console_citation_modal_request_is_current(**request)
 
 
 def test_stable_repository_and_identical_signature_dispatch_only_one_worker() -> None:
@@ -772,7 +799,7 @@ async def test_late_discovery_is_discarded_after_signature_or_generation_change(
         db=app_db,
     )
     screen = _bare_screen([message], repository, app_db=app_db)
-    signature = screen._console_citation_signature([message])
+    signature = screen._message._console_citation_signature([message])
     screen._console_citation_input_signature = signature
     screen._console_citation_request_generation = 1
 
@@ -849,7 +876,7 @@ async def test_repository_error_isolated_to_message_and_other_count_still_resolv
         _message("assistant-good", persisted_message_id="persisted-good"),
     ]
     screen = _bare_screen(messages, repository)
-    signature = screen._console_citation_signature(messages)
+    signature = screen._message._console_citation_signature(messages)
     screen._console_citation_input_signature = signature
     screen._console_citation_request_generation = 1
 
@@ -921,10 +948,10 @@ def _seed_resolved_counts(
     messages: list[ConsoleChatMessage],
     counts: dict[str, int],
 ) -> None:
-    signature = screen._console_citation_signature(messages)
+    signature = screen._message._console_citation_signature(messages)
     screen._console_citation_input_signature = signature
     screen._console_citation_repository_token = (
-        screen._console_citation_repository_readiness()[0]
+        screen._message._console_citation_repository_readiness()[0]
     )
     screen._console_citation_counts = dict(counts)
     screen._console_citation_resolved_signatures = {
@@ -1043,7 +1070,7 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
         None,
         SimpleNamespace(pending_ids=lambda _message_ids: ()),
     )
-    screen._recent_console_image_messages = lambda _messages: ()
+    screen._message._recent_console_image_messages = lambda _messages: ()
     screen._image._pending_console_generation_card_images = (
         lambda _messages, _card_specs: ()
     )
@@ -1072,7 +1099,7 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
         set_annotation_previews=Mock(),
         apply_turn_activity=Mock(return_value=""),
         set_original_attempt_previews=Mock(),
-        set_summary_boundary=Mock(),
+        set_memory_banner_presentation=Mock(),
         sync_jump_indicator=Mock(),
         set_image_specs=Mock(),
         set_generation_card_specs=Mock(),

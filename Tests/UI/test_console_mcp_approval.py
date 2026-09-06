@@ -420,11 +420,12 @@ async def test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid
         ]
         assert narrowed_select.value == "approve_session"
 
-        # The row with no `options` key is untouched: full four choices,
+        # The row with no `options` key is untouched: all default choices,
         # default `approve_once` (MCP behavior unchanged, byte-identical).
         assert [value for _label, value in unfiltered_select._options] == [
             "approve_once",
             "approve_session",
+            "allow_matching",
             "always_allow",
             "deny",
         ]
@@ -2154,14 +2155,17 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
-    def _cancel_soon() -> None:
-        time.sleep(0.05)
-        controller.begin_shutdown()
-
-    canceller = threading.Thread(target=_cancel_soon)
-    canceller.start()
-    decisions = controller.request_mcp_approvals([_pending()])
-    canceller.join()
+    results: list[dict[str, str]] = []
+    requester = threading.Thread(
+        target=lambda: results.append(controller.request_mcp_approvals([_pending()]))
+    )
+    requester.start()
+    time.sleep(0.05)
+    # Queue teardown is owner-thread confined; app exit signals it from the
+    # controller owner while the approval request itself waits off-thread.
+    controller.begin_shutdown()
+    requester.join()
+    decisions = results[0]
 
     assert decisions == {"mcp__srv__tool": "deny"}
     assert received[-1] is None
@@ -2282,22 +2286,25 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     )
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
-    def _cancel_soon() -> None:
-        time.sleep(0.05)
-        controller.begin_shutdown()
-
-    canceller = threading.Thread(target=_cancel_soon)
-    canceller.start()
-    decisions = controller.request_mcp_approvals(
-        [
-            _pending(
-                server_key="local:docs",
-                tool_name="search",
-                llm_name="mcp__docs__search",
+    results: list[dict[str, str]] = []
+    requester = threading.Thread(
+        target=lambda: results.append(
+            controller.request_mcp_approvals(
+                [
+                    _pending(
+                        server_key="local:docs",
+                        tool_name="search",
+                        llm_name="mcp__docs__search",
+                    )
+                ]
             )
-        ]
+        )
     )
-    canceller.join()
+    requester.start()
+    time.sleep(0.05)
+    controller.begin_shutdown()
+    requester.join()
+    decisions = results[0]
 
     assert decisions == {"mcp__docs__search": "deny"}
 
@@ -3154,20 +3161,7 @@ def test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names():
 
 @pytest.fixture
 def mock_chat_host():
-    host = Mock()
-    host.app_config = {
-        "chat_defaults": {
-            "provider": "openai",
-            "model": "gpt-4.1",
-            "temperature": 0.7,
-        }
-    }
-    host.chat_sidebar_collapsed = False
-    host.chat_right_sidebar_collapsed = False
-    host.notify = Mock()
-    host.run_worker = Mock()
-    host.bell = Mock()
-    return host
+    return _build_test_app()
 
 
 def test_chat_screen_forwards_approval_decided_to_controller(mock_chat_host):

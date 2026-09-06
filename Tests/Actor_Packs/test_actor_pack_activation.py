@@ -122,6 +122,7 @@ def _write_archive(
     actor_kind: str,
     portable_uuid: str,
     sections: tuple[ActorPackExportSection, ...],
+    actor_data: dict[str, object] | None = None,
 ) -> Path:
     digest = hashlib.sha256(PNG_1X1).hexdigest()
     with path.open("wb+") as sink:
@@ -135,7 +136,9 @@ def _write_archive(
                 portrait_sha256=digest,
                 local_actor_id="source",
                 actor_payload=canonicalize_actor_payload(
-                    actor_kind, portable_uuid, {"name": "Visual import"}
+                    actor_kind,
+                    portable_uuid,
+                    actor_data or {"name": "Visual import"},
                 ),
                 portrait_bytes=PNG_1X1,
                 sections=sections,
@@ -231,6 +234,39 @@ def test_create_new_persona_preserves_incoming_uuid(activation_components) -> No
         "persona", result.local_actor_id, source="local"
     )
     assert snapshot.portrait_bytes == PNG_1X1
+
+
+def test_create_new_persona_round_trips_policy_rules(
+    activation_components, tmp_path: Path
+) -> None:
+    activation, importer, repository, local_service, db = activation_components
+    policy_rules = [
+        {
+            "rule_kind": "mcp_tool",
+            "rule_name": "fs_write",
+            "allowed": False,
+            "require_confirmation": True,
+            "max_calls_per_turn": 2,
+        }
+    ]
+    review = importer.inspect_archive(
+        _write_archive(
+            tmp_path / "persona-policy-rules.tldw-actor-pack",
+            actor_kind="persona",
+            portable_uuid=PORTABLE_UUID,
+            sections=(),
+            actor_data={"name": "Policy Persona", "policy_rules": policy_rules},
+        )
+    )
+
+    result = activation.activate(review, "create_new")
+
+    profile = local_service.get_persona_profile(result.local_actor_id)
+    assert profile["policy_rules"] == policy_rules
+    snapshot = ActorPackExportService(db, local_service, repository).capture_snapshot(
+        "persona", result.local_actor_id, source="local"
+    )
+    assert json.loads(snapshot.actor_payload)["data"]["policy_rules"] == policy_rules
 
 
 def test_cancel_after_section_publication_removes_owned_orphans(

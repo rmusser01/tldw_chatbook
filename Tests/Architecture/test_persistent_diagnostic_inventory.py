@@ -599,6 +599,10 @@ _TASK_15743_STACKED = "fdee8a31f"
 _TASK_15743_REPAIRED = "afee9672a"
 _TASK_15743_CURRENT_OWNERS = {
     (
+        "tldw_chatbook/UI/Screens/library_screen.py",
+        "Failed to load Library conversations page.",
+    ): "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py",
+    (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "console fleet wake mount-claim failed",
     ): "tldw_chatbook/UI/Console_Modules/fleet.py",
@@ -3444,6 +3448,7 @@ def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
         "owner_files": 1,
         "persistent_sink_files": 1,
         "task_492_calls": 0,
+        "task_31551_calls": 0,
         "task_494_calls": 1,
         "path_privacy_candidate_calls": 0,
     }

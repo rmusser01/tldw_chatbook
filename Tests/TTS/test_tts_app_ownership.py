@@ -920,6 +920,18 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
     async def notes_sync_shutdown() -> None:
         calls.append("notes-sync")
 
+    async def collections_capture_shutdown() -> None:
+        calls.append("collections-capture")
+
+    async def raw_cli_shutdown() -> None:
+        calls.append("raw-cli")
+
+    async def terminal_sessions_shutdown() -> None:
+        calls.append("terminal-sessions")
+
+    async def settings_durability_shutdown() -> None:
+        calls.append("settings-durability")
+
     async def actor_pack_import_shutdown() -> None:
         calls.append("actor-pack-import")
 
@@ -940,10 +952,14 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
     owner = SimpleNamespace(
         _audio_cpp_artifact_lease_coordinator=Coordinator(),
         audio_cpp_model_install_owner=InstallOwner(),
+        _shutdown_collections_capture_runtime=collections_capture_shutdown,
         _shutdown_notes_sync_runtime=notes_sync_shutdown,
         _shutdown_actor_pack_import=actor_pack_import_shutdown,
         _shutdown_actor_pack_export=actor_pack_export_shutdown,
         _shutdown_console_image_edits=image_shutdown,
+        _shutdown_raw_cli_runtime=raw_cli_shutdown,
+        _shutdown_terminal_session_manager=terminal_sessions_shutdown,
+        _shutdown_console_settings_durability=settings_durability_shutdown,
         _shutdown_console_runtime=console_runtime_shutdown,
         _shutdown_persona_buddy=persona_buddy_shutdown,
         change_review_consent_service=ChangeReviewOwner(),
@@ -953,9 +969,13 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
     await TldwCli._shutdown_app_owned_lifecycles(owner)
 
     assert calls == [
+        "collections-capture",
         "notes-sync",
         "actor-pack-import",
         "actor-pack-export",
+        "raw-cli",
+        "terminal-sessions",
+        "settings-durability",
         "console-runtime",
         "change-review",
         "persona-buddy",

@@ -127,6 +127,40 @@ def test_static_content_gate_skips_equal_copy_but_updates_changed_copy() -> None
         update.assert_called_once_with("changed")
 
 
+@pytest.mark.asyncio
+async def test_scheduling_tooltips_explain_initial_actions_and_follow_lifecycle():
+    app = WorkbenchTestApp()
+    async with app.run_test(size=(180, 60)) as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=app))
+        await pilot.pause()
+        workbench = app.screen
+        for button_id, outcome in {
+            "scheduling-chip-all": "all scheduled tasks",
+            "scheduling-chip-active": "active scheduled tasks",
+            "scheduling-chip-paused": "paused scheduled tasks",
+            "scheduling-chip-completed": "completed scheduled tasks",
+            "scheduling-detail-runs-on-cancel": "Cancel this ownership transfer",
+            "scheduling-detail-runs-on-retry": "Retry this failed ownership transfer",
+            "scheduling-automation-detail-runs-on-cancel": "Cancel this ownership transfer",
+            "scheduling-automation-detail-runs-on-retry": "Retry this failed ownership transfer",
+            "scheduling-automation-run-now": "Request an immediate run",
+            "scheduling-automation-pause-resume": "Pause this automation",
+        }.items():
+            assert outcome in str(workbench.query_one(f"#{button_id}", Button).tooltip)
+
+        detail = workbench.query_one(DefinitionDetail)
+        button = detail.query_one("#scheduling-automation-pause-resume", Button)
+        definition = _editable_definition(lifecycle="configured")
+        detail.set_definition(definition)
+        assert button.tooltip == "Pause this automation."
+        detail.apply_lifecycle(definition["id"], "paused")
+        assert button.tooltip == "Resume this automation."
+        detail.set_lifecycle_lock("Read-only mid-transfer.")
+        assert button.tooltip == "Read-only mid-transfer."
+        detail.set_lifecycle_lock(None)
+        assert button.tooltip == "Resume this automation."
+
+
 class MockSchedulingService(_MockSchedulingServiceMixin):
     """Stub service returning a single reminder task."""
 

@@ -66,6 +66,9 @@ from tldw_chatbook.Chat.thinking_blocks import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+)
 
 
 class SummaryGateway:
@@ -1663,7 +1666,7 @@ def _mutate_manual_fence(
             preserve_descendants=True,
         )
     elif name == "parent":
-        nodes[rows[3].id].parent_message_id = rows[0].persisted_message_id
+        store._native_parent_by_message[rows[3].id] = rows[0].id
     elif name == "status_visibility":
         nodes[rows[3].id].status = "failed"
     elif name == "deletion":
@@ -2152,7 +2155,9 @@ async def test_native_message_id_key_stripped_before_provider():
     assert all("_native_message_id" not in row for row in captured)
 
 
-def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
+def test_compacted_summary_precedes_run_local_startup_rider(
+    tmp_path, monkeypatch, request
+):
     from tldw_chatbook.Agents.agent_models import AgentConfig
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.project_instruction_resolver import (
@@ -2161,10 +2166,19 @@ def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
     )
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Tools import workspace_file_roots
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
+    workspace_db = WorkspaceDB(tmp_path / "workspaces.db")
+    request.addfinalizer(workspace_db.close)
+    registry = LocalWorkspaceRegistryService(workspace_db)
+    monkeypatch.setattr(workspace_file_roots, "_registry_factory", lambda: registry)
+    runs_db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    request.addfinalizer(runs_db.close)
     calls = []
     service = AgentService(
-        AgentRunsDB(tmp_path / "runs.db", client_id="test"),
+        runs_db,
         ToolCatalogRegistry(),
         chat_call=lambda **kwargs: (
             calls.append(kwargs) or {"choices": [{"message": {"content": "done"}}]}

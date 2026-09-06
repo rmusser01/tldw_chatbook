@@ -10,7 +10,7 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from Tests.textual_test_utils import widget_pilot  # noqa: F401
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Library.library_notes_state import (
     DatabaseNoteDraft,
     LibraryNoteSessionSnapshot,
@@ -548,7 +548,7 @@ async def test_paged_tree_projection_renders_branch_controls_at_exact_boundaries
         assert [child.id for child in children] == [
             "library-notes-tree-folder-0",
             "library-notes-tree-pager-folder-776f726b-folders-earlier",
-            "library-notes-tree-note-2",
+            "library-notes-row-0",
             "library-notes-tree-pager-folder-776f726b-placements-more",
         ]
         earlier = children[1]
@@ -853,7 +853,7 @@ async def test_pager_focus_survives_failure_retry_and_retry_loading_recompose() 
     )
 
     class PagerFocusApp(ConsolidatedCSSApp):
-        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
         def compose(self) -> ComposeResult:
             yield LibraryNotesCanvas(list_state=_list_state(), tree_projection=idle)
@@ -926,7 +926,7 @@ def _compact_pager_projection() -> LibraryNotesTreeProjection:
 
 
 class _CompactPagerApp(ConsolidatedCSSApp):
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         shell = Vertical(id="library-shell-grid", classes="library-notes-compact")

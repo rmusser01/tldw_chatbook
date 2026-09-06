@@ -27,7 +27,7 @@ import pytest
 from textual.selection import Selection
 from textual.widgets import Button, Input, Static
 
-import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+import tldw_chatbook.UI.Library_Modules.library_media_reader_controller as library_screen_module
 import tldw_chatbook.Widgets.Library.library_media_content as media_content_module
 from Tests.UI.test_library_media_reader_flow import (
     _flow_app,
@@ -41,6 +41,7 @@ from Tests.UI.test_library_media_side_by_side import (
 from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
     _wait_for_condition,
+    _wait_for_selector,
 )
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
@@ -135,7 +136,7 @@ async def _load_row_with_document(screen, pilot, service, index: int, content: s
     """Seed row ``index`` with ``content`` and open it from the Items list."""
     canonical_id, backing_id, title = _seed_row_document(screen, service, index, content)
     screen.query_one(f"#library-media-row-{index}", Button).press()
-    await _wait_for_detail_call(service, backing_id)
+    await _wait_for_detail_call(service, backing_id, pilot=pilot)
     service.release(backing_id)
     await _wait_for_condition(
         pilot,
@@ -159,7 +160,7 @@ async def _traverse_to_row(screen, pilot, service, *, from_index: int, to_index:
     screen.query_one(f"#library-media-row-{from_index}", Button).focus()
     await pilot.pause()
     await pilot.press("down")
-    await _wait_for_detail_call(service, backing_id)
+    await _wait_for_detail_call(service, backing_id, pilot=pilot)
     service.release(backing_id)
     await _wait_for_condition(
         pilot,
@@ -177,7 +178,8 @@ async def _submit_query(screen, pilot, query: str) -> None:
     so the helper presses Find first when the input is not yet mounted.
     """
     if not screen.query("#library-media-content-search"):
-        screen.query_one("#library-media-reader-find", Button).press()
+        find = await _wait_for_selector(screen, pilot, "#library-media-reader-find")
+        find.press()
         await _wait_for_condition(
             pilot,
             lambda: bool(screen.query("#library-media-content-search")),
@@ -396,7 +398,7 @@ async def test_clearing_the_search_mid_navigation_drops_every_highlight():
         assert selected == content
 
         # A stray advance after the clear is a no-op, not a crash.
-        screen._advance_library_media_content_match(1)
+        screen._media_reader_controller._advance_library_media_content_match(1)
         await pilot.pause()
         assert _highlighted_words_in_raw(_raw_static(screen)) == set()
 
@@ -420,10 +422,10 @@ async def test_a_cleared_detail_releases_the_cached_match_list():
 
         screen._library_media_detail = None
 
-        assert screen._library_media_content_matches() == ()
+        assert screen._media_reader_controller._library_media_content_matches() == ()
         assert screen._library_media_content_match_memo is None
         # And a stray navigation against no open item is a no-op, not a crash.
-        screen._advance_library_media_content_match(1)
+        screen._media_reader_controller._advance_library_media_content_match(1)
         await pilot.pause()
 
 
@@ -453,7 +455,7 @@ async def test_multi_megabyte_document_match_navigation_timings():
         with _count_document_passes() as counts:
             for _ in range(6):
                 started = perf_counter()
-                screen._advance_library_media_content_match(1)
+                screen._media_reader_controller._advance_library_media_content_match(1)
                 per_click_ms.append((perf_counter() - started) * 1000.0)
             passes = _total(counts)
 

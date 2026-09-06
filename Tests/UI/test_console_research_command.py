@@ -1,5 +1,7 @@
 """Console /research flag parsing (task-16793)."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from tldw_chatbook.UI.Console_Modules.research_command import (
@@ -88,6 +90,14 @@ class _RecordingScreen:
         self.app = app
         self.system_messages: list[str] = []
         self.worker_coroutines: list[object] = []
+        self._session = SimpleNamespace(
+            _current_console_conversation_id=self._current_console_conversation_id
+        )
+        self._message = SimpleNamespace(
+            _append_native_console_system_message=(
+                self._append_native_console_system_message
+            )
+        )
 
     async def _append_native_console_system_message(self, text: str) -> None:
         self.system_messages.append(text)
@@ -109,14 +119,12 @@ class _StubApp:
 
 
 async def test_research_worker_survives_a_corrupt_research_store(tmp_path):
-    from types import SimpleNamespace
-
     from loguru import logger as loguru_logger
 
     from tldw_chatbook.Research_Interop.local_research_service import (
         LocalResearchService,
     )
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.wiring import build_console_commands_controller
 
     db_path = tmp_path / "research.db"
     db_path.write_bytes(b"this is not a sqlite database at all\x00\x01")
@@ -127,14 +135,15 @@ async def test_research_worker_survives_a_corrupt_research_store(tmp_path):
     # the handler's None-guard fired instead).
     service = LocalResearchService(db_path)
     screen = _RecordingScreen(_StubApp(service))
+    build_console_commands_controller(screen)
 
     warnings: list[str] = []
     sink_id = loguru_logger.add(
         lambda message: warnings.append(str(message)), level="WARNING"
     )
     try:
-        await ChatScreen._console_command_research(
-            screen, SimpleNamespace(args="why is the sky blue")
+        await screen._commands._console_command_research(
+            SimpleNamespace(args="why is the sky blue")
         )
 
         assert len(screen.worker_coroutines) == 1

@@ -177,8 +177,8 @@ async def test_console_settings_summary_sync_state_is_noop_when_state_unchanged(
         # Two separately-constructed, value-equal state snapshots (frozen
         # dataclass equality), mirroring how the screen rebuilds state fresh
         # every tick.
-        state_a = console._build_console_settings_summary_state()
-        state_b = console._build_console_settings_summary_state()
+        state_a = console._context_cost._build_console_settings_summary_state()
+        state_b = console._context_cost._build_console_settings_summary_state()
         assert state_a == state_b
 
         update_calls: list[str] = []

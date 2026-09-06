@@ -44,7 +44,8 @@ def _make_briefing(db: SubscriptionsDB, watchlist_id: int, *, created_at: str) -
     resolution, and this suite must prove an ordering rule (newest briefing
     first) that a same-second default would make flaky.
     """
-    briefing_id = db.insert_briefing(watchlist_id)
+    # Feed history is complete, so it must not retain a live generation claim.
+    briefing_id = db.insert_briefing(watchlist_id, status="complete")
     with db.transaction() as conn:
         conn.execute(
             "UPDATE briefings SET created_at = ? WHERE id = ?",

@@ -41,8 +41,9 @@ def test_each_action_command_maps_to_a_real_screen_method():
     """AC#1/#2: every added command dispatches to an action method that
     already exists -- no new capability, no dangling target."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Console_Modules.commands import ConsoleCommandsController
 
-    targets = ChatScreen._CONSOLE_ACTION_COMMAND_TARGETS
+    targets = ConsoleCommandsController._CONSOLE_ACTION_COMMAND_TARGETS
     for name, _hint in CONSOLE_ACTION_COMMANDS:
         assert name in targets, f"{name} has no action target"
         method_name = targets[name]

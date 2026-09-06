@@ -136,6 +136,14 @@ FORBIDDEN_MUTATION_LOADERS_BY_PATH: dict[str, frozenset[str]] = {
     WATCHLISTS_COLLECTIONS_PATH: frozenset({"_load_notifications", "_load_briefings"}),
 }
 
+LOADER_GROUPS_BY_PATH = {
+    SCHEDULES_WORKBENCH_PATH: {"load_tasks": "schedules-load-tasks"},
+    WATCHLISTS_COLLECTIONS_PATH: {
+        "_load_notifications": "wc_notifications",
+        "_load_briefings": "wl-briefings-load",
+    },
+}
+
 #: Every audited mutation owner must dispatch exactly once through the named
 #: helper. Qualified owners survive edits above the site; nested worker bodies
 #: remain distinct from their enclosing handlers without relying on line pins.
@@ -158,6 +166,8 @@ MUTATION_REFRESH_HELPER_INVENTORY: dict[str, str] = {
     "_dismiss_notification": "_request_notifications_refresh",
     f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
     "_generate_briefing": "_request_briefings_refresh",
+    f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
+    "_follow_coordinated_briefing": "_request_briefings_refresh",
     f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
     "_cast_script": "_request_briefings_refresh",
     f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
@@ -256,6 +266,7 @@ def _mutation_refresh_violations_in_tree(
     *,
     forbidden_loaders: set[str] | frozenset[str],
     owner_helpers: dict[str, str],
+    loader_groups: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Return refresh-contract failures keyed by qualified function owner.
 
@@ -268,8 +279,51 @@ def _mutation_refresh_violations_in_tree(
     issues: dict[str, list[str]] = {}
     helper_counts = dict.fromkeys(owner_helpers, 0)
 
+    # A nested wrapper may await the raw loader when run_worker owns that
+    # wrapper in the loader's exclusive group. Require its sole reference to
+    # be that dispatch: an additional inline await must not inherit the waiver.
+    grouped_callbacks: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _self_call_name(node) != "run_worker":
+            continue
+        exclusive = _keyword(node, "exclusive")
+        if (
+            not node.args
+            or not isinstance(exclusive, ast.Constant)
+            or exclusive.value is not True
+        ):
+            continue
+        group = _keyword(node, "group")
+        if not isinstance(group, ast.Constant) or not isinstance(group.value, str):
+            continue
+        callback = node.args[0]
+        if isinstance(callback, ast.Call):
+            callback = callback.func
+        if not isinstance(callback, ast.Name):
+            continue
+        dispatcher = owners.get(node.lineno, "<module>")
+        references = [
+            item
+            for item in ast.walk(tree)
+            if isinstance(item, ast.Name)
+            and isinstance(item.ctx, ast.Load)
+            and item.id == callback.id
+            and (
+                owners.get(item.lineno) == dispatcher
+                or owners.get(item.lineno, "").startswith(f"{dispatcher}.")
+            )
+        ]
+        if len(references) == 1:
+            grouped_callbacks[f"{dispatcher}.{callback.id}"] = group.value
+
     for lineno, loader in _forbidden_inline_loader_awaits(tree, forbidden_loaders):
         owner = owners.get(lineno, "<module>")
+        expected_group = (loader_groups or {}).get(loader)
+        if (
+            expected_group is not None
+            and grouped_callbacks.get(owner) == expected_group
+        ):
+            continue
         issues.setdefault(owner, []).append(
             f"await self.{loader}(...) is forbidden; dispatch through "
             "the loader-group refresh helper"
@@ -310,6 +364,7 @@ def _mutation_refresh_contract_violations() -> list[str]:
             tree,
             forbidden_loaders=forbidden_loaders,
             owner_helpers=by_path[relative],
+            loader_groups=LOADER_GROUPS_BY_PATH[relative],
         ).items():
             violations.append(f"{relative}::{owner}: {detail}")
     return violations
@@ -747,6 +802,43 @@ def test_awaited_mutation_loader_is_flagged() -> None:
     assert (
         "await self.load_tasks(...) is forbidden" in violations["ScratchScreen._mutate"]
     )
+
+
+def test_nested_loader_wrapper_requires_exclusive_grouped_dispatch() -> None:
+    for callback in ("refresh", "refresh()"):
+        for exclusive, group, extra_call, permitted in (
+            ("True", "tasks", "", True),
+            ("False", "tasks", "", False),
+            ("unknown", "tasks", "", False),
+            ("True", "mutation", "", False),
+            ("True", "tasks", "await refresh()", False),
+            (
+                "True",
+                "tasks",
+                "async def mutate():\n            await refresh()\n        await mutate()",
+                False,
+            ),
+        ):
+            tree = ast.parse(
+                "class ScratchScreen:\n"
+                "    async def dispatch(self):\n"
+                "        async def refresh():\n"
+                "            await self.load_tasks()\n"
+                f"        self.run_worker({callback}, exclusive={exclusive}, group={group!r})\n"
+                f"        {extra_call}\n"
+            )
+            violations = _mutation_refresh_violations_in_tree(
+                tree,
+                forbidden_loaders={"load_tasks"},
+                owner_helpers={},
+                loader_groups={"load_tasks": "tasks"},
+            )
+            assert (not violations) is permitted, (
+                callback,
+                exclusive,
+                group,
+                extra_call,
+            )
 
 
 def test_wrapped_awaited_mutation_loaders_are_flagged_once_each() -> None:

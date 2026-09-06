@@ -44,6 +44,10 @@ import pytest
 
 from Tests.Chat.test_console_fleet_wake import _terminal_subagent_run
 from Tests.UI.app_factory import _build_test_app
+from Tests.console_resource_fixtures import (
+    close_owned_console_resources as close_owned_console_resources,
+    close_owned_console_test_apps as close_owned_console_test_apps,
+)
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import (
     StaticConversationTreeService,
@@ -469,7 +473,7 @@ async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_pa
             "harness precondition: the mount must REUSE the launch-built "
             "controller, or this test is not about stickiness at all"
         )
-        expected = chat._build_console_provider_selection()
+        expected = chat._provider_selection._build_console_provider_selection()
         assert await _settle(
             pilot,
             lambda: controller.configured_model == expected.configured_model,

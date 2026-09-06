@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from types import MappingProxyType
@@ -17,6 +19,103 @@ from tldw_chatbook.Library.library_pager_state import PageFreshness
 LIBRARY_MEDIA_EMPTY_COPY = (
     "No media in your Library yet. Import something to see it here."
 )
+
+LIBRARY_MEDIA_SERVICE_ERROR = "Couldn't load media. Check the local Library and retry."
+# Final review I-2: not "Retry failed · " -- the Analyze receipt on this
+# same canvas (library_media_canvas.py) already has a Button labelled
+# exactly "Retry failed", and the two can be on screen together. Matches
+# the module's own "Couldn't load ..." vocabulary instead.
+_RETRY_FAILED_PREFIX = "Couldn't retry · "
+# Review I-2: no number. This request path is a bare ``asyncio.to_thread``
+# with no ``wait_for`` and no deadline, so any bound quoted here would be
+# invented. (The 5 s figure belongs to the screen-level source snapshot,
+# a different path.)
+_TIMEOUT_REASON = "timed out"
+# Qodo PR G finding 3: an OSError/sqlite3 message is the reader's own words
+# (kept, unlike other exceptions -- see below), but that text can embed a
+# database or filesystem path. Match POSIX absolute (``/a/b``), home-relative
+# (``~/a``), Windows drive (``C:\a``), and ``file:`` URI tokens so the shared
+# mapper can redact them before any of it reaches a screen.
+#
+# Re-review round 2: a real path segment can contain a space (macOS
+# "Application Support", Windows "Program Files"), so a segment is
+# "word( word)*" -- but only a segment immediately followed by another
+# ``/``/``\`` may absorb extra space-joined words (the trailing mandatory
+# separator in ``_SEGMENT`` is what lets ordinary backtracking find the
+# right boundary instead of running to end-of-string). The path's FINAL
+# segment never merges -- nothing bounds how far that would run -- so it
+# stops at the first space, which is exactly where a real path ends and
+# trailing prose ("... is missing") begins.
+# ponytail: a final segment that itself contains a space with nothing
+# after it (no closing quote/separator) still under-redacts -- there's no
+# way to bound that merge without a real tokenizer. Not hit by any known
+# OSError/sqlite3 message shape; revisit if one shows up.
+_SEGMENT = r"[^\s/\\'\"]*(?:[ ][^\s/\\'\"]+)*[/\\]"
+_PATH_TOKEN_PATTERN = re.compile(
+    r"""(?P<prefix>^|[\s'"])
+    (?:file:|[A-Za-z]:\\|~/|/)
+    (?:%s)*
+    [^\s/\\'"]+
+    """
+    % _SEGMENT,
+    re.VERBOSE,
+)
+
+
+def _redact_paths(text: str) -> str:
+    """Replace filesystem/database path tokens in ``text`` with ``<path>``.
+
+    Args:
+        text: Raw exception text that may embed a local path.
+
+    Returns:
+        ``text`` with every path-like token (see ``_PATH_TOKEN_PATTERN``)
+        replaced by the literal ``<path>``; text with no such token is
+        returned unchanged.
+    """
+    return _PATH_TOKEN_PATTERN.sub(lambda m: f"{m.group('prefix')}<path>", text)
+
+
+def _retry_failure_reason(exc: BaseException) -> str:
+    """Name a failed refresh in the reader's terms, never as a bare class.
+
+    Args:
+        exc: The exception the failed page request raised.
+
+    Returns:
+        A short human-readable reason for the failure, with any filesystem
+        or database path redacted to ``<path>``.
+    """
+    # ``asyncio.TimeoutError`` IS ``TimeoutError`` on 3.11+, and
+    # ``TimeoutError`` subclasses ``OSError`` -- so it must be tested first.
+    if isinstance(exc, TimeoutError):
+        return _TIMEOUT_REASON
+    if isinstance(exc, (OSError, sqlite3.OperationalError)):
+        # ``strerror`` (when set) is the human message without the
+        # "[Errno N] " wrapper ``str()`` adds. Redact BEFORE truncating --
+        # cutting a path in half at the 80-char bound would still leak its
+        # unredacted prefix.
+        raw = getattr(exc, "strerror", None) or str(exc)
+        message = " ".join(_redact_paths(raw).split())[:80]
+        return message or type(exc).__name__
+    return type(exc).__name__
+
+
+def build_media_retry_failure_copy(exc: BaseException) -> str:
+    """Describe a failed attempt to recover an already stale Media page."""
+    return _RETRY_FAILED_PREFIX + _retry_failure_reason(exc)
+
+
+def build_media_load_failure_copy(
+    applied: MediaBrowseScope | None, failed_scope: MediaBrowseScope
+) -> str:
+    """Describe a failed initial load, page change, or filter change."""
+    if applied is None:
+        return LIBRARY_MEDIA_SERVICE_ERROR
+    if failed_scope.same_except_page(applied):
+        return f"Couldn't load page {failed_scope.page}."
+    return "Filter wasn't applied; showing previous results."
+
 
 # task-4025: the Trash view's honest empty state -- present tense, no
 # promise of anything beyond what the surface does (items land here on

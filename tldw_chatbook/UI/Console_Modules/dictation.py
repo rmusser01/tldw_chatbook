@@ -90,7 +90,7 @@ needed zero edits: the attribute now lives on `self._dictation`, but
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from functools import partial
 import asyncio
@@ -170,6 +170,22 @@ CONSOLE_DICTATION_MAX_BYTES = pcm_byte_limit(
     channels=CONSOLE_DICTATION_CHANNELS,
     sample_width=CONSOLE_DICTATION_SAMPLE_WIDTH,
 )
+
+
+class _DictationRetryDialog(ConfirmationDialog):
+    """Abandon retained audio when an undecided retry loses the foreground."""
+
+    def __init__(
+        self, *, abandon: Callable[[], Coroutine[Any, Any, None]], **kwargs: Any
+    ) -> None:
+        super().__init__(**kwargs)
+        self._abandon = abandon
+
+    async def on_screen_suspend(self) -> None:
+        # ConfirmationDialog records button/Escape decisions before removal.
+        # An undecided suspend is a foreign cover, navigation, or raw pop.
+        if self.result is None:
+            await self._abandon()
 
 
 class ConsoleDictationEvent(Message):
@@ -838,6 +854,7 @@ class ConsoleDictationController:
         self._console_dictation_partial = ""
         self._console_pending_voice_action: str | None = None
         self._console_dictation_late_discard_ack = False
+        self._retry_dialog: ConfirmationDialog | None = None
 
     @property
     def is_mounted(self) -> bool:
@@ -970,15 +987,21 @@ class ConsoleDictationController:
         `__init__`'s docstring."""
         return self._visible_draft_session_id_accessor()
 
-    async def suspend(self) -> None:
-        """Keep retained audio for our retry prompt; otherwise abandon capture."""
-        if (
+    def suspend(self) -> Coroutine[Any, Any, None]:
+        """Snapshot the owned retry overlay before asynchronous suspend cleanup."""
+        stack = self._screen.app.screen_stack
+        preserve_retry = (
             self._retry_dialog is not None
-            and self._screen.app.screen is self._retry_dialog
-        ):
-            # The microphone is already closed before this prompt opens.
-            return
-        await self.teardown()
+            and len(stack) >= 2
+            and stack[-1] is self._retry_dialog
+            and stack[-2] is self._screen
+        )
+
+        async def cleanup() -> None:
+            if not preserve_retry:
+                await self.teardown()
+
+        return cleanup()
 
     async def teardown(self) -> None:
         """Release dictation's own resources during screen unmount.
@@ -1000,6 +1023,9 @@ class ConsoleDictationController:
         self._console_dictation_partial = ""
         self._console_dictation_state = "idle"
         self._release_buddy_listening()
+        self._retry_dialog = None
+        if self.is_mounted:
+            self._set_console_dictation_state("idle")
         if dictation_session is not None:
             await asyncio.to_thread(dictation_session.discard)
 
@@ -1751,9 +1777,15 @@ class ConsoleDictationController:
                 if self._console_dictation_session is session:
                     self._notify_console_dictation_error(exc)
                 return
-            dialog = ConfirmationDialog(
+
+            async def abandon_retry() -> None:
+                if self._console_dictation_session is session:
+                    await self.teardown()
+
+            dialog = _DictationRetryDialog(
+                abandon=abandon_retry,
                 title="Parakeet transcription failed",
-                message="Parakeet failed. Retry this audio with faster-whisper?",
+                message=("Parakeet failed. Retry this audio with faster-whisper?"),
                 confirm_label="Retry",
                 cancel_label="Keep draft",
             )
@@ -1776,9 +1808,10 @@ class ConsoleDictationController:
             finally:
                 if self._retry_dialog is dialog:
                     self._retry_dialog = None
-            if not self.is_mounted or self._console_dictation_session is not session:
-                return
             if not confirmed:
+                self._finish_failed_console_dictation(session)
+                return
+            if self._console_dictation_session is not session or not self.is_mounted:
                 self._finish_failed_console_dictation(session)
                 return
             try:

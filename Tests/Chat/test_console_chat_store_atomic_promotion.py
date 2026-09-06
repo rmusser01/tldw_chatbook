@@ -11,7 +11,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat import console_chat_store as console_store_module
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleSettingsComponent,
+)
 from tldw_chatbook.Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
@@ -429,8 +432,8 @@ def test_promotion_persists_sparse_context_policy_inside_the_bundle(
 
     monkeypatch.setattr(service.context_repository, "save_policy", recording_save)
     monkeypatch.setattr(
-        store,
-        "_flush_context_policy_on_first_persist",
+        service,
+        "update_conversation_context_policy",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("postcommit context-policy write")
         ),
@@ -442,6 +445,151 @@ def test_promotion_persists_sparse_context_policy_inside_the_bundle(
     assert service.get_conversation_context_policy(conversation_id).overrides == (
         session.context_policy_overrides
     )
+    assert session.context_policy_durable_revision == 1
+
+
+@pytest.mark.parametrize("mode", (None, ContextCompactionMode.OFF))
+def test_promotion_staged_policy_publishes_its_postcommit_revision(
+    tmp_path, monkeypatch, mode
+):
+    db, service, store = _store(tmp_path, "staged-policy.db")
+    try:
+        session = store.create_session(ephemeral=True)
+        overrides = ConsoleContextPolicyOverrides(compaction_mode=mode)
+        store.set_session_context_policy_overrides(session.id, overrides)
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+        writes = []
+        original = service.update_conversation_context_policy
+
+        def recording_write(**kwargs):
+            writes.append((db.get_connection().in_transaction, kwargs))
+            return original(**kwargs)
+
+        def reject_bundle_write(*_args, **_kwargs):
+            pytest.fail("staged policy must use only the postcommit CAS writer")
+
+        monkeypatch.setattr(
+            service.context_repository, "save_policy", reject_bundle_write
+        )
+        monkeypatch.setattr(
+            service, "update_conversation_context_policy", recording_write
+        )
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert writes == [
+            (
+                False,
+                {
+                    "conversation_id": conversation_id,
+                    "overrides": overrides,
+                    "expected_revision": None,
+                },
+            )
+        ]
+        durable = service.get_conversation_context_policy(conversation_id)
+        assert durable.overrides == overrides
+        assert durable.revision == (None if mode is None else 1)
+        assert session.context_policy_durable_revision == durable.revision
+        assert session.settings_persistence_failures == {}
+    finally:
+        with db.quiesce_connections(timeout_seconds=2):
+            pass
+        assert db.registered_connection_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_promotion_staged_policy_failure_keeps_conversation_and_retries(
+    tmp_path, monkeypatch
+):
+    db, service, store = _store(tmp_path, "staged-policy-failure.db")
+    try:
+        session = store.create_session(ephemeral=True)
+        overrides = ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.OFF
+        )
+        store.set_session_context_policy_overrides(session.id, overrides)
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+        original = service.update_conversation_context_policy
+
+        def fail_write(**_kwargs):
+            raise RuntimeError("injected postcommit policy failure")
+
+        monkeypatch.setattr(service, "update_conversation_context_policy", fail_write)
+        conversation_id = store.promote_ephemeral_session(session.id)
+
+        assert session.ephemeral is False
+        assert session.persisted_conversation_id == conversation_id
+        assert _conversation_count(db) == 1
+        assert service.get_conversation_context_policy(
+            conversation_id
+        ).overrides.is_empty
+        assert session.context_policy_durable_revision is None
+        failure = session.settings_persistence_failures[
+            ConsoleSettingsComponent.CONTEXT_POLICY
+        ]
+        assert failure.revision == session.context_policy_revision
+        assert failure.context_policy_overrides == overrides
+
+        monkeypatch.setattr(service, "update_conversation_context_policy", original)
+        assert await store.retry_console_settings_persistence(
+            session_id=session.id,
+            component=ConsoleSettingsComponent.CONTEXT_POLICY,
+            revision=failure.revision,
+        )
+        durable = service.get_conversation_context_policy(conversation_id)
+        assert durable.overrides == overrides
+        assert durable.revision == session.context_policy_durable_revision == 1
+        assert session.settings_persistence_failures == {}
+        assert _conversation_count(db) == 1
+    finally:
+        with db.quiesce_connections(timeout_seconds=2):
+            pass
+        assert db.registered_connection_count() == 0
+
+
+@pytest.mark.parametrize("mode", (None, ContextCompactionMode.OFF))
+def test_promotion_inherited_fork_policy_owns_revision_for_subsequent_apply(
+    tmp_path, mode
+):
+    db, service, store = _store(tmp_path, "inherited-policy.db")
+    try:
+        source = store.create_session(
+            ephemeral=True,
+            settings=ConsoleSessionSettings(provider="openai", model="fixture"),
+        )
+        overrides = ConsoleContextPolicyOverrides(compaction_mode=mode)
+        store.set_session_context_policy_overrides(source.id, overrides)
+        message = store.append_message(
+            source.id, role=ConsoleMessageRole.USER, content="hello"
+        )
+        snapshot = store.stage_fork_snapshot(
+            store.issue_fork_fence(message.id),
+            title="Inherited policy",
+            fork_session_id="inherited-policy-fork",
+            fork_conversation_id=None,
+        )
+        fork = store.register_fork_snapshot(snapshot, activate=False)
+        assert fork.context_policy_revision == 0
+
+        conversation_id = store.promote_ephemeral_session(fork.id)
+
+        durable = service.get_conversation_context_policy(conversation_id)
+        assert durable.overrides == overrides
+        assert durable.revision == (None if mode is None else 1)
+        assert fork.context_policy_durable_revision == durable.revision
+        updated = ConsoleContextPolicyOverrides(
+            compaction_mode=ContextCompactionMode.ASK
+        )
+        _, persisted = store.set_session_context_policy_overrides(fork.id, updated)
+        assert persisted
+        durable = service.get_conversation_context_policy(conversation_id)
+        assert durable.overrides == updated
+        assert durable.revision == (1 if mode is None else 2)
+        assert fork.context_policy_durable_revision == durable.revision
+    finally:
+        with db.quiesce_connections(timeout_seconds=2):
+            pass
+        assert db.registered_connection_count() == 0
 
 
 def test_promotion_context_policy_failure_rolls_back_without_publication(

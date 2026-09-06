@@ -313,11 +313,8 @@ async def test_submit_refusal_never_invokes_accepted_hook():
 
 
 @pytest.mark.asyncio
-async def test_submit_success_still_invokes_accepted_hook_before_assistant_row():
-    """The Qodo-3 reorder must not regress the successful path: the hook
-    still fires exactly once, and still fires strictly before the
-    ASSISTANT placeholder is appended (store order stays
-    [USER, ..., ASSISTANT])."""
+async def test_submit_success_invokes_accepted_hook_after_owner_before_provider():
+    """Acceptance publishes its owner after skill trust, before provider entry."""
     skills = _Skills("inline")
     store = persisted_console_store()
     gateway = _RecordingGateway()
@@ -328,13 +325,22 @@ async def test_submit_success_still_invokes_accepted_hook_before_assistant_row()
         model="m",
         skills_service=skills,
     )
-    assistant_rows_seen_at_hook_time = []
+    hook_snapshots = []
 
     def _on_accepted():
         session_id = store.active_session_id
         messages = store.messages_for_session(session_id) if session_id else []
-        assistant_rows_seen_at_hook_time.append(
-            [m for m in messages if m.role is ConsoleMessageRole.ASSISTANT]
+        hook_snapshots.append(
+            {
+                "roles": tuple(message.role for message in messages),
+                "assistants": tuple(
+                    (message.id, message.status, message.content)
+                    for message in messages
+                    if message.role is ConsoleMessageRole.ASSISTANT
+                ),
+                "skill_executions": tuple(skills.executions),
+                "provider_calls": len(gateway.payloads),
+            }
         )
 
     controller.on_submission_accepted = _on_accepted
@@ -342,7 +348,21 @@ async def test_submit_success_still_invokes_accepted_hook_before_assistant_row()
     result = await controller.submit_draft("$code-review go")
 
     assert result.accepted is True
-    assert assistant_rows_seen_at_hook_time == [[]]
+    assert len(hook_snapshots) == 1
+    snapshot = hook_snapshots[0]
+    assert snapshot["roles"] == (
+        ConsoleMessageRole.USER,
+        ConsoleMessageRole.ASSISTANT,
+    )
+    assert snapshot["skill_executions"] == (("code-review", "go"),)
+    assert snapshot["provider_calls"] == 0
+    ((assistant_id, status, content),) = snapshot["assistants"]
+    assert status == "pending"
+    assert content == ""
+    completed = store.get_message(assistant_id)
+    assert completed.status == "complete"
+    assert completed.content == "reply"
+    assert len(gateway.payloads) == 1
 
 
 @pytest.mark.asyncio

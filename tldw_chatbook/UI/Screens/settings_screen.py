@@ -272,6 +272,13 @@ from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
 from ...Widgets.Settings_Widgets.tool_profiles_panel import ToolProfilesPanel
+if TYPE_CHECKING:
+    from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+        ToolPackImportOptions,
+    )
+    from ...Tool_Packs.contracts import ToolPackError
+    from ...Tool_Packs.service import ToolProfileListing
+
 from ...Widgets.enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave
 from ...Third_Party.textual_fspicker import Filters
 from ...Model_Artifacts.service import ArtifactRef
@@ -415,6 +422,103 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def activate_profile(profile_id: str) -> tuple[bool, str]:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import activate_profile as implementation
+
+    return implementation(profile_id)
+
+
+def active_profile_info() -> dict:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import active_profile_info as implementation
+
+    return implementation()
+
+
+def clone_profile_as(source_id: str, new_name: str) -> tuple[bool, str]:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import clone_profile_as as implementation
+
+    return implementation(source_id, new_name)
+
+
+def delete_user_profile(profile_id: str) -> tuple[bool, str]:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import delete_user_profile as implementation
+
+    return implementation(profile_id)
+
+
+def fetch_index_status() -> dict:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import fetch_index_status as implementation
+
+    return implementation()
+
+
+def get_profile_defaults(profile_id: str) -> SettingsLibraryRagDefaults | None:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import get_profile_defaults as implementation
+
+    return implementation(profile_id)
+
+
+def index_change_pending(values: SettingsLibraryRagDefaults) -> bool:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import index_change_pending as implementation
+
+    return implementation(values)
+
+
+def is_first_run_state(info: dict, grouped: dict, index_state: str) -> bool:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import is_first_run_state as implementation
+
+    return implementation(info, grouped, index_state)
+
+
+def list_profiles_grouped() -> dict:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import list_profiles_grouped as implementation
+
+    return implementation()
+
+
+def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile as implementation,
+    )
+
+    return implementation()
+
+
+def rename_user_profile(profile_id: str, new_name: str) -> tuple[bool, str]:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import rename_user_profile as implementation
+
+    return implementation(profile_id, new_name)
+
+
+def save_rag_defaults_to_active_profile(
+    values: SettingsLibraryRagDefaults,
+) -> tuple[bool, str]:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import (
+        save_rag_defaults_to_active_profile as implementation,
+    )
+
+    return implementation(values)
+
+
+def soft_config_warnings(values: SettingsLibraryRagDefaults) -> list[str]:
+    """Resolve the profile adapter on first use, retaining the Settings call seam."""
+    from .settings_rag_profile_adapter import soft_config_warnings as implementation
+
+    return implementation(values)
 
 
 def _personal_context_settings_panel_class() -> type["PersonalContextSettingsPanel"]:
@@ -4257,12 +4361,12 @@ class SettingsScreen(BaseAppScreen):
         """Inspect and explicitly activate a Tool Pack outside the event loop."""
         from ...Tool_Packs.activation import ToolPackActivationResult
         from ...Tool_Packs.contracts import ToolPackError
-        from ...Tool_Packs.importer import ToolPackImportReview
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
             ToolPackImportOptions,
             ToolPackImportOptionsModal,
             ToolPackImportReviewModal,
         )
+        from ...Tool_Packs.importer import ToolPackImportReview
 
         service = getattr(self.app_instance, "tool_pack_service", None)
         if service is None:
@@ -4292,7 +4396,7 @@ class SettingsScreen(BaseAppScreen):
             if archive_path.name.casefold().endswith(suffix)
             else archive_path.stem
         )
-        options: ToolPackImportOptions | None = ToolPackImportOptions(
+        options: "ToolPackImportOptions | None" = ToolPackImportOptions(
             default_id or "tool-profile"
         )
         try:
@@ -4363,12 +4467,12 @@ class SettingsScreen(BaseAppScreen):
         policy_digest: str | None,
     ) -> None:
         """Capture, review, and safely publish one immutable Tool Pack."""
-        from ...Tool_Packs.contracts import ToolPackError
-        from ...Tool_Packs.export import ToolPackExportReview
         from ...Tool_Packs.publication import (
             CapturedToolPackDestination,
             ToolPackPublicationResult,
         )
+        from ...Tool_Packs.contracts import ToolPackError
+        from ...Tool_Packs.export import ToolPackExportReview
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
             ToolPackExportReviewModal,
         )
@@ -23466,15 +23570,15 @@ class SettingsScreen(BaseAppScreen):
         profile_id: str | None,
     ) -> None:
         """Apply staged defaults, reviewing one imported first bind if required."""
+        from ...Tool_Packs.contracts import ToolPackError
         from ...Tool_Packs.binding import (
             ToolProfileBindingReview,
             ToolProfileConfirmationRequired,
         )
-        from ...Tool_Packs.contracts import ToolPackError
-        from ...Tool_Packs.service import ToolProfileListing
         from ...Widgets.Settings_Widgets.tool_pack_import_review import (
             ToolProfileFirstBindReviewModal,
         )
+        from ...Tool_Packs.service import ToolProfileListing
 
         intended = WorkspaceAssistantDefaults(
             assistant_kind="persona",

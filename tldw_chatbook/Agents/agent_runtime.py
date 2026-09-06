@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from loguru import logger
 
@@ -30,6 +30,9 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.model_capabilities import (
     moonshot_model_returns_reasoning_content,
 )
+
+if TYPE_CHECKING:
+    from .fallback_chain import FallbackRuntime
 
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). The
 # retry/fallback/projection helpers are loop-only dependencies, imported
@@ -411,7 +414,6 @@ class LoopDeps:
     load_schemas: Callable[[list[str], list[dict], ToolCall], ToolLoadSelection]
     should_cancel: Callable[[], bool]
     clock: Callable[[], float]
-    replace_disclosed_names: Callable[[frozenset[str]], None] = lambda names: None
     call_model_with_continuation: (
         Callable[
             [list, tuple, ProviderContinuationCheckpoint | None],
@@ -625,6 +627,9 @@ class LoopDeps:
     # projection as compatibility-safe and bypass the strict boundary below.
     # Appended to preserve legacy positional LoopDeps construction.
     has_tool_record_projection: Callable[[ToolCall], bool] = lambda _call: False
+    # Appended after every pre-existing field so the token-budgeted disclosure
+    # callback does not shift LoopDeps' legacy positional constructor slots.
+    replace_disclosed_names: Callable[[frozenset[str]], None] = lambda names: None
 
 
 

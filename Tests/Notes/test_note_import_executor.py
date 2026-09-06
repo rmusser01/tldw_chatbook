@@ -3427,28 +3427,43 @@ def test_target_internal_value_errors_are_fatal_and_baseexceptions_escape(
         target.read_note(note_id=_NOTE_ID)
 
 
+_EXPECTED_FAULT_CANARY = "NOTE-IMPORT-EXPECTED-FAULT-CANARY"
+
+
 @pytest.mark.parametrize(
     ("fault", "expected_type"),
     [
         (
-            FolderValidationError("private folder validation detail"),
+            FolderValidationError(f"{_EXPECTED_FAULT_CANARY} folder validation detail"),
             ImportTargetPermanentError,
         ),
         (
             FolderCapabilityError(
-                reason_code="private-reason",
-                user_message="private folder capability detail",
+                reason_code=f"{_EXPECTED_FAULT_CANARY}-reason",
+                user_message=f"{_EXPECTED_FAULT_CANARY} folder capability detail",
             ),
             ImportTargetPermanentError,
         ),
         (
-            CharactersRAGDBError("private database detail"),
+            CharactersRAGDBError(f"{_EXPECTED_FAULT_CANARY} database detail"),
             ImportTargetPermanentError,
         ),
-        (sqlite3.OperationalError("private SQL detail"), ImportTargetPermanentError),
-        (sqlite3.IntegrityError("private integrity detail"), ImportTargetConflictError),
-        (FolderCollisionError("private collision detail"), ImportTargetConflictError),
-        (FolderConflictError("private conflict detail"), ImportTargetConflictError),
+        (
+            sqlite3.OperationalError(f"{_EXPECTED_FAULT_CANARY} SQL detail"),
+            ImportTargetPermanentError,
+        ),
+        (
+            sqlite3.IntegrityError(f"{_EXPECTED_FAULT_CANARY} integrity detail"),
+            ImportTargetConflictError,
+        ),
+        (
+            FolderCollisionError(f"{_EXPECTED_FAULT_CANARY} collision detail"),
+            ImportTargetConflictError,
+        ),
+        (
+            FolderConflictError(f"{_EXPECTED_FAULT_CANARY} conflict detail"),
+            ImportTargetConflictError,
+        ),
     ],
 )
 def test_target_expected_faults_keep_their_item_level_translation(
@@ -3469,9 +3484,10 @@ def test_target_expected_faults_keep_their_item_level_translation(
 
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
-    assert "private" not in str(caught.value)
-    assert "private" not in repr(caught.value)
-    assert "private" not in "".join(
+    assert _EXPECTED_FAULT_CANARY not in str(caught.value)
+    assert _EXPECTED_FAULT_CANARY not in repr(caught.value)
+    # A traceback's source paths may legitimately include /private (macOS).
+    assert _EXPECTED_FAULT_CANARY not in "".join(
         traceback.format_exception(
             type(caught.value), caught.value, caught.value.__traceback__
         )

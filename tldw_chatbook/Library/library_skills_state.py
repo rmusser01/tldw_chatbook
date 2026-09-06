@@ -92,6 +92,23 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # entry above.
         "wait_agents",
         "check_agents",
+        # Current worktree/managed-skill tools and Console commands caught
+        # by the same four-source drift guard (TASK-31911).
+        "discard_agent_worktree",
+        "merge_agent_worktree",
+        "prepare_managed_skill_promotion",
+        "context",
+        "doctor",
+        "emergency-stop",
+        "help",
+        "model",
+        "new",
+        "redirect",
+        "sessions",
+        "settings",
+        "steer",
+        "temp",
+        "workspace",
         # task-580: console commands from the /rewind and image-generation
         # features. These were added to the command registry without updating
         # this set, so the drift guard below failed and was carried as an

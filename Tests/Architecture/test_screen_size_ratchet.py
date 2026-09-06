@@ -74,7 +74,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: compatibility methods and keeps fork state behind the message controller;
 #: the final merged tree measures 16,966/563.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16966, 563),
+    # TASK-31750.1: citation eligibility joins the existing message owner.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16811, 505),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -563,7 +564,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # AST method-name set on `LibraryScreen` is identical at the merge-base
     # and at `origin/dev` (measured, not assumed -- both directions of the set
     # difference are empty), so dev's extraction added and removed no name.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37537, 1282),
+    # 2026-09-06, TASK-31932: combined Prompts + Media/Reader/assembly moves,
+    # measured after rebase onto c4d45c0926; retain both waves' reduction.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36109, 1260),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

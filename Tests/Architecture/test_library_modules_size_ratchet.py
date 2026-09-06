@@ -145,10 +145,13 @@ _BUDGETS: dict[str, int] = {
     # counts (`len(path.read_text(encoding="utf-8").splitlines())`, this
     # file's own `_measure` expression), no headroom.
     "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 502,
+    # TASK-31735 (2026-09-05): unchanged ordered construction moved out of screen.
+    "tldw_chatbook/UI/Library_Modules/wiring.py": 338,
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 943,
-    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1738,
+    # 2026-09-06, TASK-31932: lock in the merged dev controller's measured size.
+    "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1686,
     "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1307,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -228,6 +231,10 @@ _BUDGETS: dict[str, int] = {
     # total including `self` and `screen`). No other body touched; 56 movers
     # unchanged. 2623 -> 2721.
     "tldw_chatbook/UI/Library_Modules/library_ingest_controller.py": 2721,
+    # 2026-09-05, task-31648: media analysis ownership extracted from Library.
+    "tldw_chatbook/UI/Library_Modules/library_media_analysis_controller.py": 868,
+    # 2026-09-05, task-31649: Reader search/progress ownership extracted.
+    "tldw_chatbook/UI/Library_Modules/library_media_reader_controller.py": 766,
     "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py": 371,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
@@ -370,7 +377,7 @@ _BUDGETS: dict[str, int] = {
     # cousin" framing (the getattr/focused escape is that shape's own
     # sub-case -- the seventh instance counted under it -- not an eighth/
     # new shape), +3 lines. Net 3140 -> 3142.
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3142,
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3139,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
