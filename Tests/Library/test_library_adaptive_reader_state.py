@@ -629,13 +629,20 @@ def test_media_items_column_grows_once_the_reader_is_comfortable(
 
 @pytest.mark.parametrize("custom_items_width", [32, 34, 48])
 @pytest.mark.parametrize("width", [160, 235])
-def test_a_typed_custom_items_width_is_obeyed_rather_than_grown(
+def test_a_typed_custom_items_width_is_obeyed_by_the_growth_gate(
     width: int, custom_items_width: int
 ) -> None:
     """Settings > Appearance > Custom widths is a hand-typed number.
 
-    "Automatic" adapts; "Custom" obeys. Without the gate the typed value was
-    silently overridden above ~130 columns (review Important 1).
+    "Automatic" adapts; "Custom" obeys. Without the `list_grows` gate the
+    typed value was silently overridden above ~130 columns (review
+    Important 1).
+
+    Scope: the `list_grows` gate only, with BOTH panes open. It does NOT
+    cover the two comfort clamps, which still widen a typed width once the
+    Library pane is gone -- see
+    `test_a_typed_custom_items_width_is_still_widened_once_the_library_closes`
+    for what those actually do, and why.
     """
     custom = MediaReaderLayoutPreferences(
         custom_widths_enabled=True,
@@ -648,6 +655,36 @@ def test_a_typed_custom_items_width_is_obeyed_rather_than_grown(
 
     assert grown.items_width == custom_items_width
     assert grown == ungrown
+
+
+@pytest.mark.parametrize("priority", [None, "items"])
+def test_a_typed_custom_items_width_is_still_widened_once_the_library_closes(
+    priority: str | None,
+) -> None:
+    """task-31953: the comfort clamps are NOT gated on custom widths.
+
+    Decision: documented, not changed. TWO clamps widen a typed width once
+    the Library pane is gone -- the library-closed clamp in
+    `adaptive_reader_state.py` (`if items_open and not library_open`) and the
+    priority-pane clamp above it -- so "obey the typed width" is not the
+    one-line change this test-debt rider is scoped to, and
+    `test_resolution_never_mutates_saved_preferences` already pins one of the
+    widened values (a typed 40 resolves to 56). Changing it is a
+    user-visible width change on all four reader surfaces; it needs its own
+    task. This pin records what the resolver does today so the next reader
+    change is not blamed for it.
+    """
+    custom = MediaReaderLayoutPreferences(
+        custom_widths_enabled=True,
+        library_width=31,
+        items_width=32,
+    )
+
+    layout = resolve_media_reader_layout(100, custom, priority=priority)
+
+    # A typed 32 paints 52: 100 cells less the two one-cell grips and the
+    # 46-cell Reader minimum.
+    assert (layout.library_open, layout.items_width) == (False, 52)
 
 
 def test_media_items_column_is_wider_at_235_than_at_100() -> None:

@@ -326,6 +326,11 @@ def resolve_adaptive_reader_layout(
     library_width = requested_library_width if library_open else 0
     items_width = preferences.items_width if items_open else 0
     if items_open and not library_open:
+        # task-31953: this clamp is deliberately NOT gated on
+        # `custom_widths_enabled` -- with the Library pane gone a typed 32
+        # still widens to the comfort ceiling (52 at width 100 on Media), as
+        # does the priority-pane clamp above. Documented, not changed; see
+        # `test_a_typed_custom_items_width_is_still_widened_once_the_library_closes`.
         comfort_width = max(
             items_width,
             min(profile.list_comfort_width, profile.list_max_width),

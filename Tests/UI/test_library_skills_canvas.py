@@ -77,6 +77,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _FakeSkillsScopeService,
     _active_library_screen,
+    _wait_for_condition,
     _wait_for_library_shell,
 )
 from Tests.UI.app_factory import _build_test_app as _build_shared_test_app
@@ -1664,15 +1665,29 @@ async def test_library_skills_items_priority_floor_moves_with_the_grip_width(
             AsyncMock(),
         )
         screen.query_one("#library-row-browse-skills").press()
-        shell = None
-        for _ in range(200):
-            await pilot.pause(0.01)
-            found = screen.query("#library-skills-reader-shell")
-            if found and found.first().effective_layout.reader_width:
-                shell = found.first()
-                break
 
-        assert shell is not None and shell.region.width == width
+        def _painted() -> bool:
+            # task-31953: anchor on the PAINTED Items width, not on
+            # `effective_layout.reader_width` alone -- the layout field lands
+            # a frame before the shell re-lays out its panes, so breaking on
+            # it read `items.region.width == 0` about one run in nine.
+            found = screen.query("#library-skills-reader-shell")
+            if not found:
+                return False
+            candidate = found.first()
+            return bool(
+                candidate.effective_layout.reader_width
+                and candidate.items.region.width == items_width
+            )
+
+        await _wait_for_condition(
+            pilot,
+            _painted,
+            message="Skills reader shell never painted the expected Items width.",
+        )
+        shell = screen.query_one("#library-skills-reader-shell")
+
+        assert shell.region.width == width
         assert shell.effective_layout.items_open is items_open
         assert shell.effective_layout.items_width == items_width
         assert shell.items.region.width == items_width
