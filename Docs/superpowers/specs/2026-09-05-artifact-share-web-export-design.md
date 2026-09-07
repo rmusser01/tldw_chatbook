@@ -195,3 +195,11 @@ Deviations from the design text above, discovered during implementation:
   completion (or named-artifact failure) arrives via the completion
   notification; there is no intermediate progress surface.
 
+- **Deferred controller creation and sweep timing (CI boot-budget, ADR-097):**
+  the controller is created — and the stale-share startup sweep runs — on the
+  first share interaction, not during app boot. Importing the Web_Server share
+  chain at boot breaches `MAX_TLDW_MODULES_AT_UI_READY` (972), whose policy is
+  that the budget never rises and new imports must be deferred. The sweep
+  therefore still runs before any new share can start; only its timing moved.
+- **Task numbering:** the backlog task for this feature is task-31978; the
+  original task-31758 was renumbered after dev claimed the number.

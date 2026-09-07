@@ -9,7 +9,7 @@
 **Tech Stack:** Python ≥3.11, aiohttp (existing `[web]` extra — **no new dependencies**), pydantic, Textual 8.2.8 (`SelectionList`, `ModalScreen`), pytest with `pytest-asyncio` auto mode.
 
 **Spec:** `Docs/superpowers/specs/2026-09-05-artifact-share-web-export-design.md` (read it first — the plan argues from it)
-**Backlog task:** TASK-31758 (`backlog/tasks/task-31758 - Add-artifact-share-web-export-from-Artifacts-screen.md`)
+**Backlog task:** TASK-31978 (`backlog/tasks/task-31978 - Add-artifact-share-web-export-from-Artifacts-screen.md`)
 **ADR:** `backlog/decisions/123-artifact-share-web-export.md` (Task 1)
 
 ## Global Constraints
@@ -2178,11 +2178,11 @@ git commit -m "feat(ui): wire artifact share into Artifacts screen and app lifec
 **Files:**
 - Modify: `Docs/User_Guide/artifacts.md`
 - Modify: `Docs/superpowers/specs/2026-09-05-artifact-share-web-export-design.md` (only if implementation deviated)
-- Modify: `backlog/tasks/task-31758 - Add-artifact-share-web-export-from-Artifacts-screen.md`
+- Modify: `backlog/tasks/task-31978 - Add-artifact-share-web-export-from-Artifacts-screen.md`
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: updated docs; TASK-31758 moved toward Done (implementation notes recorded).
+- Produces: updated docs; TASK-31978 moved toward Done (implementation notes recorded).
 
 - [ ] **Step 1: Extend the user guide**
 
@@ -2190,9 +2190,9 @@ Append a "Sharing artifacts" section to `Docs/User_Guide/artifacts.md` (currentl
 
 - [ ] **Step 2: Record any deviations**
 
-If implementation deviated from the spec (e.g. footer-hint tuple shape forced a change, or a test idiom differed), update the spec's relevant lines and note the deviation in TASK-31758's Implementation Notes — do not silently diverge.
+If implementation deviated from the spec (e.g. footer-hint tuple shape forced a change, or a test idiom differed), update the spec's relevant lines and note the deviation in TASK-31978's Implementation Notes — do not silently diverge.
 
-- [ ] **Step 3: Close out TASK-31758**
+- [ ] **Step 3: Close out TASK-31978**
 
 Update the backlog task: check off acceptance criteria that the tests demonstrate, add the Implementation Plan reference (`Docs/superpowers/plans/2026-09-05-artifact-share-web-export.md`), add Implementation Notes (approach, modified/added files, deviations), and record the ADR check:
 
@@ -2220,7 +2220,7 @@ Expected: all PASS. Do not run the full suite (repo rule: ask first).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Docs/User_Guide/artifacts.md "backlog/tasks/task-31758 - Add-artifact-share-web-export-from-Artifacts-screen.md"
+git add Docs/User_Guide/artifacts.md "backlog/tasks/task-31978 - Add-artifact-share-web-export-from-Artifacts-screen.md"
 git commit -m "docs: document artifact sharing and close out task notes"
 ```
 

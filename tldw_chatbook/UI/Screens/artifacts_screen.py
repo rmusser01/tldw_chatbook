@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from html import escape as html_escape
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from rich.console import Group
@@ -48,7 +48,6 @@ from ...Third_Party.textual_fspicker import FileSave
 from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.path_validation import validate_path_simple
-from ...Web_Server.artifact_share import ArtifactShareError, ShareStatus
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -57,8 +56,13 @@ from ..Navigation.pending_handoff_store import (
     HandoffChannel,
     HandoffClaim,
 )
-from .artifact_share_dialog import ArtifactShareDialog
 from .destination_recovery import DestinationRecoveryState
+
+if TYPE_CHECKING:
+    # Import-time cost matters: the share chain pulls the whole Web_Server
+    # module set, and the UI-ready module census ratchets against exactly
+    # that growth (ADR-097). Import share pieces lazily at call sites.
+    from ...Web_Server.artifact_share import ShareStatus
 
 
 logger = logger.bind(module="ArtifactsScreen")
@@ -1226,6 +1230,11 @@ class ArtifactsScreen(BaseAppScreen):
                 "warning",
             )
             return
+        # First share interaction materializes the app-owned controller
+        # (deferred import chain keeps the UI-ready module census in budget).
+        ensure_controller = getattr(self.app_instance, "_get_artifact_share_controller", None)
+        if callable(ensure_controller):
+            ensure_controller()
         self._share_dialog_worker = self._run_share_dialog_open()
 
     def _share_dialog_publish_allowed(self, generation: int) -> bool:
@@ -1261,6 +1270,8 @@ class ArtifactsScreen(BaseAppScreen):
             notice = "A share is already running; starting a new one will stop it."
         if not self._share_dialog_publish_allowed(generation):
             return
+        from .artifact_share_dialog import ArtifactShareDialog
+
         dialog = ArtifactShareDialog(records, active_share_notice=notice)
         self.app.call_from_thread(
             self.app.push_screen, dialog, self._on_share_dialog_result
@@ -1273,6 +1284,8 @@ class ArtifactsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True, group="artifacts-share-start")
     def _start_share(self, options: dict) -> None:
+        from ...Web_Server.artifact_share import ArtifactShareError
+
         controller = getattr(self.app_instance, "artifact_share_controller", None)
         if controller is None:
             self.app.call_from_thread(

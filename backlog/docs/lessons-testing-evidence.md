@@ -3479,7 +3479,7 @@ or Textual will reject the duplicate even when the route signature matches.
 
 ## Adding a resource of a GUARDED KIND obliges you to run that kind's inventory suite, not just your feature's tests
 
-**Follow-up incident (TASK-31758 / PR #2437, 2026-09-05).** Forty-five
+**Follow-up incident (TASK-31978 / PR #2437, 2026-09-05).** Forty-five
 pixel-migu seed, resource, and installed-distribution checks passed after a
 rebase, but the required generated-artifact job still failed: two new startup
 diagnostics in `app.py` and `config.py` were absent from the production
@@ -13281,6 +13281,7 @@ The same trap sits behind `./scripts/preflight.sh | tail` — a known previous
 incident in this repo, and the reason preflight is always run bare.
 
 ## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31758, 2026-09-05)
+## Plan-embedded code rots against the installed library; only implementer-run RED catches it (TASK-31978, 2026-09-05)
 
 The artifact-share SDD plan embedded near-verbatim implementation and test
 code authored against pinned-at-plan-time versions, and both sides rotted

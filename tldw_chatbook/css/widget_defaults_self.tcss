@@ -778,6 +778,19 @@
 
 
 
+/* ===== WIDGET: ArtifactShareDialog (UI/Screens/artifact_share_dialog.py) ===== */
+
+    ArtifactShareDialog { align: center middle; background: $background 70%; }
+    ArtifactShareDialog > VerticalScroll {
+        width: 76; max-width: 96%; height: auto; max-height: 90%;
+        background: $surface; border: solid $primary; padding: 1 2;
+    }
+    ArtifactShareDialog Input, ArtifactShareDialog RadioSet, ArtifactShareDialog SelectionList {
+        margin-bottom: 1;
+    }
+    ArtifactShareDialog #share-dialog-status { color: $warning; }
+
+
 /* ===== WIDGET: ChatScreen (UI/Screens/chat_screen.py) ===== */
 
     ChatScreen ToastRack {

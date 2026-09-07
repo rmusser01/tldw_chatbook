@@ -10210,13 +10210,10 @@ class TldwCli(
         self.local_chatbook_service = LocalChatbookService(
             self._build_chatbook_db_paths()
         )
-        from .Web_Server.artifact_share import ArtifactShareController
-
-        self.artifact_share_controller = ArtifactShareController()
-        try:
-            self.artifact_share_controller.startup_sweep()
-        except Exception as exc:
-            logger.warning(f"Artifact share startup sweep failed: {exc}")
+        # ArtifactShareController is created lazily on first share use via
+        # _get_artifact_share_controller(): importing its module chain at boot
+        # breaches the UI-ready module census ratchet (ADR-097 — the budget
+        # never rises; new imports must be deferred).
         self.server_chatbook_service = (
             ServerChatbookService.from_server_context_provider(
                 self.server_context_provider,
@@ -18272,6 +18269,25 @@ class TldwCli(
             # Diagnostics must never be the reason a crash handler fails.
             pass
         super()._handle_exception(error)
+
+    def _get_artifact_share_controller(self):
+        """Return the app-owned share controller, creating it on first use.
+
+        Creation (and the stale-share startup sweep) is deferred to the first
+        share interaction so the Web_Server import chain stays off the boot
+        path and inside the UI-ready module census budget (ADR-097).
+        """
+        controller = getattr(self, "artifact_share_controller", None)
+        if controller is None:
+            from .Web_Server.artifact_share import ArtifactShareController
+
+            controller = ArtifactShareController()
+            self.artifact_share_controller = controller
+            try:
+                controller.startup_sweep()
+            except Exception as exc:
+                logger.warning(f"Artifact share startup sweep failed: {exc}")
+        return controller
 
     def _shutdown_artifact_share(self) -> None:
         """Stop any running artifact share; safe to call repeatedly."""
