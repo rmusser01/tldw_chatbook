@@ -604,6 +604,17 @@ returns `OPENED` after the exact destination is current and visible or rolls
 back to the unchanged prior Console state and returns `FAILED`; partial target
 changes are not an outcome.
 
+For a retained switcher, ADR-120 defines a request-owned presentation completion:
+the canonical mutation lane proves the exact prepared Console immediately under
+that same live overlay, synchronously consumes/dismisses its matching committed
+completion, and then checks the ordinary exposed destination before returning
+public `OPENED`. No await separates those checks and dismissal. Request, mount,
+query, cancellation, stack position and screen-change epoch fence this exception;
+ordinary callers remain strict. Successful dismissal leaves composer focus and
+cannot restore the old Context opener. Refusal before pop preserves the modal;
+exceptional post-pop stack changes use owned rollback without recreating source
+overlays. This removes the circular exposed-before-dismiss requirement.
+
 The total transition/recovery contract is:
 
 | State/event | Opener result | Next presentation | Focus/action |
@@ -621,6 +632,32 @@ Retry or Refresh transitions back through Idle with a new generation; Open
 Library dismisses only after Library accepts the immutable context. Every
 failure/cancellation restores query, stable highlight, scroll, and the specified
 focus. `OPENED` alone dismisses directly to Console.
+
+Task5 admission correction (2026-09-06): Library acceptance means that its
+existing bounded local locator and save guards have prepared the exact
+inspection, not merely that the app owns a Library screen. The source visit
+remains mounted and cancellable during preparation. The existing app navigation
+owner fences cancellation and stale identity before a one-way commit that
+installs the prepared Library route and reader selection, then transfers the
+screen. Cold mount consumes that prepared selection without a second admission
+race. Later transcript rendering remains a separate Library operation. Generic
+late synchronous screen-switch rollback is outside this narrow correction;
+admission rejection and precommit cancellation are not excluded. See ADR-120's
+Task5 admission correction. Repair authority and Context Character return
+origins are unchanged.
+
+Task5 failed-transfer correction (2026-09-07): retain a Library-owned receipt
+through the app's ownership decision. A failed transfer without destination
+ownership restores only the exact inspection commit's changed retained state,
+including nested Notes phase and pending marker, if destination identities,
+monotonic navigation/page generations, reader identity and installed state still
+match. Newer Library work is never overwritten; stale completion removes only
+its own still-identical prepared marker. Completed saves and generations are
+not rolled back. Partial synchronous commit failure restores immediately;
+once stack ownership is acquired, later failures do not restore the old view.
+Finalize or rollback releases the request's lease exactly once. This is
+destination-only rollback, not recreation of a dismissed source or global stack.
+See ADR-120's failed-transfer correction.
 
 User-visible failures say `Conversation no longer exists`, `Profile changed`,
 `Character unavailable`, or `Could not open chat`; technical authority details
@@ -1305,8 +1342,9 @@ The programme is complete when:
 11. A painted result list never reorders silently. Meaning may become the first
     paint; later results require the visible apply action and preserve stable
     selection.
-12. The switcher stays mounted through typed cancellable activation and closes
-    only after the exact destination is current and visible.
+12. The switcher stays mounted through typed cancellable activation; ADR-120's
+    synchronous owned presentation completion reveals the exact prepared target,
+    and public `OPENED` follows strict exposed-destination proof.
 13. Partial or stale index generations never affect ranking, and authoritative
     deletion or identity invalidation takes effect before asynchronous cleanup.
 14. The specified first-use, identity, race, scale, latency, memory, keyboard,

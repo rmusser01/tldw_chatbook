@@ -168,6 +168,53 @@ def mix_int16(a: bytes, b: bytes) -> bytes:
     return np.clip(x + y, -32768, 32767).astype(np.int16).tobytes()
 
 
+def select_mic_device(recorder: Any, name: str) -> bool:
+    """Point `recorder` at the microphone the user chose, by name.
+
+    Enumeration returns names while ``set_device`` wants an id, so the name
+    is resolved against the recorder's own device list. A name that no longer
+    resolves is NOT silently downgraded to the system default: recording the
+    wrong microphone is worse than refusing (same rule as ``DeviceTap``) --
+    for a whole meeting, and equally for a voice enrollment, which would
+    otherwise build a voiceprint from a different input channel than the
+    meetings it is matched against (TASK-31826 review I5).
+
+    Args:
+        recorder: An `AudioRecordingService`-shaped object.
+        name: The configured microphone's device name.
+
+    Returns:
+        True when the device was found AND the recorder accepted it. A
+        recorder that answers `False` (`AudioRecordingService.set_device`
+        validates the id against its own live enumeration, and refuses while
+        recording) is refused here too, rather than reported as selected and
+        left to fail in the recording thread -- or, worse, to record the
+        default input for a whole meeting (Qodo review 6).
+    """
+    try:
+        devices = list(recorder.get_audio_devices())
+    except Exception as exc:  # noqa: BLE001 - treated as "cannot resolve"
+        # Type only (final review Minor 11): a backend's enumeration error
+        # can quote the device it choked on, and the rule three lines below
+        # -- audio devices are routinely named after their owner -- applies
+        # just as much to a failure as to a miss.
+        logger.warning("Meeting microphone enumeration failed ({})", type(exc).__name__)
+        devices = []
+    for device in devices:
+        if str(device.get("name", "")) == name:
+            # `is not False`, not truthiness: a recorder that returns nothing
+            # has no verdict to honour, and every fake in the tree predates
+            # this contract. Only an explicit refusal refuses.
+            if recorder.set_device(device.get("id", device.get("index"))) is not False:
+                return True
+            logger.warning("the configured meeting microphone was rejected by the recorder")
+            return False
+    # The device NAME stays out of the log: audio devices are routinely
+    # named after their owner ("<Name>'s AirPods"), and the user picked it.
+    logger.warning("the configured meeting microphone was not found; not falling back to the default input")
+    return False
+
+
 def _default_vad_factory():
     import webrtcvad
 
@@ -279,13 +326,11 @@ class MeetingCapture:
         return True if started else self._abandon_start()
 
     def _select_mic_device(self, name: str) -> bool:
-        """Point the recorder at the microphone the user chose, by name.
+        """Select the configured microphone; records the failure as a fault.
 
-        Enumeration returns names while ``set_device`` wants an id, so the
-        name is resolved against the recorder's own device list. A name that
-        no longer resolves is NOT silently downgraded to the system default:
-        recording the wrong microphone for a whole meeting is worse than
-        refusing to start (same rule as ``DeviceTap``).
+        The lookup itself is `select_mic_device` (shared with explicit voice
+        enrollment); this only adds the capture-level fault the caller
+        reports, since the device NAME must stay out of the log.
 
         Args:
             name: The configured microphone's device name.
@@ -293,19 +338,8 @@ class MeetingCapture:
         Returns:
             True when the device was found and selected.
         """
-        try:
-            devices = list(self._mic.get_audio_devices())
-        except Exception as exc:  # noqa: BLE001 - treated as "cannot resolve"
-            logger.warning("Meeting microphone enumeration failed: {}", exc)
-            devices = []
-        for device in devices:
-            if str(device.get("name", "")) == name:
-                self._mic.set_device(device.get("id", device.get("index")))
-                return True
-        # The device NAME stays out of the log: audio devices are routinely
-        # named after their owner ("<Name>'s AirPods"), and the user picked
-        # it -- `self.fault` carries it to the caller instead.
-        logger.warning("the configured meeting microphone was not found; not falling back to the default input")
+        if select_mic_device(self._mic, name):
+            return True
         self.fault = LookupError(f"microphone {name!r} not found")
         return False
 

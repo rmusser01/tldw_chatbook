@@ -1252,15 +1252,12 @@ ConsoleRunLogModal {
     min-width: 0;
 }
 
-/* The three width declarations are a fallback only: every mounted grip sets
-   its width as an INLINE style from its destination profile's `grip_width`
-   (task-31633 AC#2), and an inline style outranks this rule -- so for Media,
-   whose grips are one cell, these three lines are dead. Keep them in step
-   with `PANE_GRIP_WIDTH` (the shared default every other reader uses). */
+/* No width here (task-31952 AC#1). Every mounted grip sets its width as an
+   INLINE style from the resolved layout's `grip_width` -- the same number the
+   resolver held back for it -- and an inline style outranks this rule, so the
+   `width/min-width/max-width: 5` fallback that used to sit here was dead for
+   every destination and a second, stale answer for the four on one cell. */
 .library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {
-    width: 5;
-    min-width: 5;
-    max-width: 5;
     height: 100%;
     min-height: 0;
     margin: 0;
@@ -1285,7 +1282,8 @@ ConsoleRunLogModal {
 }
 
 /* task-31276: no focus outline here. The grip is as TALL AS THE SHELL (5
-   columns wide then, one for Media since task-31633 AC#2), so an outline can
+   columns wide then, one on the four readers that opted in since task-31633
+   AC#2 and task-31951), so an outline can
    only ever paint its top and bottom rows -- and the top row sits on the
    Reader's identity line, where such a rule reads as a rendering artifact at
    the pane join, not as focus (live: `┐─────Local Media item`, 14 captures -- and it persists,
@@ -4730,6 +4728,45 @@ ConsoleTerminalWorkspace Button:focus {
     text-style: bold underline;
 }
 
+/* Keep focused search one row. */
+#console-switcher-query,
+#console-switcher-query:focus {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    border: none;
+    outline: none;
+    padding: 0;
+}
+
+#console-switcher-query:focus,
+.console-switcher-result-candidate {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+#console-switcher-query:focus {
+    border-left: thick $ds-action-focus;
+    text-style: bold;
+}
+
+#console-switcher-modal {
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-switcher-scope,
+#console-switcher-selected-detail,
+#console-switcher-page-status,
+#console-switcher-hints {
+    color: $ds-text-muted;
+}
+
+.console-switcher-result-error {
+    border-left: solid $ds-status-error;
+}
+
 /* TASK-31429 (Qodo review on PR #2393): the conversation row IS the Button
    (`_conversation_button`), so the former descendant form
    `.console-workspace-conversation-row Button:focus` matched nothing. Target
@@ -4871,6 +4908,7 @@ ConsoleTerminalWorkspace Button:focus {
 .console-character-group,
 .console-character-row,
 .console-character-action,
+#console-character-query-handoff,
 #console-character-retry,
 #console-character-open-roleplay {
     width: 100%;
@@ -7634,6 +7672,29 @@ ChatScreen.-focus #console-workbench-header {
     min-width: 0;
 }
 
+
+/* Meetings rail: the voice rows (TASK-31826). Class-keyed on purpose -- an
+   `#id Button` rule would be an ancestor-scoped bare-type subject, which the
+   Perf Guard CSS ratchet counts.
+
+   A Textual container defaults to `height: 1fr`, so these blocks split the
+   rail's leftover rows between them and collapsed to one row (the offer's
+   three answer buttons were clipped out of the compositor entirely at
+   100x30 -- review C1). Sizing them to their content instead lets the rail's
+   VerticalScroll do the work. */
+.meetings-rail-block,
+.meetings-rail-actions {
+    height: auto;
+}
+
+/* Same treatment `.console-retrieval-scope-action` needed (TASK-24607):
+   `width: auto` alone does not shrink a Button, its DEFAULT_CSS carries
+   `min-width: 16`. Four 16-column buttons need 65 columns; the rail is half
+   a workbench, so "Import…" was clipped to one column at 100 (review I4). */
+.meetings-rail-button {
+    width: auto;
+    min-width: 0;
+}
 
 #artifacts-workbench,
 #personas-workbench,

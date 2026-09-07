@@ -36,7 +36,7 @@ classifiers = [
 
 # --- Dependencies ---
 dependencies = [
-    "chardet",
+    "chardet>=3.0.2,<6",
     "httpx",
     "loguru",
     "textual==8.2.8",  # exact pin: UI framework, bump deliberately (TASK-1353)

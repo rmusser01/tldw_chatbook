@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
 from enum import Enum
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+    CharacterConversationRow,
+    LocalCharacterConversationTarget,
+    UnresolvedConversationKey,
+)
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
     ReverseKey,
@@ -22,10 +28,11 @@ CONSOLE_SWITCHER_PAGE_LIMIT = 50
 
 
 class SwitcherMode(str, Enum):
-    """The two bounded views owned by the Ctrl+K switcher."""
+    """The three bounded views owned by the Ctrl+K switcher."""
 
     ACTIVE = "active"
     HISTORY = "history"
+    CHARACTER_CHATS = "character_chats"
 
 
 class ActivityGroup(str, Enum):
@@ -98,7 +105,7 @@ class ConsoleSwitcherActivitySignal:
 class ConsoleSwitcherHistoryPage:
     """One bounded persisted-conversation History page."""
 
-    entries: tuple["ConsoleSwitcherEntry", ...]
+    entries: tuple[ConsoleSwitcherEntry, ...]
     offset: int
     limit: int
     total: int
@@ -128,6 +135,78 @@ class ConsoleSwitcherHistoryQuery:
     can_match: bool = True
 
 
+@dataclass(frozen=True)
+class ConsoleSwitcherCharacterResult:
+    """One immutable local Character-chat result presented by Ctrl+K."""
+
+    row_key: str
+    target: LocalCharacterConversationTarget | None
+    unresolved: UnresolvedConversationKey | None
+    character_label: str
+    title: str
+    relative_time: str
+    absolute_time: str
+    selected_excerpt: str
+
+    def __post_init__(self) -> None:
+        if (self.target is None) == (self.unresolved is None):
+            raise ValueError("character result must be resolved or unresolved")
+
+    @property
+    def stable_result_key(self) -> str:
+        """Return the repository-owned stable row identity."""
+
+        return self.row_key
+
+
+def build_console_character_results(
+    rows: Iterable[CharacterConversationRow],
+    *,
+    now: datetime | None = None,
+    limit: int = CONSOLE_SWITCHER_PAGE_LIMIT,
+) -> tuple[ConsoleSwitcherCharacterResult, ...]:
+    """Project Character-chat rows without changing repository page order.
+
+    Args:
+        rows: Repository-ordered rows; the first occurrence of each identity wins.
+        now: Reference clock for relative ages, defaulting to the current time.
+        limit: Maximum number of unique rows to return; nonpositive means empty.
+
+    Returns:
+        Immutable rows retaining exact identities and safe selected excerpts.
+    """
+
+    reference_now = now or datetime.now(UTC)
+    bounded: dict[str, CharacterConversationRow] = {}
+    for row in rows:
+        if row.row_key and row.row_key not in bounded:
+            bounded[row.row_key] = row
+
+    results: list[ConsoleSwitcherCharacterResult] = []
+    for row in list(bounded.values())[: max(0, int(limit))]:
+        instant = _parse_instant(row.last_modified)
+        absolute = (
+            f"Updated {instant.astimezone().strftime('%Y-%m-%d %H:%M %Z')}"
+            if instant is not None
+            else "Updated time unavailable"
+        )
+        results.append(
+            ConsoleSwitcherCharacterResult(
+                row_key=row.row_key,
+                target=row.target,
+                unresolved=row.unresolved,
+                character_label=row.character_label,
+                title=row.title,
+                relative_time=format_console_relative_age(
+                    row.last_modified, now=reference_now
+                ),
+                absolute_time=absolute,
+                selected_excerpt=row.selected_excerpt,
+            )
+        )
+    return tuple(results)
+
+
 class _ConsoleHistoryTimezoneConfig(BaseModel):
     """Strict configuration boundary for an optional explicit IANA timezone."""
 
@@ -141,7 +220,9 @@ class _ConsoleHistoryTimezoneConfig(BaseModel):
         if value is None:
             return None
         if not isinstance(value, str):
-            raise ValueError("configured_name must be text or None")
+            raise ValueError(  # noqa: TRY004 - Pydantic must wrap validation failure
+                "configured_name must be text or None"
+            )
         return value.strip() or None
 
     @field_validator("configured_name")
@@ -366,7 +447,7 @@ def build_console_switcher_entries(
             row.row_key,
         )
     )
-    reference_now = now or datetime.now(timezone.utc)
+    reference_now = now or datetime.now(UTC)
     entries = []
     for row in deduped[: max(0, int(limit))]:
         # TASK-356: one state vocabulary across surfaces ("saved chat", not
@@ -499,12 +580,12 @@ def _parse_instant(value: str | datetime | None) -> datetime | None:
         if not raw:
             return None
         try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(raw)
         except ValueError:
             return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def parse_console_switcher_instant(
@@ -618,7 +699,7 @@ def build_console_active_results(
     token = str(authority_token or "").strip()
     if not profile or not token:
         return ()
-    reference_now = now or datetime.now(timezone.utc)
+    reference_now = now or datetime.now(UTC)
     row_tuple = tuple(rows)
     rows_by_session = {
         str(row.native_session_id): row for row in row_tuple if row.native_session_id
@@ -730,8 +811,8 @@ def build_console_active_results(
         try:
             captured = CapturedReceipt.model_validate(
                 {
-                    "activity_id": getattr(raw, "activity_id"),
-                    "status": getattr(raw, "status"),
+                    "activity_id": raw.activity_id,
+                    "status": raw.status,
                 }
             )
         except (AttributeError, ValidationError):

@@ -69,8 +69,8 @@ class LibraryMediaReaderShell(LibraryAdaptiveReaderShell):
             layout: The resolved Media layout to mount with.
             **kwargs: Forwarded to ``LibraryAdaptiveReaderShell`` (``id``,
                 ``classes``, ...); the Media identity arguments (id prefix,
-                pane labels, grip classes and the profile's one-cell
-                ``grip_width``) are fixed here.
+                pane labels and grip classes) are fixed here. The one-cell
+                grip width rides in on ``layout`` (task-31952 AC#3).
         """
         super().__init__(
             library=library,
@@ -81,7 +81,6 @@ class LibraryMediaReaderShell(LibraryAdaptiveReaderShell):
             library_label="Library",
             items_label="Items",
             grip_classes="library-media-pane-grip",
-            grip_width=MEDIA_READER_LAYOUT_PROFILE.grip_width,
             **kwargs,
         )
         self.reader = reader
