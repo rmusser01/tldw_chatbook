@@ -198,10 +198,15 @@ def child_command():
     return [sys.executable, "-I", "-S", str(entry)]
 
 
+def child_environment():
+    return {**os.environ, "_TLDW_PRIVATE_SQLITE_PARENT_PID": str(os.getpid())}
+
+
 def run_child(payload, cwd):
     codec = protocol()
     result = subprocess.run(
         child_command(),
+        env=child_environment(),
         input=codec.encode_frame(payload),
         capture_output=True,
         cwd=cwd,
@@ -211,6 +216,32 @@ def run_child(payload, cwd):
     assert result.returncode == 0
     assert result.stderr == b""
     return codec.decode_frame(result.stdout)
+
+
+@pytest.mark.parametrize(
+    "metadata", [None, "", "0", "-1", "01", "unknown-parent", "9" * 100]
+)
+def test_fixed_entry_refuses_missing_or_malformed_original_parent_metadata(
+    tmp_path, metadata
+):
+    target = tmp_path / "must-not-be-created"
+    environment = os.environ.copy()
+    environment.pop("_TLDW_PRIVATE_SQLITE_PARENT_PID", None)
+    if metadata is not None:
+        environment["_TLDW_PRIVATE_SQLITE_PARENT_PID"] = metadata
+    result = subprocess.run(
+        child_command(),
+        env=environment,
+        input=protocol().encode_frame(
+            request(target, writable=True, create_if_missing=True)
+        ),
+        capture_output=True,
+        timeout=3,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert result.stdout == result.stderr == b""
+    assert not target.exists()
 
 
 def test_real_child_ignores_hostile_cwd_and_environment_import_paths(
@@ -365,6 +396,7 @@ def test_real_source_pin_rechecks_bound_authority_and_closes(tmp_path, replace):
     target.chmod(0o600)
     with subprocess.Popen(
         child_command(),
+        env=child_environment(),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -410,6 +442,7 @@ def test_real_helper_rejects_oversized_frame_without_waiting_for_body(tmp_path):
     codec = protocol()
     with subprocess.Popen(
         child_command(),
+        env=child_environment(),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -457,6 +490,7 @@ def test_isolated_entry_skips_all_package_initializers(tmp_path):
             "-S",
             str(installed / "DB/private_sqlite_helper_entry.py"),
         ],
+        env=child_environment(),
         input=codec.encode_frame(
             request(tmp_path / "db", writable=True, create_if_missing=True)
         ),
@@ -477,6 +511,7 @@ def test_real_child_refuses_retargeting_after_initialization(tmp_path, operation
     other = tmp_path / "other"
     with subprocess.Popen(
         child_command(),
+        env=child_environment(),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -505,6 +540,7 @@ def test_real_pinned_child_exits_on_eof(tmp_path):
     target.touch(mode=0o600)
     with subprocess.Popen(
         child_command(),
+        env=child_environment(),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -648,9 +684,12 @@ def test_source_pin_initialization_path_failure_is_classified(
             read = input_pipe.read
             write = output_pipe.write
 
+            def __init__(self, parent_pid):
+                pass
+
         monkeypatch.setattr(helper, "_PrivatePipe", PrivatePipe)
         monkeypatch.setattr(files, "prepare_batch", substitute_after_preparation)
-        assert helper.run() == 0
+        assert helper.run(os.getppid()) == 0
         assert codec.decode_frame(output_pipe.getvalue()) == {
             "version": 1,
             "operation": "pin_source",

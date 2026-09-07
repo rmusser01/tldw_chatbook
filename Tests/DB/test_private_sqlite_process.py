@@ -5,6 +5,7 @@
 import asyncio
 import importlib
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -313,7 +314,7 @@ def test_actual_child_output_backpressure_has_finite_deadline():
         leaf_bootstrap()
         + """
 from tldw_chatbook.DB.private_sqlite_helper import _PrivatePipe
-pipe = _PrivatePipe()
+pipe = _PrivatePipe(os.getppid())
 pipe.deadline = time.monotonic() + 0.2
 try:
     pipe.write(b'x' * (4 * 1024 * 1024))
@@ -835,3 +836,272 @@ def test_transient_recheck_cannot_extend_enclosing_operation_budget(
                 lease.request(
                     "recheck_source", deadline=process.OperationDeadline(None)
                 )
+
+
+@pytest.mark.parametrize(
+    "primary_type", [KeyboardInterrupt, SystemExit, asyncio.CancelledError]
+)
+def test_owner_cleanup_interruption_preserves_primary_and_settles_other_children(
+    tmp_path, monkeypatch, primary_type
+):
+    process = api()
+    admission = process.HelperAdmission()
+    owner = admission.reserve(transient=3, retained=0, deadline=deadline())
+    leases = [
+        process.HelperLease.start(
+            request(tmp_path / str(index)),
+            operation="prepare",
+            reservation=owner,
+            deadline=deadline(),
+        )
+        for index in range(2)
+    ]
+    primary = primary_type()
+    first_exchange = leases[0]._exchange
+
+    def interrupted_close(frame, operation, budget):
+        if operation == "close":
+            raise KeyboardInterrupt()
+        return first_exchange(frame, operation, budget)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(leases[0], "_exchange", interrupted_close)
+            with pytest.raises(BaseException) as caught:
+                with owner:
+                    raise primary
+            assert caught.value is primary
+        assert all(lease._child.poll() is not None for lease in leases)
+        assert all(lease.cleanup_state == "reaped" for lease in leases)
+        assert primary.__notes__ == ["private_sqlite_helper_cleanup_failed"]
+        with admission.reserve(transient=4, retained=4, deadline=deadline()):
+            pass
+    finally:
+        owner.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize(
+    "primary_type", [KeyboardInterrupt, SystemExit, asyncio.CancelledError]
+)
+def test_start_failure_cleanup_interruption_keeps_original_control_flow(
+    tmp_path, monkeypatch, primary_type
+):
+    process = api()
+    admission = process.HelperAdmission()
+    children = []
+    real_popen = subprocess.Popen
+    primary = primary_type()
+
+    def launch(*args, **kwargs):
+        child = real_popen(*args, **kwargs)
+        children.append(child)
+        real_wait = child.wait
+        interrupted = False
+
+        def wait(*args, **kwargs):
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt()
+            return real_wait(*args, **kwargs)
+
+        monkeypatch.setattr(child, "wait", wait)
+        return child
+
+    def initial_failure(self, frame, operation, budget):
+        raise primary
+
+    with monkeypatch.context() as patch:
+        patch.setattr(process.subprocess, "Popen", launch)
+        patch.setattr(process.HelperLease, "_exchange", initial_failure)
+        with admission.reserve(transient=1, retained=0, deadline=deadline()) as owner:
+            with pytest.raises(BaseException) as caught:
+                process.HelperLease.start(
+                    request(tmp_path / "db"),
+                    operation="prepare",
+                    reservation=owner,
+                    deadline=deadline(),
+                )
+            assert caught.value is primary
+    assert primary.__notes__ == ["private_sqlite_helper_cleanup_failed"]
+    assert len(children) == 1 and children[0].poll() is not None
+    assert children[0].stdin.closed and children[0].stdout.closed
+    with admission.reserve(transient=4, retained=4, deadline=deadline()):
+        pass
+
+
+def test_delayed_fixed_entry_refuses_original_parent_death_before_prepare(tmp_path):
+    codec = importlib.import_module("tldw_chatbook.DB.private_sqlite_protocol")
+    target = tmp_path / "must-not-be-prepared"
+    gate_read, gate_write = os.pipe()
+    gate_program = f"""
+import os,sys
+os.read({gate_read},1)
+os.close({gate_read})
+os.execv(sys.executable,[sys.executable,'-I','-S',sys.argv[1]])
+"""
+    launcher_program = (
+        leaf_bootstrap()
+        + f"""
+import subprocess
+from tldw_chatbook.DB.private_sqlite_process import HelperAdmission,HelperLease,OperationDeadline
+from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
+real_popen = subprocess.Popen
+def delayed_launch(args, **kwargs):
+    kwargs.update(stdin=0,stdout=1,pass_fds=({gate_read},))
+    real_popen([sys.executable,'-I','-S','-c',{gate_program!r},args[-1]],**kwargs)
+    os._exit(0)
+subprocess.Popen = delayed_launch
+owner = HelperAdmission().reserve(transient=1,retained=0,deadline=OperationDeadline(None))
+HelperLease.start(PrepareRequest({str(target)!r},True,True,False),operation='prepare',reservation=owner,deadline=OperationDeadline(None))
+"""
+    )
+    launcher = subprocess.Popen(
+        [sys.executable, "-I", "-S", "-c", launcher_program],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        pass_fds=(gate_read,),
+        bufsize=0,
+    )
+    os.close(gate_read)
+    try:
+        # Actual production launch captured its metadata, but actual fixed entry
+        # cannot initialize until the original parent has been reaped here.
+        assert launcher.wait(timeout=3) == 0
+        assert launcher.stderr.read() == b""
+        os.write(gate_write, b"go")
+        frame = codec.encode_frame(
+            {
+                "version": 1,
+                "operation": "prepare",
+                "path": str(target),
+                "writable": True,
+                "create_if_missing": True,
+                "preserve_source_mode": False,
+            }
+        )
+        try:
+            launcher.stdin.write(frame)
+        except BrokenPipeError:
+            pass
+        # Keep the inherited request writer open; EOF is not the death signal.
+        assert select.select([launcher.stdout], [], [], 2)[0]
+        assert os.read(launcher.stdout.fileno(), 65540) == b""
+        assert not target.exists()
+    finally:
+        os.close(gate_write)
+        for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
+            stream.close()
+        if launcher.poll() is None:
+            launcher.kill()
+        launcher.wait(timeout=3)
+
+
+def test_launcher_overwrites_ambient_parent_metadata(tmp_path, monkeypatch):
+    process = api()
+    monkeypatch.setenv("_TLDW_PRIVATE_SQLITE_PARENT_PID", "untrusted-ambient-value")
+    with process.HelperAdmission().reserve(
+        transient=1, retained=0, deadline=deadline()
+    ) as owner:
+        lease = process.HelperLease.start(
+            request(tmp_path / "db"),
+            operation="prepare",
+            reservation=owner,
+            deadline=deadline(),
+        )
+        assert lease.initial_response["status"] == "ok"
+    assert os.environ["_TLDW_PRIVATE_SQLITE_PARENT_PID"] == "untrusted-ambient-value"
+
+
+@pytest.mark.parametrize("body_failed", [False, True])
+def test_new_cleanup_control_flow_settles_pending_retained_handoff(
+    tmp_path, monkeypatch, body_failed
+):
+    process = api()
+    codec = importlib.import_module("tldw_chatbook.DB.private_sqlite_protocol")
+    monkeypatch.setitem(process._LEASE_KINDS, "pin_source", "retained")
+    admission = process.HelperAdmission()
+    owner = admission.reserve(transient=2, retained=1, deadline=deadline())
+    path = tmp_path / "source"
+    path.touch(mode=0o600)
+    retained = process.HelperLease.start(
+        codec.PrepareRequest(str(path), False, False, True),
+        operation="pin_source",
+        reservation=owner,
+        deadline=deadline(),
+    )
+    owner.handoff_retained(retained)
+    transient = process.HelperLease.start(
+        request(tmp_path / "target"),
+        operation="prepare",
+        reservation=owner,
+        deadline=deadline(),
+    )
+    cancellation = asyncio.CancelledError()
+
+    def interrupted_close(frame, operation, budget):
+        raise cancellation
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(transient, "_exchange", interrupted_close)
+            with pytest.raises(BaseException) as caught:
+                with owner:
+                    if body_failed:
+                        raise ValueError("source-sensitive-body-failure")
+            assert caught.value is cancellation
+        assert retained._child.poll() is not None
+        assert transient._child.poll() is not None
+        with admission.reserve(transient=4, retained=4, deadline=deadline()):
+            pass
+    finally:
+        retained.close()
+        transient.close()
+        owner.__exit__(None, None, None)
+
+
+def test_new_start_cleanup_control_flow_supersedes_ordinary_launch_failure(
+    tmp_path, monkeypatch
+):
+    process = api()
+    admission = process.HelperAdmission()
+    children = []
+    real_popen = subprocess.Popen
+    cancellation = asyncio.CancelledError()
+
+    def launch(*args, **kwargs):
+        child = real_popen(*args, **kwargs)
+        children.append(child)
+        real_wait = child.wait
+        interrupted = False
+
+        def wait(*args, **kwargs):
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                raise cancellation
+            return real_wait(*args, **kwargs)
+
+        monkeypatch.setattr(child, "wait", wait)
+        return child
+
+    def initial_failure(self, frame, operation, budget):
+        raise process.HelperProtocolError()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(process.subprocess, "Popen", launch)
+        patch.setattr(process.HelperLease, "_exchange", initial_failure)
+        with admission.reserve(transient=1, retained=0, deadline=deadline()) as owner:
+            with pytest.raises(BaseException) as caught:
+                process.HelperLease.start(
+                    request(tmp_path / "db"),
+                    operation="prepare",
+                    reservation=owner,
+                    deadline=deadline(),
+                )
+            assert caught.value is cancellation
+    assert children[0].poll() is not None
+    assert cancellation.__notes__ == ["private_sqlite_operation_failed"]
+    with admission.reserve(transient=4, retained=4, deadline=deadline()):
+        pass
