@@ -37,14 +37,19 @@ class OnlineClusterer:
         self._max = max_speakers
         self._centroids: dict[str, np.ndarray] = {}
         self._counts: dict[str, int] = {}
+        self._seconds: dict[str, float] = {}
         self._pinned: set[str] = set()
         self._n = max(0, int(start_id))
 
-    def assign(self, embedding: np.ndarray) -> str:
+    def assign(self, embedding: np.ndarray, seconds: float = 0.0) -> str:
         """Assign embedding to a cluster ID.
 
         Args:
             embedding: Voice embedding vector.
+            seconds: Seconds of audio this embedding covers; added to the
+                returned cluster's running total (`seconds()`), even on a
+                cap-fold that leaves the centroid untouched -- the audio was
+                still attributed to that speaker's timeline.
 
         Returns:
             Cluster ID string (e.g., "S1", "S2").
@@ -64,6 +69,7 @@ class OnlineClusterer:
             n = self._counts[cid] + 1
             self._centroids[cid] = (self._centroids[cid] * self._counts[cid] + emb) / n
             self._counts[cid] = n
+            self._seconds[cid] = self._seconds.get(cid, 0.0) + seconds
             return cid
 
         # Not near enough: create new cluster if under cap
@@ -72,6 +78,7 @@ class OnlineClusterer:
             cid = f"S{self._n}"
             self._centroids[cid] = emb.copy()
             self._counts[cid] = 1
+            self._seconds[cid] = seconds
             return cid
 
         # Cap reached: fold into nearest NON-PINNED cluster
@@ -88,10 +95,44 @@ class OnlineClusterer:
             n = self._counts[cid] + 1
             self._centroids[cid] = (self._centroids[cid] * self._counts[cid] + emb) / n
             self._counts[cid] = n
+            self._seconds[cid] = self._seconds.get(cid, 0.0) + seconds
             return cid
 
         # All clusters are pinned: return nearest but do NOT update centroid
+        if best_id is not None:
+            self._seconds[best_id] = self._seconds.get(best_id, 0.0) + seconds
         return best_id
+
+    def seconds(self, cluster_id: str) -> float:
+        """Total embedded-audio seconds attributed to `cluster_id` so far.
+
+        Args:
+            cluster_id: Cluster ID (e.g., "S1").
+
+        Returns:
+            Accumulated seconds, or 0.0 for an id never assigned.
+        """
+        return self._seconds.get(cluster_id, 0.0)
+
+    def nearest(self, vector) -> tuple[str, float] | None:
+        """The held cluster closest to `vector`, by cosine distance.
+
+        Args:
+            vector: A voice embedding to compare against every centroid.
+
+        Returns:
+            ``(cluster_id, cosine_distance)`` for the nearest centroid, or
+            ``None`` when no cluster has been created yet.
+        """
+        if not self._centroids:
+            return None
+        vec = np.asarray(vector, dtype=np.float32)
+        best_id, best_dist = None, None
+        for cid, cen in self._centroids.items():
+            dist = 1.0 - _cos(vec, cen)
+            if best_dist is None or dist < best_dist:
+                best_id, best_dist = cid, dist
+        return best_id, best_dist
 
     @property
     def threshold(self) -> float:

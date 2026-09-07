@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from tldw_chatbook.Audio.diarizer_cluster import (
     OnlineClusterer,
     merged_speaker_names,
@@ -44,6 +45,14 @@ def test_start_id_mints_past_the_pre_crash_ids():
 def test_start_id_defaults_to_the_first_worker_numbering():
     c = OnlineClusterer()
     assert c.assign(_v(1, 0, 0)) == "S1" and c.max_id == 1
+
+
+def test_assign_accumulates_seconds_and_nearest_reports_distance():
+    c = OnlineClusterer()
+    a = c.assign(_v(1, 0, 0), seconds=1.5); c.assign(_v(0.99, 0.01, 0), seconds=2.0)
+    assert c.seconds(a) == pytest.approx(3.5)
+    cid, dist = c.nearest(_v(1, 0, 0))
+    assert cid == a and dist == pytest.approx(0.0, abs=1e-3)
 
 
 def test_reconcile_maps_final_to_live_by_nearest_centroid():

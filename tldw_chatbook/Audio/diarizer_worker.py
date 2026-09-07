@@ -7,19 +7,30 @@ run as ``python -m tldw_chatbook.Audio.diarizer_worker`` by
     argv  :  ``--start-id N`` (optional) -- start cluster numbering past ``N``.
              Set only on a RESTART, so the replacement worker cannot re-mint
              an id the dead one already handed out (31749).
-    stdin :  one JSON control line per command; an "assign" line is followed
-             by exactly ``n`` bytes of raw PCM16 (16 kHz mono).
-    stdout:  one ``{"id": ..., "seq": ...}`` line per assign (the ``seq`` is
-             echoed so the app can discard a reply whose window already gave
-             up); ``{"segments": [...]}`` for a diarize.
-    stderr:  ``READY`` once the ECAPA model is warm; ``ERROR <type>`` on a
-             per-command failure. Never PCM, text, names, or paths.
+    stdin :  one JSON control line per command; an "assign" or "enroll_from_pcm"
+             line is followed by exactly ``n`` bytes of raw PCM16 (16 kHz mono).
+    stdout:  one ``{"id": ..., "seq": ..., "self": ...}`` line per assign (the
+             ``seq`` is echoed so the app can discard a reply whose window
+             already gave up); ``{"segments": [...], "self": ...}`` for a
+             diarize; ``{"centroid": [...] | null, "seconds": ...}`` for
+             ``export_centroid`` / ``enroll_from_pcm``. ``enroll`` and ``pin``
+             send no reply.
+    stderr:  ``READY`` once the ECAPA model is warm; ``ERROR <op> <type>`` on a
+             per-command failure. Never PCM, text, names, or paths -- and
+             never the voiceprint vector (spec §3.2/§6).
 
 The worker holds the live `OnlineClusterer` for the whole meeting. On a
 ``diarize`` command it clusters the whole file (batch), computes final
 centroids, reconciles them against the live centroids, and returns segments
 whose ``speaker`` is already the live cluster id -- so reconciliation lives
 here, never in the session (spec §3.3).
+
+Self-voiceprint matching (spec §3.2, 31826 task 2): ``enroll`` holds a
+voiceprint vector plus its own (stricter) match threshold and a minimum
+accumulated-seconds gate in memory for this process only -- never persisted,
+never logged. ``assign`` and ``diarize`` replies then carry a ``self`` field
+matched against that voiceprint; ``export_centroid`` and ``enroll_from_pcm``
+hand the app process a centroid to persist itself (`Audio/voiceprint.py`).
 """
 from __future__ import annotations
 
@@ -27,7 +38,14 @@ import json
 import os
 import sys
 
+import numpy as np
+
 MODEL = "speechbrain/spkrec-ecapa-voxceleb"
+# ponytail: no [diarization] revision-pin config exists yet, so there is
+# nothing today's loader can expose -- an operator can still declare one via
+# env until that config lands; absent it, a stamped voiceprint record gets
+# an honest "unpinned" rather than a made-up version.
+MODEL_ID = f"{MODEL}@{os.environ.get('TLDW_DIARIZER_MODEL_REVISION') or 'unpinned'}"
 WINDOW_S = 1.5  # batch clustering window over the recording
 
 
@@ -87,7 +105,8 @@ def _parse_start_id(argv) -> int:
         return 0
 
 
-def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=0.25, start_id=0):
+def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=0.25, start_id=0,
+                        out_centroids=None):
     """Pure (no torch): cluster window embeddings, reconcile to live ids.
 
     The authoritative Stop pass. ``cluster_fn(embeddings, num_speakers)`` is the
@@ -119,6 +138,13 @@ def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=
             inherited (31749). A minted id always continues past it, so a Stop
             pass run on a restarted (centroid-less) worker cannot hand out an
             id the user already named.
+        out_centroids: Optional dict the caller supplies to receive
+            ``{live_id: final_centroid}`` for every reconciled final cluster
+            (mint included) -- an out-param rather than a return-value change
+            so the four `_reconcile_windows`-level tests above, which only
+            look at the returned segment list, stay untouched. When two final
+            clusters reconcile to the same live id (the over-split surplus
+            case in `reconcile`), the later one in iteration order wins.
 
     Returns:
         Segment dicts (``start_s``/``end_s``/``speaker``), speaker = reconciled
@@ -153,6 +179,8 @@ def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=
         if fid not in mapping:
             mapping[fid] = f"S{next_n}"
             next_n += 1
+    if out_centroids is not None:
+        out_centroids.update({mapping[fid]: cen for fid, cen in final_centroids})
     return [
         {"start_s": s0, "end_s": s1, "speaker": mapping.get(f"F{label}", f"F{label}")}
         for (s0, s1), label in zip(spans, labels)
@@ -160,7 +188,14 @@ def _reconcile_windows(spans, embeddings, live_centroids, cluster_fn, threshold=
 
 
 def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float, max_speakers: int):
-    """Embed the whole file (torch), then cluster + reconcile to live ids."""
+    """Embed the whole file (torch), then cluster + reconcile to live ids.
+
+    Returns:
+        ``(segments, final_centroids_by_live_id)`` -- the reconciled segment
+        dicts, plus every reconciled final cluster's centroid keyed by the
+        live id it maps to (voiceprint `self` matching and `export_centroid`
+        read this after a `diarize`; see `serve()`).
+    """
     from tldw_chatbook.Local_Ingestion.diarization_service import (
         ClusteringMethod,
         DiarizationService,
@@ -204,9 +239,12 @@ def _batch(encoder, torch, np, live, wav_path: str, start_s: float, end_s: float
         "min_speakers": 1,
         "clustering_method": ClusteringMethod.AGGLOMERATIVE.value,
     })
-    return _reconcile_windows(
+    out_centroids: dict = {}
+    segments = _reconcile_windows(
         spans, embeddings, live.centroids(), svc._cluster_speakers, live.threshold, live.max_id,
+        out_centroids=out_centroids,
     )
+    return segments, out_centroids
 
 
 def _write(stdout, obj) -> None:
@@ -227,15 +265,26 @@ def serve(stdin, stdout, live, embed, batch) -> int:
 
     Args:
         stdin: Binary input stream: one JSON control line per command, an
-            "assign" line followed by exactly its ``n`` bytes of PCM.
+            "assign"/"enroll_from_pcm" line followed by exactly its ``n``
+            bytes of PCM.
         stdout: Binary output stream for the one-line JSON replies.
         live: The `OnlineClusterer` held for the whole meeting.
-        embed: ``(pcm: bytes) -> embedding`` for an assign.
-        batch: ``(wav, start_s, end_s) -> segment dicts`` for a diarize.
+        embed: ``(pcm: bytes) -> embedding`` for an assign or enroll_from_pcm.
+        batch: ``(wav, start_s, end_s) -> (segment dicts, {live_id: centroid})``
+            for a diarize.
 
     Returns:
         0 -- the process exit code, so `main()` can return it directly.
     """
+    from tldw_chatbook.Audio.diarizer_cluster import _cos
+    from tldw_chatbook.Audio.voiceprint import unit_normalise
+
+    def _cos_dist(a, b) -> float:
+        return 1.0 - _cos(a, b)
+
+    enrolled = None  # (voiceprint_vector, threshold, min_seconds), or None
+    last_batch_centroids: dict = {}  # live_id -> centroid, from the last diarize
+
     while True:
         line = stdin.readline()
         if not line:
@@ -246,24 +295,71 @@ def serve(stdin, stdout, live, embed, batch) -> int:
             continue
         op = cmd.get("cmd")
         if op == "assign":
-            pcm = _read_exactly(stdin, int(cmd.get("n", 0)))
+            n = int(cmd.get("n", 0))
+            sr = int(cmd.get("sr", 16000)) or 16000
+            pcm = _read_exactly(stdin, n)
+            seconds = n / (2 * sr)
             try:
-                sid = live.assign(embed(pcm))
+                sid = live.assign(embed(pcm), seconds=seconds)
             except Exception as exc:  # noqa: BLE001
                 sys.stderr.write(f"ERROR assign {type(exc).__name__}\n")
                 sys.stderr.flush()
                 sid = None
-            _write(stdout, {"id": sid, "seq": cmd.get("seq")})
+            is_self = False
+            if enrolled is not None and sid is not None:
+                evec, ethresh, emin_s = enrolled
+                cen = live.centroids().get(sid)
+                if cen is not None:
+                    is_self = _cos_dist(cen, evec) <= ethresh and live.seconds(sid) >= emin_s
+            _write(stdout, {"id": sid, "seq": cmd.get("seq"), "self": is_self})
         elif op == "diarize":
+            final_centroids = None
             try:
-                segs = batch(cmd["wav"], float(cmd.get("start", 0.0)), float(cmd.get("end", 0.0)))
+                segs, final_centroids = batch(cmd["wav"], float(cmd.get("start", 0.0)), float(cmd.get("end", 0.0)))
             except Exception as exc:  # noqa: BLE001
                 sys.stderr.write(f"ERROR diarize {type(exc).__name__}\n")
                 sys.stderr.flush()
                 segs = []
-            _write(stdout, {"segments": segs})
+            if final_centroids is not None:
+                last_batch_centroids = final_centroids
+            self_id = None
+            if enrolled is not None and last_batch_centroids:
+                evec, ethresh, _emin_s = enrolled
+                dists = [(cid, _cos_dist(cen, evec)) for cid, cen in last_batch_centroids.items()]
+                best_id, best_dist = min(dists, key=lambda t: t[1])
+                if best_dist <= ethresh:
+                    self_id = best_id
+            _write(stdout, {"segments": segs, "self": self_id})
         elif op == "pin":
             live.pin(str(cmd.get("id", "")))
+        elif op == "enroll":
+            # No reply: held in memory only, for this process's lifetime.
+            enrolled = (
+                np.asarray(cmd.get("vector", []), dtype=np.float32),
+                float(cmd.get("threshold", 0.2)),
+                float(cmd.get("min_seconds", 0.0)),
+            )
+        elif op == "export_centroid":
+            cid = str(cmd.get("id", ""))
+            cen = last_batch_centroids.get(cid)
+            if cen is None:
+                cen = live.centroids().get(cid)
+            if cen is None:
+                _write(stdout, {"centroid": None})
+            else:
+                _write(stdout, {"centroid": unit_normalise(list(cen)), "seconds": live.seconds(cid)})
+        elif op == "enroll_from_pcm":
+            n = int(cmd.get("n", 0))
+            sr = int(cmd.get("sr", 16000)) or 16000
+            pcm = _read_exactly(stdin, n)
+            try:
+                centroid = unit_normalise(list(np.asarray(embed(pcm), dtype=np.float32)))
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write(f"ERROR enroll_from_pcm {type(exc).__name__}\n")
+                sys.stderr.flush()
+                _write(stdout, {"centroid": None})
+            else:
+                _write(stdout, {"centroid": centroid, "seconds": n / (2 * sr)})
         elif op == "close":
             break
     return 0
@@ -275,8 +371,6 @@ def main() -> int:
     max_speakers = int(os.environ.get("TLDW_DIARIZER_MAX_SPEAKERS", "8"))
 
     try:
-        import numpy as np
-
         from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
         from tldw_chatbook.Local_Ingestion.diarization_service import _lazy_import_torch
 

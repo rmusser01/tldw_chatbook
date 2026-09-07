@@ -11,6 +11,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.Audio import diarizer_local
 from tldw_chatbook.Audio.diarizer_local import (
     COARSE_UNAVAILABLE,
@@ -513,8 +515,41 @@ def _drive_worker(script, live):
         return vectors[min(len(handed), len(vectors)) - 1]
 
     stdout = io.BytesIO()
-    assert serve(script, stdout, live, fake_embed, lambda *a: []) == 0
+    assert serve(script, stdout, live, fake_embed, lambda *a, **k: ([], {})) == 0
     return [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()], handed
+
+
+def _serve_lines(lines, embed, batch=None):
+    """Drive `serve()` over raw wire lines; return the parsed JSON replies."""
+    import io
+
+    from tldw_chatbook.Audio.diarizer_worker import serve
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+
+    stdin = io.BytesIO(b"".join(lines)); stdout = io.BytesIO()
+    serve(stdin, stdout, OnlineClusterer(max_speakers=8), embed, batch or (lambda *a, **k: ([], {})))
+    return [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
+
+
+def test_self_flag_requires_threshold_and_min_seconds():
+    pcm = b"\x00\x00" * 16000  # 1 s
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    lines = [ctl({"cmd": "enroll", "vector": [1, 0, 0], "threshold": 0.2, "min_seconds": 2.0})]
+    for seq in range(3):
+        lines += [ctl({"cmd": "assign", "sr": 16000, "seq": seq, "n": len(pcm)}), pcm]
+    out = _serve_lines(lines, embed=lambda pcm: [0.99, 0.01, 0.0])
+    assert [o["self"] for o in out] == [False, True, True]   # 1 s < 2 s, then 2 s, 3 s
+
+
+def test_enroll_from_pcm_returns_unit_centroid_and_export_centroid_roundtrip():
+    pcm = b"\x00\x00" * 16000 * 3
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    out = _serve_lines([ctl({"cmd": "enroll_from_pcm", "sr": 16000, "n": len(pcm)}), pcm,
+                        ctl({"cmd": "assign", "sr": 16000, "seq": 0, "n": len(pcm)}), pcm,
+                        ctl({"cmd": "export_centroid", "id": "S1"})],
+                       embed=lambda pcm: [3.0, 4.0, 0.0])
+    assert out[0]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[0]["seconds"] == pytest.approx(3.0)
+    assert out[2]["centroid"] == pytest.approx([0.6, 0.8, 0.0]) and out[2]["seconds"] == pytest.approx(3.0)
 
 
 def test_worker_command_loop_pins_the_cluster_it_is_told_to():
@@ -534,7 +569,7 @@ def test_worker_command_loop_pins_the_cluster_it_is_told_to():
 
     # The reply framing is unchanged: one line per assign, `seq` echoed, and
     # `pin` answers nothing at all (three commands in, two replies out).
-    assert replies == [{"id": "S1", "seq": 0}, {"id": "S1", "seq": 1}]
+    assert replies == [{"id": "S1", "seq": 0, "self": False}, {"id": "S1", "seq": 1, "self": False}]
     assert handed == [b"aaaa", b"bbbb"]      # PCM read by the control line's `n`
     assert list(pinned.centroids()["S1"]) == [1.0, 0.0]
 
@@ -557,4 +592,4 @@ def test_worker_command_loop_ignores_a_garbled_line_and_an_unknown_command():
         ),
         live,
     )
-    assert replies == [{"id": "S1", "seq": 7}]
+    assert replies == [{"id": "S1", "seq": 7, "self": False}]
