@@ -13,7 +13,7 @@ from typing import Any
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, ProgressBar, RichLog, Select, Static
 
@@ -116,6 +116,8 @@ class MeetingsScreen(BaseAppScreen):
         # keyring backend, which boot must not (Task 6's import invariant).
         self._store: Any | None = None
         self._store_unavailable = False
+        #: `(StoreUnavailable, ModelMismatch)`, resolved with the store.
+        self._store_errors: tuple = ()
         self._offer: Any | None = None
         self._enroll_cancel: threading.Event | None = None
         self._enroll_timer = None
@@ -135,7 +137,11 @@ class MeetingsScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             with Horizontal(id="meetings-workbench", classes="ds-panel destination-workbench"):
-                with Vertical(id="meetings-rail", classes="destination-workbench-pane"):
+                # VerticalScroll, not Vertical (review C2): the rail's content
+                # is taller than a 30-row terminal's viewport, and a plain
+                # Vertical clips the overflow out of the compositor with no
+                # scrollbar -- the Voice row was unreachable by any input.
+                with VerticalScroll(id="meetings-rail", classes="destination-workbench-pane"):
                     yield Static("Sources", classes="destination-section")
                     yield Select([("System default", "default")], value="default", id="meetings-mic-select", allow_blank=False)
                     yield Select([("Native (auto)", "auto")], value="auto", id="meetings-system-select", allow_blank=False)
@@ -167,62 +173,86 @@ class MeetingsScreen(BaseAppScreen):
                         tooltip="Recover the unfinished meeting recording found in this folder.",
                     )
                     # ---- learning offer (post-Stop, never modal) -----------
-                    with Vertical(id="meetings-learn-offer"):
+                    # Every container below carries `meetings-rail-block` /
+                    # `meetings-rail-actions` (height: auto) and every Button
+                    # `meetings-rail-button` (width: auto; min-width: 0):
+                    # Textual's defaults are `height: 1fr` and `min-width: 16`,
+                    # which squeezed these rows to zero rows and clipped the
+                    # fourth button off a half-width rail (review C1/C2/I4).
+                    with Vertical(id="meetings-learn-offer", classes="meetings-rail-block"):
                         yield Static("", id="meetings-learn-offer-copy", markup=False)
-                        with Horizontal(id="meetings-learn-offer-actions"):
+                        with Horizontal(id="meetings-learn-offer-actions", classes="meetings-rail-actions"):
                             yield Button(
                                 "Accept", id="meetings-learn-accept", variant="success",
+                                classes="meetings-rail-button",
                                 tooltip="Add this meeting's sample to your stored voiceprint.",
                             )
                             yield Button(
                                 "Not now", id="meetings-learn-decline",
+                                classes="meetings-rail-button",
                                 tooltip="Keep nothing from this meeting; ask again next time.",
                             )
+                        # Second row: the three labels total 34 columns, one
+                        # more than the rail's 33 at an 80-column terminal.
+                        with Horizontal(id="meetings-learn-offer-never-row", classes="meetings-rail-actions"):
                             yield Button(
                                 "Don't ask again", id="meetings-learn-never",
+                                classes="meetings-rail-button",
                                 tooltip="Keep nothing and stop offering to learn your voice.",
                             )
                     # ---- your voice ----------------------------------------
                     yield Static("Your voice", classes="destination-section")
                     yield Static("Voice: checking…", id="meetings-voice-status")
-                    with Horizontal(id="meetings-voice-actions"):
+                    # Two rows, not four buttons on one: even sized to their
+                    # labels the four need 43 columns, and the rail is half a
+                    # workbench (40 at an 80-column terminal).
+                    with Horizontal(id="meetings-voice-actions", classes="meetings-rail-actions"):
                         yield Button(
                             "Enroll my voice", id="meetings-enroll",
+                            classes="meetings-rail-button",
                             tooltip="Record about 30 seconds of your voice so meetings can label you.",
                         )
+                    with Horizontal(id="meetings-voice-store-actions", classes="meetings-rail-actions"):
                         yield Button(
                             "Delete", id="meetings-voice-delete",
+                            classes="meetings-rail-button",
                             tooltip="Delete the stored voiceprint from this device.",
                         )
                         yield Button(
                             "Export…", id="meetings-voice-export",
+                            classes="meetings-rail-button",
                             tooltip="Save an encrypted copy of your voiceprint to a file.",
                         )
                         yield Button(
                             "Import…", id="meetings-voice-import",
+                            classes="meetings-rail-button",
                             tooltip="Load a voiceprint from a file you exported.",
                         )
                     yield Static("", id="meetings-voice-message", markup=False)
-                    with Horizontal(id="meetings-enroll-progress-row"):
+                    with Horizontal(id="meetings-enroll-progress-row", classes="meetings-rail-actions"):
                         yield Static("", id="meetings-enroll-progress")
                         yield Button(
                             "Cancel", id="meetings-enroll-cancel",
+                            classes="meetings-rail-button",
                             tooltip="Stop this recording and keep nothing.",
                         )
-                    with Vertical(id="meetings-voice-form"):
+                    with Vertical(id="meetings-voice-form", classes="meetings-rail-block"):
                         yield Input(placeholder="Passphrase", password=True, id="meetings-voice-passphrase")
                         yield Input(placeholder="File path", id="meetings-voice-path")
-                        with Horizontal(id="meetings-voice-form-actions"):
+                        with Horizontal(id="meetings-voice-form-actions", classes="meetings-rail-actions"):
                             yield Button(
                                 "Export to file", id="meetings-voice-export-run",
+                                classes="meetings-rail-button",
                                 tooltip="Write your voiceprint to this file, encrypted with this passphrase.",
                             )
                             yield Button(
                                 "Merge", id="meetings-voice-merge",
+                                classes="meetings-rail-button",
                                 tooltip="Blend the file's voiceprint into the one stored here.",
                             )
                             yield Button(
                                 "Replace", id="meetings-voice-replace",
+                                classes="meetings-rail-button",
                                 tooltip="Discard the stored voiceprint and keep the file's instead.",
                             )
                 with Vertical(id="meetings-canvas", classes="destination-workbench-pane"):
@@ -261,12 +291,20 @@ class MeetingsScreen(BaseAppScreen):
             # A recording that outlives its countdown and Cancel button has
             # no way to be stopped: end it with the screen.
             self._enroll_cancel.set()
-        if self._offer is not None and self._owner is not None:
-            # The offer lapses with the screen (spec §3.4): the warm worker it
-            # holds must not outlive the surface that offered to use it.
+        owner = self._owner
+        # `owner.pending_offer`, not `self._offer` (review M8): an offer that
+        # became pending after this screen was unmounted still holds a warm
+        # worker, and nothing else will lapse it until the next meeting.
+        if owner is not None and getattr(owner, "pending_offer", None) is not None:
+            # The offer lapses with the screen (spec §3.4). A plain daemon
+            # thread, not a Textual worker: a worker started on an unmounting
+            # node can be cancelled before it runs, and `dismiss_learning`
+            # closes a subprocess, which takes seconds (review I1).
             self._offer = None
             try:
-                self._owner.dismiss_learning()
+                threading.Thread(
+                    target=owner.dismiss_learning, name="meetings-dismiss", daemon=True
+                ).start()
             except Exception as exc:  # noqa: BLE001 - teardown must not raise
                 logger.debug("meetings offer dismiss: {}", type(exc).__name__)
         # No super().on_unmount(): the dispatcher already invokes
@@ -297,8 +335,10 @@ class MeetingsScreen(BaseAppScreen):
     @work(exclusive=True, group="meetings-prepare", thread=True, exit_on_error=False)
     def _run_prepare(self) -> None:
         # Building the store imports the keyring backend, so it happens here,
-        # on the prepare thread, not on the first paint of the Voice row.
-        self._voice_store()
+        # on the prepare thread, not on the first paint of the Voice row. The
+        # result crosses to the UI thread rather than being assigned from
+        # here (review M1).
+        self.app.call_from_thread(self._adopt_store, *self._build_store())
         if self._owner is None:
             self.app.call_from_thread(self._show_prepare_error, "Meetings are unavailable in this build.")
             return
@@ -484,7 +524,7 @@ class MeetingsScreen(BaseAppScreen):
         self.query_one("#meetings-pause", Button).disabled = True
         self._stop_worker()
 
-    @work(exclusive=True, group="meetings-stop", thread=True)
+    @work(exclusive=True, group="meetings-stop", thread=True, exit_on_error=False)
     def _stop_worker(self) -> None:
         try:
             result = self._owner.stop(reason="user")
@@ -496,7 +536,29 @@ class MeetingsScreen(BaseAppScreen):
             # three buttons stayed disabled with no way back (review I2).
             self.app.call_from_thread(self._stop_failed, str(exc))
             return
-        self.app.call_from_thread(self._on_stopped, result)
+        # The offer is decided HERE, on the stop thread (review I2): deciding
+        # it can read the voiceprint store, which is a bounded but real wait
+        # that must not land on the event loop.
+        self.app.call_from_thread(self._on_stopped, result, self._offer_for(result))
+
+    def _offer_for(self, result: MeetingResult | None) -> Any | None:
+        """The learning offer for a finished meeting. Never called on the UI thread.
+
+        Args:
+            result: The finished meeting, or None when there was none.
+
+        Returns:
+            The owner's `LearningOffer`, or None (including on failure — an
+            offer must never break a Stop).
+        """
+        owner = self._owner
+        if owner is None or result is None:
+            return None
+        try:
+            return owner.learning_offer(result)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("meetings: learning offer failed ({})", type(exc).__name__)
+            return None
 
     def _stop_failed(self, reason: str) -> None:
         self._stop_requested = False
@@ -525,7 +587,7 @@ class MeetingsScreen(BaseAppScreen):
             return "backend unavailable"
         return None
 
-    def _on_stopped(self, result: MeetingResult | None) -> None:
+    def _on_stopped(self, result: MeetingResult | None, offer: Any | None = None) -> None:
         # `on_unmount` has already detached; the widget updates below would
         # raise on a screen that is no longer composed (Qodo Q14).
         if not self.is_mounted:
@@ -567,15 +629,7 @@ class MeetingsScreen(BaseAppScreen):
         self.query_one("#meetings-footer", Static).update(" ".join(parts))
         self.query_one("#meetings-open-library", Button).disabled = not bool(job_id)
         self.query_one("#meetings-partial", Static).update("")
-        # ponytail: `learning_offer` may load the store, bounded by the
-        # owner's 1.5 s timeout and cached after Start -- once per meeting on
-        # the UI thread. Move it to the stop worker if that ever shows.
-        owner = self._owner
-        if owner is not None:
-            try:
-                self._show_learning_offer(owner.learning_offer(result))
-            except Exception as exc:  # noqa: BLE001 - an offer never fails a stop
-                logger.warning("meetings: learning offer failed ({})", type(exc).__name__)
+        self._show_learning_offer(offer)
 
     # ---- session events (capture threads -> loop) -------------------------
     def _on_session_event(self, kind: str, payload: Any) -> None:
@@ -623,7 +677,23 @@ class MeetingsScreen(BaseAppScreen):
                 # result -- never read `owner.last_result` here, it may not
                 # be assigned yet.
                 session = self._session
-                self._on_stopped(session.stop())
+                result = session.stop()
+                self._on_stopped(result)
+                # We are on the event loop here, so the offer is decided on a
+                # thread instead of inline (review I2), the same rule the
+                # Stop button's own worker follows.
+                if result is not None:
+                    self._offer_worker(result)
+
+    @work(exclusive=True, group="meetings-offer", thread=True, exit_on_error=False,
+          description="meeting learning offer")
+    def _offer_worker(self, result: MeetingResult) -> None:
+        # `description=` is not decoration: without it Textual builds the
+        # worker's description from `repr()` of its arguments, which for a
+        # MeetingResult is the meeting folder's full path (review I3).
+        offer = self._offer_for(result)
+        if offer is not None:
+            self.app.call_from_thread(self._show_learning_offer, offer)
 
     def _render_segment(self, segment: MeetingSegment) -> None:
         self._note_speaker(segment)
@@ -871,23 +941,44 @@ class MeetingsScreen(BaseAppScreen):
             return
         self.query_one("#meetings-voice-message", Static).update(copy)
 
-    def _voice_store(self) -> Any | None:
-        """The app's voiceprint store, built once, lazily.
+    def _build_store(self) -> tuple[Any | None, tuple]:
+        """Build the store and resolve its exception classes.
+
+        Pure: it returns, it never assigns, so the prepare worker can call it
+        off the UI thread and hand the result over (review M1). The classes
+        are resolved HERE rather than inside the transfer worker's `except`,
+        where a failing import would strand the flow (review M9).
 
         Imported inside the method on purpose: `Audio.voiceprint` pulls the
         keyring backend, and boot must import neither (Task 6's invariant).
 
         Returns:
+            `(store, (StoreUnavailable, ModelMismatch))`, or `(None, ())`.
+        """
+        try:
+            from ...Audio.voiceprint import ModelMismatch, StoreUnavailable, default_store
+
+            return default_store(), (StoreUnavailable, ModelMismatch)
+        except Exception as exc:  # noqa: BLE001 - the screen still works
+            logger.warning("meetings: voiceprint store unavailable ({})", type(exc).__name__)
+            return None, ()
+
+    def _adopt_store(self, store: Any | None, errors: tuple) -> None:
+        """Take the store built elsewhere (UI thread only)."""
+        if self._store is not None or self._store_unavailable:
+            return
+        self._store, self._store_errors = store, errors
+        self._store_unavailable = store is None
+        self._refresh_voice_row()
+
+    def _voice_store(self) -> Any | None:
+        """The app's voiceprint store, built once (UI thread).
+
+        Returns:
             The store, or None when one cannot be built at all.
         """
         if self._store is None and not self._store_unavailable:
-            try:
-                from ...Audio.voiceprint import default_store
-
-                self._store = default_store()
-            except Exception as exc:  # noqa: BLE001 - the screen still works
-                self._store_unavailable = True
-                logger.warning("meetings: voiceprint store unavailable ({})", type(exc).__name__)
+            self._adopt_store(*self._build_store())
         return self._store
 
     def _refresh_voice_row(self) -> None:
@@ -941,10 +1032,21 @@ class MeetingsScreen(BaseAppScreen):
         self._voice_message("Learning from this meeting…")
         self._accept_learning_worker(offer)
 
-    @work(exclusive=True, group="meetings-learn", thread=True, exit_on_error=False)
+    # `description=` on every worker below: Textual's default description is
+    # `repr()` of the arguments, and a LearningOffer carries the meeting
+    # folder's path (review I3).
+    @work(exclusive=True, group="meetings-learn", thread=True, exit_on_error=False,
+          description="voice learning accept")
     def _accept_learning_worker(self, offer: Any) -> None:
         ok = bool(self._owner.accept_learning(offer))
         self.app.call_from_thread(self._learning_accepted, ok)
+
+    @work(group="meetings-learn-decline", thread=True, exit_on_error=False,
+          description="voice learning decline")
+    def _decline_learning_worker(self, offer: Any) -> None:
+        # Off the UI thread (review I1): `decline_learning` closes the warm
+        # diarizer subprocess, which its own docstring bounds at ~12 s.
+        self._owner.decline_learning(offer)
 
     def _learning_accepted(self, ok: bool) -> None:
         if not self.is_mounted:
@@ -960,14 +1062,14 @@ class MeetingsScreen(BaseAppScreen):
     def _learn_decline(self) -> None:
         offer = self._hide_learning_offer()
         if self._owner is not None:
-            self._owner.decline_learning(offer)
+            self._decline_learning_worker(offer)
 
     @on(Button.Pressed, "#meetings-learn-never")
     def _learn_never(self) -> None:
         offer = self._hide_learning_offer()
         owner = self._owner
         if owner is not None:
-            owner.decline_learning(offer)
+            self._decline_learning_worker(offer)
             settings = getattr(owner, "settings", None)
             if settings is not None:
                 # The running owner keeps a warm worker for the next offer
@@ -1056,7 +1158,7 @@ class MeetingsScreen(BaseAppScreen):
     def _enroll_finished(self, result: Any | None, error: str | None) -> None:
         self._enroll_cancel = None
         self._stop_countdown()
-        if result is not None and getattr(result, "ok", False) and self._owner is not None:
+        if result is not None and result.ok and self._owner is not None:
             # A new voiceprint invalidates the owner's cached verdict, so the
             # next meeting reads the one just saved (Task 4).
             self._owner.invalidate_voiceprint()
@@ -1111,6 +1213,7 @@ class MeetingsScreen(BaseAppScreen):
         self._delete_armed = False
         if not self.is_mounted:
             return
+        self._clear_passphrase()
         self.query_one("#meetings-voice-form").display = True
         self.query_one("#meetings-voice-export-run", Button).display = mode == "export"
         for widget_id in ("#meetings-voice-merge", "#meetings-voice-replace"):
@@ -1121,6 +1224,11 @@ class MeetingsScreen(BaseAppScreen):
             else "Type the file's passphrase and path, then Merge or Replace."
         )
 
+    def _clear_passphrase(self) -> None:
+        """Empty the passphrase Input (review M6: it must not linger)."""
+        if self.is_mounted:
+            self.query_one("#meetings-voice-passphrase", Input).value = ""
+
     def _voice_form_values(self, action: str) -> tuple[Path, str] | None:
         """The typed path and passphrase, refusing an empty either way.
 
@@ -1129,7 +1237,7 @@ class MeetingsScreen(BaseAppScreen):
 
         Returns:
             `(path, passphrase)`, or None when something was missing (the
-            refusal is already on screen).
+            refusal is already on screen and the passphrase field is empty).
         """
         passphrase = self.query_one("#meetings-voice-passphrase", Input).value
         text = self.query_one("#meetings-voice-path", Input).value.strip()
@@ -1137,6 +1245,7 @@ class MeetingsScreen(BaseAppScreen):
             self._voice_message(f"{action} needs a passphrase.")
             return None
         if not text:
+            self._clear_passphrase()
             self._voice_message(f"{action} needs a file path.")
             return None
         return Path(text).expanduser(), passphrase
@@ -1170,9 +1279,15 @@ class MeetingsScreen(BaseAppScreen):
         self._voice_message("Importing…")
         self._voice_transfer_worker("import", values[0], values[1], replace)
 
-    @work(exclusive=True, group="meetings-voice-transfer", thread=True, exit_on_error=False)
+    @work(exclusive=True, group="meetings-voice-transfer", thread=True, exit_on_error=False,
+          description="voiceprint transfer")
     def _voice_transfer_worker(self, action: str, path: Path, passphrase: str, replace: bool) -> None:
-        store = self._voice_store()
+        # `description=` is required, not cosmetic (review I3): Textual's
+        # default builds the description from `repr()` of the arguments, and
+        # `Worker.__rich_repr__` yields it to `app.log.worker` on every state
+        # change -- which would put the typed passphrase and the full
+        # destination path in the Textual log.
+        store = self._store
         try:
             if action == "export":
                 store.export(path, passphrase)
@@ -1186,12 +1301,15 @@ class MeetingsScreen(BaseAppScreen):
         self.app.call_from_thread(self._voice_transfer_done, action, ok, copy)
 
     def _transfer_failure_copy(self, action: str, exc: Exception) -> str:
-        """Static copy for a failed export/import -- never the path or message."""
-        from ...Audio.voiceprint import ModelMismatch, StoreUnavailable
+        """Static copy for a failed export/import -- never the path or message.
 
-        if isinstance(exc, StoreUnavailable):
+        The two named classes were resolved with the store (review M9), so
+        this path never imports while handling a failure.
+        """
+        store_unavailable, model_mismatch = self._store_errors or (None, None)
+        if store_unavailable is not None and isinstance(exc, store_unavailable):
             return "Store locked — try again after unlocking the keyring"
-        if isinstance(exc, ModelMismatch):
+        if model_mismatch is not None and isinstance(exc, model_mismatch):
             return "Different model — choose Replace"
         return f"{action.capitalize()} failed ({type(exc).__name__})."
 
@@ -1200,11 +1318,11 @@ class MeetingsScreen(BaseAppScreen):
             self._owner.invalidate_voiceprint()
         if not self.is_mounted:
             return
+        self._clear_passphrase()
         self._voice_message(copy)
         if not ok:
             return
         self.query_one("#meetings-voice-form").display = False
-        self.query_one("#meetings-voice-passphrase", Input).value = ""
         self._refresh_voice_row()
         self._render_voice_match(getattr(self._owner, "voice_match", None))
 

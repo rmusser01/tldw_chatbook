@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,7 +11,7 @@ import pytest
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.Audio.meeting_owner import (
     EnrollResult,
     LearningOffer,
@@ -97,6 +98,10 @@ class FakeOwner:
         self.offer: LearningOffer | None = None      # what learning_offer() returns
         self.accept_result = True
         self.learning_calls: list[tuple] = []
+        self.offer_threads: list[int] = []           # where learning_offer ran
+        self.decline_block: threading.Event | None = None
+        self.declined = threading.Event()
+        self.dismissed = threading.Event()
         self.enroll_calls: list[tuple] = []
         self.enroll_release: threading.Event | None = None
         self.invalidated = 0
@@ -166,6 +171,7 @@ class FakeOwner:
 
     def learning_offer(self, result):
         self.learning_calls.append(("offer", result))
+        self.offer_threads.append(threading.get_ident())
         self._pending_offer = self.offer
         return self.offer
 
@@ -176,11 +182,19 @@ class FakeOwner:
 
     def decline_learning(self, offer=None):
         self.learning_calls.append(("decline", offer))
+        # The real one closes a diarizer subprocess and can take seconds; the
+        # Event lets a test hold it there and prove the UI is not blocked.
+        if self.decline_block is not None:
+            self.decline_block.wait(5.0)
         self._pending_offer = None
+        self.declined.set()
 
     def dismiss_learning(self):
         self.learning_calls.append(("dismiss", None))
+        if self.decline_block is not None:
+            self.decline_block.wait(5.0)
         self._pending_offer = None
+        self.dismissed.set()
 
     def enroll_from_mic(self, seconds=30.0, progress=None, cancel=None):
         self.enroll_calls.append((seconds, cancel))
@@ -207,11 +221,25 @@ class FakeStore:
 
     def __init__(self, *, exists=True, mode="keyring"):
         self._exists = exists
-        self.mode = mode
-        self.calls: list[tuple] = []
+        self._mode = mode
+        self.calls: list[tuple] = []       # mutations
+        self.reads: list[str] = []         # what the status path touched
         self.raises: Exception | None = None
+        #: Held by export/import so a test can inspect the running worker.
+        self.block: threading.Event | None = None
+
+    @property
+    def mode(self):
+        self.reads.append("mode")
+        return self._mode
+
+    def load(self, *args, **kwargs):
+        # The status line must never read the key (spec §3.1: the Keychain
+        # prompt belongs to enrollment, not to opening the screen).
+        raise AssertionError("the Voice row must never call store.load()")
 
     def exists(self):
+        self.reads.append("exists")
         return self._exists
 
     def delete(self):
@@ -221,6 +249,8 @@ class FakeStore:
 
     def export(self, dest, passphrase):
         self.calls.append(("export", Path(dest), passphrase))
+        if self.block is not None:
+            self.block.wait(5.0)
         if self.raises is not None:
             raise self.raises
 
@@ -284,6 +314,40 @@ class Host(ConsolidatedCSSApp):
 
     def on_navigate_to_screen(self, message) -> None:
         self.seen.append((message.screen_name, dict(message.screen_context)))
+
+
+class StyledHost(Host):
+    """`Host` with the app's own bundle loaded, for geometry assertions.
+
+    `ConsolidatedCSSApp` loads only the widget/screen sheets, so a harness
+    without this measures a rail the running app never has: no workbench
+    padding or border, `min-width: 16` still on every Button, and none of the
+    `meetings-rail-*` rules. Every layout claim in this file is made here.
+    """
+
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
+
+async def _wait_until(pilot, predicate, timeout: float = 5.0) -> bool:
+    """Pump the loop until `predicate()` holds (review M5: no bare sleeps)."""
+    waited = 0.0
+    while waited < timeout:
+        await pilot.pause(0.05)
+        if predicate():
+            return True
+        waited += 0.05
+    return False
+
+
+def _shown(screen, widget_id: str):
+    """The painted size of a widget, or None when it is not in the compositor."""
+    widget = screen.query_one(f"#{widget_id}")
+    visible = screen._compositor.visible_widgets
+    if widget not in visible:
+        return None
+    region, clip = visible[widget]
+    painted = region.intersection(clip)
+    return None if not painted.area else painted
 
 
 def _text(widget) -> str:
@@ -404,7 +468,12 @@ async def test_user_stop_finalises_exactly_once(tmp_path, monkeypatch):
         await pilot.pause(0.2)
         calls = []
         real = screen._on_stopped
-        monkeypatch.setattr(screen, "_on_stopped", lambda result: calls.append(result) or real(result))
+        # `_on_stopped(result, offer)`: the offer is decided on the stop
+        # thread and handed over (TASK-31826 review I2).
+        monkeypatch.setattr(
+            screen, "_on_stopped",
+            lambda result, offer=None: calls.append(result) or real(result, offer),
+        )
         await pilot.click("#meetings-stop")
         await pilot.pause(0.3)
         assert len(calls) == 1 and calls[0].stop_reason == "user"
@@ -1179,9 +1248,9 @@ async def test_enrollment_shows_a_countdown_and_cancel_stops_it(tmp_path):
         await pilot.pause(0.3)
         screen = host.screen_stack[-1]
         screen.query_one("#meetings-enroll", Button).press()
-        await pilot.pause(0.3)
+        progress = screen.query_one("#meetings-enroll-progress", Static)
+        assert await _wait_until(pilot, lambda: "Recording" in _text(progress))
         assert screen.query_one("#meetings-enroll-progress-row").display is True
-        assert "Recording" in _text(screen.query_one("#meetings-enroll-progress", Static))
         # Start stays disabled while the microphone is held by the enrollment.
         assert screen.query_one("#meetings-start", Button).disabled is True
         screen.query_one("#meetings-enroll-cancel", Button).press()
@@ -1189,8 +1258,9 @@ async def test_enrollment_shows_a_countdown_and_cancel_stops_it(tmp_path):
         cancel = owner.enroll_calls[0][1]
         assert cancel is not None and cancel.is_set()
         owner.enroll_release.set()
-        await pilot.pause(0.4)
-        assert screen.query_one("#meetings-enroll-progress-row").display is False
+        assert await _wait_until(
+            pilot, lambda: screen.query_one("#meetings-enroll-progress-row").display is False
+        )
         assert "cancelled" in _text(screen.query_one("#meetings-voice-message", Static)).lower()
         assert owner.invalidated == 0
 
@@ -1207,8 +1277,7 @@ async def test_a_successful_enrollment_refreshes_the_voice_row(tmp_path):
         assert _text(screen.query_one("#meetings-voice-status", Static)) == "Voice: not enrolled"
         store._exists = True
         screen.query_one("#meetings-enroll", Button).press()
-        await pilot.pause(0.5)
-        assert owner.invalidated == 1
+        assert await _wait_until(pilot, lambda: owner.invalidated == 1)
         assert _text(screen.query_one("#meetings-voice-status", Static)) == (
             "Voice: enrolled (keyring)"
         )
@@ -1351,3 +1420,244 @@ def test_unmounted_screen_never_touches_the_voice_widgets(tmp_path):
     screen._voice_transfer_done("import", True, "Voiceprint imported.")
     # State work still lands (the owner is not a widget).
     assert owner.invalidated == 2
+
+
+# ---- fix round 1: layout at real terminal sizes, and off-the-loop work -----
+
+VOICE_BUTTON_IDS = (
+    "meetings-enroll", "meetings-voice-delete", "meetings-voice-export", "meetings-voice-import",
+)
+OFFER_BUTTON_IDS = ("meetings-learn-accept", "meetings-learn-decline", "meetings-learn-never")
+
+
+@pytest.mark.parametrize("size", [(160, 45), (100, 30), (80, 24)])
+@pytest.mark.asyncio
+async def test_the_offer_and_voice_row_are_reachable_on_a_small_terminal(tmp_path, size):
+    """Review C1/C2: with a plain `Vertical` rail the offer's answer buttons
+    and the whole Voice section fell out of the compositor below 160x45 —
+    visible copy, no reachable control, and no scrollbar to get to them.
+
+    Measured through `_compositor.visible_widgets` (what is actually painted),
+    with the app's own stylesheet loaded, at the sizes users really run.
+    """
+    app = _build_test_app()
+    owner = FakeOwner(tmp_path)
+    owner.offer = LearningOffer(kind="matched_cluster", folder=tmp_path, cluster_id="S1")
+    app.meeting_session_owner = owner
+    host = StyledHost(app)
+    async with host.run_test(size=size) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        screen.query_one("#meetings-start", Button).press()
+        await _wait_until(pilot, lambda: owner.is_active)
+        screen.query_one("#meetings-stop", Button).press()
+        await _wait_until(pilot, lambda: screen.query_one("#meetings-learn-offer").display)
+        rail = screen.query_one("#meetings-rail")
+        rail.scroll_end(animate=False)
+        await pilot.pause(0.1)
+        for widget_id in OFFER_BUTTON_IDS + VOICE_BUTTON_IDS:
+            painted = _shown(screen, widget_id)
+            assert painted is not None, f"{widget_id} is not painted at {size}"
+            label = str(screen.query_one(f"#{widget_id}", Button).label)
+            assert painted.width >= len(label), (
+                f"{widget_id} shows {painted.width} of {len(label)} label columns at {size}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_the_rail_scrolls_so_the_controls_stay_reachable(tmp_path):
+    """The other half of C2: the rail's content is taller than a 30-row
+    terminal's viewport, so it must SCROLL. A plain `Vertical` clipped the
+    overflow away with no scrollbar and no way back to it."""
+    app = _build_test_app()
+    app.meeting_session_owner = FakeOwner(tmp_path)
+    host = StyledHost(app)
+    async with host.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        rail = screen.query_one("#meetings-rail")
+        assert rail.virtual_size.height > rail.size.height   # overflows...
+        assert rail.max_scroll_y > 0                         # ... and scrolls
+        # Below the fold at rest: the voice row, and the transport controls
+        # too — a 13-row viewport cannot hold them together with the sources
+        # block above them. The controls were already off-viewport here
+        # BEFORE this feature (measured on a71338fb3 with this same
+        # stylesheet: viewport 13, content 24); what changed is that a plain
+        # `Vertical` gave no way back to them at all.
+        assert _shown(screen, "meetings-voice-import") is None
+        assert _shown(screen, "meetings-start") is None
+        for widget_id in ("meetings-voice-import", "meetings-start"):
+            screen.query_one(f"#{widget_id}").scroll_visible(animate=False)
+            await pilot.pause(0.1)
+            assert _shown(screen, widget_id) is not None, widget_id
+
+
+@pytest.mark.asyncio
+async def test_the_learning_offer_is_decided_off_the_ui_thread(tmp_path):
+    """Ruling R2 (review I2): deciding the offer can read the voiceprint
+    store, a bounded but real wait that must not land on the event loop."""
+    host, owner = await _boot(tmp_path)
+    owner.offer = LearningOffer(kind="matched_cluster", folder=tmp_path, cluster_id="S1")
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await _wait_until(pilot, lambda: screen.query_one("#meetings-learn-offer").display)
+        assert owner.offer_threads and host._thread_id not in owner.offer_threads
+
+
+@pytest.mark.asyncio
+async def test_declining_never_blocks_the_event_loop(tmp_path):
+    """Ruling R1 (review I1): `decline_learning` closes a diarizer
+    subprocess — its own docstring bounds that at ~12 s. On the UI thread it
+    froze the app; the answer has to land on a worker."""
+    host, owner = await _boot(tmp_path)
+    owner.offer = LearningOffer(kind="matched_cluster", folder=tmp_path, cluster_id="S1")
+    owner.decline_block = threading.Event()
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await _wait_until(pilot, lambda: screen.query_one("#meetings-learn-offer").display)
+        # WALL CLOCK, not loop iterations: the whole point is that the press
+        # does not park the event loop inside `decline_learning`, which the
+        # fake holds for up to 5 s. On the UI thread this pause cannot return
+        # before that Event is set.
+        started = time.monotonic()
+        screen.query_one("#meetings-learn-decline", Button).press()
+        await pilot.pause(0.05)
+        assert time.monotonic() - started < 2.0, "the decline blocked the event loop"
+        assert screen.query_one("#meetings-learn-offer").display is False
+        assert ("decline", owner.offer) in owner.learning_calls
+        owner.decline_block.set()
+        assert owner.declined.wait(5.0)
+
+
+@pytest.mark.asyncio
+async def test_the_unmount_lapse_never_blocks_the_teardown(tmp_path):
+    """Same for the lapse (review I1/M8): navigating away with an offer on
+    screen must not freeze the transition, and it reads `pending_offer` so an
+    offer that arrived after unmount is still released."""
+    host, owner = await _boot(tmp_path)
+    owner.offer = LearningOffer(kind="matched_cluster", folder=tmp_path, cluster_id="S1")
+    owner.decline_block = threading.Event()
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await _wait_until(pilot, lambda: screen.query_one("#meetings-learn-offer").display)
+        started = time.monotonic()
+    # `run_test` exiting unmounts the screen. The dismiss is held for up to
+    # 5 s by the fake; an inline call would have held the teardown with it.
+    assert time.monotonic() - started < 2.0, "the unmount lapse blocked the teardown"
+    owner.decline_block.set()
+    assert owner.dismissed.wait(5.0)
+    assert ("dismiss", None) in owner.learning_calls
+
+
+@pytest.mark.asyncio
+async def test_the_transfer_worker_description_carries_no_passphrase_or_path(tmp_path):
+    """Review I3: `@work` with no `description=` builds one from `repr()` of
+    every argument, and `Worker.__rich_repr__` yields it to `app.log.worker`
+    on every state change — so the typed passphrase and the destination path
+    would reach the Textual log."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        store = FakeStore()
+        store.block = threading.Event()          # hold the worker where we can see it
+        screen._store = store
+        screen.query_one("#meetings-voice-export", Button).press()
+        await pilot.pause(0.1)
+        screen.query_one("#meetings-voice-path", Input).value = "/Users/alice/vp.json"
+        screen.query_one("#meetings-voice-passphrase", Input).value = "hunter2"
+        screen.query_one("#meetings-voice-export-run", Button).press()
+        assert await _wait_until(pilot, lambda: bool(store.calls))
+        descriptions = [w.description for w in host.workers] + [
+            w.name for w in host.workers
+        ]
+        store.block.set()
+        assert descriptions, "the transfer worker never appeared"
+        joined = " ".join(descriptions)
+        assert "hunter2" not in joined and "alice" not in joined and "vp.json" not in joined
+        assert "voiceprint transfer" in joined
+
+
+@pytest.mark.asyncio
+async def test_the_voice_status_never_reads_the_key(tmp_path):
+    """Review M2: the status line may only stat the file and report the key
+    MODE. A `load()` would raise the Keychain prompt on screen open."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        store = FakeStore()
+        screen._store = store
+        screen._refresh_voice_row()          # FakeStore.load() would fail the test
+        assert "exists" in store.reads and "mode" in store.reads
+        assert store.calls == []             # nothing was mutated
+
+
+def test_the_marker_never_lands_on_the_mic_you_row(meetings_screen_with_session):
+    """Review M3: in plain call mode the mic row has no cluster id at all, so
+    it can never be "the matched cluster" — pinned rather than left to the
+    empty-string guard."""
+    screen = meetings_screen_with_session(segments=[("you", None, "hi")])
+    screen._session.meta.matched_self = "S1"
+    screen._rerender_transcript()
+    assert screen.rendered_lines == ["[00:00:00] You: hi"]
+
+
+@pytest.mark.asyncio
+async def test_the_enrollment_countdown_actually_counts_down(tmp_path):
+    """Review M4: a `set_interval` that fired once and never again would have
+    passed the old assertion (it only checked the first paint)."""
+    host, owner = await _boot(tmp_path)
+    owner.enroll_release = threading.Event()
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        screen.query_one("#meetings-enroll", Button).press()
+        progress = screen.query_one("#meetings-enroll-progress", Static)
+        assert await _wait_until(pilot, lambda: "Recording" in _text(progress))
+        assert screen._enroll_timer is not None          # the interval is running
+        assert _text(progress) == "Recording… 30s left"
+        screen._tick_countdown()
+        assert _text(progress) == "Recording… 29s left"
+        screen._tick_countdown()
+        assert _text(progress) == "Recording… 28s left"
+        owner.enroll_release.set()
+        assert await _wait_until(
+            pilot, lambda: screen.query_one("#meetings-enroll-progress-row").display is False
+        )
+        assert screen._enroll_timer is None              # ... and stopped
+
+
+@pytest.mark.asyncio
+async def test_the_passphrase_never_lingers_in_the_input(tmp_path):
+    """Review M6: it survived a form switch and a refusal, so a passphrase
+    typed for one file could be sent to the next one by a stray press."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        screen._store = FakeStore()
+        passphrase = screen.query_one("#meetings-voice-passphrase", Input)
+        screen.query_one("#meetings-voice-export", Button).press()
+        await pilot.pause(0.1)
+        passphrase.value = "hunter2"
+        screen.query_one("#meetings-voice-import", Button).press()   # switch
+        await pilot.pause(0.1)
+        assert passphrase.value == ""
+        passphrase.value = "hunter2"                                  # ... and a refusal
+        screen.query_one("#meetings-voice-path", Input).value = ""
+        screen.query_one("#meetings-voice-merge", Button).press()
+        await pilot.pause(0.1)
+        assert passphrase.value == ""
