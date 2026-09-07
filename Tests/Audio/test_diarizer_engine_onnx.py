@@ -1,3 +1,4 @@
+import contextlib
 import dataclasses
 import hashlib
 import http.server
@@ -7,6 +8,7 @@ import struct
 import sys
 import tarfile
 import threading
+import time
 import types
 import wave
 
@@ -231,13 +233,20 @@ def _make_hostile_tar_bz2(real_content: bytes) -> bytes:
         symlink = tarfile.TarInfo(name="dirB/model.onnx")  # right basename, symlink
         symlink.type = tarfile.SYMTYPE
         symlink.linkname = "/etc/passwd"
-        symlink.size = 0
+        # Matches `real_content`'s size (re-review Minor 1): `size = 0` (a
+        # link's natural size) let the C2 exact-size check reject this
+        # candidate before the isfile()/issym()/islnk() leg was ever
+        # reached, so removing *just* that leg still passed. `addfile` with
+        # no `fileobj` writes no data blocks regardless of the declared
+        # size, and tarfile does not expect any for a link type on read, so
+        # the archive stays internally consistent.
+        symlink.size = len(real_content)
         tf.addfile(symlink)
 
         hardlink = tarfile.TarInfo(name="dirC/model.onnx")  # right basename, hardlink
         hardlink.type = tarfile.LNKTYPE
         hardlink.linkname = "readme.txt"
-        hardlink.size = 0
+        hardlink.size = len(real_content)  # see symlink's comment above
         tf.addfile(hardlink)
 
         readme = tarfile.TarInfo(name="readme.txt")  # unrelated decoy file
@@ -401,9 +410,13 @@ def test_ensure_models_follows_an_allowed_redirect_hop(tmp_path, stub_server, mo
     # I4: the production happy path (a GitHub release 302ing to
     # objects.githubusercontent.com) had no coverage at all -- a mutant that
     # refuses every 3xx passed 12/12. Route the embedder through one 302.
+    # I4 (partial, re-review): the `Location` is relative -- production
+    # redirects are absolute today, but pinning the relative-resolution leg
+    # (`cur_url.join`, not a bare `httpx.URL(location)`) end-to-end here
+    # costs nothing and a mutant swapping that call used to pass 23/23.
     eng = _engine_with_manifest_pointing_at(stub_server, monkeypatch)
     host, port = stub_server.server_address
-    stub_server.routes["/redir"] = {"status": 302, "location": f"http://{host}:{port}/emb.onnx"}
+    stub_server.routes["/redir"] = {"status": 302, "location": "/emb.onnx"}
     emb_asset = dataclasses.replace(eng.EMBEDDERS["titanet_small"], url=f"http://{host}:{port}/redir")
     monkeypatch.setattr(eng, "EMBEDDERS", {**eng.EMBEDDERS, "titanet_small": emb_asset})
 
@@ -573,6 +586,51 @@ def test_extract_tar_member_rejects_every_unsafe_candidate_and_picks_the_real_on
     assert dest.read_bytes() == real_content
 
 
+def _make_link_only_tar_bz2(link_type, real_content: bytes) -> bytes:
+    """A tarball with exactly one hostile `model.onnx` candidate of
+    `link_type` (`tarfile.SYMTYPE` or `tarfile.LNKTYPE`), sized to match
+    `real_content`, plus the one real, safe member -- isolates the
+    isfile()/issym()/islnk() leg of the filter on its own (re-review item
+    3: the combined fixture let a filter that drops only ONE of the two
+    link types pass, since ordering/other-member effects could mask it)."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:bz2") as tf:
+        hostile = tarfile.TarInfo(name="model.onnx")
+        hostile.type = link_type
+        hostile.linkname = "nowhere"  # must not resolve to the real member
+        hostile.size = len(real_content)
+        tf.addfile(hostile)
+
+        real = tarfile.TarInfo(name="real/model.onnx")
+        real.size = len(real_content)
+        tf.addfile(real, io.BytesIO(real_content))
+    return buf.getvalue()
+
+
+def test_extract_tar_member_rejects_a_symlink_candidate_on_its_own(tmp_path):
+    from tldw_chatbook.Audio.diarizer_engine_onnx import _extract_tar_member
+
+    real_content = b"R" * 1_000
+    tar_path = tmp_path / "fixture.tar.bz2"
+    tar_path.write_bytes(_make_link_only_tar_bz2(tarfile.SYMTYPE, real_content))
+    dest = tmp_path / "out.onnx"
+
+    _extract_tar_member(tar_path, "model.onnx", dest, expected_size=len(real_content))
+    assert dest.read_bytes() == real_content
+
+
+def test_extract_tar_member_rejects_a_hardlink_candidate_on_its_own(tmp_path):
+    from tldw_chatbook.Audio.diarizer_engine_onnx import _extract_tar_member
+
+    real_content = b"R" * 1_000
+    tar_path = tmp_path / "fixture.tar.bz2"
+    tar_path.write_bytes(_make_link_only_tar_bz2(tarfile.LNKTYPE, real_content))
+    dest = tmp_path / "out.onnx"
+
+    _extract_tar_member(tar_path, "model.onnx", dest, expected_size=len(real_content))
+    assert dest.read_bytes() == real_content
+
+
 def test_ensure_models_constructs_its_client_with_trust_env_and_manual_redirects(monkeypatch):
     # Minor 8: spec §9 lists "proxy passthrough" as a downloader test; that
     # depends entirely on `trust_env=True` reaching the real `httpx.Client`.
@@ -592,3 +650,83 @@ def test_ensure_models_constructs_its_client_with_trust_env_and_manual_redirects
     client.close()
 
     assert captured == {"follow_redirects": False, "trust_env": True, "timeout": 30.0}
+
+
+class _ScriptedClient:
+    """No sockets: maps an exact URL string to one canned response and
+    records every URL requested (KeyError on an unscripted one, so a
+    forbidden request fails loudly instead of silently proceeding) --
+    drives `_stream_to_file` directly against the REAL production
+    allowlist (`github.com` / `*.githubusercontent.com`), unlike the
+    loopback stub, which is itself an allowed host under the C1 loopback
+    exception and so can never reach the host-allowlist checks at all
+    (re-review N-I1)."""
+
+    def __init__(self, routes):
+        self.routes = routes
+        self.requested: list[str] = []
+
+    def stream(self, method, url, **kw):
+        self.requested.append(url)
+        return contextlib.nullcontext(self.routes[url])
+
+
+def _fake_response(status_code, *, location=None, body=b""):
+    headers = {"location": location} if location else {}
+    return types.SimpleNamespace(status_code=status_code, headers=headers, iter_bytes=lambda: iter([body]))
+
+
+def test_stream_to_file_enforces_the_real_host_allowlist_and_relative_redirects(tmp_path):
+    # N-I1: the C1 scheme guard refuses every off-allowlist redirect
+    # reachable from the (http-only) loopback stub on SCHEME alone, so no
+    # stub-based test could ever reach the host-allowlist checks -- deleting
+    # either one left the whole suite green. This drives `_stream_to_file`
+    # directly against the real `https://github.com` allowlist instead.
+    from tldw_chatbook.Audio.diarizer_engine_onnx import ModelsUnavailable, _stream_to_file
+
+    deadline = time.monotonic() + 30.0
+
+    # (a) initial URL's host is off the allowlist -> refused, nothing requested.
+    client = _ScriptedClient({})
+    with pytest.raises(ModelsUnavailable, match="download failed"):
+        _stream_to_file(client, "https://evil.example/x", tmp_path / "a", deadline, lambda n: None, 999)
+    assert client.requested == []
+
+    # (b) redirect target's host is off the allowlist (scheme unchanged) --
+    # the HOST check refuses it; evil.invalid is never requested.
+    client = _ScriptedClient({
+        "https://github.com/x": _fake_response(302, location="https://evil.invalid/y"),
+    })
+    with pytest.raises(ModelsUnavailable, match="download failed"):
+        _stream_to_file(client, "https://github.com/x", tmp_path / "b", deadline, lambda n: None, 999)
+    assert client.requested == ["https://github.com/x"]
+
+    # (c) redirect downgrades scheme on an otherwise-allowed host -- the
+    # real production downgrade direction (controller ruling C1).
+    client = _ScriptedClient({
+        "https://github.com/x": _fake_response(302, location="http://github.com/y"),
+    })
+    with pytest.raises(ModelsUnavailable, match="download failed"):
+        _stream_to_file(client, "https://github.com/x", tmp_path / "c", deadline, lambda n: None, 999)
+    assert client.requested == ["https://github.com/x"]
+
+    # (d) redirect to an allowed *.githubusercontent.com host, same scheme
+    # -> followed, body written.
+    dest_d = tmp_path / "d"
+    client = _ScriptedClient({
+        "https://github.com/x": _fake_response(302, location="https://objects.githubusercontent.com/y"),
+        "https://objects.githubusercontent.com/y": _fake_response(200, body=b"hello"),
+    })
+    _stream_to_file(client, "https://github.com/x", dest_d, deadline, lambda n: None, 999)
+    assert dest_d.read_bytes() == b"hello"
+    assert client.requested == ["https://github.com/x", "https://objects.githubusercontent.com/y"]
+
+    # (e) a relative Location resolves against the CURRENT url
+    # (`cur_url.join`, never a bare `httpx.URL(location)`).
+    dest_e = tmp_path / "e"
+    client = _ScriptedClient({
+        "https://github.com/dir/x": _fake_response(302, location="y"),
+        "https://github.com/dir/y": _fake_response(200, body=b"world"),
+    })
+    _stream_to_file(client, "https://github.com/dir/x", dest_e, deadline, lambda n: None, 999)
+    assert dest_e.read_bytes() == b"world"
