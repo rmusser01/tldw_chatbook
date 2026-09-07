@@ -35,7 +35,7 @@ from .models import (
     CanvasRevisionInfo,
     CanvasScope,
 )
-from .profiles import resolve_profile
+from .profiles import ProfileSnapshot, resolve_profile
 
 
 class _TitleParser(HTMLParser):
@@ -720,6 +720,11 @@ class NativeConsoleCanvasAuthority:
                 canvas_id=chosen.revision.canvas_id,
                 revision_id=chosen.revision.revision_id,
             )
+
+    @property
+    def profile_snapshot(self) -> ProfileSnapshot:
+        """Return the same retained authority used to admit exact revisions."""
+        return self._canvas_controller.profile_snapshot
 
     async def resolve_render_plan(self, scope: CanvasGatewayScope):
         captured = self._selected_scope(scope)

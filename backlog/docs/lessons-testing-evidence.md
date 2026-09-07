@@ -57,6 +57,15 @@ real playback. Exercise installed wheels as well as editable source. Keep
 observer corrections separate from application failures, and preserve raw ASR
 differences instead of silently turning lexical mismatches into exact matches.
 
+## Transport failure must not change a served process into a native owner
+
+**TASK-31939, Canvas snapshot delivery, 2026-09-06.** A regression with a
+served-launch marker and a refused control client returned a native Canvas
+gateway: launch mode had been inferred from whether authentication produced a
+client. Retaining the served marker independently and refusing native gateway
+creation made that regression pass. A bad protocol version must disable the
+affected transport, not select a different listener or authority boundary.
+
 ## Index-plan guards must accept the names the DDL actually uses
 
 **TASK-31242 isolated PR preparation, 2026-09-05.** Five real-SQLite,

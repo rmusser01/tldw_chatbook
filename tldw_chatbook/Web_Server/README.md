@@ -133,6 +133,16 @@ browser delivery** immediately revokes Canvas delivery and execution and keeps
 stored artifacts. It does not revoke full Chatbook browser access. Re-enabling
 Canvas requires saving the setting and restarting Chatbook.
 
+Canvas runtime build, catalog, policy, and verified executable bytes are captured
+for the process lifetime. After a packaged runtime or policy update, stop and
+restart the served parent **and all children** (or the native Chatbook host).
+Browser refresh or reopening a preview does not load a new policy. The private
+parent/child protocol requires matching snapshot identities; mixed versions or
+snapshots leave Canvas unavailable while the terminal remains usable. Unknown,
+missing, and revoked profiles preserve source/history/export without substituting
+another runtime. Scripts-disabled V2 openings show inert source. The packaged V2
+candidate remains disabled pending qualification.
+
 ## Privilege boundary
 
 Served mode runs the full trusted Chatbook application with the permissions of

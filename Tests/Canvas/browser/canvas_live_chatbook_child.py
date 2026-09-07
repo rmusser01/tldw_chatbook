@@ -31,7 +31,12 @@ def _document(version: str) -> str:
         "<!doctype html><html><body>"
         '<h1 id="chatbook-app-canvas">CHATBOOK_APP_CANVAS</h1>'
         f'<p id="chatbook-app-revision">{version}</p>'
-        "</body></html>"
+        + (
+            '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]</pre>'
+            if os.environ.get("TLDW_CANVAS_TEST_CANDIDATE") == "1"
+            else ""
+        )
+        + "</body></html>"
     )
 
 
@@ -278,6 +283,23 @@ class _ScriptedCanvasGateway:
 
 
 def main() -> None:
+    if os.environ.get("TLDW_CANVAS_TEST_CANDIDATE") == "1":
+        from dataclasses import replace
+
+        from tldw_chatbook.Canvas import profiles
+
+        base = profiles.load_profile_snapshot()
+        snapshot = replace(
+            base,
+            profiles=tuple(
+                replace(row, executable=True, reason=None)
+                if row.profile_id == "canvas-v2-mermaid-1"
+                else row
+                for row in base.profiles
+            ),
+            default_diagram_profile="canvas-v2-mermaid-1",
+        )
+        profiles.load_profile_snapshot = lambda: snapshot
     app = None
     database = None
     try:
