@@ -2099,3 +2099,86 @@ async def test_owned_retry_preserves_inherited_fork_predecessor_after_rollback(
     await test_production_factory_accepts_active_ancestor_revisions_on_nested_fork(
         tmp_path, make_database, make_gateway, monkeypatch, fork_failure=True,
     )
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "first",
+        "foreign_owner",
+        "foreign_gateway",
+        "capture_on",
+        "forged",
+        "rebound",
+        "later_call",
+        "tool_loop",
+        "unknown_dispatch",
+    ],
+)
+async def test_uncaptured_construction_recovery_requires_exact_live_first_call(
+    tmp_path,
+    make_database,
+    make_gateway,
+    scenario,
+):
+    """Construction-failure proof cannot authorize replay or another send."""
+    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+    database = make_database(tmp_path / "construction.sqlite", "construction")
+    conversation = database.add_conversation({"title": "construction recovery"})
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+
+    def fail_factory(_request, _resolution, _route):
+        if scenario == "unknown_dispatch":
+            raise TraceCallPersistenceError(
+                boundary=SimpleNamespace(dispatch_outcome="unknown")
+            )
+        raise ValueError("synthetic construction failure")
+
+    gateway = make_gateway(trace_call_boundary_factory=fail_factory)
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        model="test-model",
+        ready=True,
+        base_url="https://api.openai.com/v1",
+        execution_key="openai",
+        streaming=False,
+    )
+    request = gateway.prepare_chat_request(
+        resolution,
+        _semantic_request([{"role": "user", "content": "hello"}], [revision], policy),
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    owner = object()
+    signals = ConsoleProviderStreamSignals()
+    gateway._bind_trace_preparation(signals, owner)
+    route = (
+        ConsoleRequestRoute.TOOL_LOOP
+        if scenario == "tool_loop"
+        else ConsoleRequestRoute.FRESH
+    )
+    with pytest.raises(TraceCallPersistenceError) as caught:
+        gateway._reserve_trace_call(request, resolution, route, signals=signals)
+    failure = caught.value
+    mode = ConsoleTraceCaptureMode.CAPTURE_OFF
+    if scenario == "foreign_owner":
+        owner = object()
+    elif scenario == "foreign_gateway":
+        gateway = make_gateway(trace_call_boundary_factory=fail_factory)
+    elif scenario == "capture_on":
+        mode = ConsoleTraceCaptureMode.CAPTURE_ON
+    elif scenario == "forged":
+        failure = TraceCallPersistenceError(reservation_status="unknown")
+    elif scenario == "rebound":
+        gateway._bind_trace_preparation(signals, owner)
+    elif scenario == "later_call":
+        with pytest.raises(TraceCallPersistenceError):
+            gateway._reserve_trace_call(request, resolution, route, signals=signals)
+
+    if scenario == "first":
+        gateway._verify_trace_preparation_recovery(owner, failure, signals, mode)
+        # The same proof is single-use, even with the same owner and gateway.
+    with pytest.raises(TraceCallPersistenceError):
+        gateway._verify_trace_preparation_recovery(owner, failure, signals, mode)

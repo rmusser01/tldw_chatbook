@@ -18067,6 +18067,10 @@ class TldwCli(
             )
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
+        monitor = self.ui_responsiveness_monitor
+        if monitor is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(monitor.close)
 
         # F3/TASK-601: shut down both Library ingest worker boundaries. Final
         # shutdown order, explicit:
