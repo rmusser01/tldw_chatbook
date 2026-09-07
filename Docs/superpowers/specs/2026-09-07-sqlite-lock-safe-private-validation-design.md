@@ -65,6 +65,12 @@ The launcher uses the current interpreter and installed, package-owned helper
 code, without a shell or user working-directory import search. General file
 validation loads only standard-library and dependency-leaf privacy modules, not
 application startup, config, keyring, providers, logging sinks or model refresh.
+Original-parent identity is fixed launcher metadata captured before exec, not a
+late child observation. The launcher overwrites the internal
+`_TLDW_PRIVATE_SQLITE_PARENT_PID` field in its private child environment; the
+entry consumes and validates it before helper imports and carries that identity
+through polling. Missing or changed identity refuses before file preparation.
+This is not a caller option, environment enable switch or wire permission.
 Packaging tests must exercise an installed wheel, not only checkout file paths.
 
 ## 2. IPC and failure ownership
