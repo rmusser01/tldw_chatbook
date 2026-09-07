@@ -3,7 +3,7 @@
 Status: Proposed — conversational decisions approved; written specification awaiting review
 Date: 2026-09-07
 
-Revision: 2 — incorporates the second user-requested design review.
+Revision: 3 — incorporates the third user-requested design review.
 
 Task: [TASK-31978](../tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
 
@@ -48,6 +48,11 @@ new filesystem or execution authority when imported.
    folders, models, and currently available temporary media are optional. Unknown or
    unavailable required data blocks a complete result. Partial archives are labeled
    partial and cannot perform installation replacement in v1. Server data is excluded.
+   Valid current configuration is required for complete backup-source discovery, not
+   archive inspection or isolated restore. Restore destination discovery uses the
+   archive and independently verified local targets; damaged config never causes a
+   silent fallback to default database paths. Unverifiable replacement targets block
+   replacement while inspection and new-destination recovery remain available.
 
 3. Coordinate protocol-aware persistence participants through enforced maintenance
    admission over stable logical namespaces outside replaced data. Verified file/path
@@ -70,6 +75,13 @@ new filesystem or execution authority when imported.
    allowlists, trusted_schema=OFF, restricted functions/authorizers, and SQL execution
    budgets apply before and during staged migration. Installed migration SQL must
    not activate unvalidated imported schema; no unrestricted-connection fallback.
+   Represent selected folder topology, empty directories, and versioned supported
+   directory metadata explicitly in the manifest. Directory/file names share bounded
+   collision/containment checks. Restore parents before children and metadata last;
+   unsupported metadata requires an explicit partial-metadata result. New archives
+   and rollback copies publish atomically to new files only, never overwrite an
+   existing destination, and reject protected source/control aliases or unexcluded
+   output-inside-source layouts. Check-then-replace publication is insufficient.
 
 5. Exclude managed credentials by default using typed owner adapters on staged
    copies, including qualified treatment of SQLite secret remnants. Explicit export
@@ -100,8 +112,11 @@ new filesystem or execution authority when imported.
    storage and preserves both generations. Other profiles may launch only if intact
    evidence proves their namespaces disjoint. Cross-volume replacement is recoverable,
    not globally atomic, and is enabled only on qualified platforms/filesystems.
+   Before clearing an operation fence, persist its installed generation's independent
+   activation-required state. Completing recovery is not permission to start work.
 
-8. Replacement first creates and verifies an encrypted exact local rollback archive.
+8. Replacement first creates and verifies an encrypted local rollback archive of the
+   exact stored-data snapshot and supported captured managed credentials.
    The user supplies a rollback password before any live mutation. Portable export
    redaction does not apply to this artifact. Never overwrite shared keyring entries.
    Retain recovery copies until explicit deletion; protect unresolved evidence. A
@@ -111,6 +126,14 @@ new filesystem or execution authority when imported.
    unsupported old-owner mappings block publication until reviewed. Owners retire
    obsolete managed objects only after verified rollback, and final inventory checks
    reject accidentally active newer objects/sidecars outside the desired generation.
+   Capture readable affected Chatbook-owned keyring values and scope mappings; old
+   references alone do not guarantee later credential recovery. If an existing scope
+   no longer matches, restore into a new scope through the owning adapter rather
+   than overwrite shared credentials. Journal those references/scopes. Disclose
+   unsupported/unreadable credentials before replacement and require acknowledgement
+   of the missing credential coverage if proceeding. Exact local stored-data recovery
+   does not imply that revoked tokens, expired sessions, or environment credentials
+   become available; no provider authentication check runs automatically.
 
 9. Isolated restoration uses a new data namespace, dedicated config, explicit fresh
    process launch, owner-aware path remapping, and new device/credential scopes. A
@@ -134,6 +157,12 @@ new filesystem or execution authority when imported.
     existing owners complete explicit review/reconciliation. This defines the explicit
     recovery exception anticipated by ADR-060 without adding those fields to ordinary
     Chatbook export or activating imported device-local journals.
+    A durable per-generation activation record is authoritative for every supported
+    launch route, including later ordinary/headless launches. Per-owner approvals
+    do not grant other owners permission. Completed-operation fence clearing, UI
+    closure, report rebuilding, or imported approval claims cannot clear this state.
+    Missing/corrupt state for a known restored generation keeps capabilities inactive.
+    Every restore/rollback creates a new locally reviewed generation.
 
 12. Distinguish Archive verified, Restoration validated, Opened successfully, and
     Needs setup. Release requires real data round trips, both destinations, startup
@@ -147,6 +176,12 @@ during installed migrations, custom-root discovery through normal launchers, sco
 startup blocking, separate maintenance intervals, packaged helper availability, and
 recovered-media deletion/re-backup. These extend the existing release gate rather
 than claiming those runtime checks have already been performed.
+
+Third-review evidence adds recovery without parseable current configuration,
+activation persistence after ordinary relaunch and operation-fence clearing, changed
+or unavailable keyring values, publication races against an existing good backup,
+and empty-directory/metadata round trips. These are contract corrections; they do
+not enlarge the feature into server credential repair or general filesystem backup.
 
 ## Alternatives considered
 
