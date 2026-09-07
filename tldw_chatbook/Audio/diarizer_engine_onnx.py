@@ -125,7 +125,15 @@ def models_dir(override: Path | None = None) -> Path:
 
 
 def model_paths(embedder: str, override: Path | None = None) -> tuple[Path, Path]:
-    """`(segmentation_path, embedder_path)` for `embedder` under `models_dir(override)`."""
+    """`(segmentation_path, embedder_path)` for `embedder` under `models_dir(override)`.
+
+    Raises:
+        ValueError: `embedder` is not a manifest key -- `models_ready` takes
+            the same input and returns False instead of raising (Task 3
+            calls both together; only one of them needs to raise).
+    """
+    if embedder not in EMBEDDERS:
+        raise ValueError(f"unknown embedder: {embedder}")
     d = models_dir(override)
     return d / SEGMENTATION.file_name, d / EMBEDDERS[embedder].file_name
 
@@ -152,23 +160,27 @@ def _sha256_of(path: Path) -> str:
 
 
 def _read_wav_span(path: str, start_s: float, end_s: float):
-    """Read `[start_s, end_s)` of a mono 16-bit PCM WAV as float32 samples in
-    `[-1, 1]` (`wave` + numpy only, per spec §5 -- no torchaudio).
+    """Read `[start_s, end_s)` of a mono 16 kHz 16-bit PCM WAV as float32
+    samples in `[-1, 1]` (`wave` + numpy only, per spec §5 -- no torchaudio;
+    the meeting always writes 16 kHz mono, so this never resamples).
 
     Returns:
         `(samples, sr)`.
 
     Raises:
-        ValueError: anything but mono 16-bit PCM ("unsupported wav").
+        ValueError: anything but mono 16 kHz 16-bit PCM, or a `start_s` at or
+            past end-of-file (both "unsupported wav").
     """
     import numpy as np
 
     with wave.open(str(path), "rb") as wf:
-        if wf.getnchannels() != 1 or wf.getsampwidth() != 2:
-            raise ValueError("unsupported wav")
         sr = wf.getframerate()
+        if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or sr != 16000:
+            raise ValueError("unsupported wav")
         total = wf.getnframes()
         a = max(0, int(round(start_s * sr)))
+        if a >= total:
+            raise ValueError("unsupported wav")
         b = min(total, int(round(end_s * sr))) if end_s else total
         b = max(a, b)
         wf.setpos(a)
@@ -180,7 +192,8 @@ def _read_wav_span(path: str, start_s: float, end_s: float):
 def _embed_vector(extractor, np, samples, sr: int):
     """Unit-normalised embedding (np.ndarray) for `samples` at `sr` via the
     sherpa-onnx stream API. A zero-magnitude embedding is returned as-is --
-    the worker's `_unit()` refuses it downstream (task 1)."""
+    the enroll/export paths' `_unit()` refuses it downstream; `assign` does
+    not (task 1's own surface, unaffected by this engine)."""
     stream = extractor.create_stream()
     stream.accept_waveform(sample_rate=sr, waveform=samples)
     stream.input_finished()
@@ -204,8 +217,10 @@ def _cluster_centroids(extractor, np, samples, sr, groups):
     live centroids live in.
 
     Args:
-        groups: `{speaker_label: [(start_s, end_s), ...]}`, times relative to
-            `samples` (already offset by the batch's own start).
+        groups: `{speaker_label: [(start_s, end_s), ...]}` -- times relative
+            to the START of `samples` (i.e. span-relative, NOT yet offset);
+            the batch's own `start_s` is added back later, at segment
+            assembly in `_batch`.
 
     Returns:
         `{"F<label>": (centroid: np.ndarray, seconds: float)}`.
@@ -279,6 +294,7 @@ def _batch(sherpa_onnx, np, extractor, seg_path, emb_path, threshold, live, max_
         segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
             pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(model=str(seg_path)),
             num_threads=BATCH_THREADS,
+            provider="cpu",
         ),
         embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
             model=str(emb_path), num_threads=BATCH_THREADS, provider="cpu",
@@ -356,15 +372,23 @@ def load(
         if _sha256_of(seg_path) != SEGMENTATION.sha256 or _sha256_of(emb_path) != EMBEDDERS[key].sha256:
             raise ValueError("model hash mismatch")
 
-    extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
-        sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(emb_path), num_threads=LIVE_THREADS, provider="cpu")
-    )
+    def _make_extractor(num_threads: int):
+        return sherpa_onnx.SpeakerEmbeddingExtractor(
+            sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(emb_path), num_threads=num_threads, provider="cpu")
+        )
+
+    extractor = _make_extractor(LIVE_THREADS)
     threshold = CLUSTER_THRESHOLD[key]
 
     return LoadedEngine(
         lambda pcm, sr: _embed(extractor, np, pcm, sr),
+        # A fresh BATCH_THREADS extractor per Stop pass (spec §2: "4 for the
+        # Stop pass") -- built lazily here rather than eagerly alongside
+        # `extractor` above, since the Stop pass runs at most once per
+        # meeting and a live-only meeting should not pay for a second
+        # loaded model it never uses.
         lambda wav, s, e: _batch(
-            sherpa_onnx, np, extractor, seg_path, emb_path, threshold, live, max_speakers, wav, s, e
+            sherpa_onnx, np, _make_extractor(BATCH_THREADS), seg_path, emb_path, threshold, live, max_speakers, wav, s, e
         ),
         model_id_for_embedder(key),
     )

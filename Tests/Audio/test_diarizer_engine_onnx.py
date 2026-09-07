@@ -105,3 +105,34 @@ def test_batch_folds_clusters_past_max_speakers(fake_sherpa, tmp_path):
     loaded = eng.load(OnlineClusterer(max_speakers=1), 1, models_dir_override=tmp_path, verify_hashes=False)
     segs, centroids = loaded.batch(str(wav), 0.0, 4.0)
     assert len(centroids) == 1 and len({s["speaker"] for s in segs}) == 1
+
+
+def test_batch_offsets_segment_times_by_the_span_start(fake_sherpa, tmp_path):
+    # Review I1: every other batch() test calls start_s=0.0, which passes even
+    # if the "start_s + r.start" offset in _batch is dropped entirely. Here
+    # start_s=1.0 so the fake's fixed span-relative segments (0.0-2.0,
+    # 1.5-3.0, 3.0-4.0) must come back shifted to absolute file time.
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+    (tmp_path / "pyannote-segmentation-3-0.onnx").write_bytes(b"x"); (tmp_path / "nemo_en_titanet_small.onnx").write_bytes(b"x")
+    wav = tmp_path / "mixed.wav"; _wav(wav)
+    loaded = eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path, verify_hashes=False)
+    segs, _ = loaded.batch(str(wav), 1.0, 4.0)
+    assert (segs[0]["start_s"], segs[0]["end_s"]) == (1.0, 3.0)  # was 0.0-2.0
+    assert (segs[1]["start_s"], segs[1]["end_s"]) == (2.5, 4.0)  # was 1.5-3.0
+    assert (segs[2]["start_s"], segs[2]["end_s"]) == (4.0, 5.0)  # was 3.0-4.0
+
+
+def test_load_verifies_hashes_by_default_and_can_skip_the_check(fake_sherpa, tmp_path):
+    # Review I2: nothing exercised verify_hashes=True (the default) or the
+    # "model hash mismatch" message before this test.
+    from tldw_chatbook.Audio import diarizer_engine_onnx as eng
+    from tldw_chatbook.Audio.diarizer_cluster import OnlineClusterer
+    (tmp_path / "pyannote-segmentation-3-0.onnx").write_bytes(b"junk-seg")
+    (tmp_path / "nemo_en_titanet_small.onnx").write_bytes(b"junk-emb")
+
+    with pytest.raises(ValueError, match="model hash mismatch"):
+        eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path)  # verify_hashes defaults True
+
+    loaded = eng.load(OnlineClusterer(), 8, models_dir_override=tmp_path, verify_hashes=False)
+    assert loaded.model_id.startswith("sherpa-onnx/")
