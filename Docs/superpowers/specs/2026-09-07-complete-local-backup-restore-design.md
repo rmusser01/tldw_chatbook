@@ -2,7 +2,7 @@
 
 Date: 2026-09-07
 
-Revision: 3 — third design-review corrections incorporated.
+Revision: 4 — fourth design-review corrections incorporated.
 
 Status: Draft for written user review. Conversational scope and review corrections
 approved; implementation and implementation planning have not started.
@@ -48,6 +48,9 @@ Approved decisions:
 - The third review separates damaged-installation recovery from backup discovery,
   makes activation restrictions durable across launches, bounds credential rollback
   claims, prevents archive-output overwrite, and preserves explicit folder structure.
+- The fourth review invalidates dependent indexes across restored source generations,
+  revalidates source inventory under maintenance, and distinguishes intentionally
+  deleted recovered media from unexpectedly missing required payloads.
 
 The remaining implementation choices below are concrete proposals for this written
 review, particularly the encryption helper, recovery catalog, and verification
@@ -80,6 +83,10 @@ workflow rather than silently changing Save semantics.
 [ADR-029](../../../backlog/decisions/029-local-private-data-boundary.md) governs
 private files and diagnostics; [ADR-036](../../../backlog/decisions/036-application-service-composition-lifecycle.md)
 governs application service composition.
+
+[ADR-030](../../../backlog/decisions/030-derived-index-lifecycle-and-atomic-media-migrations.md)
+keeps media authoritative and indexes derived; recovery must reconcile projections
+before exposing them against restored sources.
 
 [ADR-021](../../../backlog/decisions/021-file-backed-notes-disk-authority-and-recovery.md)
 keeps File Notes disk-authoritative and separates recovery stores from projections.
@@ -122,7 +129,7 @@ by a recursive directory copy or silently ignored.
 | Config and app definitions | Include current settings, templates, prompts, workspace metadata, local definitions, and supported history after managed-secret processing. |
 | Persistent assets | Include attachments, saved media, persona artwork, voice references, and other app-owned user content. Resolve their referencing records as one dependency group. |
 | Sync, queue, permission, and recovery state | Retain recoverable data, but restore operational state into quarantine; activation rules are in section 9. |
-| Derived indexes and embeddings | Include durable indexes by default when a qualified capture adapter exists. Optional omission is explicit and reports rebuild prerequisites/cost; no rebuild starts automatically. |
+| Derived indexes and embeddings | Include durable indexes by default when a qualified capture adapter exists. Optional omission is explicit and reports rebuild prerequisites/cost; no rebuild starts automatically. Restored or preserved indexes cannot serve a changed source generation until owner validation/reconciliation succeeds. |
 | Models | Off by default, with per-model selection, byte sizes, dependency details, and available-source verification. Model recipes alone do not imply model bytes were captured. |
 | External folders | Off by default, selected per root; source identity, coverage, and consistency limitations are shown. Source folders are never modified by backup. |
 | Temporary generated media | Offer Include currently available temporary media, off by default; count referenced available/missing items. Included bytes restore as retained recovered assets, outside expiry/startup-cleanup namespaces. |
@@ -136,7 +143,9 @@ and exclusions. A location outside the default data directory is not automatical
 external: a configured app-owned database remains baseline content.
 
 Every inventory entry records included, intentionally excluded, absent because
-unused, unavailable, or unsupported. Known missing required data and unknown durable
+unused, intentionally deleted with a validated owner tombstone, unavailable, or
+unsupported. An intentional deletion includes its durable deletion/reference state,
+not a requirement for the deleted payload. Known missing required data and unknown durable
 entries block a complete result. A partial backup requires explicit acknowledgement
 of omissions, retains dependency failures in the manifest, and cannot later be
 relabeled complete. Partial archives support extraction and isolated recovery of
@@ -304,6 +313,21 @@ operations to completed or durable recoverable boundaries. Unresolved operations
 whose bytes/ownership cannot be captured coherently block a complete backup. Do
 not kill a worker merely to obtain a snapshot or discard an unsaved editor draft;
 ask the user to save/discard a draft through its existing flow before maintenance.
+
+After admission closes and writers drain, rediscover the selected owners, effective
+storage mappings, aliases, dependencies, and required assets under maintenance.
+Compare this inventory with the approved scope; a preview-time enumeration is not
+the capture inventory. Changed roots/owners, shared-profile impact, exclusions, or
+required coverage invalidate the preview. Release maintenance and obtain a renewed
+preview, then reacquire and revalidate; never extend the lock set out of order while
+holding existing locks. Registry admission keeps this final scope stable during capture.
+
+Ordinary record/asset growth within already approved owners is included in the final
+capture, subject to rechecked capacity and limits. If growth changes an approved
+coverage choice or exceeds the budget, stop for a revised preview. Reconcile the
+captured dependency groups and manifest against this final inventory before writers
+resume. Record the actual capture boundary and coverage, not discovery-time counts.
+External folders retain the separate per-file consistency contract below.
 
 Use DB/private_sqlite.py for each SQLite snapshot, including committed WAL content.
 Do not copy live .db/-wal/-shm files as independent assets. Required databases and
@@ -549,8 +573,9 @@ Resolve the target inventory into three explicit sets before confirmation:
   files is not a replacement. Preserve these objects in verified rollback before
   retiring them through their owner; never recursively delete a target directory.
 - Preserve outside this replacement: unselected profiles, external source folders,
-  declared optional exclusions, shared items outside the approved scope, and recovery
-  control/artifacts. Show intentional preservation in the result.
+  independent optional exclusions, shared items outside the approved scope, and recovery
+  control/artifacts. Optional exclusion does not keep a dependent projection active
+  after its source changes. Show intentional preservation in the result.
 
 Absence from the archive alone does not authorize retirement: distinguish explicit
 producer inventory/omissions, optional exclusions, and an owner introduced after
@@ -562,6 +587,22 @@ rollback snapshot includes committed WAL state. Journal every restore, retire,
 and preserve decision, and validate the final live owner inventory against the
 approved plan. A stale database or attachment absent from the desired
 generation cannot survive as an accidentally active store.
+
+Apply ADR-030 to every derived index, embedding projection, and query-result cache
+whose authoritative source is restored. Invalidate cache entries and disable the
+affected projection before the restored generation can be queried. An omitted index
+is not an independent optional exclusion: retire its affected managed state into
+rollback or quarantine it through its owner, with that choice shown in the preview.
+Shared indexes require the same scope expansion/refusal rules as shared databases.
+
+Both restored and retained projections require owner-verified source identity/state,
+schema and embedding compatibility, and reconciliation with active source records
+before serving retrieval. Presence, matching paths, or matching record IDs alone are
+insufficient. Without sufficient provenance or a qualified validation adapter, leave
+the projection unavailable and report explicit rebuild/reconciliation prerequisites.
+No rebuild starts automatically, including a local rebuild. Isolated restore and
+later rollback obey the same rules; approving a runtime capability cannot bypass
+projection validation. Safe source-content inspection remains available meanwhile.
 
 Stop affected services and prevent new participants from opening their storage.
 Produce and verify an encrypted exact local rollback archive before the first live
@@ -701,7 +742,7 @@ recovery for an interrupted file/catalog update.
 Transcript media resolution consults the recovered reference for a restored message
 and original media key before the temporary-store resolver. Mapping uses source
 profile/message identity and the original slug/type, not display name alone. A
-known recovered reference with missing bytes renders Missing recovered media rather
+known recovered reference with unexpectedly missing bytes renders Missing recovered media rather
 than falling through to an unrelated same-named temporary file. Persist mappings
 across restart and re-backup; restore collisions require matching identity/content
 or explicit remapping, never silent reassignment. No media is decoded or executed
@@ -709,16 +750,25 @@ merely to register it during archive validation.
 
 Once recovered, these assets are durable app-owned content and join the baseline of
 every subsequent full backup, independent of the temporary-media option. Include
-catalog, references, and referenced payloads in one capture dependency group. Restore
-and relocation use this same owner and keep logical asset IDs stable. Existing
+catalog, references, and referenced payloads in one capture dependency group. Include
+intentional-deletion tombstones with their references without requiring deleted bytes.
+Restore and relocation use this same owner and keep logical asset IDs stable. Existing
 live-generated media retains its original session/TTL policy unless explicitly
 captured and restored through this feature.
 
 Expose recovered assets and sizes in storage/recovery details with explicit deletion.
 Deleting a message releases its reference through the owner; it does not immediately
 erase a payload still referenced elsewhere or retained for recovery. Deleting a
-recovered asset previews affected messages, leaves explicit missing-media references,
-and removes bytes through the checked owner lifecycle. Unreferenced durable payloads
+recovered asset previews affected messages, retains references marked intentionally
+deleted, and removes bytes through the checked owner lifecycle. Persist a versioned
+owner tombstone tied to the stable asset ID and affected references; journal tombstone
+publication and payload retirement so an interrupted deletion is recoverable. Render
+these references as Deleted recovered media, with no temporary-store fallback.
+Only validated owner deletion state authorizes absence: never infer a tombstone from
+a missing file, failed read, or digest mismatch. A valid tombstone survives subsequent
+backup/restore and does not make the backup partial; an absent required payload with
+no valid tombstone still blocks completeness. Restoring the tombstone cannot revive
+the deleted asset from unrelated retained files. Unreferenced durable payloads
 are listed as cleanup candidates and removed only by an explicit user cleanup action
 after rechecking references and active recovery holds. Automatic cleanup is limited
 to provably operation-owned unpublished staging. It cannot sweep unknown files,
@@ -758,6 +808,10 @@ Implementation release evidence must include:
   profiles/configs, custom paths, optional owners, unknown durable entries, aliases,
   shared stores, and deliberately missing data. New persistence owners cannot ship
   without a classification/capture declaration or explicit justified exclusion.
+- Inventory changes between preview and maintenance: create an asset, enable an owner,
+  remap a database, and introduce a shared alias from another participating process.
+  Assert normal in-scope growth is captured, scope/budget changes renew the preview,
+  lock reacquisition preserves ordering, and the manifest matches final fenced coverage.
 - Real SQLite/WAL data and real filesystem assets captured under concurrent writes
   from separate processes. Prove participating writers drain together and another
   protocol-aware process cannot enter during capture/publication. Cover shared-store
@@ -780,6 +834,11 @@ Implementation release evidence must include:
   backup, declared optional exclusions, unknown files, shared stores, and old SQLite
   sidecars. Assert restore/retire/preserve sets, rollback recovery of retired objects,
   and no active stale objects or unreviewed deletion after publication.
+- Derived-index omission with newer target-only and deleted-source documents, imported
+  projections with incompatible embedding/schema provenance, shared indexes, and
+  rollback to an older source generation. Assert stale results are unavailable across
+  restart, cache invalidation occurs, no rebuild starts automatically, and retrieval
+  resumes only after qualified validation/reconciliation of the restored sources.
 - Failure injection before/after every durable journal/publication boundary,
   including process termination, out-of-space, target changes, disconnected volumes,
   unavailable rollback password, corrupt control state, and interrupted rollback.
@@ -823,6 +882,11 @@ Implementation release evidence must include:
   bytes, reference deletion, shared references, explicit orphan cleanup, interrupted
   catalog/file publication, and a second backup/restore with temporary-media capture
   disabled. Durable recovered content must remain covered and resolvable.
+- Intentional recovered-asset deletion versus unexpected file loss and digest failure.
+  Round-trip deletion tombstones and references through another complete backup and
+  both restore destinations; assert Deleted versus Missing rendering, no payload
+  resurrection/fallback, and missing required bytes still prevent a complete result.
+  Inject interruption between tombstone publication and payload retirement.
 - Separate timing/lifecycle assertions: normal-backup writers resume before packaging,
   while replacement/rollback remains fenced through encrypted safety-copy verification
   and installed validation. Progress and cancellation describe the actual interval.
@@ -883,6 +947,9 @@ is qualified. Existing selective exports remain available during development.
 | Exact rollback promises external credential availability | Capture supported owned values encrypted, remap conflicting scopes, and report external/unreadable authentication separately. |
 | Backup publication overwrites an existing good archive | New-file-only flow, source/control alias checks, and atomic no-replace publication under destination races. |
 | File-only archive loses empty folder structure | Explicit bounded directory manifest, parent ordering, collision checks, and supported metadata/omission policy. |
+| Omitted indexes remain active against replaced sources | Dependent projections are invalidated/quarantined; source and embedding compatibility plus reconciliation gate retrieval under ADR-030. |
+| Preview inventory drifts before capture | Rediscover under maintenance, renew scope/budget previews, and bind completeness to final captured inventory. |
+| Deliberate media deletion appears as backup corruption | Validated owner tombstones preserve intentional absence and references; unexpected missing payloads still block completeness. |
 
 ## 12. Written review boundary
 
