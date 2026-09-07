@@ -14,6 +14,7 @@ from textual.widgets import Static
 from .main_navigation import MainNavigationBar
 
 if TYPE_CHECKING:
+    from textual.widget import Widget
     from tldw_chatbook.app import TldwCli
 
 
@@ -149,9 +150,10 @@ class BaseAppScreen(Screen):
         )
         if focus_identity is not None:
             # ``call_after_refresh`` (not ``call_next``): Textual only
-            # SCHEDULES the teardown here, and ``Screen._on_timer_update``
-            # runs it before ``_invoke_and_clear_callbacks``, so the new
-            # children exist by the time this runs.
+            # SCHEDULES the teardown here -- ``Widget.refresh`` queues
+            # ``_check_recompose`` via ``call_next``, which always runs
+            # before the ``InvokeLater`` that ``call_after_refresh``
+            # posts, so the new children exist by the time this runs.
             #
             # TWO hops on purpose. ``call_after_refresh`` posts an
             # ``InvokeLater`` message, so callbacks run in POST order --
@@ -212,9 +214,13 @@ class BaseAppScreen(Screen):
            (PR L review item 1): ``focus_chain[0]`` is the
            ``MainNavigationBar``'s first tab on every screen, where a
            blind Enter LEAVES THE SCREEN -- a key that was inert before
-           this seam existed. ``LabScreen`` hits this branch on every
-           recompose (its body mounts in a later ``call_after_refresh``,
-           so the captured id is genuinely absent when the restore runs).
+           this seam existed. Nothing screen-recomposes a ``LabScreen``
+           today (``lab_frame.py`` re-lays its rail without a recompose),
+           but its body mounts in a later ``call_after_refresh``, so a
+           future recompose would find the captured id absent and land
+           here -- on ``LabModeStrip``'s chips, where Enter switches Lab
+           mode. Narrower than leaving the screen; excluding the chips
+           is a follow-up if that path ever fires.
            The bare ``focus_chain[0]`` remains the last resort for a
            screen whose content area holds nothing focusable at all;
            mounted and keyboard-reachable still beats ``None``.
@@ -241,7 +247,7 @@ class BaseAppScreen(Screen):
         if target is not None:
             self.set_focus(target, scroll_visible=False)
 
-    def _first_focusable_in_content(self):
+    def _first_focusable_in_content(self) -> "Widget | None":
         """The fallback target: first focusable widget under content.
 
         Falls back to the screen's own first focusable widget only when

@@ -9239,7 +9239,11 @@ class LibraryScreen(BaseAppScreen):
         ``_focus_library_list_entry`` -- deliberately those two and no
         more, so this predicate stays a statement about which route/stage
         the channel serves and never a second copy of its row-picking
-        logic.
+        logic. Two no-landing cases are knowingly left inside "owns":
+        a pending Find focus whose input never mounts, and an empty
+        Media list whose four fallback controls are all absent or
+        disabled -- both narrow, both end at ``None`` rather than at a
+        wrong widget.
         """
         if self._library_media_find_focus_pending:
             return True
