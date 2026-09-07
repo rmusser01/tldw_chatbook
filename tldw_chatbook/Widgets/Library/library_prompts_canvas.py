@@ -741,7 +741,12 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             management_toolbar.styles.height = "auto"
             with management_toolbar:
                 yield Button(
-                    library_disabled_action_label("Select page", select_page_disabled),
+                    # task-31959 (batch-3 review, minor 3): padded too --
+                    # it sits auto-width LEFT of "Clear all" in this row, so
+                    # its own flip moved its padded neighbours two cells.
+                    library_disabled_action_label(
+                        "Select page", select_page_disabled, align=True
+                    ),
                     id="library-prompts-select-page",
                     classes="library-canvas-action",
                     compact=True,

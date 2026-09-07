@@ -43,6 +43,7 @@ from tldw_chatbook.Library.library_media_reader_state import (
     settle_success,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen, _sync_library_canvas
+from tldw_chatbook.Widgets.Library.library_media_viewer import RENDERED_VIEW_NOTE
 
 
 class ControlledDetailMediaService(StaticLibraryMediaScopeService):
@@ -2729,7 +2730,7 @@ async def test_non_markdown_article_says_why_the_rendered_toggle_is_absent():
         assert not viewer.viewer.is_markdown
 
         note = screen.query_one("#library-media-content-mode-note", Static)
-        assert str(note.content) == "Rendered view is for Markdown and transcripts"
+        assert str(note.content) == RENDERED_VIEW_NOTE
         # Text only: the slot gains no control.
         assert not screen.query("#library-media-content-mode-rendered")
         assert not screen.query("#library-media-content-mode-raw")
@@ -2783,8 +2784,11 @@ async def test_any_non_markdown_item_with_content_says_why_rendered_is_absent(
         assert not viewer.viewer.is_markdown
 
         note = screen.query_one("#library-media-content-mode-note", Static)
+        # Type-neutral copy (batch-3 review ruling 1): it says why THIS item
+        # has no rendered view, not which types one is for -- the old
+        # spelling told a transcript reader rendering was "for transcripts".
         assert (
-            "Rendered view is for Markdown and transcripts"
+            "No Markdown formatting to render — showing the stored text"
             in _painted_text(host, note.region)
         )
         # Text only: the slot gains no control.
@@ -2810,4 +2814,4 @@ async def test_empty_item_paints_no_stored_content_and_no_rendered_view_note():
         assert "No stored content." in _painted_text(host, body.region)
 
         assert not screen.query("#library-media-content-mode-note")
-        assert "Rendered view is for" not in _painted_text(host, viewer.region)
+        assert RENDERED_VIEW_NOTE not in _painted_text(host, viewer.region)

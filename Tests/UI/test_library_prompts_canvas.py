@@ -1239,11 +1239,12 @@ async def test_prompts_canvas_select_mode_renders_summary_and_selection_toolbars
                 "#library-prompts-delete-selected",
             )
         )
-        # task-31959: the actions that flip with the selection count spell
-        # their enabled label with the "○ " marker's own width reserved, so
-        # the word holds its column when the first selection enables them.
+        # task-31959: every select-mode action spells its enabled label with
+        # the "○ " marker's own width reserved, so a word holds its column
+        # when its own -- or an auto-width left neighbour's -- state flips.
+        # "Done" never flips with the selection, so it stays unpadded.
         assert [str(button.label) for button in management] == [
-            "Select page",
+            f"{LIBRARY_ACTION_LABEL_PAD}Select page",
             f"{LIBRARY_ACTION_LABEL_PAD}Clear all",
             "Done",
         ]

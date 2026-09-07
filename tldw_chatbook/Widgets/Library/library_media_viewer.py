@@ -59,7 +59,11 @@ READER_EMPTY_FAILED_COPY = "Nothing loaded — the list could not be loaded."
 #: allowlist of article/document left a plaintext, video or audio item that
 #: failed the Markdown sniff with the same silent blank slot, while an empty
 #: article got the note above "No stored content.", explaining nothing.
-RENDERED_VIEW_NOTE = "Rendered view is for Markdown and transcripts"
+#: The copy is type-neutral for the same reason (batch-3 review ruling 1):
+#: naming the types a rendered view IS for read as a contradiction above a
+#: plain-prose transcript -- "for transcripts", withheld from a transcript.
+#: It now says why THIS item has none.
+RENDERED_VIEW_NOTE = "No Markdown formatting to render — showing the stored text"
 
 
 def empty_reader_copy(*, loading: bool, list_failed: bool) -> str:

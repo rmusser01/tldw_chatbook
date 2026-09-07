@@ -140,7 +140,12 @@ keyword: quokkasand…`, the title hit painted `article · 1m`.)*
   labels back in place — the word itself does not move: an enabled
   select-mode action reserves the marker's own two cells, so "Export
   selected" starts in the same column whether or not the "○" is showing.
-  That holds on Media, Conversations, Notes and Prompts alike.
+  You can see that on Media, Conversations and Prompts. Notes reserves the
+  same width, but its select-mode row overflows the notes pane at every
+  width today, so "Clear" and "Export selected" are off-screen there until
+  that row is reworked. On Conversations the pane is narrow enough that the
+  label is clipped either way — "○" alone while disabled, "Exp" once
+  enabled — but it is clipped in the same column, which is the point.
 
 **Media's "Analyze"** (Media only) generates an analysis for every checked
 item in one run, in list order, on its own row under Clear/Export/Review:
@@ -343,8 +348,9 @@ still spans the pane.
   "Raw" to see the plain source instead. A rendered heading starts in the
   same column as the prose beneath it. Any item with content but no
   markdown gets no toggle, whatever its media type; that slot reads
-  "Rendered view is for Markdown and transcripts" instead of going
-  silently blank. An item with no stored content shows no such note — the
+  "No Markdown formatting to render — showing the stored text" instead of
+  going silently blank — it names what THIS item has, so a plain-prose
+  transcript is not told that rendering is "for transcripts". An item with no stored content shows no such note — the
   box already says "No stored content." and there is no rendered view to
   explain away. Below the toggle (or directly
   above Content for everything else) is a "Search content…" box — its
@@ -396,8 +402,7 @@ still spans the pane.
 
 *Verified against fix/media-riders-o — 2026-09-07 (tasks 31958/31959: live
 in tmux at 235x52 on a seeded scratch profile. A `plaintext` item with
-content painted "Rendered view is for Markdown and transcripts" above its
-text; an empty `article` painted "No stored content." with no note above
+content painted the no-Markdown note above its text; an empty `article` painted "No stored content." with no note above
 it. In Conversations select mode, checking the first row moved the count
 0 → 1 and left the Export selected label's first painted glyph on column
 83 — "○" before, "Exp" (clipped) after.)*
