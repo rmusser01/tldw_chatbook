@@ -35,5 +35,32 @@ Native macOS evidence on 4fcb verified Ctrl+K, pointer mode selection, typed
 Keyword query, exact selected result and compact detail layout. Enter/F3 delivery
 was not established. The dedicated synthetic-data process was subsequently
 controller-interrupted and verified stopped; this is not native quit evidence.
-Fresh post-fix native and full-owner UI results are still pending. Windows and
+Subsequent native macOS pointer activation on source
+`f5b943c8f361c05cf53e61a67c3fb440b685cf4e` showed the exact Alpha transcript.
+Manual Enter verification was not completed and its request was retracted.
+The controller verified and SIGINT-stopped only the owned synthetic app
+PID65085; its exit receipt reported no exception. This is partial native
+evidence, not keyboard/F3 or native quit acceptance. Windows and
 three-participant first-use verification remain external, unwaived gaps.
+
+The full-owner UI attempt5 on that same source passed 30 narrow warm searches
+and genuinely returned `OPENED` for `perf-00000`, but its instrument then waited
+on Textual's lifetime `Widget.is_mounted` flag, which remains true after removal.
+Its commit-wait observer also failed to forward the completion-owner keyword.
+Bounded attempts6/7 confirmed exact Console exposure, modal absence from both
+stack and app registry, and actual commit acknowledgement. The artifact now
+checks those live boundaries and forwards supplied arguments unchanged, retaining
+all exact target/transcript/composer/persisted-ID assertions and the 50 ms loop /
+100 ms busy-paint limits. These are instrument corrections, not a passing full
+matrix or permission to discard the failed attempts.
+
+Performance remains **unqualified**: attempt5 preparation/activation intervals
+were 79.873/127.801 ms, attempt6 activation was 131.468 ms, and attempt7 activation
+was 87.733 ms. Attempt7's 79.257 ms automatic main-thread generation-2 collection
+fell wholly inside that last interval (13,497 objects collected, zero
+uncollectable). Its stylesheet rebuild and individual registration timings were
+small; the collected objects' owners are not identified. Observer allocations
+can shift GC timing, and capped detail records were dropped, so this is neither
+a baseline Textual performance comparison nor proof of a retained-object leak.
+No production GC/cache policy was changed. The corrected full-owner matrix and
+remaining native workflow still require fresh qualification.

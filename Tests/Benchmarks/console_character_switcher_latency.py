@@ -96,6 +96,40 @@ class PaintWindow:
         return result
 
 
+def _accepted_modal_closed(app: Any, modal: Any, chat: Any) -> bool:
+    """Check the actual removal boundary before recording activation settled."""
+    return (
+        app.screen is chat
+        and modal not in app.screen_stack
+        and not app.is_mounted(modal)
+    )
+
+
+def _observe_commit_waiter(original: Any, current_window: Any) -> Any:
+    """Observe the real acknowledgement without substituting its owner."""
+
+    async def observed(*args: Any, **kwargs: Any) -> None:
+        window = current_window()
+        try:
+            await original(*args, **kwargs)
+        except BaseException as error:
+            if window is not None:
+                window.calls.append(
+                    {
+                        "kind": "commit_waiter_error",
+                        "exception_type": type(error).__name__,
+                        "at_ns": time.perf_counter_ns(),
+                    }
+                )
+            raise
+        if window is not None:
+            window.calls.append(
+                {"kind": "commit_started", "at_ns": time.perf_counter_ns()}
+            )
+
+    return observed
+
+
 async def _wait(predicate: Any, label: str, timeout: float = OPERATION_TIMEOUT) -> None:
     try:
         async with asyncio.timeout(timeout):
@@ -451,19 +485,11 @@ async def run(
                 finally:
                     call["returned_ns"] = time.perf_counter_ns()
 
-            async def observed_commit_waiter(request: Any) -> None:
-                window = active
-                await original_commit_waiter(request)
-                if window is not None:
-                    window.calls.append(
-                        {"kind": "commit_started", "at_ns": time.perf_counter_ns()}
-                    )
-
             # Observation-only wrappers delegate every real input/result unchanged.
             chat._character_context.keyword_page = observed_page
             workspace.activate_character_conversation = observed_activate
             workspace.wait_until_character_conversation_commit_started = (
-                observed_commit_waiter
+                _observe_commit_waiter(original_commit_waiter, lambda: active)
             )
 
             for size in ((52, 20), (120, 50)):
@@ -582,8 +608,8 @@ async def run(
                         )
                         assert result["result"] == "opened", result
                         await _wait(
-                            lambda modal=modal: (
-                                not modal.is_mounted and app.screen is chat
+                            lambda modal=modal: _accepted_modal_closed(
+                                app, modal, chat
                             ),
                             "accepted modal close",
                         )
