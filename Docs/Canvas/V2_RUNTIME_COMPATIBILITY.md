@@ -216,3 +216,12 @@ startup publishes a transaction; diagram or authored failures publish no diagram
 mutations. Handles are disposed before authored code and never become globals.
 Later source/attribute mutation does not rerender. These browser tests qualify
 this consumer integration only; production candidate admission remains disabled.
+
+Worker admission also independently checks every generic plan collection and
+node record before creating the VM: namespace-specific tag/attribute vocabulary,
+element versus text-node slots, uniqueness, asset references, bounded base64 and
+raster metadata, aggregate bytes/pixels, and CSS text/nested-rule quotas. Actual
+CSSOM paint semantics and browser image decode remain renderer responsibilities;
+the worker does not gain DOM/CSSOM construction. Installation removes the original
+declaration text children through typed mutations before appending its scene, so
+the virtual text getter sees the same descendants as the rendered DOM.
