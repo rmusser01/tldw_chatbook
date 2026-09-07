@@ -179,6 +179,32 @@ def _freeze_media_summary_value(value: Any) -> Any:
     raise TypeError("Media summary values must be JSON-like immutable data.")
 
 
+def library_media_int_backing_id(media_id: object) -> int | None:
+    """The positive integer backing id behind a Library media display id.
+
+    task-31962: ``library_screen`` grew three spellings of this one
+    coercion (the row re-projection's, the review-selected handler's inline
+    ``rsplit``, and the review cursor's ``int()``), which is how the next
+    change to the id shape half-lands. This is the single owner.
+
+    Args:
+        media_id: A canonical ``local:media:<id>`` display id, a bare
+            integer id in either text or int form, or anything else.
+
+    Returns:
+        The positive backing id, or ``None`` when the value carries none --
+        a legacy ``media-<n>`` row id, an unparseable tail, ``None``, or a
+        non-positive id (no media row has one).
+    """
+    if media_id is None:
+        return None
+    try:
+        backing_id = int(str(media_id).rsplit(":", 1)[-1])
+    except (TypeError, ValueError):
+        return None
+    return backing_id if backing_id > 0 else None
+
+
 def validate_media_browse_items(
     items: Sequence[Mapping[str, Any]],
 ) -> tuple[Mapping[str, Any], ...]:

@@ -15,6 +15,7 @@ from tldw_chatbook.Library.library_media_state import (
     build_media_browse_result,
     build_library_media_browse_state,
     build_library_media_state,
+    library_media_int_backing_id,
     validate_media_browse_items,
 )
 from Tests.UI.library_media_rows import summary_row, summary_rows
@@ -897,3 +898,26 @@ def test_narrow_keyword_reason_cut_is_unchanged() -> None:
     assert _keyword_reason_term("notes") == "notes"
 
 
+# ---------------------------------------------------------------------------
+# task-31962: ONE spelling of the display-id -> int backing-id coercion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param("local:media:12", 12, id="prefixed-display-id"),
+        pytest.param("12", 12, id="bare-int-text"),
+        pytest.param(12, 12, id="bare-int"),
+        pytest.param("media-12", None, id="legacy-row-id"),
+        pytest.param("local:media:abc", None, id="unparseable-tail"),
+        pytest.param("", None, id="empty"),
+        pytest.param(None, None, id="missing"),
+        pytest.param("local:media:0", None, id="non-positive"),
+        pytest.param("local:media:-4", None, id="negative"),
+    ],
+)
+def test_int_backing_id_covers_every_shape_the_three_spellings_handled(
+    value: object, expected: int | None
+) -> None:
+    assert library_media_int_backing_id(value) == expected

@@ -179,6 +179,7 @@ from ...Library.library_media_state import (
     build_library_media_browse_state,
     build_library_media_state,
     build_library_media_trash_state,
+    library_media_int_backing_id,
 )
 from ...Library.library_media_reader_state import (
     SELECTION_SETTLE_SECONDS,
@@ -32693,13 +32694,9 @@ class LibraryScreen(BaseAppScreen):
             The loaded item's position when the Reader holds one of the
             set's items, else ``review_set.cursor``.
         """
-        loaded = getattr(
-            self._library_media_reader_session, "loaded_backing_id", None
+        loaded = library_media_int_backing_id(
+            getattr(self._library_media_reader_session, "loaded_backing_id", None)
         )
-        try:
-            loaded = int(loaded) if loaded is not None else None
-        except (TypeError, ValueError):
-            loaded = None
         if loaded is None:
             return review_set.cursor
         return next(
@@ -32980,12 +32977,14 @@ class LibraryScreen(BaseAppScreen):
         selection = self._library_media_row_selection
         if not selection.count:
             return
-        backing_ids: list[int] = []
-        for canonical_id in selection.ids:
-            try:
-                backing_ids.append(int(str(canonical_id).rsplit(":", 1)[-1]))
-            except (ValueError, TypeError):
-                continue
+        backing_ids = [
+            backing_id
+            for backing_id in (
+                library_media_int_backing_id(canonical_id)
+                for canonical_id in selection.ids
+            )
+            if backing_id is not None
+        ]
         if not backing_ids:
             return
         self.run_worker(
@@ -36051,7 +36050,7 @@ class LibraryScreen(BaseAppScreen):
             return
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         search_media = getattr(service, "search_media", None)
-        backing_id = self._library_media_int_backing_id(media_id)
+        backing_id = library_media_int_backing_id(media_id)
         if not callable(search_media) or backing_id is None:
             return
         try:
@@ -36079,13 +36078,6 @@ class LibraryScreen(BaseAppScreen):
             str(row.get("id") or ""), has_analysis=bool(row.get("has_analysis"))
         ):
             _sync_library_canvas(self, "media", allow_screen_fallback=False)
-
-    def _library_media_int_backing_id(self, media_id: str) -> int | None:
-        """The integer backing id for ``media_id``, or None when it has none."""
-        try:
-            return int(self._library_media_backing_id(media_id))
-        except (TypeError, ValueError):
-            return None
 
     def _notify_library_media_analysis_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed analysis-edit save.
