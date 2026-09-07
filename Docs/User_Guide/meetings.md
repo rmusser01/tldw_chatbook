@@ -71,7 +71,8 @@ config keys, not switches on this screen.
   meeting can tag you by voice and why not: `on`, or `off` with one of
   `disabled` (the `voice_match` setting), `plain call mode` (see below),
   `no voiceprint`, `needs re-enrollment` (the voiceprint was made with a
-  different embedding model), `store unreadable`, `keyring locked`, or
+  different embedding model), `live speaker labels off` (see below),
+  `store unreadable`, `keyring locked`, or
   `store unavailable`. Before Start this line is provisional — it only
   checked that a record exists, not that it can be decrypted — so re-check
   it once the meeting is recording.
@@ -81,6 +82,12 @@ config keys, not switches on this screen.
   anything other than your display name is treated as an override and
   clears the marker; renaming it back to your display name is not an
   override.
+- **Voice match needs live speaker labels on.** Matching compares the live
+  speaker clusters against your voiceprint, and those only exist when a live
+  diarizer is running — so with `[meetings] live_diarization = false` (the
+  default) the rail reads "Voice match: off (live speaker labels off)" and
+  nothing is ever tagged. Set `live_diarization = true` (and keep the
+  diarization extra installed) to turn matching on.
 - **Plain call mode never matches.** In a call with `diarize_mic_channel`
   off (the default), the mic channel is already assumed to be you, so voice
   matching never runs there — there's nothing to disambiguate. It runs in

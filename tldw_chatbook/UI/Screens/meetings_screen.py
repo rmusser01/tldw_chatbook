@@ -44,6 +44,7 @@ STOP_REASON_COPY = {
 VOICE_MATCH_OFF_COPY = {
     "disabled": "disabled",
     "plain_call_mode": "plain call mode",
+    "live_labels_off": "live speaker labels off",
     "no_voiceprint": "no voiceprint",
     "needs_reenrollment": "needs re-enrollment",
     "cannot_decrypt": "store unreadable",

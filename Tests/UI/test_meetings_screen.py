@@ -1051,6 +1051,7 @@ def test_live_legend_skips_a_hostile_speaker_id(meetings_screen_with_session):
         (None, "Voice match: off"),
         ("disabled", "Voice match: off (disabled)"),
         ("plain_call_mode", "Voice match: off (plain call mode)"),
+        ("live_labels_off", "Voice match: off (live speaker labels off)"),
         ("no_voiceprint", "Voice match: off (no voiceprint)"),
         ("needs_reenrollment", "Voice match: off (needs re-enrollment)"),
         ("cannot_decrypt", "Voice match: off (store unreadable)"),

@@ -930,7 +930,15 @@ class FakeBackend:
 
 
 def _backend_spy(monkeypatch, backend=None):
-    """Replace `build_diarizer` with a spy; returns (backend, seen kwargs)."""
+    """Replace `build_diarizer` with a spy; returns (backend, seen kwargs).
+
+    Also declares the diarization stack installed. A spied backend means
+    "this run HAS live speaker labels", and since final review I1 the voice
+    gate reads `prepared.live_diarization_active` -- which is computed from
+    `diarization_requirements()`, i.e. from whether torch happens to be in
+    the test machine's venv. Pinning it here keeps every voice test's verdict
+    a property of the settings under test, not of the host.
+    """
     seen: dict = {}
     made = backend if backend is not None else FakeBackend()
 
@@ -939,6 +947,7 @@ def _backend_spy(monkeypatch, backend=None):
         made.voiceprint = list(kwargs.get("voiceprint") or []) or None
         return made
 
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
     monkeypatch.setattr(mo, "build_diarizer", build)
     return made, seen
 
@@ -1152,21 +1161,61 @@ def test_prepare_never_reads_the_key(tmp_path, monkeypatch):
 
 def test_prepare_reports_no_voiceprint_from_a_stat_alone(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
     keys = FakeKeys()
-    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, keys=keys, enrolled=False))
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path, keys=keys, enrolled=False),
+    )
     assert owner.prepare().voice_match.reason == "no_voiceprint"
     assert keys.reads == 0
+
+
+def test_voice_match_is_off_without_live_speaker_labels(tmp_path, monkeypatch):
+    """Final review I1: `live_diarization` is off by DEFAULT, and with it off
+    `build_diarizer` returns None -- no clusters, so nothing can ever be
+    matched. The rail used to say "Voice match: on" for that config."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    keys = FakeKeys()
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=False,
+        voiceprint_store=_store(tmp_path, keys=keys, centroid=(0.6, 0.8)),
+    )
+    reads_after_save = keys.reads
+
+    prepared = owner.prepare()                                  # room mode (no tap)
+    assert prepared.voice_match == mo.VoiceMatchState("off", "live_labels_off")
+    # The gate has to agree with the thing it models: same settings, no backend.
+    assert mo.build_diarizer(owner.settings) is None
+    assert prepared.live_diarization_active is False
+
+    owner.start()
+    assert owner.voice_match == mo.VoiceMatchState("off", "live_labels_off")
+    assert keys.reads == reads_after_save     # gated before the store: no Keychain prompt
+    owner.stop()
+
+
+def test_voice_match_is_on_again_once_live_labels_are_enabled(tmp_path, monkeypatch):
+    """The negative control for the gate above: the ONLY thing changing here
+    is `live_diarization`, and the same store then reports "on"."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    _backend_spy(monkeypatch)
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path, centroid=(0.6, 0.8)),
+    )
+    assert owner.prepare().voice_match == mo.VoiceMatchState("on", None)
 
 
 def test_prepare_reports_store_unavailable_without_raising(tmp_path, monkeypatch):
     """Review M2: a store that cannot be opened at all is a different repair
     from a record that would not decrypt."""
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
 
     def broken_store():
         raise RuntimeError("keyfile permissions")
 
-    owner, _, _ = _owner(tmp_path)
+    owner, _, _ = _owner(tmp_path, live_diarization=True)
     owner._store_factory = broken_store
     assert owner.prepare().voice_match.reason == "store_unavailable"
 

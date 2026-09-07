@@ -238,7 +238,9 @@ class VoiceMatchState:
     `state` is ``"on"`` or ``"off"``; `reason` is a STATIC key the rail turns
     into copy -- never a path, a name, or an exception message. Off-reasons:
     ``"disabled"`` (the setting), ``"plain_call_mode"`` (the mic channel
-    already is the user), the store's own verdict (``"no_voiceprint"``,
+    already is the user), ``"live_labels_off"`` (no live diarizer will be
+    built, so there are no clusters to compare -- the SHIPPED default,
+    final review I1), the store's own verdict (``"no_voiceprint"``,
     ``"needs_reenrollment"``, ``"cannot_decrypt"``, ``"keyring_locked"``), or
     ``"store_unavailable"`` -- the store could not be opened at all (a
     locked-down key file, a missing dependency), which is a different repair
@@ -685,13 +687,24 @@ class MeetingSessionOwner:
         Returns:
             The off-state when matching cannot apply at all -- in PLAIN call
             mode the mic channel already IS the user, so remote clusters are
-            never compared (spec §3.4, the largest false-positive path) and
-            the store is not touched. None means "ask the store".
+            never compared (spec §3.4, the largest false-positive path); with
+            no live diarizer there are no clusters to compare at all
+            (`build_diarizer` returns None, so `matched_self` can never be
+            set -- final review I1, the shipped default). Neither touches the
+            store. None means "ask the store".
         """
         if not self.settings.voice_match:
             return VoiceMatchState("off", "disabled")
         if mode == "call" and not self.settings.diarize_mic_channel:
             return VoiceMatchState("off", "plain_call_mode")
+        prepared = self.prepared
+        live_ok = prepared.live_diarization_active if prepared is not None else (
+            self.settings.live_diarization
+            and self.settings.diarizer_backend == "local"
+            and not diarization_requirements()
+        )
+        if not live_ok:
+            return VoiceMatchState("off", "live_labels_off")
         return None
 
     def _voice_match_preview(self, mode: str) -> VoiceMatchState:
@@ -776,7 +789,10 @@ class MeetingSessionOwner:
         # is what says whether voice matching applies (spec §3.4). `start()`
         # re-reads it from the capture, which is authoritative once the tap
         # has actually come up -- and only `start()` decrypts the record.
-        self.voice_match = self._voice_match_preview("room" if tap_mode.kind == "unavailable" else "call")
+        # Published BEFORE the voice verdict, not after: `_voice_match_off_for`
+        # reads `prepared.live_diarization_active` rather than re-running the
+        # find_spec sweep (final review I1), and it must see THIS probe's
+        # value, never the previous one's.
         self.prepared = PrepareResult(
             tap_mode=tap_mode, provider=provider, model=model or "",
             diarization_available=not missing, diarization_missing=missing,
@@ -785,8 +801,9 @@ class MeetingSessionOwner:
                 and self.settings.diarizer_backend == "local"
             ),
             recoverable=recoverable, input_devices=devices, capture_error=capture_error,
-            voice_match=self.voice_match,
         )
+        self.voice_match = self._voice_match_preview("room" if tap_mode.kind == "unavailable" else "call")
+        self.prepared.voice_match = self.voice_match
         return self.prepared
 
     # ---- lifecycle --------------------------------------------------------
