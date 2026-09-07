@@ -11,17 +11,22 @@ plus a `MODEL_ID` constant, same as the SpeechBrain engine. `main()` in
 `diarizer_worker.py` imports this module by name and calls `load()`;
 `serve()` never learns which engine is running.
 
-Model acquisition (spec §3) is Task 3's job; this module only defines the
-manifest (`SEGMENTATION`, `EMBEDDERS`) and the placement helpers
-(`models_dir`, `model_paths`, `models_ready`) Task 3's downloader targets --
-clean seams, no network code here.
+Model acquisition (spec §3, task 3: 31827): `ensure_models` places the
+manifest's assets under `models_dir()`, streaming through httpx (imported
+only inside `ensure_models`/`_stream_to_file`, never at module scope) so
+this module still never pulls httpx in just by being imported.
 """
 from __future__ import annotations
 
 import hashlib
+import os
+import secrets
+import tarfile
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -157,6 +162,231 @@ def _sha256_of(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+class ModelsUnavailable(RuntimeError):
+    """`ensure_models` failed (spec §3/§8). The message is always one of the
+    four static strings below -- never a URL, host, path or file name."""
+
+
+#: The manifest's release host and the only redirect target suffix a hop may
+#: land on (spec §3: "redirects followed only to *.githubusercontent.com").
+ALLOWED_HOSTS = ("github.com",)
+ALLOWED_REDIRECT_SUFFIX = ".githubusercontent.com"
+DOWNLOAD_BUDGET_S = 600.0
+
+_MAX_REDIRECTS = 5
+_MB = 1 << 20
+
+
+def _url_for(asset: ModelAsset) -> str:
+    """Seam tests monkeypatch by replacing the manifest asset itself
+    (`dataclasses.replace(asset, url=...)`) rather than this function."""
+    return asset.url
+
+
+def _temp_path_for(final: Path) -> Path:
+    return final.with_name(f"{final.name}.tmp-{os.getpid()}-{secrets.token_hex(4)}")
+
+
+def _extract_tar_member(tar_path: Path, wanted_basename: str, dest: Path) -> None:
+    """Extract `wanted_basename` (`model.onnx` or `model.int8.onnx`) from the
+    segmentation release tarball, rejecting any member that is a link or
+    whose name escapes the archive (spec §3's safe-member filter)."""
+    with tarfile.open(tar_path, mode="r:bz2") as tf:
+        member = None
+        for candidate in tf.getmembers():
+            name = candidate.name
+            if os.path.basename(name) != wanted_basename:
+                continue
+            if name.startswith("/") or ".." in Path(name).parts:
+                continue
+            if not candidate.isfile() or candidate.issym() or candidate.islnk():
+                continue
+            member = candidate
+            break
+        if member is None:
+            raise ModelsUnavailable("download failed")
+        extracted = tf.extractfile(member)
+        if extracted is None:
+            raise ModelsUnavailable("download failed")
+        with open(dest, "wb") as out:
+            out.write(extracted.read())
+
+
+def _stream_to_file(http_client, url: str, dest: Path, deadline: float, on_bytes: Callable[[int], None]) -> None:
+    """GET `url`, following at most `_MAX_REDIRECTS` 3xx hops whose target
+    host is allow-listed, streaming the final 2xx body to `dest`. Raises
+    `ModelsUnavailable("download failed")` or `("budget exceeded")`; never
+    mentions the URL/host in the exception."""
+    import httpx
+
+    current = url
+    if httpx.URL(current).host not in ALLOWED_HOSTS:
+        raise ModelsUnavailable("download failed")
+
+    for _ in range(_MAX_REDIRECTS + 1):
+        if time.monotonic() >= deadline:
+            raise ModelsUnavailable("budget exceeded")
+        try:
+            with http_client.stream("GET", current) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location")
+                    if not location:
+                        raise ModelsUnavailable("download failed")
+                    next_url = httpx.URL(current).join(location)
+                    host = next_url.host or ""
+                    if host not in ALLOWED_HOSTS and not host.endswith(ALLOWED_REDIRECT_SUFFIX):
+                        raise ModelsUnavailable("download failed")
+                    current = str(next_url)
+                    continue
+                if not (200 <= resp.status_code < 300):
+                    raise ModelsUnavailable("download failed")
+                with open(dest, "wb") as fh:
+                    # No `chunk_size`: httpx yields pieces as they arrive off
+                    # the wire instead of buffering up to a fixed size first,
+                    # which is what lets the budget check below actually cut
+                    # a slow transfer short between chunks (ruling 6) rather
+                    # than only after the whole body has landed.
+                    for piece in resp.iter_bytes():
+                        if time.monotonic() >= deadline:
+                            raise ModelsUnavailable("budget exceeded")
+                        fh.write(piece)
+                        on_bytes(len(piece))
+                return
+        except httpx.HTTPError as exc:
+            raise ModelsUnavailable("download failed") from exc
+    raise ModelsUnavailable("download failed")
+
+
+def _fetch_asset(http_client, asset: ModelAsset, path: Path, deadline: float, on_bytes: Callable[[int], None]) -> None:
+    """Download `asset` (retrying once on a verification failure) and
+    atomically place it at `path` (spec §3/§8 -- rulings 3/4/9)."""
+    # `ensure_models` only ever fetches `SEGMENTATION` (not the int8 variant,
+    # which isn't in `model_paths`' plan -- spec §7 bake-off leaves it as a
+    # future candidate), so the tarball member wanted is always the same.
+    is_tarball = asset.kind == "segmentation"
+    wanted_member = "model.onnx"
+
+    for attempt in range(2):
+        final_tmp = _temp_path_for(path)
+        try:
+            if is_tarball:
+                tar_tmp = _temp_path_for(path.with_suffix(".tar.bz2"))
+                try:
+                    _stream_to_file(http_client, _url_for(asset), tar_tmp, deadline, on_bytes)
+                    _extract_tar_member(tar_tmp, wanted_member, final_tmp)
+                finally:
+                    tar_tmp.unlink(missing_ok=True)
+            else:
+                _stream_to_file(http_client, _url_for(asset), final_tmp, deadline, on_bytes)
+
+            if final_tmp.stat().st_size == asset.size and _sha256_of(final_tmp) == asset.sha256:
+                os.replace(final_tmp, path)
+                return
+        finally:
+            final_tmp.unlink(missing_ok=True)
+
+        if attempt == 1:
+            raise ModelsUnavailable("hash mismatch")
+
+
+def ensure_models(
+    embedder: str,
+    *,
+    models_dir_override: Path | None = None,
+    progress: Callable[[str], None] | None = None,
+    budget_s: float = DOWNLOAD_BUDGET_S,
+    client: Any | None = None,
+) -> tuple[Path, Path]:
+    """Place the segmentation + `embedder` ONNX models under
+    `models_dir(models_dir_override)`, downloading whatever is missing
+    (spec §3).
+
+    Air-gapped installs (`models_dir_override` pointing at a pre-placed
+    directory): a file that already exists there is fully hash-verified and
+    never touched over the network, matching or not -- a mismatch is fatal
+    (`"air-gapped file invalid"`), never retried. A file that is simply
+    absent is still fetched normally, so an override directory can also be
+    used as a plain download destination (this is also how the test suite
+    redirects writes away from the real user data dir).
+
+    The default (no override) placement never hashes a pre-existing file
+    (presence + size only, like `models_ready`) -- hashing 40 MB on every
+    call would defeat the point of the no-op path; `load()` hashes on open.
+
+    Args:
+        embedder: One of `EMBEDDERS`' keys.
+        models_dir_override: Test/air-gapped seam for `models_dir()`.
+        progress: Called with static strings like `"downloading 12 / 35 MB"`
+            (integers only, no file names or paths), at most once per MB of
+            combined progress across whatever still needs fetching.
+        budget_s: Wall-clock ceiling for the whole call.
+        client: An httpx-client-shaped object (`.stream`); a fresh
+            `httpx.Client` is created (and closed) when omitted.
+
+    Returns:
+        `(segmentation_path, embedder_path)`.
+
+    Raises:
+        ValueError: `embedder` is not a manifest key (from `model_paths`).
+        ModelsUnavailable: `"download failed"`, `"hash mismatch"`,
+            `"budget exceeded"`, or `"air-gapped file invalid"`.
+    """
+    seg_path, emb_path = model_paths(embedder, models_dir_override)
+    plan = ((SEGMENTATION, seg_path), (EMBEDDERS[embedder], emb_path))
+
+    to_fetch: list[tuple[ModelAsset, Path]] = []
+    for asset, path in plan:
+        if models_dir_override is not None and path.is_file():
+            if path.stat().st_size == asset.size and _sha256_of(path) == asset.sha256:
+                continue
+            raise ModelsUnavailable("air-gapped file invalid")
+        if path.is_file() and path.stat().st_size == asset.size:
+            continue
+        to_fetch.append((asset, path))
+
+    if not to_fetch:
+        return seg_path, emb_path
+
+    deadline = time.monotonic() + budget_s
+    if deadline <= time.monotonic():
+        raise ModelsUnavailable("budget exceeded")
+
+    total_mb = sum(asset.size for asset, _ in to_fetch) // _MB
+    state = {"done": 0, "reported_mb": 0}
+
+    def _on_bytes(n: int) -> None:
+        state["done"] += n
+        mb = state["done"] // _MB
+        if progress is not None and mb > state["reported_mb"]:
+            state["reported_mb"] = mb
+            progress(f"downloading {mb} / {total_mb} MB")
+
+    seg_path.parent.mkdir(parents=True, exist_ok=True)
+    owns_client = client is None
+    http_client = client
+    placed: list[Path] = []
+    try:
+        for asset, path in to_fetch:
+            if owns_client and http_client is None:
+                import httpx
+
+                http_client = httpx.Client(follow_redirects=False, trust_env=True, timeout=30.0)
+            _fetch_asset(http_client, asset, path, deadline, _on_bytes)
+            placed.append(path)
+    except Exception:
+        # "nothing written" on refusal (spec §3/§8) covers the WHOLE call,
+        # not just the asset that failed -- an earlier asset in this same
+        # `to_fetch` batch may have already landed successfully.
+        for done_path in placed:
+            done_path.unlink(missing_ok=True)
+        raise
+    finally:
+        if owns_client and http_client is not None:
+            http_client.close()
+
+    return seg_path, emb_path
 
 
 def _read_wav_span(path: str, start_s: float, end_s: float):
