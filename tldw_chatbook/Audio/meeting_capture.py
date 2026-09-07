@@ -189,7 +189,11 @@ def select_mic_device(recorder: Any, name: str) -> bool:
     try:
         devices = list(recorder.get_audio_devices())
     except Exception as exc:  # noqa: BLE001 - treated as "cannot resolve"
-        logger.warning("Meeting microphone enumeration failed: {}", exc)
+        # Type only (final review Minor 11): a backend's enumeration error
+        # can quote the device it choked on, and the rule three lines below
+        # -- audio devices are routinely named after their owner -- applies
+        # just as much to a failure as to a miss.
+        logger.warning("Meeting microphone enumeration failed ({})", type(exc).__name__)
         devices = []
     for device in devices:
         if str(device.get("name", "")) == name:

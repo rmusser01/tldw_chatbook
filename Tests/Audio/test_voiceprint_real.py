@@ -36,15 +36,26 @@ _PARAGRAPH = (
 )
 
 
+def _run(argv: list[str]) -> None:
+    """Run one of our own TTS tools, reporting its stderr on failure.
+
+    `check=True` + `capture_output=True` reduced an `afconvert` failure to an
+    exit code (task 6 review M6). The output is the tool's own diagnostic --
+    ours, not user content -- so it belongs in the failure message.
+    """
+    done = subprocess.run(argv, capture_output=True)
+    if done.returncode != 0:
+        raise AssertionError(
+            f"{argv[0]} exited {done.returncode}: {done.stderr.decode(errors='replace').strip()}"
+        )
+
+
 def _say_wav(voice: str, dest: Path) -> Path:
     """`say -v <voice> -o` an AIFF, then `afconvert` it to a 16 kHz mono
     PCM16 WAV. Argument lists only -- never a shell string."""
     aiff = dest.with_suffix(".aiff")
-    subprocess.run(["say", "-v", voice, "-o", str(aiff), _PARAGRAPH], check=True, capture_output=True)
-    subprocess.run(
-        ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(aiff), str(dest)],
-        check=True, capture_output=True,
-    )
+    _run(["say", "-v", voice, "-o", str(aiff), _PARAGRAPH])
+    _run(["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(aiff), str(dest)])
     return dest
 
 
@@ -77,7 +88,13 @@ def test_enrolled_voice_matches_itself_and_not_another(tmp_path, meeting_session
 
     pcm_a = _read_pcm16(_say_wav("Samantha", tmp_path / "voice_a.wav"))
     pcm_b = _read_pcm16(_say_wav("Daniel", tmp_path / "voice_b.wav"))
-    assert pcm_a and pcm_b, "say/afconvert produced empty audio"
+    # Each voice is sliced into two 3 s windows below, and `min(len(pcm), …)`
+    # truncates silently -- a short render would otherwise surface as an
+    # opaque "voice A never received a cluster id" (task 6 review M5).
+    assert len(pcm_a) >= 6 * _BYTES_PER_SECOND and len(pcm_b) >= 6 * _BYTES_PER_SECOND, (
+        f"say/afconvert produced under 6s of audio "
+        f"({len(pcm_a) / _BYTES_PER_SECOND:.1f}s / {len(pcm_b) / _BYTES_PER_SECOND:.1f}s)"
+    )
 
     # Enroll from voice A on a short-lived worker -- the same op explicit
     # enrollment uses (spec §3.4). A separate process from the meeting's own
