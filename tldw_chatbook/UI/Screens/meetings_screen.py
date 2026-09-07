@@ -301,10 +301,18 @@ class MeetingsScreen(BaseAppScreen):
             # node can be cancelled before it runs, and `dismiss_learning`
             # closes a subprocess, which takes seconds (review I1).
             self._offer = None
+
+            def _dismiss() -> None:
+                # Runs on the daemon thread: an exception here would otherwise
+                # reach `threading.excepthook` and paint a traceback (which can
+                # carry a path) over the TUI (re-review N1).
+                try:
+                    owner.dismiss_learning()
+                except Exception as exc:  # noqa: BLE001 - teardown must not raise
+                    logger.debug("meetings offer dismiss: {}", type(exc).__name__)
+
             try:
-                threading.Thread(
-                    target=owner.dismiss_learning, name="meetings-dismiss", daemon=True
-                ).start()
+                threading.Thread(target=_dismiss, name="meetings-dismiss", daemon=True).start()
             except Exception as exc:  # noqa: BLE001 - teardown must not raise
                 logger.debug("meetings offer dismiss: {}", type(exc).__name__)
         # No super().on_unmount(): the dispatcher already invokes
@@ -1336,8 +1344,10 @@ class MeetingsScreen(BaseAppScreen):
         self.query_one("#meetings-recover", Button).disabled = True
         self._recover_worker(folders[0])
 
-    @work(exclusive=True, group="meetings-recover", thread=True)
+    @work(exclusive=True, group="meetings-recover", thread=True, description="meetings recover")
     def _recover_worker(self, folder: Path) -> None:
+        # `description=` keeps the folder path out of `Worker.description`
+        # (which Textual writes to its log on every state change).
         # Guarded separately from the submit below: a truncated or malformed
         # meeting.json used to raise straight out of the worker, which then
         # died silently with the Recover button left disabled and nothing on

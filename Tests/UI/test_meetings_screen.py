@@ -1629,10 +1629,9 @@ async def test_the_enrollment_countdown_actually_counts_down(tmp_path):
         assert await _wait_until(pilot, lambda: "Recording" in _text(progress))
         assert screen._enroll_timer is not None          # the interval is running
         assert _text(progress) == "Recording… 30s left"
-        screen._tick_countdown()
-        assert _text(progress) == "Recording… 29s left"
-        screen._tick_countdown()
-        assert _text(progress) == "Recording… 28s left"
+        # A REAL tick: the interval itself must fire (re-review N4) -- a
+        # `set_interval(1000.0, …)` or a wrong callback fails this wait.
+        assert await _wait_until(pilot, lambda: "29s left" in _text(progress), timeout=2.5)
         owner.enroll_release.set()
         assert await _wait_until(
             pilot, lambda: screen.query_one("#meetings-enroll-progress-row").display is False
