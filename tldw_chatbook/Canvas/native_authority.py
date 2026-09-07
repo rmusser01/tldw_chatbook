@@ -194,7 +194,7 @@ class NativeConsoleCanvasAuthority:
         self._gateway_invalidator: Callable[[str], None] | None = None
         self._selection: dict[str, _Selection] = {}
         self._parsed_block_imports: OrderedDict[
-            tuple[str, str, int], _ParsedBlockImport
+            tuple[str, str, int | str], _ParsedBlockImport
         ] = OrderedDict()
         self._browser_targets: OrderedDict[str, CanvasBridgeTarget] = OrderedDict()
         self._publication_receipts: OrderedDict[str, _PublicationReceipt] = (
@@ -651,7 +651,7 @@ class NativeConsoleCanvasAuthority:
         source_turn_id: str | None,
         block_index: int | None,
         block_identity: str | None,
-    ) -> tuple[str, str, int] | None:
+    ) -> tuple[str, str, int | str] | None:
         values = (
             source_message_id,
             origin_message_id,
@@ -673,9 +673,11 @@ class NativeConsoleCanvasAuthority:
             raise ValueError("Canvas source turn is invalid")
         if type(block_index) is not int or not 0 <= block_index <= 1024:
             raise ValueError("Canvas block index is invalid")
-        if block_identity != f"{source_message_id}:canvas-html:{block_index}":
-            raise ValueError("Canvas block identity is invalid")
-        return (scope.conversation_id, origin_message_id, block_index)
+        if block_identity == f"{source_message_id}:canvas-html:{block_index}":
+            return (scope.conversation_id, origin_message_id, block_index)
+        if block_identity == f"{source_message_id}:canvas-mermaid:{block_index}":
+            return (scope.conversation_id, origin_message_id, f"mermaid:{block_index}")
+        raise ValueError("Canvas block identity is invalid")
 
     def gateway_scope(
         self,

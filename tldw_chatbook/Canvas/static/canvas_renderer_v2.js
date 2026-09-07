@@ -890,7 +890,7 @@ function armWatchdog(milliseconds, code) {
   watchdog = setTimeout(() => fail(code, "Canvas worker exceeded its termination backstop."), milliseconds);
 }
 
-function fail(code, message) {
+function fail(code, message, diagram = null) {
   if (failed) return;
   failed = true;
   clearWatchdog();
@@ -909,6 +909,7 @@ function fail(code, message) {
     state: "failed",
     code,
     message,
+    diagram,
     scripts_disabled: true,
     engine: "quickjs-wasm",
     native_worker_sentinel: "native-worker-clean",
@@ -1210,10 +1211,20 @@ function handleWorkerMessage(event) {
     pendingPlan = null;
     return;
   }
-  if (message.type === "failure" && ownRecord(message, ["type", "code", "message", "native_worker_sentinel"])) {
+  if (message.type === "failure" && ownRecord(message, ["type", "code", "message", "diagram", "native_worker_sentinel"])) {
+    const diagram = message.diagram;
+    const codes = new Set(["parse-error", "unsupported-syntax", "unsupported-label", "invalid-id", "invalid-text", "conflicting-node", "missing-endpoint", "cycle", "self-message", "duplicate-participant", "empty-diagram", "declaration-limit", "input-limit", "labels-limit", "label-limit", "nodes-limit", "edges-limit", "participants-limit", "messages-limit", "notes-limit", "work-limit", "elements-limit", "output-limit", "area-limit", "geometry-limit"]);
+    if (diagram !== null && (!ownRecord(diagram, ["code", "ordinal", "line", "column"]) ||
+        !codes.has(diagram.code) || !Number.isInteger(diagram.ordinal) ||
+        diagram.ordinal < 1 || diagram.ordinal > 4 ||
+        ![diagram.line, diagram.column].every(value => value === null ||
+          (Number.isInteger(value) && value >= 1 && value <= 8192)))) {
+      return fail("worker-protocol", "Canvas worker emitted invalid diagram diagnostics.");
+    }
     return fail(
       boundedIdentifier(message.code) ? message.code : "runtime-error",
       boundedString(message.message, 4096) ? message.message : "Canvas execution failed.",
+      diagram,
     );
   }
   if (message.type === "bootstrap-failure" && ownRecord(message, ["type", "name"])) {

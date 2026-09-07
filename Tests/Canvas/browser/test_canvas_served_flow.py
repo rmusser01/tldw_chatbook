@@ -638,6 +638,54 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
         child_module="Tests.Canvas.browser.canvas_live_chatbook_child",
     )
 
+    broker_events = []
+    original_request = stack.server._canvas_control_broker.request
+
+    async def observed_request(child_id, message_type, payload, *, timeout):
+        started = asyncio.get_running_loop().time()
+        outcome = "ok"
+        code = None
+        try:
+            return await original_request(
+                child_id, message_type, payload, timeout=timeout
+            )
+        except Exception as error:  # Test diagnostic never records error text.
+            outcome = type(error).__name__[:64]
+            candidate = getattr(error, "code", None)
+            code = (
+                candidate
+                if candidate
+                in {
+                    "deadline_exceeded",
+                    "backpressure",
+                    "child_not_connected",
+                    "operation_failed",
+                    "selection_refused",
+                    "connection_closed",
+                }
+                else "other"
+            )
+            raise
+        finally:
+            if len(broker_events) < 160:
+                broker_events.append(
+                    {
+                        "type": message_type,
+                        "outcome": outcome,
+                        "code": code,
+                        "elapsed_ms": round(
+                            (asyncio.get_running_loop().time() - started) * 1000
+                        ),
+                    }
+                )
+                (tmp_path / "broker-diagnostics.json").write_text(
+                    json.dumps(broker_events), encoding="utf-8"
+                )
+
+    monkeypatch.setattr(
+        stack.server._canvas_control_broker, "request", observed_request
+    )
+
     async def assert_persisted_complete(marker):
         database_path = tmp_path / "test_data" / "canvas-live-chatbook.sqlite"
         for _ in range(300):
@@ -660,6 +708,23 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             )
             page = await browser.new_page(ignore_https_errors=True)
             page.set_default_timeout(45_000)
+            await page.add_init_script("""(() => {
+              const Original = MessageChannel;
+              window.MessageChannel = class extends Original {
+                constructor() {
+                  super();
+                  this.port1.addEventListener('message', event => {
+                    const value = event.data;
+                    if (value?.type === 'canvas:status') {
+                      window.__lastRendererStatus = {
+                        state: ['ready', 'failed'].includes(value.state) ? value.state : 'invalid',
+                        code: typeof value.code === 'string' && /^[a-z-]{1,64}$/.test(value.code) ? value.code : null
+                      };
+                    }
+                  });
+                }
+              };
+            })();""")
             await _login_live_page(page, origin=stack.origin, access_token=access_token)
             await expect(page.locator("body")).to_have_class(re.compile("first-byte"))
             await expect(page.locator("#terminal")).to_contain_text(
@@ -703,6 +768,7 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             await expect(shell.get_by_text("Revision 1", exact=True)).to_be_visible()
 
             await page.wait_for_timeout(1_000)
+            await page.context.tracing.start(screenshots=True, snapshots=True)
             await _send_console_prompt(page, "Revise the active Canvas", focus_ack)
             await _wait_for_gateway_calls(
                 tmp_path / "test_data" / "canvas-live-gateway-calls", 3
@@ -717,9 +783,34 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
                 encoding="ascii"
             ) == "canvas_create,staged"
             await assert_persisted_complete("CHATBOOK_CANVAS_UPDATED")
-            await expect(preview.locator("#chatbook-app-revision")).to_have_text(
-                "v2", timeout=15_000
-            )
+            try:
+                await expect(preview.locator("#chatbook-app-revision")).to_have_text(
+                    "v2", timeout=15_000
+                )
+            except AssertionError as error:
+                diagnostics = await shell.locator("body").evaluate("""() => {
+                  const text = id => (document.getElementById(id)?.textContent || '').slice(0, 512);
+                  const frame = document.getElementById('canvas-preview');
+                  return {previewState: text('preview-state'), loading: text('loading-state'),
+                    connection: text('connection-state'), revision: text('revision-label'),
+                    rendererStatus: window.__lastRendererStatus || null,
+                    iframeSrc: frame?.getAttribute('src'), iframeHidden: frame?.hidden};
+                }""")
+                try:
+                    projection = await _served_shell_projection(page)
+                    diagnostics["selection"] = projection["selection"]
+                except (AssertionError, PlaywrightTimeoutError):
+                    diagnostics["selection"] = "unavailable"
+                diagnostic_path = tmp_path / "preview-timeout-state.json"
+                diagnostic_path.write_text(json.dumps(diagnostics), encoding="utf-8")
+                trace_path = tmp_path / "preview-timeout-trace.zip"
+                await page.context.tracing.stop(path=trace_path)
+                error.add_note(
+                    f"Preview diagnostics: {diagnostic_path}; trace: {trace_path}; state: {diagnostics}"
+                )
+                raise
+            else:
+                await page.context.tracing.stop()
             await expect(shell.get_by_text("Revision 2", exact=True)).to_be_visible()
             await page.locator("#terminal .xterm-helper-textarea").focus()
             await page.locator("#terminal .xterm-helper-textarea").press("F12")
@@ -1722,7 +1813,7 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
         await server._served_canvas_gateway.aclose()
 
 
-@pytest.mark.parametrize("diagrams", [False, True])
+@pytest.mark.parametrize("diagrams", [False, True, "failed"])
 async def test_mounted_production_authority_renders_and_settles_submit(
     tmp_path: Path, unused_tcp_port: int, candidate_snapshot, diagrams
 ) -> None:
@@ -1793,7 +1884,9 @@ async def test_mounted_production_authority_renders_and_settles_submit(
             "<script>document.getElementById('send-result').addEventListener("
             "'click', () => canvas.submit({profile: 'alpha'}));</script>"
             + (
-                '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]</pre>'
+                ('<pre data-canvas-diagram="mermaid">flowchart TD\n'
+                 + ('A[PRIVATE_LABEL] --> A' if diagrams == "failed" else 'A[Tea]')
+                 + '</pre>')
                 if diagrams
                 else ""
             )
@@ -1858,20 +1951,28 @@ async def test_mounted_production_authority_renders_and_settles_submit(
 
             canvas_shell = page.frame_locator("#served-canvas-frame")
             preview = canvas_shell.frame_locator("#canvas-preview")
-            await expect(preview.locator("#profile-identity")).to_have_text(
-                "Profile Alpha"
-            )
-            await expect(canvas_shell.locator("#loading-state")).to_be_hidden()
-
-            if diagrams:
-                await expect(preview.locator("svg")).to_be_visible()
+            if diagrams == "failed":
+                await expect(canvas_shell.locator("#preview-state")).to_have_text("Preview failed")
+                await expect(canvas_shell.locator("#loading-state")).to_contain_text("Diagram 1: cycle")
+                assert drafts == []
+                await canvas_shell.locator("#repair-button").click()
+            else:
+                await expect(preview.locator("#profile-identity")).to_have_text("Profile Alpha")
+                await expect(canvas_shell.locator("#loading-state")).to_be_hidden()
+                if diagrams:
+                    await expect(preview.locator("svg")).to_be_visible()
+                await preview.get_by_role("button", name="Send result").click()
             await expect(page.locator("#terminal-region")).to_be_visible()
 
-            await preview.get_by_role("button", name="Send result").click()
             await expect(canvas_shell.locator("#bridge-dialog")).to_be_visible()
+            assert drafts == []
+            if diagrams == "failed":
+                draft = await canvas_shell.locator("#bridge-complete-text").input_value()
+                assert "cycle" in draft
+                assert "PRIVATE_LABEL" not in draft
             await canvas_shell.get_by_role("button", name="Send to composer").click()
             await expect(canvas_shell.locator("#bridge-dialog")).to_be_hidden()
-            assert drafts == ['{"profile":"alpha"}']
+            assert drafts == ([draft] if diagrams == "failed" else ['{"profile":"alpha"}'])
             suffix = "_v2" if diagrams else ""
             shell_url = await page.locator("#served-canvas-frame").get_attribute("src")
             recorder.assert_generated_confined(

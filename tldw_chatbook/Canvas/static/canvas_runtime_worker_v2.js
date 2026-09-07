@@ -613,7 +613,7 @@ function validatePlan(value) {
   validateDiagramRecords(value);
 }
 
-function postFailure(code, message) {
+function postFailure(code, message, diagram = null) {
   if (terminal) return;
   terminal = true;
   const boundedCode = boundedIdentifier(code) ? code : "runtime-error";
@@ -624,6 +624,7 @@ function postFailure(code, message) {
     type: "failure",
     code: boundedCode,
     message: boundedMessage,
+    diagram,
     native_worker_sentinel: self.__canvasNativeWorkerSentinel,
   });
 }
@@ -837,9 +838,20 @@ function runStartup(operationId) {
     const result = context.callFunction(apply, context.undefined, [render, records]);
     if (result.error) {
       const error = context.dump(result.error);
+      const diagnostic = {};
+      for (const key of ["code", "ordinal", "line", "column"]) {
+        const property = context.getProp(result.error, key);
+        try { diagnostic[key] = context.dump(property); }
+        finally { property.dispose(); }
+      }
       result.error.dispose();
       const wrapped = new Error("QuickJS diagram startup failed");
       wrapped.quickJSError = error;
+      const codes = new Set(["parse-error", "unsupported-syntax", "unsupported-label", "invalid-id", "invalid-text", "conflicting-node", "missing-endpoint", "cycle", "self-message", "duplicate-participant", "empty-diagram", "declaration-limit", "input-limit", "labels-limit", "label-limit", "nodes-limit", "edges-limit", "participants-limit", "messages-limit", "notes-limit", "work-limit", "elements-limit", "output-limit", "area-limit", "geometry-limit"]);
+      if (codes.has(diagnostic.code) && Number.isInteger(diagnostic.ordinal) &&
+          diagnostic.ordinal >= 1 && diagnostic.ordinal <= 4 &&
+          [diagnostic.line, diagnostic.column].every(value => value === null ||
+            (Number.isInteger(value) && value >= 1 && value <= 8192))) wrapped.diagram = diagnostic;
       wrapped.interrupted = interrupted;
       throw wrapped;
     }
@@ -1777,7 +1789,7 @@ self.onmessage = async (event) => {
     }
     throw new Error("worker protocol");
   } catch (error) {
-    postFailure(failureCode(error), "Canvas script failed inside the bounded virtual runtime.");
+    postFailure(failureCode(error), "Canvas script failed inside the bounded virtual runtime.", error.diagram || null);
   }
 };
 }

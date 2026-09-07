@@ -5,6 +5,20 @@ a chart, calculator, form, diagram, small simulation, or polished single-page
 document. Ordinary prose and short code snippets are usually clearer in chat.
 Canvas V1 accepts one complete, self-contained HTML document per revision.
 
+Mermaid code fences offer the same **Open in Canvas** and **Open as new**
+actions. The diagram text is escaped into a text-only declaration in a complete
+HTML document. HTML fence identities remain stable when Mermaid fences appear
+before them. Each diagram must contain nonempty valid Unicode within 8 KiB.
+Mermaid execution requires an admitted compatible runtime profile; the candidate
+profile remains disabled pending release qualification.
+
+The initial Mermaid subset covers acyclic TD/TB/LR flowcharts and simple sequence
+diagrams with explicit participants, messages and notes. It excludes subgraphs,
+cycles, configuration directives, themes, HTML/Markdown labels and upstream
+Mermaid browser APIs. The assistant receives bounded guidance for the selected
+profile, including complete examples and shared limits. Historical revisions
+keep their exact profile, even when the creation default changes.
+
 ## Create or open a Canvas
 
 Ask the Console assistant to create a Canvas and describe the interaction you
@@ -39,6 +53,26 @@ does not rewind chat history or delete the newer revision.
 Canvas revisions created by an assistant commit atomically with that assistant
 turn. Cancelling or failing the turn discards its staged changes and leaves the
 last committed preview available.
+
+Source acceptance is independent of preview success. The toolbar distinguishes
+**Preview pending**, **Preview ready**, **Preview failed** and **Source only**.
+A failed new revision remains saved and identifiable; it does not show an older
+diagram as if the new revision had rendered. Inspect its exact source or choose
+**View previous** explicitly. Diagram failures show a bounded code, ordinal and
+location when available, with a specific repair hint.
+
+**Prepare repair draft** opens the existing confirmation dialog with trusted,
+source-free guidance. Only **Send to composer** inserts the unsent draft into the
+same unchanged Chatbook composer. Nothing is submitted automatically, and a
+browser error never retries a model tool call. A changed conversation or composer
+refuses stale insertion.
+
+Source HTML downloads containing Mermaid declarations require their compatible
+Chatbook profile to render; they are not standalone rendered diagrams. A
+scripts-disabled or unavailable-profile opening shows inert source. Profile
+revocation never substitutes another renderer. Packaged runtime updates require
+restarting the native host or served parent and all children; browser refresh
+does not update the process-owned runtime snapshot.
 
 ## Temporary chats and portable history
 

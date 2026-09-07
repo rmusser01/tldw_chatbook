@@ -1,0 +1,34 @@
+Canvas profile canvas-v2-mermaid-1: executable Mermaid syntax subset with a Canvas-specific renderer, not the upstream browser API.
+Use one complete HTML document. Put exact plain diagram text in text-only <pre data-canvas-diagram="mermaid"> declarations; escape &, < and > for HTML text. Never interpolate diagram source into scripts. All declarations render once before authored scripts in one detached startup transaction. An error discards all startup output. Later text edits do not rerender; create a new revision.
+
+Accepted flow syntax: flowchart TD, TB (TD alias), LR; ASCII identifiers [A-Za-z_][A-Za-z0-9_]*; named rectangle A[Text], rounded A(Text), diamond A{Text}; directed --> arrows, optional -->|Text| label; acyclic branches and rejoining. Repeated identical declarations are allowed; changed labels/shapes are refused. No cycles, self-loops, subgraphs, other directions/shapes/styles, compound shorthand, edge IDs, styling or click/link actions.
+Accepted sequence syntax: sequenceDiagram; explicit participant A or participant A as Label; A->>B: Text and A-->>B: Text; Note left of A: Text, Note right of A: Text, Note over A: Text, Note over A,B: Text. No implicit/duplicate participants, self-messages, actors, activation, loops, alternatives, parallel/critical blocks, numbering, create/destroy, links or callbacks.
+Labels are plain Unicode text, including quoted flow labels, with renderer-owned wrapping. No HTML/Markdown labels, formatting, HTML line breaks or actionable URLs. Blank lines and ordinary %% comments work. No front matter, %%{init: ...}%%, themes, class definitions, parser configuration or unlisted syntax. Existing document CSS cannot configure the parser.
+
+Budgets are conjunctive refusal ceilings, not guaranteed combinations. Per diagram / document: input 8/16 KiB; nodes 16/24; edges 24/32; participants 6/8; messages 16/24; notes 8/12; all labels 4/8 KiB; SVG elements 250/400; output 48/64 KiB; work units 10,000/20,000; area 4,194,304/8,388,608 square CSS px. At most four declarations; each label 512 bytes; each diagram at most 2,048 by 4,096 CSS px. UTF-8 byte limits apply after one HTML entity decode.
+All diagrams, library evaluation and authored scripts share V1 limits: source 512 KiB, evaluated scripts 256 KiB, heap 32 MiB, stack 512 KiB, startup 250 ms, events 50 ms, pending jobs 100, DOM nodes 1,800, CSS rules 900, patches per operation 500. Existing timer/rate/bridge bounds remain. No network, filesystem, cookies, persistent storage, modules, parent DOM or Chatbook API access.
+Default output is intrinsic-size scrollable 16 px monospace, normal weight/style, 24 px line spacing. Geometry is deterministic; local glyph appearance can differ. Authored CSS/JS overrides are outside default layout fidelity. Shorten labels or split large diagrams when limits refuse them; declare sequence participants explicitly.
+
+Source accepted/staged/committed is separate from browser pending/ready/failed/source-only state. A saved revision may fail parsing/layout. Inspect that exact source or explicitly View previous. Never claim an old image proves a new revision rendered. Browser failures never cause automatic retries or chat submission. Repair is a user-confirmed unsent draft. Source HTML containing declarations requires the compatible Chatbook profile; it is not a standalone Mermaid application. Unavailable/revoked profiles stay source-only without substitution. Packaged runtime updates require restarting the whole native host or served parent and children.
+
+Complete flow example:
+```html
+<!doctype html><html><head><meta charset="utf-8"><title>Decision flow</title></head><body>
+<pre data-canvas-diagram="mermaid">flowchart TD
+A[Start] --> B{Ready?}
+B -->|Yes| C[Continue]
+B -->|No| D[Revise]
+</pre></body></html>
+```
+
+Complete sequence example:
+```html
+<!doctype html><html><head><meta charset="utf-8"><title>Request</title></head><body>
+<pre data-canvas-diagram="mermaid">sequenceDiagram
+participant A as Reader
+participant B as Library
+A->>B: Request
+B-->>A: Response
+Note over A,B: Complete
+</pre></body></html>
+```

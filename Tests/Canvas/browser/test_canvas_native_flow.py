@@ -172,6 +172,69 @@ def _scope(revision_id: str) -> CanvasGatewayScope:
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+async def test_mermaid_failure_is_identified_and_offers_explicit_repair(candidate_snapshot):
+    source = ('<pre data-canvas-diagram="mermaid">sequenceDiagram\n'
+              'SECRET_SOURCE_SENTINEL->>B: Secret label</pre>')
+
+    class CandidateAuthority(_NativeFlowAuthority):
+        async def resolve_render_plan(self, scope):
+            return compile_canvas_document(source, runtime_profile="canvas-v2-mermaid-1",
+                                           snapshot=candidate_snapshot)
+
+        async def read_source(self, scope):
+            return CanvasSourceResponse(source, sha256_utf8(source), "canvas-v2-mermaid-1")
+
+    gateway = CanvasGateway(authority=CandidateAuthority(), profile_snapshot=candidate_snapshot)
+    try:
+        launch = await gateway.open_shell(_scope("revision-1"))
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True, executable_path=_chromium_executable(playwright.chromium))
+            page = await browser.new_page()
+            await page.add_init_script("""(() => {
+              const Original = window.MessageChannel;
+              window.__statusReceivers = [];
+              window.MessageChannel = class extends Original {
+                constructor() { super(); const port = this.port1;
+                  port.addEventListener('message', event => {
+                    if (event.data?.type === 'canvas:status') window.__statusReceivers.push(
+                      {handler: port.onmessage, nonce: event.data.nonce});
+                  });
+                }
+              };
+            })();""")
+            await page.goto(launch.browser_url)
+            await expect(page.locator("#preview-state")).to_have_text("Preview failed")
+            await expect(page.locator("#loading-state")).to_contain_text("Diagram 1")
+            assert "SECRET_SOURCE_SENTINEL" not in await page.locator("#loading-state").inner_text()
+            await expect(page.locator("#repair-button")).to_be_visible()
+            await page.locator("#reload-button").click()
+            await expect(page.locator("#preview-state")).to_have_text("Preview failed")
+            await page.evaluate("""() => {
+              const old = window.__statusReceivers[0];
+              old.handler({data: {type: 'canvas:status', nonce: old.nonce, state: 'ready'}});
+            }""")
+            await expect(page.locator("#preview-state")).to_have_text("Preview failed")
+            await expect(page.locator("#canvas-preview")).to_be_hidden()
+            screenshots = os.environ.get("TLDW_CANVAS_SCREENSHOT_DIR")
+            if screenshots:
+                for width, label in ((1100, "wide"), (390, "narrow")):
+                    await page.set_viewport_size({"width": width, "height": 760})
+                    assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                    repair_box = await page.locator("#repair-button").bounding_box()
+                    assert repair_box and repair_box["x"] + repair_box["width"] <= width
+                    suffix = os.environ.get("TLDW_CANVAS_SCREENSHOT_SUFFIX", "")
+                    await page.screenshot(path=str(Path(screenshots) / f"task7-failure-{label}{suffix}.png"))
+                print(f"Task7 browser: Chromium {browser.version}; screenshots: {screenshots}")
+            await page.locator("#source-button").click()
+            await expect(page.locator("#source-view")).to_have_value(source)
+            await browser.close()
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
 async def test_candidate_native_shell_initializes_private_runtime_and_disables_to_source(
     candidate_snapshot, monkeypatch
 ):

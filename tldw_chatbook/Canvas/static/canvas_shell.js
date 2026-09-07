@@ -21,6 +21,7 @@
     bridgeCancel: byId("bridge-cancel-button"), bridgeCopy: byId("bridge-copy-button"), bridgeRetry: byId("bridge-retry-button"),
     bridgeReturn: byId("bridge-return-button"), bridgeConfirm: byId("bridge-confirm-button"),
     bridgeExpiry: byId("bridge-expiry"), bridgeExpiryStatus: byId("bridge-expiry-status"),
+    previewState: byId("preview-state"), repair: byId("repair-button"),
   };
   const basePath = location.pathname;
   const api = (path) => new URL(path, location.href).href;
@@ -46,6 +47,35 @@
   let previewStopped = false;
   let pendingBridge = null;
   let cancellingBridge = false;
+  let repairText = "";
+
+  function previewFailure(message) {
+    const hints = {
+      "parse-error": "Use the supported flowchart or sequence syntax.",
+      "unsupported-syntax": "Use only the supported syntax; declare sequence participants explicitly.",
+      "unsupported-label": "Use plain text labels without HTML or Markdown.",
+      "invalid-id": "Use ASCII letters, digits and underscores for identifiers.",
+      "invalid-text": "Use valid Unicode text.",
+      "conflicting-node": "Keep each node's original shape and label.",
+      "missing-endpoint": "Declare every participant or node before use.",
+      "cycle": "Remove cycles and self-loops from the flowchart.",
+      "self-message": "Use messages between distinct participants.",
+      "duplicate-participant": "Declare each participant once.",
+      "empty-diagram": "Add a supported nonempty diagram.",
+    };
+    const limits = ["declaration", "input", "labels", "label", "nodes", "edges", "participants", "messages", "notes", "work", "elements", "output", "area", "geometry"];
+    for (const name of limits) hints[`${name}-limit`] = "Shorten labels or split the diagram into smaller Canvases.";
+    const value = message.diagram;
+    if (value && ownRecord(value, ["code", "ordinal", "line", "column"]) &&
+        Object.hasOwn(hints, value.code) && Number.isInteger(value.ordinal) &&
+        value.ordinal >= 1 && value.ordinal <= 4 &&
+        [value.line, value.column].every(number => number === null ||
+          (Number.isInteger(number) && number >= 1 && number <= 8192))) {
+      const location = value.line === null ? "" : `, line ${value.line}${value.column === null ? "" : `, column ${value.column}`}`;
+      return `Diagram ${value.ordinal}: ${value.code}${location}. ${hints[value.code]}`;
+    }
+    return "The isolated preview failed. Inspect source, view the previous revision, or reload.";
+  }
 
   async function post(path, value, extraHeaders = {}, signal = undefined) {
     const headers = {"Content-Type": "application/json", ...extraHeaders};
@@ -577,6 +607,10 @@
     if (currentPort) currentPort.close();
     currentPort = null;
     currentLoadNonce = "";
+    repairText = "";
+    ui.repair.hidden = true;
+    ui.frame.hidden = true;
+    ui.previewState.textContent = "Preview unavailable";
     ui.frame.src = "about:blank";
     ui.sourceView.value = "";
     ui.sourcePanel.hidden = true;
@@ -626,6 +660,10 @@
     if (currentPort) currentPort.close();
     currentPort = null;
     currentLoadNonce = "";
+    repairText = "";
+    ui.repair.hidden = true;
+    ui.frame.hidden = true;
+    ui.previewState.textContent = "Preview pending";
     ui.loading.hidden = false;
     ui.loading.textContent = "Preparing isolated preview…";
     const frame = await post("api/frame", {});
@@ -662,6 +700,7 @@
     pendingPlan = null;
     pendingRuntimeData = null;
     ui.loading.textContent = "Preview unavailable. Source is preserved.";
+    ui.previewState.textContent = "Source only";
     ui.sourceView.value = source;
     ui.sourcePanel.hidden = false;
     for (const child of document.querySelector(".canvas-workbench").children) {
@@ -674,26 +713,37 @@
     if (!rendererReady || !pendingPlan || !ui.frame.contentWindow) return;
     const channel = new MessageChannel();
     const nonce = crypto.randomUUID();
+    const load = loadOperation;
+    const operation = selectionOperation;
     currentLoadNonce = nonce;
     currentPort = channel.port1;
     channel.port1.onmessage = (event) => {
       const message = event.data;
       if (!message || typeof message !== "object") return;
-      if (message.nonce !== nonce) return;
+      if (message.nonce !== nonce || nonce !== currentLoadNonce ||
+          load !== loadOperation || operation !== selectionOperation || closed) return;
       if (message.type === "canvas:execution-started") {
         channel.port1.postMessage({type: "canvas:execution-ack", nonce});
       }
       if (message.type === "canvas:status") {
         if (message.state === "ready") {
           ui.loading.hidden = true;
+          ui.frame.hidden = false;
+          ui.previewState.textContent = "Preview ready";
           setConnection("Connected");
         } else if (message.state === "failed") {
-          ui.loading.textContent = message.message || "Canvas preview failed. Inspect source or reload.";
+          const diagnostic = previewFailure(message);
+          ui.loading.textContent = diagnostic;
+          ui.frame.hidden = true;
+          ui.previewState.textContent = "Preview failed";
+          repairText = `Please repair the selected Canvas revision after this preview failure: ${diagnostic} Read the exact selected source and profile before proposing a complete replacement document.`;
+          ui.repair.hidden = false;
           ui.loading.hidden = false;
           ui.compatibility.hidden = false;
           byId("compatibility-title").textContent = "Preview issue";
-          ui.compatibilityCopy.textContent = "The generated script failed in the isolated runtime. You can retry without generated scripts.";
+          ui.compatibilityCopy.textContent = "Source is preserved; this revision has no successful preview. Inspect its source or explicitly view the previous revision.";
           ui.scriptsDisabled.hidden = false;
+          if (displayedMetadata.parent_revision_id) showNotice("Preview failed · View previous", {previous: true});
         }
       }
       if (message.type === "canvas:bridge-request") void prepareBridgeMessage(message);
@@ -794,6 +844,11 @@
   ui.noticePrevious.addEventListener("click", async () => { dismissNotice(); await navigate("previous"); });
   ui.noticeDismiss.addEventListener("click", dismissNotice);
   ui.reload.addEventListener("click", () => loadFrame());
+  ui.repair.addEventListener("click", () => {
+    if (!repairText || !currentLoadNonce) return;
+    void prepareBridgeMessage({type: "canvas:bridge-request", nonce: currentLoadNonce,
+      request_id: `repair-${crypto.randomUUID()}`, kind: "submit", value: repairText});
+  });
   ui.scriptsDisabled.addEventListener("click", () => loadFrame({scriptsDisabled: true}));
   ui.source.addEventListener("click", async () => {
     try {
