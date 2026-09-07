@@ -74,7 +74,6 @@ class _ProbeApp(ConsolidatedCSSApp):
         self.focusable_content = focusable_content
         self.hidden_items_subtree = hidden_items_subtree
         self.work_disabled = work_disabled
-        self.grip_width = grip_width
         self.toggles: list[str] = []
         self.resize_messages = 0
 
@@ -574,6 +573,34 @@ def test_shared_shell_structure_is_owned_by_shared_tcss_selectors():
         ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {"
         in source
     )
+
+
+@pytest.mark.parametrize(
+    "sheet",
+    [
+        CSS_SOURCE,
+        # The rebuilt sheet: `build_css` routes this screen-scoped rule here
+        # rather than into `tldw_cli_modular.tcss`, which carries only the
+        # grip's :hover/.-active pair.
+        CSS_SOURCE.parents[1] / "screen_agentic_library.tcss",
+    ],
+    ids=["component-source", "generated-screen-sheet"],
+)
+def test_no_sheet_declares_a_grip_width_beside_the_inline_one(sheet: Path) -> None:
+    """task-31952 AC#1: the five-column fallback is gone everywhere.
+
+    Every mounted grip sets its width inline from the layout the resolver
+    produced, and an inline style outranks a rule -- so ``width: 5`` here was
+    dead for Media, dead for the three siblings task-31951 narrowed, and a
+    second (stale) answer to a question the resolver already settles.
+    """
+    grip_block = sheet.read_text(encoding="utf-8").split(
+        ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {",
+        1,
+    )[1].split("}", 1)[0]
+
+    for declaration in ("width:", "min-width:", "max-width:"):
+        assert declaration not in grip_block, (sheet.name, declaration)
 
 
 def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
