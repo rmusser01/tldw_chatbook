@@ -34,6 +34,8 @@ _CHILD_READY_TIMEOUT_SECONDS = 15.0
 
 @dataclass(frozen=True)
 class ShareStatus:
+    """Snapshot of one running share session (no credentials, ever)."""
+
     share_name: str
     urls: tuple[str, ...]
     artifact_count: int
@@ -46,6 +48,12 @@ class ArtifactShareController:
     def __init__(
         self, *, status_callback: Callable[[ShareStatus | None], None] | None = None
     ) -> None:
+        """Prepare an idle controller.
+
+        Args:
+            status_callback: Optional sink invoked (from the starting/stopping
+                thread) with the new ``ShareStatus``, or None on stop.
+        """
         self._lock = threading.RLock()
         self._process: subprocess.Popen | None = None
         self._share_dir: Path | None = None
@@ -54,10 +62,16 @@ class ArtifactShareController:
 
     @property
     def status(self) -> ShareStatus | None:
+        """The running share's status, or None when no share is active."""
         with self._lock:
             return self._status
 
     def startup_sweep(self) -> list[Path]:
+        """Remove share directories left behind by dead server processes.
+
+        Returns:
+            The removed share directories.
+        """
         removed = sweep_stale_shares()
         if removed:
             logger.info(f"Artifact share sweep removed {len(removed)} stale share dir(s)")
@@ -73,12 +87,34 @@ class ArtifactShareController:
         bind: str = "127.0.0.1",
         port: int = 0,
     ) -> ShareStatus:
+        """Stage the selected artifacts and start the share server child.
+
+        Args:
+            records: Artifact records to stage (see ``stage_share``).
+            share_name: Human-facing share title.
+            username: Optional shared-login username (with ``password``).
+            password: Optional shared-login password.
+            bind: Bind host; "0.0.0.0" exposes on all interfaces.
+            port: Bind port (0 = ephemeral).
+
+        Returns:
+            The running share's ``ShareStatus``.
+
+        Raises:
+            ArtifactShareError: Web extras missing, no records, an invalid
+                username, staging failure, or the child failed/was too slow
+                to report readiness (staging is cleaned in every case).
+        """
         if not is_web_server_available():
             raise ArtifactShareError(
                 "Web sharing requires extra packages: pip install tldw_chatbook[web]"
             )
         if not records:
             raise ArtifactShareError("No artifacts selected to share.")
+        if username and ":" in username:
+            # Defensive twin of the dialog's check (Qodo #14): Basic auth
+            # splits on the first ':', so a colon username can never match.
+            raise ArtifactShareError("Username cannot contain ':'.")
         with self._lock:
             self.stop_share()  # single active share; starting a new one stops the old
             auth = (
@@ -99,22 +135,30 @@ class ArtifactShareController:
             # the readiness phase ends; the child keeps its own descriptor
             # until it exits, so writes never block on either side.
             with tempfile.TemporaryFile() as child_log:
-                process = subprocess.Popen(
-                    [
-                        sys.executable,
-                        "-m",
-                        "tldw_chatbook.Web_Server.artifact_share_server",
-                        str(manifest_path),
-                        "--host",
-                        bind,
-                        "--port",
-                        str(port),
-                    ],
-                    start_new_session=True,
-                    cwd=str(Path(__file__).resolve().parents[2]),
-                    stdout=child_log,
-                    stderr=subprocess.STDOUT,
-                )
+                try:
+                    process = subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-m",
+                            "tldw_chatbook.Web_Server.artifact_share_server",
+                            str(manifest_path),
+                            "--host",
+                            bind,
+                            "--port",
+                            str(port),
+                        ],
+                        start_new_session=True,
+                        cwd=str(Path(__file__).resolve().parents[2]),
+                        stdout=child_log,
+                        stderr=subprocess.STDOUT,
+                    )
+                except OSError as exc:
+                    # Qodo #9: a failed spawn must not strand the staged
+                    # directory; fail with one error and clean up.
+                    self._cleanup_staging()
+                    raise ArtifactShareError(
+                        f"Could not start share server: {exc}"
+                    ) from exc
                 self._process = process
                 status_path = self._share_dir / "status.json"
                 deadline = time.monotonic() + _CHILD_READY_TIMEOUT_SECONDS
@@ -156,6 +200,7 @@ class ArtifactShareController:
             return self._status
 
     def stop_share(self) -> None:
+        """Stop the running share (terminate child, remove staging), if any."""
         with self._lock:
             process, self._process = self._process, None
             if process is not None:
@@ -192,13 +237,21 @@ class ArtifactShareController:
             self._share_dir = None
 
     def _emit_status(self) -> None:
+        """Invoke the status callback, logging failures with share context.
+
+        Qodo #7: the failure log names the share (never credentials) so a
+        broken UI callback can be tied to the session it belongs to.
+        """
         callback = self._status_callback
         if callback is None:
             return
+        share_name = self._status.share_name if self._status is not None else "<stopped>"
         try:
             callback(self._status)
         except Exception:  # noqa: BLE001 - UI callback must not break sharing
-            logger.exception("Artifact share status callback failed")
+            logger.exception(
+                f"Artifact share status callback failed (share='{share_name}')"
+            )
 
 
 def compute_display_urls(bind: str, port: int) -> list[str]:

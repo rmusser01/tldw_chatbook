@@ -21,6 +21,11 @@ from textual.widgets import (
 from textual.widgets.selection_list import Selection
 
 _CONFIRM_PHRASE = "share"
+#: Length bounds enforced at submission (Qodo #2): generous for real use,
+#: small enough to keep manifests, headers, and the page sane.
+_SHARE_NAME_MAX = 200
+_USERNAME_MAX = 64
+_PASSWORD_MAX = 256
 
 
 def _option_title(record: dict[str, Any]) -> str:
@@ -147,6 +152,7 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
         self.query_one("#share-dialog-status", Static).update(message)
 
     def action_cancel(self) -> None:
+        """Dismiss the dialog with None (no share started)."""
         self.dismiss(None)
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -168,10 +174,27 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
         if not selected:
             self._status("Select at least one artifact to share.")
             return
+        share_name = self.query_one("#share-name", Input).value.strip()
         username = self.query_one("#share-username", Input).value.strip()
         password = self.query_one("#share-password", Input).value
         if self._auth_enabled() and (not username or not password):
             self._status("Enter both a username and a password, or disable the password.")
+            return
+        # Qodo #14: Basic auth splits on the first ':', so a colon username
+        # can never authenticate; refuse it here with actionable copy.
+        if self._auth_enabled() and ":" in username:
+            self._status("Username cannot contain ':' -- pick a different username.")
+            return
+        # Qodo #2: bound the free-text fields before they reach manifests,
+        # headers, and the served page.
+        if self._auth_enabled() and len(username) > _USERNAME_MAX:
+            self._status(f"Username must be {_USERNAME_MAX} characters or fewer.")
+            return
+        if self._auth_enabled() and len(password) > _PASSWORD_MAX:
+            self._status(f"Password must be {_PASSWORD_MAX} characters or fewer.")
+            return
+        if len(share_name) > _SHARE_NAME_MAX:
+            self._status(f"Share name must be {_SHARE_NAME_MAX} characters or fewer.")
             return
         port = self._port_value()
         if port < 0:
@@ -186,8 +209,7 @@ class ArtifactShareDialog(ModalScreen[dict | None]):
         self.dismiss(
             {
                 "selected_records": selected,
-                "share_name": self.query_one("#share-name", Input).value.strip()
-                or "Shared artifacts",
+                "share_name": share_name or "Shared artifacts",
                 "username": username if self._auth_enabled() else "",
                 "password": password if self._auth_enabled() else "",
                 "bind": self._bind_choice(),

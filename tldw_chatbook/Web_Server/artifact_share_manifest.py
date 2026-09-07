@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import tempfile
 import uuid
 import zipfile
@@ -60,6 +61,16 @@ class ArtifactShareAuth(BaseModel):
 
 
 def build_share_auth(username: str, password: str) -> ArtifactShareAuth:
+    """Derive the PBKDF2 verifier model for a shared Basic-auth login.
+
+    Args:
+        username: The single shared username recipients must present.
+        password: The plaintext shared password (only the derived verifier
+            is retained; the plaintext is never stored).
+
+    Returns:
+        An ``ArtifactShareAuth`` with the salted PBKDF2 hash.
+    """
     key, salt = CredentialEncryptor.derive_key_from_password(password)
     return ArtifactShareAuth(
         username=username,
@@ -69,6 +80,17 @@ def build_share_auth(username: str, password: str) -> ArtifactShareAuth:
 
 
 def verify_share_auth(auth: ArtifactShareAuth, username: str, password: str) -> bool:
+    """Check a presented (username, password) pair against the verifier.
+
+    Args:
+        auth: The stored PBKDF2 verifier.
+        username: Presented username.
+        password: Presented password.
+
+    Returns:
+        True only when both the username and derived key match
+        (constant-time comparisons); False otherwise.
+    """
     if not hmac.compare_digest(username.encode("utf-8"), auth.username.encode("utf-8")):
         return False
     key, _unused_salt = CredentialEncryptor.derive_key_from_password(
@@ -78,6 +100,8 @@ def verify_share_auth(auth: ArtifactShareAuth, username: str, password: str) -> 
 
 
 class SharedArtifact(BaseModel):
+    """One staged bundle entry: opaque key, provenance, and staged filename."""
+
     key: str
     display_name: str
     description: str = ""
@@ -89,6 +113,8 @@ class SharedArtifact(BaseModel):
 
 
 class ArtifactShareManifest(BaseModel):
+    """On-disk manifest describing one staged share session."""
+
     model_config = {"populate_by_name": True}
 
     schema_version: int = Field(default=ARTIFACT_SHARE_SCHEMA, alias="schema")
@@ -100,10 +126,12 @@ class ArtifactShareManifest(BaseModel):
 
 
 def share_root_dir() -> Path:
+    """Return the per-user root directory that holds staged share sessions."""
     return get_user_data_dir() / "share"
 
 
 def _sha256_file(path: Path) -> str:
+    """Return the hex SHA-256 digest of a file's contents."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -120,9 +148,21 @@ def stage_share(
 ) -> ArtifactShareManifest:
     """Copy selected artifact bundles into a fresh staging directory.
 
-    Raises ArtifactShareStagingError naming the offending artifact when a
-    record has no on-disk bundle; the staging directory is removed on any
-    failure (fail closed).
+    Args:
+        records: Artifact records (``name``, ``file_path``, ``chatbook_id``/
+            ``id``, ``description``) as provided by the chatbook service.
+        share_name: Human-facing share title recorded on the manifest.
+        auth: Optional shared-login verifier; None serves the share openly.
+        share_root: Override staging root (tests); defaults to the user
+            data dir's ``share/``.
+
+    Returns:
+        The written ``ArtifactShareManifest`` for the staged session.
+
+    Raises:
+        ArtifactShareStagingError: A record has no on-disk bundle, points at
+            a symlink, or cannot be staged under a safe name. The staging
+            directory is removed on any failure (fail closed).
     """
     root = Path(share_root) if share_root is not None else share_root_dir()
     root_existed = root.is_dir()
@@ -139,19 +179,44 @@ def stage_share(
         for record in records:
             display_name = str(record.get("name") or "artifact")
             raw_path = record.get("file_path")
-            source = Path(str(raw_path)).expanduser() if raw_path else None
-            if source is None or not source.is_file():
+            if not raw_path:
+                raise ArtifactShareStagingError(
+                    f"Artifact '{display_name}' has no exported bundle on disk."
+                )
+            # Trust model: records point at user-chosen export locations
+            # (anywhere the user saved the bundle), so the source is NOT
+            # confined to the private chatbooks dir -- the user picked it.
+            # The server's staging-dir containment is the enforced boundary.
+            # A symlinked source is refused either way: a swapped link must
+            # not launder an arbitrary file into a share.
+            raw_source = Path(str(raw_path)).expanduser()
+            if raw_source.is_symlink():
+                raise ArtifactShareStagingError(
+                    f"Artifact '{display_name}' points at a symlink; refusing to stage it."
+                )
+            source = raw_source.resolve()
+            if not source.is_file():
                 raise ArtifactShareStagingError(
                     f"Artifact '{display_name}' has no exported bundle on disk."
                 )
             chatbook_id = record.get("chatbook_id", record.get("id"))
-            base = f"{chatbook_id}-{slugify_share_name(display_name)}"
+            # The identifier is untrusted service data; it only ever enters
+            # the staged filename pre-sanitized (no separators/traversal).
+            safe_id = slugify_share_name(str(chatbook_id))
+            base = f"{safe_id}-{slugify_share_name(display_name)}"
             candidate = f"{base}.zip"
             suffix = 1
             while candidate in used_names:
                 suffix += 1
                 candidate = f"{base}-{suffix}.zip"
             used_names.add(candidate)
+            # Defensive containment: the sanitizers above make this
+            # unreachable, but a future regression in them must fail closed
+            # here instead of writing outside the staging directory.
+            if (share_dir / candidate).resolve().parent != share_dir.resolve():
+                raise ArtifactShareStagingError(
+                    f"Artifact '{display_name}' staged filename escapes the share directory."
+                )
             atomic_copy(source, share_dir / candidate, mode=_STAGED_FILE_MODE)
             copied = share_dir / candidate
             staged.append(
@@ -196,7 +261,18 @@ def stage_share(
 
 
 def load_manifest(manifest_path: Path) -> ArtifactShareManifest:
-    """Load and validate a share manifest; any problem raises (fail closed)."""
+    """Load and validate a share manifest; any problem raises (fail closed).
+
+    Args:
+        manifest_path: Path to the session's ``manifest.json``.
+
+    Returns:
+        The validated ``ArtifactShareManifest``.
+
+    Raises:
+        ArtifactShareError: The file is unreadable/corrupt JSON, its schema
+            version is not the supported one, or it lists no artifacts.
+    """
     data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     manifest = ArtifactShareManifest.model_validate(data)
     if manifest.schema_version != ARTIFACT_SHARE_SCHEMA:
@@ -212,6 +288,15 @@ def load_manifest(manifest_path: Path) -> ArtifactShareManifest:
 
 
 def pid_alive(pid: int) -> bool:
+    """Cheap liveness pre-check for a PID (signal 0 probe).
+
+    Args:
+        pid: Process ID to probe.
+
+    Returns:
+        True when the process exists (including when only permission
+        denies the probe); False when no such process exists.
+    """
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -221,11 +306,53 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def _pid_is_share_server(pid: int) -> bool:
+    """Confirm via ``ps`` that a live PID is actually a share server.
+
+    Qodo #12: bare ``os.kill(pid, 0)`` liveness lets a recycled PID pin a
+    stale share directory forever. When ``ps`` runs, the process command
+    line must name the share server module. When ``ps`` is unavailable or
+    fails (non-posix hosts, probe errors), the answer is True so the sweep
+    keeps the historical pid-exists behavior instead of deleting a
+    possibly-live share.
+
+    Args:
+        pid: Live PID to inspect.
+
+    Returns:
+        True when the PID is (or cannot be proven not to be) a share
+        server; False only when ``ps`` positively showed another command.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if result.returncode != 0:
+        return True
+    return "artifact_share_server" in result.stdout
+
+
 def sweep_stale_shares(share_root: Path | None = None) -> list[Path]:
     """Remove share directories whose server process is gone.
 
+    Liveness is two-step (Qodo #12): the cheap ``pid_alive`` probe first,
+    then a ``ps`` command-line check so a recycled PID owned by an
+    unrelated process no longer keeps a stale directory alive.
+
     Call only at app startup, before any share is started, so a freshly
     created directory can never race this sweep.
+
+    Args:
+        share_root: Override staging root (tests); defaults to the user
+            data dir's ``share/``.
+
+    Returns:
+        The removed share directories, in sorted order.
     """
     root = Path(share_root) if share_root is not None else share_root_dir()
     removed: list[Path] = []
@@ -241,7 +368,7 @@ def sweep_stale_shares(share_root: Path | None = None) -> list[Path]:
                 pid = int(json.loads(status_path.read_text(encoding="utf-8"))["pid"])
             except (ValueError, KeyError, OSError):
                 pid = None
-        if pid is None or not pid_alive(pid):
+        if pid is None or not pid_alive(pid) or not _pid_is_share_server(pid):
             shutil.rmtree(entry, ignore_errors=True)
             removed.append(entry)
     return removed

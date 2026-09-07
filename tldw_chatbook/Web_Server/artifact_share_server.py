@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import hashlib
 import hmac
 import html
 import os
@@ -19,9 +20,14 @@ import signal
 import threading
 import time
 import urllib.parse
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+
+if TYPE_CHECKING:  # pragma: no cover - import-time only, typing only
+    from aiohttp import web
 
 from ..Utils.atomic_file_ops import atomic_write_json
 from .artifact_share_manifest import (
@@ -72,19 +78,61 @@ footer {{ margin-top: 2rem; color: #777; font-size: .85rem; }}
 """
 
 
+def _require_aiohttp() -> Any:
+    """Gate the lazy aiohttp import behind the optional-dependency check.
+
+    Returns the imported ``aiohttp`` module, raising ``ImportError`` with
+    the standard ``pip install tldw_chatbook[web]`` guidance when the
+    ``[web]`` extra is missing. Route handlers import aiohttp lazily but
+    are unreachable before ``build_app()`` runs, so calling this at the
+    top of ``build_app()``, ``run()``, and ``main()`` covers every entry
+    point with one gate.
+
+    Returns:
+        The imported ``aiohttp`` module object.
+
+    Raises:
+        ImportError: aiohttp is not installed.
+    """
+    from ..Utils.optional_deps import require_dependency
+
+    return require_dependency("aiohttp", "web")
+
+
 class ArtifactShareServer:
     """Serve one staged share directory described by a manifest."""
 
     def __init__(self, manifest_path: Path):
+        """Load the manifest and prepare per-app auth state.
+
+        Args:
+            manifest_path: Path to the session's ``manifest.json``; its
+                parent directory is the served staging directory.
+        """
         self.manifest_path = Path(manifest_path)
         self.manifest: ArtifactShareManifest = load_manifest(self.manifest_path)
         self.staging_dir = self.manifest_path.parent.resolve()
-        self._verified: set[tuple[str, str]] = set()
+        # Qodo #16: SHA-256 digests of verified (username, password) pairs,
+        # never the plaintext pairs themselves.
+        self._verified: set[str] = set()
         self._failures: dict[str, tuple[int, float]] = {}
+        # Qodo #10: bounds how many PBKDF2 verifications run concurrently in
+        # the default executor (Semaphore binds its loop lazily on first
+        # await, so constructing it here is safe without a running loop).
+        self._verify_semaphore = asyncio.Semaphore(2)
 
     # -- routes -------------------------------------------------------------
 
-    def build_app(self):
+    def build_app(self) -> "web.Application":
+        """Build the aiohttp application with routes and middlewares.
+
+        Returns:
+            The configured ``web.Application`` for this share session.
+
+        Raises:
+            ImportError: The ``[web]`` extra (aiohttp) is not installed.
+        """
+        _require_aiohttp()
         from aiohttp import web
 
         app = web.Application(client_max_size=1)
@@ -97,7 +145,11 @@ class ArtifactShareServer:
         app.router.add_get("/bundle.zip", self.handle_bundle)
         return app
 
-    async def _headers_middleware(self, request, handler):
+    async def _headers_middleware(
+        self,
+        request: "web.Request",
+        handler: "Callable[[web.Request], Awaitable[web.StreamResponse]]",
+    ) -> "web.StreamResponse":
         from aiohttp import web
 
         try:
@@ -115,7 +167,11 @@ class ArtifactShareServer:
     # to keep aiohttp lazily imported.
     _headers_middleware.__middleware_version__ = 1  # type: ignore[attr-defined]
 
-    async def _auth_middleware(self, request, handler):
+    async def _auth_middleware(
+        self,
+        request: "web.Request",
+        handler: "Callable[[web.Request], Awaitable[web.StreamResponse]]",
+    ) -> "web.StreamResponse":
         from aiohttp import web
 
         auth = self.manifest.auth
@@ -126,14 +182,25 @@ class ArtifactShareServer:
         if locked_until > now:
             raise web.HTTPTooManyRequests(text="Too many failed attempts; retry shortly.")
         username, password = _parse_basic_auth(request.headers.get("Authorization", ""))
-        if username is not None and (username, password) in self._verified:
+        presented = _verified_digest(username, password) if username is not None else None
+        # Fast replay path stays on the event loop (digest membership only).
+        if presented is not None and presented in self._verified:
             return await handler(request)
-        if username is not None and verify_share_auth(auth, username, password):
-            if len(self._verified) >= _VERIFIED_CACHE_LIMIT:
-                self._verified.clear()
-            self._verified.add((username, password))
-            self._failures.pop(peer, None)
-            return await handler(request)
+        if username is not None:
+            # Qodo #10: PBKDF2 (100k iterations) must not block the event
+            # loop; run it in the default executor, bounded by a semaphore
+            # so concurrent guesses cannot occupy the whole thread pool.
+            loop = asyncio.get_running_loop()
+            async with self._verify_semaphore:
+                verified = await loop.run_in_executor(
+                    None, verify_share_auth, auth, username, password
+                )
+            if verified:
+                if len(self._verified) >= _VERIFIED_CACHE_LIMIT:
+                    self._verified.clear()
+                self._verified.add(presented)
+                self._failures.pop(peer, None)
+                return await handler(request)
         count = failures + 1
         locked_until = now + _AUTH_LOCKOUT_SECONDS if count >= _AUTH_FAILURE_THRESHOLD else 0.0
         self._failures[peer] = (count, locked_until)
@@ -144,12 +211,14 @@ class ArtifactShareServer:
 
     _auth_middleware.__middleware_version__ = 1  # type: ignore[attr-defined]
 
-    async def handle_index(self, request):
+    async def handle_index(self, request: "web.Request") -> "web.StreamResponse":
+        """Serve the human-browsable index page for the share."""
         from aiohttp import web
 
         return web.Response(text=self._render_index(), content_type="text/html")
 
-    async def handle_index_json(self, request):
+    async def handle_index_json(self, request: "web.Request") -> "web.StreamResponse":
+        """Serve the machine-readable artifact listing."""
         import json as _json
 
         from aiohttp import web
@@ -174,7 +243,14 @@ class ArtifactShareServer:
             content_type="application/json",
         )
 
-    async def handle_artifact(self, request):
+    async def handle_artifact(self, request: "web.Request") -> "web.StreamResponse":
+        """Stream one staged artifact bundle by its opaque key.
+
+        Raises:
+            web.HTTPNotFound: The key matches no staged artifact.
+            web.HTTPGone: The key matches an artifact whose staged file is
+                missing or not servable.
+        """
         from aiohttp import web
 
         key = request.match_info["key"]
@@ -186,22 +262,66 @@ class ArtifactShareServer:
             raise web.HTTPGone(text="This artifact is no longer available.")
         return self._file_response(path, display_name)
 
-    async def handle_bundle(self, request):
-        bundle = self.staging_dir / "bundle.zip"
-        if not bundle.is_file():
-            from aiohttp import web
+    async def handle_bundle(self, request: "web.Request") -> "web.StreamResponse":
+        """Stream the all-artifacts bundle.zip from staging.
 
+        Raises:
+            web.HTTPGone: The bundle is missing, a symlink, or otherwise
+                not a contained regular file (Qodo #11).
+        """
+        from aiohttp import web
+
+        bundle = self._contained_file(self.staging_dir / "bundle.zip")
+        if bundle is None:
             raise web.HTTPGone(text="Bundle is no longer available.")
         return self._file_response(bundle, f"{self.manifest.share_name}-bundle.zip")
 
-    def _file_response(self, path: Path, display_name: str):
+    def _file_response(self, path: Path, display_name: str) -> "web.StreamResponse":
+        """Build a file download response with a safe Content-Disposition."""
         from aiohttp import web
 
         return web.FileResponse(path, headers={"Content-Disposition": _content_disposition(display_name)})
 
     # -- helpers ------------------------------------------------------------
 
+    def _contained_file(self, path: Path) -> Path | None:
+        """Resolve a staging-relative candidate only when it is servable.
+
+        Qodo #11: shared containment rule for staged files -- the candidate
+        must be a regular, non-symlink file whose resolved location stays
+        inside the staging directory (a swapped symlink must never serve
+        bytes from outside the share).
+
+        Args:
+            path: Candidate path under (nominally) the staging directory.
+
+        Returns:
+            The resolved path when contained and servable, else None.
+        """
+        if path.is_symlink() or not path.is_file():
+            return None
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(self.staging_dir)
+        except ValueError:
+            return None
+        return resolved
+
     def _resolve_staged(self, key: str) -> tuple[Path, str]:
+        """Resolve an opaque artifact key to its staged file and display name.
+
+        Args:
+            key: The URL path key from the request.
+
+        Returns:
+            (resolved staged path, display name) for the matching artifact.
+
+        Raises:
+            _UnknownKeyError: No manifest artifact matches the key (or the
+                staged name is malformed traversal).
+            _GoneKeyError: The artifact matches but its staged file is
+                missing or not a contained regular file.
+        """
         for item in self.manifest.artifacts:
             # Compare encoded bytes: str inputs raise TypeError inside
             # compare_digest when non-ASCII (e.g. /artifact/%E2%82%AC), which
@@ -211,21 +331,18 @@ class ArtifactShareServer:
             staged = item.staged_name
             if Path(staged).name != staged:  # separators/traversal never resolve
                 break
-            candidate = (self.staging_dir / staged).resolve()
-            try:
-                candidate.relative_to(self.staging_dir)
-            except ValueError:
-                break
-            if candidate.is_file():
+            candidate = self._contained_file(self.staging_dir / staged)
+            if candidate is not None:
                 return candidate, item.display_name
             raise _GoneKeyError(key)
         raise _UnknownKeyError(key)
 
     def _render_index(self) -> str:
+        """Render the index page from the manifest, escaping every field."""
         rows = []
         for item in self.manifest.artifacts:
-            name = html.escape(item.display_name, quote=True)
-            description = html.escape(item.description or "", quote=True)
+            name = _escape_fragment(item.display_name)
+            description = _escape_fragment(item.description or "")
             size = (
                 f"{item.size_bytes / (1024 * 1024):.1f} MB"
                 if item.size_bytes >= 1024 * 1024
@@ -234,14 +351,14 @@ class ArtifactShareServer:
             rows.append(
                 f"<article><h3>{name}</h3>"
                 f"<p class=\"desc\">{description}</p>"
-                f"<p class=\"meta\">{html.escape(item.kind)} &middot; {size}</p>"
+                f"<p class=\"meta\">{_escape_fragment(item.kind)} &middot; {size}</p>"
                 f"<a class=\"btn\" href=\"/artifact/{item.key}\" download>Download</a></article>"
             )
         auth_note = (
             "<p>Protected sharing is active.</p>" if self.manifest.auth is not None else ""
         )
         return _PAGE_TEMPLATE.format(
-            share_name=html.escape(self.manifest.share_name or "Shared artifacts", quote=True),
+            share_name=_escape_fragment(self.manifest.share_name or "Shared artifacts"),
             count=len(self.manifest.artifacts),
             auth_note=auth_note,
             rows="\n".join(rows),
@@ -250,7 +367,19 @@ class ArtifactShareServer:
     # -- lifecycle ----------------------------------------------------------
 
     def run(self, host: str, port: int) -> str:
-        """Serve until SIGTERM or orphaned; return the bound URL (after start)."""
+        """Serve until SIGTERM or orphaned; return the bound URL (after start).
+
+        Args:
+            host: Bind host (loopback or all interfaces).
+            port: Bind port (0 for an ephemeral one).
+
+        Returns:
+            The bound URL, e.g. ``http://127.0.0.1:PORT``.
+
+        Raises:
+            ImportError: The ``[web]`` extra (aiohttp) is not installed.
+        """
+        _require_aiohttp()
         from aiohttp import web
 
         parent_pid = os.getppid()
@@ -308,6 +437,15 @@ class _GoneKeyError(Exception):
 
 
 def _parse_basic_auth(header: str) -> tuple[str | None, str | None]:
+    """Decode a Basic Authorization header.
+
+    Args:
+        header: Raw ``Authorization`` header value.
+
+    Returns:
+        (username, password), or (None, None) when the header is absent,
+        malformed, or not Basic auth.
+    """
     if not header.startswith("Basic "):
         return None, None
     try:
@@ -320,23 +458,96 @@ def _parse_basic_auth(header: str) -> tuple[str | None, str | None]:
     return username, password
 
 
+def _verified_digest(username: str, password: str) -> str:
+    """Digest a verified (username, password) pair for the replay cache.
+
+    Qodo #16: the cache must never hold plaintext credentials, so membership
+    is compared as a SHA-256 digest over a NUL-separated pair.
+
+    Args:
+        username: Presented username.
+        password: Presented password.
+
+    Returns:
+        Hex SHA-256 digest of ``username\\x00password``.
+    """
+    return hashlib.sha256(f"{username}\x00{password}".encode("utf-8")).hexdigest()
+
+
+def _escape_fragment(value: str) -> str:
+    """Escape one value interpolated into the index-page template.
+
+    Policy (Qodo #6): the repo has no approved HTML allow-list sanitizer
+    (Utils offers control-char stripping only), so ``html.escape`` stays
+    the active defense -- no sanitizer dependency was added. This helper
+    adds the belt-and-braces guarantee: an escaped fragment can never
+    carry a raw ``<``/``>`` back into the page; should that invariant
+    ever break, re-escaping keeps the page safe instead of failing the
+    request.
+
+    Args:
+        value: Untrusted display text (artifact name, description, ...).
+
+    Returns:
+        The HTML-escaped fragment.
+    """
+    escaped = html.escape(value, quote=True)
+    if "<" in escaped or ">" in escaped:  # pragma: no cover - escape() guarantee
+        escaped = html.escape(escaped, quote=True)
+    return escaped
+
+
 def _ascii_fallback(name: str) -> str:
+    """Build the ASCII fallback filename for Content-Disposition.
+
+    Qodo #15: any C0 control byte (< 0x20, including CR/LF) or DEL would
+    split or corrupt the header, so every ASCII control character is
+    stripped from the fallback token.
+
+    Args:
+        name: Raw display filename.
+
+    Returns:
+        Quote-safe ASCII token; "artifact" when nothing survives.
+    """
     cleaned = name.encode("ascii", "replace").decode("ascii").replace('"', "'")
+    cleaned = "".join(ch for ch in cleaned if ord(ch) >= 0x20 and ch != "\x7f")
     return cleaned or "artifact"
 
 
 def _content_disposition(filename: str) -> str:
+    """Build a header-safe Content-Disposition value.
+
+    Args:
+        filename: Display filename (untrusted).
+
+    Returns:
+        ``attachment`` disposition with an ASCII fallback (control bytes
+        stripped) and a percent-encoded RFC 5987 ``filename*`` token.
+    """
     quoted = urllib.parse.quote(filename, safe="")
     return f"attachment; filename=\"{_ascii_fallback(filename)}\"; filename*=UTF-8''{quoted}"
 
 
 def _format_host(host: str) -> str:
+    """Bracket IPv6 literals for URL display; return IPv4/hostname as-is."""
     if ":" in host:  # IPv6 literal needs brackets in URLs
         return f"[{host}]"
     return host
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for the share server child process.
+
+    Args:
+        argv: Argument list (defaults to ``sys.argv[1:]``).
+
+    Returns:
+        Process exit code (0 after a clean shutdown).
+
+    Raises:
+        ImportError: The ``[web]`` extra (aiohttp) is not installed.
+    """
     parser = argparse.ArgumentParser(
         prog="artifact-share-server",
         description="Serve one staged tldw_chatbook artifact share.",
@@ -345,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=0, help="Bind port (0 = ephemeral)")
     args = parser.parse_args(argv)
+    # After argparse so --help works without the extra; before any server
+    # work so a missing dependency fails fast with the install guidance.
+    _require_aiohttp()
     server = ArtifactShareServer(args.manifest)
     server.run(args.host, args.port)
     return 0

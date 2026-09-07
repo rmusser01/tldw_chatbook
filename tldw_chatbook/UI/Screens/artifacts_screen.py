@@ -144,6 +144,10 @@ class ArtifactsScreen(BaseAppScreen):
         # The artifact-share dialog-open worker (listing chatbooks off-thread);
         # start/stop share workers own no screen-held refs.
         self._share_dialog_worker: Worker[Any] | None = None
+        # Qodo #13: bumped on unmount so a dialog-open worker that outlives
+        # the screen cannot publish (push_screen / error notifies) into an
+        # app the screen no longer belongs to.
+        self._share_dialog_generation = 0
 
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
@@ -198,6 +202,7 @@ class ArtifactsScreen(BaseAppScreen):
         # Same teardown shape for the artifact-share dialog-open worker: an
         # unmount mid-listing would otherwise push the dialog onto an app the
         # screen no longer belongs to.
+        self._share_dialog_generation += 1
         worker = self._share_dialog_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
@@ -1223,22 +1228,39 @@ class ArtifactsScreen(BaseAppScreen):
             return
         self._share_dialog_worker = self._run_share_dialog_open()
 
+    def _share_dialog_publish_allowed(self, generation: int) -> bool:
+        """True when the screen is live and `generation` is still current.
+
+        Qodo #13: an unmount mid-listing (or a late worker body after a
+        too-late cancellation) must not publish the dialog or fire error
+        notifies onto an app this screen no longer belongs to.
+        """
+        return (
+            not self._chatbook_unmounted
+            and generation == self._share_dialog_generation
+        )
+
     @work(exclusive=True, thread=True, group="artifacts-share-dialog")
     def _run_share_dialog_open(self) -> None:
+        generation = self._share_dialog_generation
         service = getattr(self.app_instance, "local_chatbook_service", None)
         if service is None:
-            self.app.call_from_thread(self._notify, CHATBOOK_SERVICE_ERROR_COPY)
+            if self._share_dialog_publish_allowed(generation):
+                self.app.call_from_thread(self._notify, CHATBOOK_SERVICE_ERROR_COPY)
             return
         try:
             records = asyncio.run(service.list_chatbooks(limit=1000))
         except Exception as exc:
             logger.warning(f"Artifact share: listing chatbooks failed: {exc}")
-            self.app.call_from_thread(self._notify, CHATBOOK_SERVICE_ERROR_COPY)
+            if self._share_dialog_publish_allowed(generation):
+                self.app.call_from_thread(self._notify, CHATBOOK_SERVICE_ERROR_COPY)
             return
         controller = getattr(self.app_instance, "artifact_share_controller", None)
         notice = None
         if controller is not None and controller.status is not None:
             notice = "A share is already running; starting a new one will stop it."
+        if not self._share_dialog_publish_allowed(generation):
+            return
         dialog = ArtifactShareDialog(records, active_share_notice=notice)
         self.app.call_from_thread(
             self.app.push_screen, dialog, self._on_share_dialog_result

@@ -127,6 +127,48 @@ def test_stage_share_rejects_missing_file(tmp_path):
         stage_share(records, share_name="x", auth=None, share_root=tmp_path / "r")
 
 
+def test_stage_share_sanitizes_untrusted_chatbook_ids(tmp_path):
+    # Qodo #8: the chatbook_id is untrusted service data; traversal and
+    # absolute-path ids must stage as plain, contained filenames.
+    evil = _record(tmp_path, "Evil", file_name="evil.zip", cid=1)
+    evil["chatbook_id"] = "../../evil"
+    absolute = _record(tmp_path, "Abs", file_name="abs.zip", cid=2)
+    absolute["chatbook_id"] = "/abs/path"
+    manifest = stage_share(
+        [evil, absolute], share_name="x", auth=None, share_root=tmp_path / "r"
+    )
+    share_dir = tmp_path / "r" / manifest.share_id
+    assert len(manifest.artifacts) == 2
+    for item in manifest.artifacts:
+        assert "/" not in item.staged_name
+        assert "\\" not in item.staged_name
+        assert ".." not in item.staged_name
+        staged = share_dir / item.staged_name
+        assert staged.is_file()
+        assert staged.read_bytes() == b"chatbook-zip-bytes"
+    # nothing escaped the staging directory
+    assert set(share_dir.iterdir()) == {
+        *(share_dir / item.staged_name for item in manifest.artifacts),
+        share_dir / "bundle.zip",
+        share_dir / "manifest.json",
+    }
+
+
+def test_stage_share_rejects_symlinked_source(tmp_path):
+    # Qodo #1: a swapped symlink must not launder an arbitrary file into a
+    # share, even when it points at a real bundle.
+    real = tmp_path / "real.zip"
+    real.write_bytes(b"real-bundle")
+    link = tmp_path / "link.zip"
+    link.symlink_to(real)
+    record = _record(tmp_path, "Linked", file_name=None, cid=5)
+    record["file_path"] = str(link)
+    with pytest.raises(ArtifactShareStagingError, match="symlink"):
+        stage_share([record], share_name="x", auth=None, share_root=tmp_path / "r")
+    # fail-closed: no share directory left behind
+    assert not (tmp_path / "r").exists() or not any((tmp_path / "r").iterdir())
+
+
 def test_auth_verify_roundtrip_and_reject():
     auth = build_share_auth("alice", "secret-pass")
     assert isinstance(auth, ArtifactShareAuth)
@@ -135,21 +177,84 @@ def test_auth_verify_roundtrip_and_reject():
     assert verify_share_auth(auth, "bob", "secret-pass") is False
 
 
-def test_sweep_removes_dead_pid_and_keeps_live(tmp_path):
+def test_sweep_removes_dead_pid_and_live_non_share_pid(tmp_path):
+    # Qodo #12: liveness is two-step. A dead pid is swept as before, and a
+    # LIVE pid that is not the share server no longer pins a stale
+    # directory -- the ps command-line check catches PID reuse. The live
+    # non-share pid is a real `sleep` child (real ps, deterministic: using
+    # pytest's own pid would collide whenever the test argv happens to
+    # contain the server module name, e.g. this suite's sibling file).
+    import subprocess as _subprocess
+
+    holder = _subprocess.Popen(["sleep", "30"])
+    try:
+        root = tmp_path / "share-root"
+        dead = root / "deadpid"
+        recycled = root / "recycledpid"
+        for entry in (dead, recycled):
+            entry.mkdir(parents=True)
+            (entry / "manifest.json").write_text("{}")
+        (dead / "status.json").write_text(json.dumps({"pid": 999999999}))
+        (recycled / "status.json").write_text(json.dumps({"pid": holder.pid}))
+
+        removed = sweep_stale_shares(root)
+
+        assert removed == [dead, recycled]
+        assert not dead.exists()
+        assert not recycled.exists()
+    finally:
+        holder.terminate()
+        holder.wait(timeout=10)
+
+
+def test_sweep_keeps_live_pid_confirmed_as_share_server(tmp_path, monkeypatch):
+    # Positive half of Qodo #12: a live pid whose command line matches the
+    # share server module keeps its directory (ps output monkeypatched; the
+    # controller integration tests cover the real child-process case).
+    import tldw_chatbook.Web_Server.artifact_share_manifest as manifest_module
+
     root = tmp_path / "share-root"
-    dead = root / "deadbeef"
-    live = root / "cafebabe"
-    for entry in (dead, live):
-        entry.mkdir(parents=True)
-        (entry / "manifest.json").write_text("{}")
-    (dead / "status.json").write_text(json.dumps({"pid": 999999999}))
-    (live / "status.json").write_text(json.dumps({"pid": os.getpid()}))
+    active = root / "active"
+    active.mkdir(parents=True)
+    (active / "manifest.json").write_text("{}")
+    (active / "status.json").write_text(json.dumps({"pid": os.getpid()}))
+    monkeypatch.setattr(manifest_module, "_pid_is_share_server", lambda pid: True)
 
     removed = sweep_stale_shares(root)
 
-    assert removed == [dead]
-    assert not dead.exists()
-    assert live.exists()
+    assert removed == []
+    assert active.exists()
+
+
+def test_pid_is_share_server_requires_share_server_command(monkeypatch):
+    # The ps gate itself: a matching command line passes, an unrelated one
+    # fails, and a ps failure fails open (keeps the pid-exists behavior).
+    from subprocess import CompletedProcess
+
+    import tldw_chatbook.Web_Server.artifact_share_manifest as manifest_module
+
+    def _ps(stdout: str, returncode: int = 0):
+        return lambda *_args, **_kwargs: CompletedProcess(
+            args=[], returncode=returncode, stdout=stdout
+        )
+
+    monkeypatch.setattr(
+        manifest_module.subprocess,
+        "run",
+        _ps("/usr/bin/python -m tldw_chatbook.Web_Server.artifact_share_server m.json"),
+    )
+    assert manifest_module._pid_is_share_server(123) is True
+
+    monkeypatch.setattr(
+        manifest_module.subprocess, "run", _ps("/usr/local/bin/pytest Tests/")
+    )
+    assert manifest_module._pid_is_share_server(123) is False
+
+    def _broken(*_args, **_kwargs):
+        raise OSError("no ps here")
+
+    monkeypatch.setattr(manifest_module.subprocess, "run", _broken)
+    assert manifest_module._pid_is_share_server(123) is True
 
 
 def test_pid_alive_current_and_bogus():

@@ -67,6 +67,28 @@ async def test_share_button_and_binding_open_dialog(tmp_path):
         )
 
 
+async def test_share_dialog_publication_guard_invalidated_on_unmount(tmp_path):
+    """Qodo #13: unmount bumps the dialog-open generation, so an in-flight
+    listing can no longer push the dialog (or fire error notifies) onto an
+    app the screen no longer belongs to."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(160, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert isinstance(screen, ArtifactsScreen)
+        stale = screen._share_dialog_generation
+        assert screen._share_dialog_publish_allowed(stale) is True
+
+        await pilot.app.pop_screen()  # real unmount
+        await pilot.pause()
+
+        assert screen._share_dialog_generation != stale
+        assert screen._share_dialog_publish_allowed(stale) is False
+        # the unmounted flag dominates even a "current" generation number
+        assert screen._share_dialog_publish_allowed(stale + 1) is False
+
+
 async def test_banner_reflects_active_share(tmp_path, stub_controller):
     app = _build_test_app()
     async with _open_artifacts(app) as (screen, pilot):

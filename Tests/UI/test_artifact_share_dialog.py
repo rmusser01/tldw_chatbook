@@ -101,3 +101,68 @@ async def test_lan_without_password_requires_typed_confirmation():
     assert isinstance(app.result, dict)
     assert app.result["bind"] == "0.0.0.0"
     assert app.result["password"] == ""
+
+
+async def test_username_with_colon_is_rejected():
+    # Qodo #14: Basic auth splits on the first ':', so a colon username is
+    # refused at the dialog instead of starting an unusable share.
+    dialog = ArtifactShareDialog(_records())
+    app = _DialogHost(dialog)
+    async with app.run_test(size=(100, 60)) as pilot:
+        options = dialog.query_one("#share-artifact-list", SelectionList)
+        options.select(options.get_option_at_index(0).value)
+        await pilot.pause()
+        await pilot.click("#share-auth-toggle")
+        await pilot.pause()
+        dialog.query_one("#share-username").value = "alice:admin"
+        dialog.query_one("#share-password").value = "secret-pass"
+        dialog.query_one("#share-start", Button).press()
+        await pilot.pause()
+        assert app.result == "unset"  # still open
+        status = dialog.query_one("#share-dialog-status", Static)
+        assert ":" in str(status.renderable)
+
+
+async def test_oversized_fields_are_rejected():
+    # Qodo #2: share_name (200), username (64), and password (256) are
+    # bounded; an over-long value keeps the dialog open with a message.
+    dialog = ArtifactShareDialog(_records())
+    app = _DialogHost(dialog)
+    async with app.run_test(size=(100, 60)) as pilot:
+        options = dialog.query_one("#share-artifact-list", SelectionList)
+        options.select(options.get_option_at_index(0).value)
+        await pilot.pause()
+        share_name = dialog.query_one("#share-name")
+        username = dialog.query_one("#share-username")
+        password = dialog.query_one("#share-password")
+
+        share_name.value = "n" * 201
+        dialog.query_one("#share-start", Button).press()
+        await pilot.pause()
+        assert app.result == "unset"
+
+        share_name.value = "Field kit"
+        await pilot.click("#share-auth-toggle")
+        await pilot.pause()
+        username.value = "u" * 65
+        password.value = "secret-pass"
+        dialog.query_one("#share-start", Button).press()
+        await pilot.pause()
+        assert app.result == "unset"
+
+        username.value = "alice"
+        password.value = "p" * 257
+        dialog.query_one("#share-start", Button).press()
+        await pilot.pause()
+        assert app.result == "unset"
+
+        # values at the bound itself are accepted
+        share_name.value = "n" * 200
+        username.value = "u" * 64
+        password.value = "p" * 256
+        dialog.query_one("#share-start", Button).press()
+        await pilot.pause()
+    assert isinstance(app.result, dict)
+    assert len(app.result["share_name"]) == 200
+    assert len(app.result["username"]) == 64
+    assert len(app.result["password"]) == 256

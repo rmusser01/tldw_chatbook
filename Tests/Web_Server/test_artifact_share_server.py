@@ -193,6 +193,119 @@ def test_auth_lockout_after_ten_failures(tmp_path):
             assert good.get(f"{url}/").status_code == 429  # same IP stays locked out
 
 
+def test_content_disposition_strips_crlf(tmp_path):
+    # Qodo #15: CR/LF (or any control byte) in a display name must never
+    # reach the header, for per-artifact downloads and the bundle alike.
+    payload = tmp_path / "crlf.zip"
+    payload.write_bytes(b"crlf-bytes")
+    records = [
+        {
+            "id": "1",
+            "chatbook_id": 1,
+            "name": "evil\r\nX-Injected: 1",
+            "description": "",
+            "file_path": str(payload),
+        }
+    ]
+    manifest = stage_share(
+        records,
+        share_name="share\r\nSet-Cookie: pwn=1",
+        auth=None,
+        share_root=tmp_path / "share",
+    )
+    manifest_path = tmp_path / "share" / manifest.share_id / "manifest.json"
+    with _served(manifest_path) as url, _client() as client:
+        artifact = client.get(f"{url}/artifact/{manifest.artifacts[0].key}")
+        assert artifact.status_code == 200
+        disposition = artifact.headers["Content-Disposition"]
+        assert "\r" not in disposition
+        assert "\n" not in disposition
+
+        bundle = client.get(f"{url}/bundle.zip")
+        assert bundle.status_code == 200
+        bundle_disposition = bundle.headers["Content-Disposition"]
+        assert "\r" not in bundle_disposition
+        assert "\n" not in bundle_disposition
+
+
+def test_bundle_symlink_escape_is_gone_never_external_bytes(tmp_path):
+    # Qodo #11: a bundle.zip swapped for a symlink to an outside file is
+    # refused (410 Gone), and the external file's bytes are never served.
+    manifest_path, _manifest = _stage(tmp_path, auth=False)
+    share_dir = manifest_path.parent
+    external = tmp_path / "external-secret.zip"
+    external.write_bytes(b"external-secret-bytes")
+    (share_dir / "bundle.zip").unlink()
+    (share_dir / "bundle.zip").symlink_to(external)
+    with _served(manifest_path) as url, _client() as client:
+        response = client.get(f"{url}/bundle.zip")
+        assert response.status_code == 410
+        assert response.content != b"external-secret-bytes"
+
+
+def test_build_app_gates_aiohttp_through_optional_deps(tmp_path, monkeypatch):
+    # Qodo #3: build_app must fail with the standard guidance (via
+    # require_dependency) when the [web] extra is missing, before any
+    # lazy route-handler import could surface a bare ModuleNotFoundError.
+    from tldw_chatbook.Web_Server import artifact_share_server as server_module
+
+    manifest_path, _manifest = _stage(tmp_path, auth=False)
+    server = ArtifactShareServer(manifest_path)
+
+    def _missing(*_args, **_kwargs):
+        raise ImportError(
+            "Required dependency 'aiohttp' for feature 'web' is not available."
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.optional_deps.require_dependency", _missing
+    )
+    with pytest.raises(ImportError, match=r"tldw_chatbook\[web\]|aiohttp"):
+        server.build_app()
+
+    def _pass_through(module_name: str, feature_name: str | None = None):
+        assert (module_name, feature_name) == ("aiohttp", "web")
+        import aiohttp
+
+        return aiohttp
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.optional_deps.require_dependency", _pass_through
+    )
+    assert server.build_app() is not None
+
+
+def test_verified_cache_stores_digests_not_plaintext(tmp_path):
+    # Qodo #16: the replay cache holds SHA-256 digests of the credential
+    # pair, never the plaintext pair; membership compares digests.
+    from tldw_chatbook.Web_Server.artifact_share_server import _verified_digest
+
+    manifest_path, _manifest = _stage(tmp_path, auth=True)
+    server = ArtifactShareServer(manifest_path)
+    digest = _verified_digest("alice", "secret-pass")
+    server._verified.add(digest)
+
+    assert len(digest) == 64  # sha256 hex
+    assert server._verified == {digest}
+    assert all(
+        "alice" not in entry and "secret" not in entry for entry in server._verified
+    )
+    # a second pair yields a distinct digest (no cross-pair collisions here)
+    assert _verified_digest("alice", "wrong") != digest
+
+
+def test_escape_fragment_guarantees_no_raw_markup():
+    # Qodo #6 (no-sanitizer branch): html.escape stays the defense; the
+    # fragment helper guarantees no raw '<'/'>' survives into the page.
+    from tldw_chatbook.Web_Server.artifact_share_server import _escape_fragment
+
+    hostile = '<script>alert(1)</script>"onmouseover="x'
+    fragment = _escape_fragment(hostile)
+    assert "<" not in fragment
+    assert ">" not in fragment
+    assert "&lt;script&gt;" in fragment
+
+
 @pytest.mark.integration
 def test_subprocess_ready_line_and_download(tmp_path):
     manifest_path, _manifest = _stage(tmp_path, auth=False)

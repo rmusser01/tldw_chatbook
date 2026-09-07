@@ -97,6 +97,36 @@ def test_start_share_without_web_deps_is_clean_error(tmp_path, isolated_share_ro
         controller.start_share(records=[_record(tmp_path, 1)], share_name="x")
 
 
+def test_start_share_popen_failure_cleans_staging(tmp_path, isolated_share_root, monkeypatch):
+    # Qodo #9: a spawn failure must surface as ArtifactShareError and must
+    # not strand the staged directory.
+    import subprocess
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("fork failed")
+
+    monkeypatch.setattr(subprocess, "Popen", _boom)
+    controller = ArtifactShareController()
+    with pytest.raises(ArtifactShareError, match="Could not start share server"):
+        controller.start_share(records=[_record(tmp_path, 1)], share_name="x")
+    assert not any(isolated_share_root.iterdir())
+
+
+def test_start_share_rejects_colon_username(tmp_path, isolated_share_root):
+    # Qodo #14 (defensive twin of the dialog check): Basic auth splits on
+    # the first ':', so a colon username can never authenticate.
+    controller = ArtifactShareController()
+    with pytest.raises(ArtifactShareError, match="':'"):
+        controller.start_share(
+            records=[_record(tmp_path, 1)],
+            share_name="x",
+            username="alice:admin",
+            password="secret-pass",
+        )
+    # rejected before staging: nothing laid down
+    assert not isolated_share_root.exists() or not any(isolated_share_root.iterdir())
+
+
 def test_startup_sweep_removes_stale_dirs(tmp_path, isolated_share_root):
     stale = isolated_share_root / "deadbeef"
     stale.mkdir(parents=True)
