@@ -559,7 +559,7 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
                     title=row.get("title"),
                     media_type=row.get("type"),
                     updated_at=row.get("last_modified"),
-                    has_analysis=bool(row.get("has_analysis")),
+                    has_analysis=self._has_analysis(row),
                 )
                 for index, row in enumerate(page, start=offset)
             ],
@@ -571,6 +571,28 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         if reasons:
             payload["match_reasons"] = reasons
         return payload
+
+    @staticmethod
+    def _has_analysis(row) -> bool:
+        """Mirror the real ``has_analysis`` projection (task-31635 Task 3).
+
+        Production projects it in SQL from the NEWEST ``DocumentVersions``
+        row's analysis text, so a fake that read only a hand-set
+        ``has_analysis`` flag could not see an analysis this same fake had
+        just persisted through ``save_analysis_version`` -- and every test
+        of "the row learns about a save" would have been passing against a
+        page that structurally could not learn.
+        """
+        if row.get("has_analysis"):
+            return True
+        versions = row.get("versions") or ()
+        # NEWEST only, like the projection: this fake's
+        # ``_append_document_version`` prepends, so index 0 is the newest --
+        # a cleared analysis must read as cleared, not as "some old version
+        # had one".
+        return bool(
+            versions and str(versions[0].get("analysis_content") or "").strip()
+        )
 
     def _match_reasons(self, page, query, offset) -> dict[str, str]:
         """Mirror task-28008's keyword-ONLY match reasons for the page.

@@ -375,8 +375,22 @@ class LocalMediaReadingService:
         limit: int = 20,
         offset: int = 0,
         library_summary: bool = False,
+        match_reasons: bool = False,
         **filters: Any,
     ) -> dict[str, Any]:
+        """Search media, optionally as one exact Library browse summary page.
+
+        Args:
+            match_reasons: Whether to run task-28008's keyword-only reason
+                probe for this page (Qodo on #2475: one extra SELECT per
+                queried summary page, so the Library browse's own fetch asks
+                for it and no other caller pays -- the "Review these"
+                enumeration loop pages the same scope and discards them).
+
+        Returns:
+            The search envelope; ``match_reasons`` is present only when this
+            call asked for it AND the query/field set can answer honestly.
+        """
         db = self._require_db()
 
         if library_summary:
@@ -466,7 +480,7 @@ class LocalMediaReadingService:
             "offset": offset,
             "limit": limit,
         }
-        if library_summary and query:
+        if library_summary and query and match_reasons:
             # task-28008: ONE extra SELECT for the whole page, and only for
             # the Library browse's OWN field set. Fix round 1 (2): the
             # probe re-evaluates the title and content legs alone, but

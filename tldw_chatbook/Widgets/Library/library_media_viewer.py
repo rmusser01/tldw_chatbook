@@ -152,6 +152,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         review_banner: str = "",
         back_visible: bool = True,
         list_failed: bool = False,
+        trash_list_open: bool = False,
         media_db: Any = None,
         speaker_rename_media_id: int | None = None,
         **kwargs: Any,
@@ -185,6 +186,11 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 failure state (task-31635). Only the EMPTY Reader reads
                 it, to say that nothing can be selected rather than
                 inviting a selection that cannot be made.
+            trash_list_open: Whether the Items pane beside this Reader is
+                showing the Trash list (task-31635, critique #5 item 11).
+                The Reader keeps the LIVE item it was on, so it says which
+                list that item belongs to -- the cheaper honest option than
+                clearing a reading position the user is coming back to.
             media_db: The real ``MediaDatabase`` and, with
                 ``speaker_rename_media_id``, the selected item's backing id
                 (TASK-31745). Breaks this canvas's otherwise pure-state
@@ -221,6 +227,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.review_banner = review_banner
         self.back_visible = back_visible
         self.list_failed = list_failed
+        self.trash_list_open = trash_list_open
         self.media_db = media_db
         self.speaker_rename_media_id = speaker_rename_media_id
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
@@ -285,13 +292,24 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         )
         banner.display = self.loading
         yield banner
-        if self.external_detail:
-            # task-31277 (critique #4 P2): only a SERVER item needs an
-            # identity line. "Local Media item" restated what the Media
-            # list beside it already said, at the cost of the top row of
-            # the reading surface on every local open.
+        # task-31277 (critique #4 P2): only a SERVER item needs an identity
+        # line. "Local Media item" restated what the Media list beside it
+        # already said, at the cost of the top row of the reading surface on
+        # every local open.
+        # task-31635 (critique #5 item 11): ...and so does a local item
+        # sitting beside the TRASH list, where the list no longer says it.
+        # Same slot, same grammar, never both -- a server item is not in
+        # the local Media list at all, which is the stronger statement.
+        identity_line = (
+            "Server item · not in local Media list"
+            if self.external_detail
+            else "Showing a Media item · not in Trash"
+            if self.trash_list_open
+            else ""
+        )
+        if identity_line:
             yield Static(
-                "Server item · not in local Media list",
+                identity_line,
                 id="library-media-reader-identity",
                 markup=False,
             )

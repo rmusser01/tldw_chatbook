@@ -1119,6 +1119,18 @@ def build_library_media_browse_state(
             f"Type: {media_type}",
             f"Updated: {age or 'unknown'}",
         )
+    # task-31635 (critique #5 item 8, declined-and-announced): a filter that
+    # narrows to exactly one row has that row loaded into the Reader before
+    # the user asks -- deliberate, and pinned both ways (the first result is
+    # selected; clearing the filter restores the previous anchor). Saying so
+    # is the honest half the list was missing; changing it would break the
+    # pinned behaviour. Only for a single hit: with several rows nothing
+    # surprising happened, and the line would just spend a row.
+    status_copy = (
+        "1 result · Enter opens"
+        if result.scope.query and len(rows) == 1
+        else ""
+    )
     empty_copy = ""
     if not rows:
         if result.scope.query:
@@ -1136,7 +1148,7 @@ def build_library_media_browse_state(
         rows=rows,
         type_options=(None, *normalized_types),
         active_type=result.scope.media_type,
-        status_copy="",
+        status_copy=status_copy,
         empty_copy=empty_copy,
         selected_id=resolved_selected_id,
         preview_lines=preview_lines,

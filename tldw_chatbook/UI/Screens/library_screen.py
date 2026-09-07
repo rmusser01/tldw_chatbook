@@ -4024,7 +4024,11 @@ class LibraryScreen(BaseAppScreen):
                 ("", progress),
             )
         return (
-            ("]", "finish review" if at_last else "next in set"),
+            # task-31635 (critique #5 item 9, ruling): a forward step marks
+            # the item you leave done, and "next in set" hid that -- users
+            # read the mark as an accident. The behaviour stays (it is the
+            # set's contract since task-31233); the chip stops being coy.
+            ("]", "finish review" if at_last else "next (marks reviewed)"),
             ("[", "prev in set"),
             ("m", "toggle reviewed"),
             ("R", "exit review"),
@@ -32667,6 +32671,46 @@ class LibraryScreen(BaseAppScreen):
             self._notify_review_set(f"All {live_count} reviewed.")
         return True
 
+    def _review_cursor_for_display(self, review_set) -> int:
+        """The set position the READER is on, else the persisted cursor.
+
+        task-31635 (critique #5 item 10): clicking a row inside the active
+        set loads it without committing a walk position, so the persisted
+        cursor stayed put and every "X of M" readout described an item
+        nobody was looking at. ``_walk_active_review_set_unguarded`` has
+        measured from the DISPLAYED item since Qodo #2333 and
+        ``_active_review_loaded_at_last`` since Qodo on #2386 -- this is the
+        same rule, shared by the two readouts that were still on the cursor.
+
+        Deliberately READ-ONLY: no ``set_cursor`` here. A click moves what
+        the readouts describe, not where the set resumes -- that stays the
+        walk's own gesture.
+
+        Args:
+            review_set: The active set.
+
+        Returns:
+            The loaded item's position when the Reader holds one of the
+            set's items, else ``review_set.cursor``.
+        """
+        loaded = getattr(
+            self._library_media_reader_session, "loaded_backing_id", None
+        )
+        try:
+            loaded = int(loaded) if loaded is not None else None
+        except (TypeError, ValueError):
+            loaded = None
+        if loaded is None:
+            return review_set.cursor
+        return next(
+            (
+                item.position
+                for item in review_set.items
+                if item.backing_media_id == loaded
+            ),
+            review_set.cursor,
+        )
+
     def _active_review_progress(self) -> ReviewProgress | None:
         """Return the active set's live progress, or ``None``.
 
@@ -32694,7 +32738,11 @@ class LibraryScreen(BaseAppScreen):
             item.backing_media_id for item in review_set.items
         )
         is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
-        return review_progress(review_set.items, review_set.cursor, is_live)
+        return review_progress(
+            review_set.items,
+            self._review_cursor_for_display(review_set),
+            is_live,
+        )
 
     def _active_review_loaded_at_last(self) -> bool:
         """True when the Reader's LOADED item is the set's last live item.
@@ -32765,7 +32813,9 @@ class LibraryScreen(BaseAppScreen):
             progress = format_review_progress(
                 review_progress(
                     review_set.items,
-                    review_set.cursor,
+                    # task-31635 item 10: the ordinal names the item the
+                    # Reader is SHOWING, so a click inside the set moves it.
+                    self._review_cursor_for_display(review_set),
                     lambda candidate: candidate in live_ids,
                 )
             )
@@ -33114,7 +33164,13 @@ class LibraryScreen(BaseAppScreen):
                 f"Review set capped at the first {REVIEW_SET_CAP} items.",
                 severity="warning",
             )
-        else:
+        elif self._active_review_set_banner() is None:
+            # task-31635 (critique #5 item 17, ruling): the Reader this
+            # create is about to open paints "Reviewing: <name> — 1 of N ·
+            # 0 reviewed" -- strictly more than this toast said, and at
+            # 100x30 the toast landed ON that Reader's border. So it is
+            # dropped whenever the banner can carry the fact, and kept as
+            # the fallback when it cannot (no active set to describe).
             self._notify_review_set(f"Reviewing {len(items)} items.")
         if displaced is not None and displaced.completed_at is None:
             from rich.markup import escape
@@ -34497,6 +34553,10 @@ class LibraryScreen(BaseAppScreen):
             # task-31635 (critique #5 item 12): only the EMPTY Reader reads
             # this -- with the list load failed there is nothing to select.
             list_failed=self._library_media_list_unselectable(),
+            # task-31635 (critique #5 item 11): the Items pane beside this
+            # Reader is the Trash list, so the Reader names the list its own
+            # (live) item actually belongs to.
+            trash_list_open=self._library_media_view == "trash",
             # TASK-31745: what the speaker-rename legend needs to actually
             # persist a rename (harmless when the state says it cannot).
             media_db=getattr(self.app_instance, "media_db", None),
@@ -34760,6 +34820,11 @@ class LibraryScreen(BaseAppScreen):
         # decides it changes under resizes and pane toggles, and a viewer
         # attribute missing from this compare silently never updates.
         back_visible = self._library_media_reader_exit_available()
+        # task-31635 item 11: a compose input like any other -- the Trash
+        # entry recomposes the screen today, but a viewer-scoped sync landing
+        # after it must not paint a Reader that has forgotten which list it
+        # is standing beside.
+        trash_list_open = self._library_media_view == "trash"
         # task-28007 AC#5: a compose input like any other -- resolved once
         # per sync and read by both halves below.
         # Review I1: only ``_compose_analysis`` consumes this, and
@@ -34779,6 +34844,7 @@ class LibraryScreen(BaseAppScreen):
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
             and viewer.back_visible == back_visible
+            and viewer.trash_list_open == trash_list_open
             and viewer.editing == self._library_media_editing
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
@@ -34850,6 +34916,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.image_preview_source = preview_source
             viewer.review_banner = review_banner
             viewer.back_visible = back_visible
+            viewer.trash_list_open = trash_list_open
             # TASK-31745: the backing id follows the selection like any other
             # compose input (the state's own rename fields are in the compare
             # above, so a stale id here could never outlive them).
@@ -35451,9 +35518,17 @@ class LibraryScreen(BaseAppScreen):
         pending = viewer._post_recompose_callback
 
         def follow_up_then_pending() -> None:
-            callback()
-            if pending is not None:
-                pending()
+            # Qodo on #2473: ``finally``, not a bare sequence. A raising
+            # follow-up (the scroll-progress restore is one) used to take
+            # task-31567's focus restore down with it and strand focus on a
+            # pane grip -- the exact defect that restore exists to prevent.
+            # The exception still propagates; only the ordering guarantee
+            # changes.
+            try:
+                callback()
+            finally:
+                if pending is not None:
+                    pending()
 
         viewer.queue_after_recompose(follow_up_then_pending)
 
@@ -35927,6 +36002,14 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_media_analysis_warning(
                 "Analysis editing is unavailable."
             )
+        if saved:
+            # Qodo on #2475: the list row learns about the analysis the app
+            # just made durable, instead of waiting for the next page fetch.
+            # One seam covers both producers -- the Reader's Generate/Save
+            # and the bulk Analyze run -- because both persist through here.
+            # Outside the try above on purpose: this is a READ, and a read
+            # that fails must not be reported as a failed save.
+            await self._reproject_library_media_analysis_row(media_id)
         if viewer_owned:
             self._library_media_editing_analysis = False
         if viewer_owned or media_id == self._selected_media_id:
@@ -35936,6 +36019,71 @@ class LibraryScreen(BaseAppScreen):
             # so the Reader never shows a stale analysis.
             await self._refresh_library_media_detail(media_id)
         return saved
+
+    async def _reproject_library_media_analysis_row(self, media_id: str) -> None:
+        """Re-read one row's ``has_analysis`` from the projection after a write.
+
+        Qodo on #2475: ``has_analysis`` is a SQL projection frozen into the
+        retained row when the page applied, so a freshly saved analysis left
+        its own row unmarked until something re-paged the list.
+
+        Asks the projection rather than trusting the write's own claim. Live
+        on 2026-09-07 the two disagreed: the Reader's Save returned a version
+        record while nothing reached the database (``create_document_version``
+        documents that it "assumes it's called within an existing transaction
+        context", and this service calls it standalone), so a row patched
+        from the write said "analysed" beside a Reader still saying "No
+        analysis yet.". One targeted id-scoped SELECT on a human-paced
+        gesture cannot say that; it is never on the page path.
+
+        Args:
+            media_id: The canonical media id whose row should be re-read.
+
+        Returns:
+            None. A missing service, an unresolvable id, or a failed read
+            leaves the row exactly as it was -- the next page fetch is still
+            authoritative.
+        """
+        controller = self._library_media_browse_controller
+        if not controller.retained_items:
+            return
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        search_media = getattr(service, "search_media", None)
+        backing_id = self._library_media_int_backing_id(media_id)
+        if not callable(search_media) or backing_id is None:
+            return
+        try:
+            payload = await self._run_library_service_call(
+                search_media,
+                mode="local",
+                query="",
+                library_summary=True,
+                isolate_in_worker=True,
+                id_allowlist=[backing_id],
+                limit=1,
+                offset=0,
+            )
+        except Exception:
+            # Silent on purpose (and no new diagnostic owner): this is a
+            # decoration read. A row that keeps its previous marker for one
+            # more page fetch is the understating direction, and the save
+            # itself already reported its own outcome.
+            return
+        items = payload.get("items", []) if isinstance(payload, Mapping) else []
+        if not items:
+            return
+        row = items[0]
+        if controller.note_analysis_state(
+            str(row.get("id") or ""), has_analysis=bool(row.get("has_analysis"))
+        ):
+            _sync_library_canvas(self, "media", allow_screen_fallback=False)
+
+    def _library_media_int_backing_id(self, media_id: str) -> int | None:
+        """The integer backing id for ``media_id``, or None when it has none."""
+        try:
+            return int(self._library_media_backing_id(media_id))
+        except (TypeError, ValueError):
+            return None
 
     def _notify_library_media_analysis_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed analysis-edit save.

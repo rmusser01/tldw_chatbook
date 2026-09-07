@@ -423,7 +423,18 @@ async def test_media_fresh_zero_distills_to_one_recovery_action(
         assert not pilot.app.query("#library-media-select-toggle")
         assert not pilot.app.query("#library-media-export")
         assert not pilot.app.query("#library-media-detail-empty")
-        assert len(pilot.app.query(".library-canvas-action")) == 1
+        # task-31635 (critique #5 item 7): the title row's Sets opener rides
+        # this page too -- it is navigation, not a result, and it is the only
+        # route back to a saved review set from an empty list. The RECOVERY
+        # budget is still exactly one: everything in the page's own body.
+        body_actions = [
+            action
+            for action in pilot.app.query(".library-canvas-action")
+            if action.id != "library-media-review-sets"
+        ]
+        assert len(body_actions) == 1, body_actions
+        sets = pilot.app.query_one("#library-media-review-sets", Button)
+        assert sets.display is True and not sets.disabled
 
 
 @pytest.mark.asyncio

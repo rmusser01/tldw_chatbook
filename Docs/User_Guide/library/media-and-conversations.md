@@ -80,7 +80,8 @@ list-and-preview layout.
 **Row markers.** An item's second row says what it is and how old it is, and
 adds **· analysed** when that item already carries an analysis — so you can
 see what is worth generating without opening anything (`document · 5m ·
-analysed`). Its title row starts with a single one-cell **state slot**. With
+analysed`). It appears the moment an analysis is saved — from the Reader's
+Generate, or from a bulk Analyze run — without re-paging the list. Its title row starts with a single one-cell **state slot**. With
 no review set active it carries only the current-row pointer **▸** in the wide
 layout (blank otherwise); once a set is active (see "Review these" below),
 every item in the set carries **·** until you review it and **✓** afterwards,
@@ -235,6 +236,9 @@ deleted on its own.
 Whichever Trash action you take, "‹ Media" returns you to a
 current list: the app refreshes the page it fenced for its own write, so it
 never asks you to press "Retry" for a change you just made here.
+The Reader beside the Trash list keeps whatever live item you had open —
+your reading position is not thrown away — and says which list that item
+belongs to: **Showing a Media item · not in Trash**, above its title.
 
 *Verified against fix/media-wave4-c — 2026-09-04 (task-31275: Trash ▸ Restore
 and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
@@ -259,7 +263,13 @@ list and dropped both while the confirmation was armed).*
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…"; both render disabled with the reason on the tooltip while the list's own load has failed. |
 | Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
+| "Sets" (title row) | Opens the saved-set picker (see "Review sets" below). It stays put on an empty or filtered-to-zero list — it is navigation, not a result, and it is the way back to a saved set when the list itself has nothing to offer. Hidden only in Select mode, like the other list-level actions. |
 | Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
+
+A filter that narrows to exactly one row loads that row into the Reader for
+you, and the list says so: **1 result · Enter opens** under the toolbar.
+(Clearing the filter puts your previous selection back.) With several hits
+nothing is auto-loaded and the line does not appear.
 
 Empty states: with nothing imported, "No media in your Library yet. Import
 something to see it here."; with a type that matches nothing, "No media
@@ -410,7 +420,10 @@ them one by one, with your place and progress saved between visits.
   list order and leaves Select mode. Creating a set activates it and opens its
   first item in the Reader. If another set was mid-walk, a notice names it and
   its progress ("Paused 'Read later' at 1 of 2 · 0 reviewed. Resume from
-  Sets.") — creating never silently strands a walk.
+  Sets.") — creating never silently strands a walk. There is no separate
+  "Reviewing N items." notice: the banner the Reader opens with says the
+  same thing and more, and in a narrow terminal that notice landed on the
+  Reader's own border.
 - **Resume on entry** — opening the media area with a set active loads its
   current item into the Reader automatically, on every entry, so the banner
   and the open document always agree (in narrower layouts Escape shows the
@@ -418,9 +431,13 @@ them one by one, with your place and progress saved between visits.
   the Items pane throughout).
 - **Walk** — while a set is active the Reader carries a banner naming the
   set, your place, and the open item's own state ("Reviewing: All media — 2
-  of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place. `]` advances and marks the item you leave as reviewed;
+  of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place —
+  and the footer chip says what the key does: **`]` next (marks reviewed)**.
+  `]` advances and marks the item you leave as reviewed;
   `[` goes back without marking; `m` toggles the loaded item's reviewed mark;
-  a final `]` on the last item marks it done in place. **Escape** steps out
+  a final `]` on the last item marks it done in place. Clicking a row of the
+  set in the Items pane moves both readouts to that item (it does not commit
+  a new resume point — `]`/`[` walk from what the Reader is showing anyway). **Escape** steps out
   of the Reader — to the loaded Items row, and to the list itself in
   narrower layouts — and keeps the set active; re-entering resumes at your
   cursor.
