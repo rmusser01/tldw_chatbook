@@ -1,5 +1,5 @@
 ---
-id: TASK-31976
+id: TASK-31983
 title: 'Library media: keyboard focus on a list row is invisible against selection'
 status: To Do
 assignee: []
@@ -26,3 +26,7 @@ Critique #6 P1 (lead), both assessors. `.library-media-row:focus` and `.library-
 - [ ] #3 The compact 2-cell row keeps its label intact (no outline: heavy regression)
 - [ ] #4 The same distinction holds for the conversations, notes and prompts row canvases
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed as TASK-31976 during critique #6's fix wave; renumbered to TASK-31983 because a concurrent session landed its own TASK-31976 on dev first (2026-08-21 owner rule, TASK-19601: older arrival keeps the id). No other task references this one.

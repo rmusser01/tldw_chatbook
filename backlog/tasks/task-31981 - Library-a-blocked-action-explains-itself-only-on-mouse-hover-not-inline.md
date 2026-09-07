@@ -1,5 +1,5 @@
 ---
-id: TASK-31977
+id: TASK-31981
 title: 'Library: a blocked action explains itself only on mouse hover, not inline'
 status: To Do
 assignee: []
@@ -26,3 +26,7 @@ Critique #6 P1, both assessors. Clicking a disabled `○ Generate` in the reader
 - [ ] #3 The pattern matches the existing Export gate's inline-reason treatment
 - [ ] #4 A painted pin asserts the reason text is present on the screen with no hover
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed as TASK-31977 during critique #6's fix wave; renumbered to TASK-31981 because a concurrent session landed its own TASK-31977 on dev first (2026-08-21 owner rule, TASK-19601: older arrival keeps the id). No other task references this one.

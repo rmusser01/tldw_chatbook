@@ -1,5 +1,5 @@
 ---
-id: TASK-31978
+id: TASK-31982
 title: 'Library media: a faulting read cascades and its Retry offers no recovery path'
 status: To Do
 assignee: []
@@ -25,3 +25,7 @@ Critique #6 P1, adjudicated from Assessment A's undo P0. The undo handler itself
 - [ ] #3 The bulk-undo receipt count reflects rows the write layer actually committed, including a restore that returns an unexpected shape
 - [ ] #4 A test reproduces a faulting media read and asserts the independent controls stay live
 <!-- AC:END -->
+
+## Renumbering provenance
+
+Filed as TASK-31978 during critique #6's fix wave; renumbered to TASK-31982 because a concurrent session landed its own TASK-31978 on dev first (2026-08-21 owner rule, TASK-19601: older arrival keeps the id). No other task references this one.
