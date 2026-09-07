@@ -1,6 +1,6 @@
 # ADR-125: Isolate private SQLite file checks from live lock ownership
 
-Status: Revised proposed contract after review; helper-process approach approved
+Status: Accepted
 Date: 2026-09-07
 Related Task: TASK-31942
 Extends: ADR-029
@@ -20,7 +20,7 @@ the descriptor was opened only for privacy validation. SQLite documents the
 [close-related locking hazard](https://sqlite.org/howtocorrupt.html#posix_advisory_locks_canceled_by_a_separate_thread_doing_close_).
 ADR-029's security checks cannot be removed to avoid it.
 
-## Decision proposed for written-design approval
+## Decision
 
 Perform live SQLite file/sidecar descriptor validation, hardening and retained
 source proof in bounded operation-owned helper processes, not in the process
@@ -40,7 +40,7 @@ existing immutable current-schema/domain/metadata checks, and returns only
 bounded proof status/identity. It never loads reference BLOBs, copies the whole
 database or moves live transactions out of the repository. This preserves
 ADR-051's metadata-focused startup while avoiding parent-side live proof closes.
-The written design explicitly includes this supporting operation for review.
+The approved written design includes this fixed supporting operation.
 
 Repository restore receives an explicit revalidated parent/sidecar identity
 handoff before closing the live proof. Tombstone settlement retains a verified
@@ -52,7 +52,7 @@ Lost live TTS proof is terminal: retain the SQLite handle, SHARED store lease an
 owning worker, report restart required, and do not force-close or mint replacement
 proof. Close retry fails promptly; process exit releases retained authority.
 New TTS admission is latched off after such a failure while healthy siblings
-remain usable. This availability tradeoff awaits approval; it is not a claim of
+remain usable. The user approved this availability tradeoff on 2026-09-07; it is not a claim of
 successful or bounded-time in-process SQLite cleanup. Early failures before a
 live connection exists use ordinary resource cleanup.
 

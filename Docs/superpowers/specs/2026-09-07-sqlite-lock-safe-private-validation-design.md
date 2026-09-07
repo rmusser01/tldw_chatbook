@@ -1,7 +1,7 @@
 # Lock-safe private SQLite validation
 
 Date: 2026-09-07
-Status: Revised after design review; helper-process approach approved, revised contract awaiting approval
+Status: Approved by user on 2026-09-07, including the reviewed terminal-retention contract
 Task: TASK-31942
 ADR: [ADR-125](../../../backlog/decisions/125-lock-safe-private-sqlite-validation.md)
 
@@ -258,7 +258,7 @@ automatic process restart, force-close, foreign-sidecar deletion or global
 all-SQLite registry is introduced. If proof fails before a live connection exists,
 ordinary helper/directory cleanup releases admission; it need not latch TTS off.
 
-This is an explicit availability tradeoff requiring written-design approval:
+This is the explicitly approved availability tradeoff:
 safe in-process cleanup is not promised after loss of irreplaceable proof. Other
 processes may remain unable to obtain the exclusive store lease until this
 Chatbook process exits. Tests must show prompt terminal errors, bounded retention,

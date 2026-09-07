@@ -104,7 +104,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-118](118-chunking-lab-local-execution-and-recovery.md) | Accepted | Keep Chunking Lab local-first, with faithful full-recipe previews, immutable A/B results, conflict-safe catalog saves, and private recoverable session checkpoints. |
 | [ADR-122](122-bundled-pixel-migu-character-and-buddy.md) | Accepted | Include pixel-migu as optional fresh-profile character and Buddy content using existing ownership and runtime boundaries. |
 | [ADR-124](124-canvas-mermaid-subset-and-immutable-runtime-profiles.md) | Accepted | Add an offline Mermaid syntax subset inside Canvas's existing zero-egress runtime, with immutable packaged profiles, security-first refusal and independent save/preview status. |
-| [ADR-125](125-lock-safe-private-sqlite-validation.md) | Proposed | Isolate live SQLite privacy/proof descriptors in bounded helpers while preserving private storage, WAL locks and metadata-only TTS startup. |
+| [ADR-125](125-lock-safe-private-sqlite-validation.md) | Accepted | Isolate live SQLite privacy/proof descriptors in bounded helpers while preserving private storage, WAL locks and metadata-only TTS startup. |
 
 ## Historical Decision Material
 
