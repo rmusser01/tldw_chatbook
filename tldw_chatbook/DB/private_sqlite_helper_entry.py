@@ -1,5 +1,6 @@
 """Exec entry: python -I -S <installed absolute file>; no application startup."""
 
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -8,6 +9,20 @@ from types import ModuleType
 def main() -> int:
     """Bootstrap only the fixed installed package namespaces, without __init__."""
     if not sys.flags.isolated or not sys.flags.no_site or len(sys.argv) != 1:
+        return 1
+    # Required launch-only metadata. Never adopt a parent discovered after
+    # interpreter startup: a subreaper may already have inherited this child.
+    parent_metadata = os.environ.pop("_TLDW_PRIVATE_SQLITE_PARENT_PID", None)
+    if (
+        parent_metadata is None
+        or not 1 <= len(parent_metadata) <= 20
+        or not parent_metadata.isascii()
+        or not parent_metadata.isdecimal()
+        or parent_metadata.startswith("0")
+    ):
+        return 1
+    parent_pid = int(parent_metadata)
+    if os.getppid() != parent_pid:
         return 1
     entry = Path(__file__).resolve(strict=True)
     package = entry.parent.parent
@@ -28,7 +43,7 @@ def main() -> int:
         sys.modules[name] = namespace
     from tldw_chatbook.DB.private_sqlite_helper import run
 
-    return run()
+    return run(parent_pid)
 
 
 if __name__ == "__main__":

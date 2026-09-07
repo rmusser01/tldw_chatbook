@@ -117,8 +117,8 @@ class _ParentGone(Exception):
 class _PrivatePipe:
     """Idle parent polling and a single deadline across each frame and reply."""
 
-    def __init__(self) -> None:
-        self.parent_pid = os.getppid()
+    def __init__(self, parent_pid: int) -> None:
+        self.parent_pid = parent_pid
         self.deadline: float | None = None
         os.set_blocking(0, False)
         os.set_blocking(1, False)
@@ -159,9 +159,11 @@ class _PrivatePipe:
                 continue
 
 
-def run() -> int:
+def run(parent_pid: int) -> int:
     """Serve one operation-owned stream; EOF or close always releases its pin."""
-    pipe = _PrivatePipe()
+    if os.getppid() != parent_pid:
+        return 0
+    pipe = _PrivatePipe(parent_pid)
     source: SourcePin | None = None
     initialized = False
     try:
@@ -177,6 +179,8 @@ def run() -> int:
                 )
                 return 0
             if payload is None:
+                return 0
+            if os.getppid() != parent_pid:
                 return 0
             operation = payload["operation"]
             response = {"version": 1, "operation": operation}

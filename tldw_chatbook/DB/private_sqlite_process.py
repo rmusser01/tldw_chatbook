@@ -168,21 +168,42 @@ class HelperReservation:
     def __exit__(self, exc_type, exc, traceback) -> None:
         self._check_owner(allow_closed=True)
         failure = None
-        for lease in tuple(self._children):
-            if exc is None and lease in self._handoffs:
-                continue
-            try:
-                lease.close()
-            except HelperCleanupError as error:
-                failure = error
-        with self._admission._condition:
-            self._closed = True
-            self._release_unused()
+
+        def settle(leases):
+            nonlocal failure
+            for lease in leases:
+                try:
+                    lease.close()
+                except BaseException as error:  # noqa: BLE001 - settle every owner before propagating control flow
+                    if failure is None or (
+                        isinstance(failure, Exception)
+                        and not isinstance(error, Exception)
+                    ):
+                        failure = error
+
+        try:
+            settle(
+                tuple(lease for lease in self._children if lease not in self._handoffs)
+            )
+            # A handoff becomes effective only after the entire context settles
+            # successfully, including cleanup of its transient preparation child.
+            if exc is not None or failure is not None:
+                settle(tuple(self._handoffs))
+        finally:
+            with self._admission._condition:
+                self._closed = True
+                self._release_unused()
         if failure is not None:
-            if exc is not None:
+            if exc is not None and (
+                not isinstance(exc, Exception) or isinstance(failure, Exception)
+            ):
                 exc.add_note("private_sqlite_helper_cleanup_failed")
+            elif not isinstance(failure, Exception):
+                if exc is not None:
+                    failure.add_note("private_sqlite_operation_failed")
+                raise failure from None
             else:
-                raise failure
+                raise HelperCleanupError() from None
 
     def handoff_retained(self, lease: HelperLease) -> None:
         """On successful context exit, transfer a retained lease to its caller.
@@ -304,6 +325,10 @@ class HelperLease:
         reservation._claim(lease, _LEASE_KINDS[operation])
         try:
             budget.remaining(5.0)
+            # Trusted launch-only identity, never supplied by a request or an
+            # ambient override. Capture before exec, including delayed startup.
+            environment = os.environ.copy()
+            environment["_TLDW_PRIVATE_SQLITE_PARENT_PID"] = str(os.getpid())
             lease._child = subprocess.Popen(
                 [
                     sys.executable,
@@ -320,6 +345,7 @@ class HelperLease:
                 stderr=subprocess.DEVNULL,
                 close_fds=True,
                 bufsize=0,
+                env=environment,
             )
             os.set_blocking(lease._child.stdin.fileno(), False)
             os.set_blocking(lease._child.stdout.fileno(), False)
@@ -329,7 +355,12 @@ class HelperLease:
             lease._failed = True
             try:
                 lease.close()
-            except HelperCleanupError:
+            except BaseException as cleanup_error:
+                if isinstance(error, Exception) and not isinstance(
+                    cleanup_error, Exception
+                ):
+                    cleanup_error.add_note("private_sqlite_operation_failed")
+                    raise cleanup_error from None
                 error.add_note("private_sqlite_helper_cleanup_failed")
             if isinstance(error, OSError):
                 normalized = HelperUnavailableError()
