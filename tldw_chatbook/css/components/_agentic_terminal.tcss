@@ -1991,7 +1991,7 @@ ConsoleRunLogModal {
     text-style: bold underline;
 }
 
-/* task-31976 (critique #6 P1, AC#4): the conversations canvas had NO
+/* task-31983 (critique #6 P1, AC#4): the conversations canvas had NO
    dedicated `:focus` rule, so a focused row fell back to the generic
    `*:focus{outline:solid}` and (like the media list) read the same as the
    `-selected` background. Same focus-only left-edge cue as
@@ -2042,7 +2042,7 @@ ConsoleRunLogModal {
    ``*:focus{outline:solid}`` (core/_reset.tcss). `outline: none` suppresses
    the generic fallback (never `outline: heavy`, which eats a compact row's
    label -- round-3 lesson).
-   task-31976 (critique #6 P1): `-selected` above uses this SAME background,
+   task-31983 (critique #6 P1): `-selected` above uses this SAME background,
    so focus and selection were indistinguishable -- the row the keyboard was
    ON looked exactly like the open row and arrow-nav read as a dead key. The
    `border-left: thick $ds-action-focus` bar is the focus-only, non-colour
@@ -2078,7 +2078,7 @@ ConsoleRunLogModal {
 
 /* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
    above -- entering the Notes list now parks DOM focus on the first row and
-   Up/Down move it between rows. task-31976: same focus-only border-left cue
+   Up/Down move it between rows. task-31983: same focus-only border-left cue
    (padding compensates so the label holds), distinct from any selection. */
 .library-notes-row:focus {
     background: $ds-focus-bg;
@@ -2115,7 +2115,7 @@ ConsoleRunLogModal {
     color: $ds-text-primary;
 }
 
-/* task-31976: same focus-only border-left cue; this row is height 1, so the
+/* task-31983: same focus-only border-left cue; this row is height 1, so the
    padding swap (0 1 -> 0 1 0 0) keeps the single label cell intact. */
 .library-notes-folder-row:focus {
     background: $ds-focus-bg;
@@ -2210,7 +2210,7 @@ ConsoleRunLogModal {
 
 /* task-2856 AC1/AC4: same readable-focus contract as .library-media-row:focus
    above -- entering the Prompts list now parks DOM focus on the first row
-   and Up/Down move it between rows. task-31976: same focus-only border-left
+   and Up/Down move it between rows. task-31983: same focus-only border-left
    cue (padding compensates so the label holds), distinct from selection. */
 .library-prompt-row:focus {
     background: $ds-focus-bg;

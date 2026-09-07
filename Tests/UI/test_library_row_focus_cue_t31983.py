@@ -1,4 +1,4 @@
-"""Library list rows: keyboard focus must be visible against selection -- TASK-31976.
+"""Library list rows: keyboard focus must be visible against selection -- TASK-31983.
 
 Critique #6 P1. `.library-media-row:focus` and `.library-media-row-selected`
 (and the sibling conversation/notes/notes-folder/prompt canvases) shared the
