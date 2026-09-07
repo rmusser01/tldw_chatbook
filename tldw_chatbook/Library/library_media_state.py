@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, Sequence
 
-from rich.cells import chop_cells
+from rich.cells import cell_len, chop_cells
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
@@ -1286,6 +1286,10 @@ def _secondary_text(
         # costs the two cells it actually paints (task-31955). Rich is
         # already a hard dependency and ``console_prompt_queue`` uses the
         # same module, so this adds nothing to install.
+        # ponytail: rich's splitter is not full UAX #29 -- a regional-
+        # indicator (flag) PAIR can halve at an odd cut offset. The CELL
+        # budget is what holds; pinned as a known ceiling by
+        # ``test_flag_pair_keyword_is_cut_on_a_cell_boundary_not_a_cluster_one``.
         # ``chop_cells`` returns NOTHING for text that paints nothing (a
         # lone ZWJ or combining mark survives the caller's non-empty
         # check), so the whole keyword is the fallback -- a zero-width one
@@ -1294,9 +1298,13 @@ def _secondary_text(
         # A cut landing on a space would paint "abcdefghi …"; the space is
         # the cut's own artefact, not part of the term.
         term = head.rstrip()
-        if head != keyword:
-            term += "…"
-        text = f"{text} · keyword: {term}"
+        # A cut head with no VISIBLE cells (zero-width, or nothing but
+        # spaces) leaves the label introducing nothing -- "keyword: " or,
+        # past the cap, "keyword: …". Say nothing instead.
+        if cell_len(term.strip()):
+            if head != keyword:
+                term += "…"
+            text = f"{text} · keyword: {term}"
     return text
 
 

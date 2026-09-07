@@ -846,8 +846,8 @@ def test_analyze_receipt_fields_default_zero_and_pass_through():
 # ---------------------------------------------------------------------------
 
 
-def _keyword_reason_term(keyword: str) -> str:
-    """The term one row paints after ``· keyword: `` when ``keyword`` matched."""
+def _keyword_reason_secondary(keyword: str) -> str:
+    """The whole secondary line of a row the browse filter matched by keyword."""
     scope = MediaBrowseScope(query="q")
     result = build_media_browse_result(
         scope,
@@ -860,7 +860,12 @@ def _keyword_reason_term(keyword: str) -> str:
         },
     )
     state = build_library_media_browse_state(result, type_options=("All",), now=NOW)
-    secondary = state.rows[0].secondary
+    return state.rows[0].secondary
+
+
+def _keyword_reason_term(keyword: str) -> str:
+    """The term one row paints after ``· keyword: `` when ``keyword`` matched."""
+    secondary = _keyword_reason_secondary(keyword)
     assert " · keyword: " in secondary, secondary
     return secondary.split(" · keyword: ", 1)[1]
 
@@ -898,13 +903,34 @@ def test_narrow_keyword_reason_cut_is_unchanged() -> None:
     assert _keyword_reason_term("notes") == "notes"
 
 
-def test_zero_width_keyword_reason_does_not_break_the_page() -> None:
-    """A keyword that paints nothing survives the caller's non-empty check.
+@pytest.mark.parametrize(
+    "keyword",
+    [
+        pytest.param("\u200d", id="zero-width-joiner"),
+        pytest.param("\u0301", id="combining-mark"),
+        pytest.param("\u200d" + " " * 12, id="zero-width-then-spaces-past-the-cap"),
+        pytest.param("   \u200d  ", id="spaces-around-a-zero-width-term"),
+    ],
+)
+def test_keyword_reason_with_nothing_to_paint_is_dropped(keyword: str) -> None:
+    """A cut head with no visible cells gets NO suffix, not a dangling label.
 
-    ``chop_cells`` has no line to return for it, and an IndexError here
-    would take down the whole page projection, not just one row's suffix.
+    ``chop_cells`` has no line to return for a zero-width term (and an
+    IndexError there would take down the whole page projection, not just
+    one row's suffix), and a head of nothing but spaces cuts to "". Both
+    painted ``article · now · keyword: `` -- a label introducing nothing --
+    and past the cap, ``keyword: …``.
+
+    A reason that is ONLY whitespace never gets this far: the result's own
+    validator rejects it (pinned below), so these are the shapes that do.
     """
-    assert _keyword_reason_term("\u200d") == "\u200d"
+    assert "keyword" not in _keyword_reason_secondary(keyword)
+
+
+def test_a_blank_match_reason_is_rejected_before_any_row_is_built() -> None:
+    """The boundary, not the row, is where a whitespace-only reason dies."""
+    with pytest.raises(ValueError, match="match_reasons"):
+        _keyword_reason_secondary("    ")
 
 
 # ---------------------------------------------------------------------------
@@ -930,6 +956,25 @@ def test_int_backing_id_covers_every_shape_the_three_spellings_handled(
     value: object, expected: int | None
 ) -> None:
     assert library_media_int_backing_id(value) == expected
+
+
+def test_flag_pair_keyword_is_cut_on_a_cell_boundary_not_a_cluster_one() -> None:
+    """Known ceiling: rich's splitter is not full UAX #29 (task-31955 review).
+
+    ``chop_cells`` keeps ZWJ sequences whole (pinned above), but a
+    regional-indicator PAIR -- the two code points a flag is made of -- can
+    be halved when the cut lands at an odd offset, leaving a lone indicator
+    letter on each side. This pin DOCUMENTS that ceiling rather than
+    asserting cluster safety the library does not provide: what is
+    guaranteed is the CELL budget, which is what the cap exists to bound.
+    """
+    flag = "\U0001F1EF\U0001F1F5"  # JP, two regional indicators = 2 cells
+    term = _keyword_reason_term("a" + flag * 6)
+    head = term.removesuffix("…")
+
+    assert cell_len(head) == 10, term
+    # The ceiling, stated: the head ends on HALF a flag.
+    assert head.endswith("\U0001F1EF"), term
 
 
 # ---------------------------------------------------------------------------
