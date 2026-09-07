@@ -1150,6 +1150,14 @@ def build_library_media_browse_state(
             _record_title(selected),
             f"Type: {media_type}",
             f"Updated: {age or 'unknown'}",
+            # task-31957: the row says "· analysed" or stays silent (a
+            # 36-cell line cannot spend cells saying "no"); this pane is a
+            # labelled line per fact, so it answers both ways with the
+            # row's own word instead of leaving the two surfaces to
+            # disagree about the same item. Kept to the pane's own narrow
+            # measure -- inside the Items pane it has ~15 cells of text
+            # width, which "Analysis: analysed" (18) would wrap.
+            f"Analysed: {'yes' if selected['has_analysis'] else 'no'}",
         )
     # task-31635 (critique #5 item 8, declined-and-announced): a filter that
     # narrows to exactly one row has that row loaded into the Reader before

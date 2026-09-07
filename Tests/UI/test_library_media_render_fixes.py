@@ -3777,3 +3777,57 @@ async def test_a_storage_error_is_never_cached_as_no_active_set():
             None,
             None,
         ]
+
+
+# ---------------------------------------------------------------------------
+# task-31957: the preview pane names the analysis state the row names
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("row_index", "expected", "other"),
+    [(0, "Analysed: yes", "Analysed: no"), (2, "Analysed: no", "Analysed: yes")],
+)
+@pytest.mark.asyncio
+async def test_the_preview_pane_paints_the_selected_items_analysis_state(
+    row_index: int, expected: str, other: str
+):
+    """task-31957: the pane answers for an analysed AND an un-analysed item.
+
+    Painted on the real screen, over the real projection: rows 1-2 of
+    ``_review_state_host`` carry an analysis and rows 3-4 do not, and the
+    pane has to say which one the selection is on -- the row's line says
+    "· analysed" or nothing, and until now the pane said neither.
+
+    ``show_preview`` is flipped on for the assertion: since the permanent
+    Reader shipped (``d99fb4a9c``) the screen passes ``show_preview=False``
+    for every Media canvas path, so this pane is not on screen today -- see
+    the batch-2 report. Everything else here is production: the screen's
+    stylesheet, the pane's real geometry (a ~15-cell text measure inside
+    the Items pane, which is why the line is kept short), and the state
+    built by the same browse projection the rows come from.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+        screen.query_one(f"#library-media-row-{row_index}", Button).press()
+        for _ in range(3):
+            await pilot.pause()
+
+        canvas = screen.query_one("#library-media-canvas")
+        canvas.show_preview = True
+        await canvas.recompose()
+        for _ in range(3):
+            await pilot.pause()
+
+        preview = screen.query_one("#library-media-preview")
+        assert preview.region.area > 0, preview.region
+        painted = _painted(host, preview.region)
+
+        assert expected in painted, painted
+        assert other not in painted, painted
+        # The pane describes the item whose row is selected, not a
+        # neighbour: its title is painted right above the answer.
+        assert f"Doc {row_index + 1}" in painted, painted

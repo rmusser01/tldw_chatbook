@@ -930,3 +930,71 @@ def test_int_backing_id_covers_every_shape_the_three_spellings_handled(
     value: object, expected: int | None
 ) -> None:
     assert library_media_int_backing_id(value) == expected
+
+
+# ---------------------------------------------------------------------------
+# task-31957: the preview pane reports the analysis state the row reports
+# ---------------------------------------------------------------------------
+
+
+def _browse_state_with_analysis(*values: bool) -> LibraryMediaCanvasState:
+    """One page whose Nth item carries analysis per ``values[N]``."""
+    scope = MediaBrowseScope()
+    items = [
+        summary_row(id=index, media_type="article", has_analysis=analysed)
+        for index, analysed in enumerate(values, start=1)
+    ]
+    result = build_media_browse_result(
+        scope,
+        {
+            "items": items,
+            "total": len(items),
+            "limit": scope.page_size,
+            "offset": 0,
+        },
+    )
+    return build_library_media_browse_state(result, type_options=("All",), now=NOW)
+
+
+@pytest.mark.parametrize(
+    ("analysed", "expected"),
+    [(True, "Analysed: yes"), (False, "Analysed: no")],
+)
+def test_preview_pane_reports_the_rows_analysis_state(
+    analysed: bool, expected: str
+) -> None:
+    """task-31957: the two surfaces describe the same item the same way.
+
+    The row's own line carries the word only when there IS an analysis (a
+    36-cell budget cannot spend cells saying "no"); the pane has a labelled
+    line per fact, so it answers in both directions with the row's word.
+    """
+    state = _browse_state_with_analysis(analysed)
+
+    assert expected in state.preview_lines, state.preview_lines
+    assert ("· analysed" in state.rows[0].secondary) is analysed
+
+
+def test_preview_pane_follows_the_selection_not_the_first_row() -> None:
+    """The pane describes the SELECTED item, so the answer must move with it."""
+    state = _browse_state_with_analysis(True, False)
+    other = build_library_media_browse_state(
+        build_media_browse_result(
+            MediaBrowseScope(),
+            {
+                "items": [
+                    summary_row(id=1, media_type="article", has_analysis=True),
+                    summary_row(id=2, media_type="article", has_analysis=False),
+                ],
+                "total": 2,
+                "limit": 20,
+                "offset": 0,
+            },
+        ),
+        type_options=("All",),
+        selected_id="local:media:2",
+        now=NOW,
+    )
+
+    assert "Analysed: yes" in state.preview_lines, state.preview_lines
+    assert "Analysed: no" in other.preview_lines, other.preview_lines
