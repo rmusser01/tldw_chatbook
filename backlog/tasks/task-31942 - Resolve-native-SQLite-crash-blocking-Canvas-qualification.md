@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 15:33'
-updated_date: '2026-09-07 20:39'
+updated_date: '2026-09-07 20:52'
 labels:
   - database
   - canvas
@@ -17,6 +17,8 @@ documentation:
   - Docs/Canvas/V2_VERIFICATION.md
   - >-
     Docs/superpowers/specs/2026-09-07-sqlite-lock-safe-private-validation-design.md
+  - >-
+    Docs/superpowers/plans/2026-09-07-sqlite-lock-safe-private-validation-implementation.md
 priority: high
 ---
 
@@ -40,10 +42,15 @@ Establish and correct the cause of the owned Chatbook child SQLite SIGBUS encoun
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/125-lock-safe-private-sqlite-validation.md
-Reason: Helper-owned descriptor and proof lifetimes introduce a private cross-process boundary; ADR029 privacy and ADR028/051 TTS ownership remain binding.
-1. Completed diagnosis: real SQLite multiprocess tests isolate SHM descriptor-close loss of live writer exclusion; exact historical SIGBUS interleavings remain unproven.
-2. Revised written design after independent review: Docs/superpowers/specs/2026-09-07-sqlite-lock-safe-private-validation-design.md. Explicit restore identity export and directory-only tombstone authority replace external descriptor consumers; helper-loss terminal retention, four retained/four transient capacity reservations and end-to-end deadline propagation await written-design approval.
-3. After approval, produce concrete regression-first implementation steps for bounded helper protocol, normal connections/source-pin leases, live TTS proof, repository handoffs and exclusive descriptor close-failure ownership.
-4. Implement the approved correction without changing schemas, WAL/mmap, private permissions, connection factories or shared dependencies. Preserve shielded worker ownership on async-waiter cancellation.
-5. Verify targeted database/TTS/privacy/lifetime/package and actual Canvas child workflows, including saturation, restore/tombstones, proof-loss terminal behavior and exclusive access after owned process exit; obtain independent correction review before TASK-31941 qualification resumes.
+Reason: Implements the accepted cross-process privacy/proof boundary while preserving ADR028/029/051.
+User approved the revised written design, including restart-required terminal retention, on 2026-09-07.
+Detailed plan: Docs/superpowers/plans/2026-09-07-sqlite-lock-safe-private-validation-implementation.md
+1. Extract shared leaf privacy checks and a bounded fixed child protocol/import boundary.
+2. Implement atomic helper capacity reservations, absolute operation deadlines and captured-child cleanup.
+3. Repair normal private connections and source-pin backup/copy/restore, with real cross-process lock regressions.
+4. Extract shared pure TTS schema/domain/metadata validation and the fixed helper proof.
+5. Integrate TTS live proof, explicit restore/directory handoffs, shielded-worker ownership and bounded restart-required quarantine; qualify both orderly and abrupt process exit.
+6. Correct exclusive descriptor/finalizer ownership and complete the raw-close consumer census.
+7. Qualify installed-wheel/import isolation, targeted DB/TTS/privacy/lifetime/performance tests and the previously failing actual Canvas child workflows; independently review the complete correction before returning to TASK-31941.
+Execution has not begun. Keep V2 disabled; no full repository sweep, PR, push, rebase or merge.
 <!-- SECTION:PLAN:END -->
