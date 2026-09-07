@@ -18,7 +18,8 @@ import importlib.util
 import shutil
 import threading
 import time
-from dataclasses import dataclass
+import wave
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
@@ -46,6 +47,17 @@ BYTES_PER_S = 32000.0
 #: that means the raw tracks are safe to delete; the rest simply end the
 #: wait (`IngestJobState`, `Library/library_ingest_jobs.py`).
 TERMINAL_JOB_STATES = frozenset({"done", "failed", "cancelled", "skipped"})
+#: How long Start/prepare will wait for the encrypted voiceprint (spec §3.1).
+#: The read runs on its own thread and is JOINED with this timeout, so a
+#: locked or prompting Keychain costs the meeting nothing but its match.
+VOICEPRINT_LOAD_TIMEOUT_S = 1.5
+#: Mic sample rate for explicit enrollment; the whole meeting pipeline is
+#: 16 kHz mono PCM16 (`MeetingCapture`, `wav_writer`).
+MIC_SAMPLE_RATE = 16000
+#: Ceiling on how much of `you.wav` the plain-call-mode learning offer embeds.
+# ponytail: the FIRST minute, not the best minute -- a meeting that opens with
+# silence learns less. Pick the loudest window if that shows up as a real miss.
+LEARN_PCM_MAX_SECONDS = 60.0
 
 if TYPE_CHECKING:  # import-light at runtime: `console_voice_input` pulls config
     from tldw_chatbook.Chat.console_voice_input import EffectiveConfig
@@ -139,6 +151,17 @@ class MeetingSettings(BaseModel):
     #: clusterer can hold no clusters), so it is refused at the boundary
     #: like every other unusable config value here.
     max_speakers: int = Field(8, ge=1)
+    #: Self-voiceprint matching (TASK-31826, spec §5). No effect until a
+    #: voiceprint is enrolled; never runs in plain call mode.
+    voice_match: bool = True
+    #: Cosine-distance ceiling for a `self` match, and the embedded audio a
+    #: cluster needs before it can be declared `self`. Bounded here for the
+    #: same reason `max_speakers` is: 0 (or > 1) is not a stricter threshold,
+    #: it is a silently dead feature.
+    voice_match_threshold: float = Field(0.2, gt=0, le=1)
+    voice_match_min_seconds: float = Field(4.0, ge=0)
+    #: Offer to learn from a qualifying meeting (at most one offer each).
+    voice_learn_offer: bool = True
 
     @field_validator("recordings_dir", mode="before")
     @classmethod
@@ -194,7 +217,56 @@ class MeetingSettings(BaseModel):
             diarize_mic_channel=get_setting("meetings", "diarize_mic_channel", False),
             diarizer_backend=get_setting("meetings", "diarizer_backend", "local") or "local",
             max_speakers=get_setting("meetings", "max_speakers", 8),
+            voice_match=get_setting("meetings", "voice_match", True),
+            voice_match_threshold=get_setting("meetings", "voice_match_threshold", 0.2),
+            voice_match_min_seconds=get_setting("meetings", "voice_match_min_seconds", 4.0),
+            voice_learn_offer=get_setting("meetings", "voice_learn_offer", True),
         )
+
+
+@dataclass
+class VoiceMatchState:
+    """Whether this meeting can tag the user by voice, and why not (spec §3.5).
+
+    `state` is ``"on"`` or ``"off"``; `reason` is a STATIC key the rail turns
+    into copy -- never a path, a name, or an exception message. Off-reasons:
+    ``"disabled"`` (the setting), ``"plain_call_mode"`` (the mic channel
+    already is the user), or the store's own verdict (``"no_voiceprint"``,
+    ``"needs_reenrollment"``, ``"cannot_decrypt"``, ``"keyring_locked"``).
+    """
+
+    state: str
+    reason: str | None = None
+
+
+@dataclass
+class LearningOffer:
+    """One post-meeting offer to learn from a clean sample (spec §3.4).
+
+    `kind` is ``"matched_cluster"`` (the matched cluster's batch centroid) or
+    ``"mic_channel"`` (plain call mode: the recorded `you.wav`, offered with
+    the explicit "was it only you on the mic?" question). At most one per
+    meeting, and never more than one outstanding.
+    """
+
+    kind: str
+    folder: Path
+    cluster_id: str | None = None
+
+
+@dataclass
+class EnrollResult:
+    """The outcome of an explicit "Enroll my voice" run (spec §3.4).
+
+    `reason` is a static key (``"capture_busy"``, ``"no_audio"``,
+    ``"embed_failed"``, ``"diarizer_unavailable"``, ``"store_unavailable"``)
+    or a recorder's own "no usable recorder" first line; `seconds` is the
+    audio the worker actually embedded.
+    """
+
+    ok: bool
+    reason: str | None = None
+    seconds: float = 0.0
 
 
 @dataclass
@@ -229,6 +301,11 @@ class PrepareResult:
     #: audio backend). The rail shows it and keeps Start disabled instead of
     #: offering a Start that can only fail (final whole-branch review, C1).
     capture_error: str | None = None
+    #: Whether a meeting started NOW would tag the user by voice, and why not
+    #: (TASK-31826). Defaulted so callers built before it -- notably
+    #: `Tests/UI/test_meetings_screen.py`'s `FakeOwner` -- keep working;
+    #: `prepare()`/`start()` always fill it in.
+    voice_match: VoiceMatchState = field(default_factory=lambda: VoiceMatchState("off", None))
 
 
 def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, ...]:
@@ -253,7 +330,7 @@ def diarization_requirements(find_spec=importlib.util.find_spec) -> tuple[str, .
     return tuple(missing)
 
 
-def build_diarizer(settings: MeetingSettings) -> Diarizer | None:
+def build_diarizer(settings: MeetingSettings, voiceprint: list[float] | None = None) -> Diarizer | None:
     """Build the live diarizer backend named by `settings`, best-effort.
 
     Import-graph rule (module docstring): `SpeechBrainDiarizer` is imported
@@ -262,6 +339,10 @@ def build_diarizer(settings: MeetingSettings) -> Diarizer | None:
 
     Args:
         settings: The validated meeting settings.
+        voiceprint: The enrolled self voiceprint to match against, or None
+            (TASK-31826). The vector goes straight to the worker and is never
+            logged. The caller decides whether matching applies at all; this
+            just forwards what it is handed.
 
     Returns:
         The diarizer to inject into the session, or `None` when live
@@ -275,7 +356,12 @@ def build_diarizer(settings: MeetingSettings) -> Diarizer | None:
         if settings.diarizer_backend == "local":
             from .diarizer_local import SpeechBrainDiarizer
 
-            return SpeechBrainDiarizer(max_speakers=settings.max_speakers)
+            return SpeechBrainDiarizer(
+                max_speakers=settings.max_speakers,
+                voiceprint=voiceprint,
+                match_threshold=settings.voice_match_threshold,
+                match_min_seconds=settings.voice_match_min_seconds,
+            )
         raise NotImplementedError(f"diarizer backend {settings.diarizer_backend!r}")
     except Exception as exc:  # noqa: BLE001 - best-effort, never block a meeting start
         logger.warning("meeting: diarizer backend unavailable ({})", type(exc).__name__)
@@ -380,6 +466,27 @@ def _default_mic_factory(**kwargs):
     return AudioRecordingService(**kwargs)
 
 
+def _read_wav_pcm(path: Path, max_seconds: float) -> tuple[bytes, int]:
+    """Up to `max_seconds` of PCM16 from `path`, for the learning offer.
+
+    Args:
+        path: A meeting track (`you.wav`).
+        max_seconds: Ceiling on how much audio is read (from the start).
+
+    Returns:
+        `(pcm, sample_rate)`; `(b"", 0)` when the file is missing or not a
+        readable WAV -- learning is best-effort and never raises at the user.
+    """
+    try:
+        with wave.open(str(path), "rb") as handle:
+            sample_rate = handle.getframerate()
+            frames = min(handle.getnframes(), int(sample_rate * max_seconds))
+            return handle.readframes(frames), sample_rate
+    except Exception as exc:  # noqa: BLE001 - type only: the message is a path
+        logger.warning("meeting: mic track unreadable for learning ({})", type(exc).__name__)
+        return b"", 0
+
+
 def _missing_recorder_message(exc: BaseException) -> str | None:
     """First line of `exc` when it means "no usable recorder", else None.
 
@@ -425,6 +532,7 @@ class MeetingSessionOwner:
         tap_probe: Callable[..., TapMode] = probe,
         tap_builder: Callable[..., Any] = build_tap,
         mic_recorder_factory: Callable[..., Any] | None = None,
+        voiceprint_store_factory: Callable[[], Any] | None = None,
         vad_factory: Callable[[], Any] | None = None,
         clock: Callable[[], float] = time.monotonic,
         watchdog_interval_s: float = 1.0,
@@ -443,6 +551,7 @@ class MeetingSessionOwner:
         self._tap_probe = tap_probe
         self._tap_builder = tap_builder
         self._mic_factory = mic_recorder_factory or _default_mic_factory
+        self._store_factory = voiceprint_store_factory
         self._vad_factory = vad_factory
         self._clock = clock
         self._watchdog_interval_s = watchdog_interval_s
@@ -458,6 +567,101 @@ class MeetingSessionOwner:
         self._watchdog_stop = threading.Event()
         self._lock = threading.RLock()
         self._stop_lock = threading.Lock()
+        #: Self-voiceprint state (TASK-31826). `_voice_load` caches the ONE
+        #: store read (vector + rail state) until something changes it;
+        #: `_retained_diarizer` is the worker kept alive past Stop for a
+        #: learning offer, and is closed on accept/decline/lapse.
+        self.voice_match = VoiceMatchState("off", None)
+        self._voice_load: tuple[list[float] | None, VoiceMatchState] | None = None
+        # `Any`, not `Diarizer`: the offer/enrollment paths use the embedding
+        # half of the backend (`export_centroid`, `enroll_from_pcm`,
+        # `wait_ready`), which is deliberately not in the session's protocol.
+        self._retained_diarizer: Any = None
+        self._pending_offer: LearningOffer | None = None
+        self._offer_handed = False
+
+    # ---- self voiceprint --------------------------------------------------
+    def _voiceprint_store(self) -> Any:
+        """The encrypted voiceprint store (injectable; lazily imported).
+
+        `Audio/voiceprint.py` pulls the config-encryption stack, so it is
+        imported HERE, never at module scope -- boot must not touch it.
+        """
+        if self._store_factory is not None:
+            return self._store_factory()
+        from .voiceprint import default_store
+
+        return default_store()
+
+    def invalidate_voiceprint(self) -> None:
+        """Forget the cached load (Settings deleted, imported or replaced one)."""
+        self._voice_load = None
+
+    def _load_voiceprint(self) -> tuple[list[float] | None, VoiceMatchState]:
+        """The stored voiceprint and the rail's match state, read once.
+
+        The read runs on its OWN thread and is joined for at most
+        `VOICEPRINT_LOAD_TIMEOUT_S` (spec §3.1): on macOS the first keyring
+        access can raise a Keychain prompt, and a meeting Start must never
+        wait behind it -- a blocked read simply reports "keyring_locked" and
+        the meeting runs without matching.
+
+        Returns:
+            `(vector | None, state)`, cached until `invalidate_voiceprint` --
+            a FAILED read included, so a locked keyring is not re-prompted on
+            every rail refresh. Settings calls `invalidate_voiceprint` after
+            an enrollment, import or delete; otherwise the next app run
+            re-reads it.
+        """
+        if self._voice_load is not None:
+            return self._voice_load
+        outcome: list[Any] = [None]
+
+        def _read() -> None:
+            try:
+                from .diarizer_worker import MODEL_ID
+
+                outcome[0] = self._voiceprint_store().load(
+                    expected_model_id=MODEL_ID, timeout_s=VOICEPRINT_LOAD_TIMEOUT_S
+                )
+            except Exception as exc:  # noqa: BLE001 - never raises into a meeting
+                logger.warning("meeting: voiceprint load failed ({})", type(exc).__name__)
+
+        thread = threading.Thread(target=_read, daemon=True, name="meeting-voiceprint-load")
+        thread.start()
+        thread.join(VOICEPRINT_LOAD_TIMEOUT_S)
+        result = outcome[0]
+        if result is None:
+            # Still running -> the key read is blocked; finished with nothing
+            # -> the store itself raised, which the record cannot recover from.
+            reason = "keyring_locked" if thread.is_alive() else "cannot_decrypt"
+            loaded: tuple[list[float] | None, VoiceMatchState] = (None, VoiceMatchState("off", reason))
+        elif result.voiceprint is None:
+            loaded = (None, VoiceMatchState("off", result.reason or "no_voiceprint"))
+        else:
+            loaded = (list(result.voiceprint.centroid), VoiceMatchState("on", None))
+        self._voice_load = loaded
+        return loaded
+
+    def _voice_match_for(self, mode: str) -> tuple[list[float] | None, VoiceMatchState]:
+        """The vector to hand the diarizer for `mode`, plus the state to show.
+
+        Args:
+            mode: The meeting's effective mode (``"room"`` / ``"call"``).
+
+        Returns:
+            `(vector | None, state)`. Matching applies only when the setting
+            is on AND the mode allows it -- in PLAIN call mode the mic channel
+            already is the user, so remote clusters are never compared (spec
+            §3.4, the largest false-positive path), and the store is not even
+            read, so no Keychain prompt is raised for a meeting that could
+            never match.
+        """
+        if not self.settings.voice_match:
+            return None, VoiceMatchState("off", "disabled")
+        if mode == "call" and not self.settings.diarize_mic_channel:
+            return None, VoiceMatchState("off", "plain_call_mode")
+        return self._load_voiceprint()
 
     # ---- prepare ----------------------------------------------------------
     def prepare(self) -> PrepareResult:
@@ -488,6 +692,11 @@ class MeetingSessionOwner:
             # backend module's path, say) -- redact it.
             logger.info("meeting device enumeration unavailable: {}", redact_user_paths(str(exc)))
             capture_error = _missing_recorder_message(exc)
+        # The tap decides the mode a meeting started now would run in, which
+        # is what says whether voice matching applies (spec §3.4). `start()`
+        # re-reads it from the capture, which is authoritative once the tap
+        # has actually come up.
+        self.voice_match = self._voice_match_for("room" if tap_mode.kind == "unavailable" else "call")[1]
         self.prepared = PrepareResult(
             tap_mode=tap_mode, provider=provider, model=model or "",
             diarization_available=not missing, diarization_missing=missing,
@@ -496,6 +705,7 @@ class MeetingSessionOwner:
                 and self.settings.diarizer_backend == "local"
             ),
             recoverable=recoverable, input_devices=devices, capture_error=capture_error,
+            voice_match=self.voice_match,
         )
         return self.prepared
 
@@ -532,6 +742,12 @@ class MeetingSessionOwner:
         # one. stop() takes `_lock` only briefly and releases it before
         # taking `_stop_lock`, so there is no lock-order cycle.
         with self._stop_lock:
+            # A new meeting lapses the previous one's unanswered learning
+            # offer (spec §3.4) and releases the worker kept for it. INSIDE
+            # `_stop_lock`: an in-flight stop() is still driving that worker's
+            # batch pass, and closing it from under that pass would cost the
+            # previous meeting its authoritative labels.
+            self._clear_offer()
             with self._lock:
                 if self.is_active:
                     raise RuntimeError("a meeting is already running")
@@ -578,7 +794,22 @@ class MeetingSessionOwner:
                 # latter on because a live diarizer exists overrode an
                 # explicit `post_diarize = false` and could relabel the
                 # Library copy with generic ids.
-                diarizer = build_diarizer(self.settings)
+                # Self-voiceprint matching (spec §3.4): the mode the capture
+                # actually settled on decides whether the vector is handed
+                # over at all, and the rail's live verdict is refreshed from
+                # it (a tap that failed to start downgrades call -> room).
+                voiceprint, self.voice_match = self._voice_match_for(capture.mode)
+                if self.prepared is not None:
+                    self.prepared.voice_match = self.voice_match
+                diarizer = build_diarizer(self.settings, voiceprint=voiceprint)
+                # The learning offer needs this worker alive AFTER Stop to
+                # export the matched cluster's centroid, so the owner takes
+                # over the close whenever an offer could plausibly follow
+                # (`_clear_offer` then closes it, on every path out).
+                retain = bool(
+                    self.settings.voice_learn_offer and diarizer is not None and self._store_readable()
+                )
+                self._retained_diarizer = diarizer if retain else None
                 self.local_sink = LocalMeetingSink(
                     folder, submit=self._submit_on_ui_thread,
                     post_transcribe=self.settings.post_transcribe,
@@ -590,6 +821,7 @@ class MeetingSessionOwner:
                     dictation_factory=lambda cap: self._dictation_factory(cap, facade, cfg),
                     sinks=[self.local_sink],
                     diarizer=diarizer,
+                    close_diarizer_on_stop=not retain,
                 )
                 self.session = session
                 # A RAISING start() has to run the same cleanup as a False
@@ -609,6 +841,10 @@ class MeetingSessionOwner:
                     shutil.rmtree(folder, ignore_errors=True)
                     self.session = None
                     self.local_sink = None
+                    # A meeting that never started has no Stop to close the
+                    # diarizer the owner just claimed -- do it here or leak
+                    # the worker subprocess.
+                    self._close_retained_diarizer()
                     raise RuntimeError(failure)
                 self._start_watchdog()
                 return session
@@ -659,9 +895,18 @@ class MeetingSessionOwner:
                 return self.last_result
         with self._stop_lock:
             self._watchdog_stop.set()
+            previous = self.last_result
             result = session.stop(reason=reason)  # idempotent for sequential callers
             if result is not None:
                 self.last_result = result
+                if result is not previous:
+                    # One offer decision per MEETING: a second stop() hands
+                    # back the same cached result and must not resurrect an
+                    # offer the user already answered.
+                    self._pending_offer = self._offer_for(result)
+                    self._offer_handed = False
+                    if self._pending_offer is None:
+                        self._close_retained_diarizer()
             self._watch_ingest_job()
             return result if result is not None else self.last_result
 
@@ -675,7 +920,242 @@ class MeetingSessionOwner:
             self.stop(reason="shutdown")
         if self.local_sink is not None:
             self.local_sink.close()
+        # App quit: an unanswered offer lapses and its worker goes with it.
+        self._clear_offer()
         self._unwatch_ingest_job()
+
+    # ---- learning offer ---------------------------------------------------
+    def _store_readable(self) -> bool:
+        """False only once a load has PROVED the store unreadable.
+
+        An unattempted load (plain call mode, matching off) reads as "maybe":
+        the offer path loads for itself when it gets there.
+        """
+        loaded = self._voice_load
+        return loaded is None or loaded[1].reason not in ("cannot_decrypt", "keyring_locked")
+
+    def _close_retained_diarizer(self) -> None:
+        """Close the worker kept for a learning offer, if any. Idempotent."""
+        diarizer, self._retained_diarizer = self._retained_diarizer, None
+        if diarizer is None:
+            return
+        try:
+            diarizer.close()
+        except Exception as exc:  # noqa: BLE001 - best-effort teardown
+            logger.warning("meeting: diarizer close failed ({})", type(exc).__name__)
+
+    def _clear_offer(self) -> None:
+        """Drop any pending offer and release the worker held for it."""
+        self._pending_offer = None
+        self._offer_handed = False
+        self._close_retained_diarizer()
+
+    def _offer_for(self, result: MeetingResult) -> LearningOffer | None:
+        """Whether this meeting produced a sample worth learning from (§3.4).
+
+        Args:
+            result: The finished meeting.
+
+        Returns:
+            The offer, or None. Learning MERGES into an enrolled voiceprint,
+            so with nothing stored there is nothing to improve -- that is what
+            the explicit "Enroll my voice" flow is for.
+        """
+        if not self.settings.voice_learn_offer:
+            return None
+        if self._load_voiceprint()[0] is None:
+            return None
+        meta = result.meta
+        folder = Path(meta.folder)
+        if meta.matched_self and not meta.matched_self_overridden:
+            return LearningOffer(kind="matched_cluster", folder=folder, cluster_id=meta.matched_self)
+        if meta.mode == "call" and not meta.diarize_mic_channel and (folder / "you.wav").exists():
+            # Plain call mode: the mic channel was never diarized, so there is
+            # no cluster to export -- the recorded track is the sample, and
+            # the screen asks "was it only you on the mic?" before accepting.
+            return LearningOffer(kind="mic_channel", folder=folder)
+        return None
+
+    def learning_offer(self, result: MeetingResult) -> LearningOffer | None:
+        """The one learning offer for `result`, or None.
+
+        Idempotent per meeting (spec §3.4): the first call after a qualifying
+        meeting returns the offer, every later call returns None.
+
+        Args:
+            result: The finished meeting the screen is showing.
+
+        Returns:
+            The offer to present, or None when this meeting has none (or its
+            offer was already taken, answered, or lapsed).
+        """
+        offer = self._pending_offer
+        if offer is None or self._offer_handed or Path(result.meta.folder) != offer.folder:
+            return None
+        self._offer_handed = True
+        return offer
+
+    def accept_learning(self, offer: LearningOffer) -> bool:
+        """Merge the meeting's clean sample into the stored voiceprint.
+
+        Args:
+            offer: The offer `learning_offer` handed out.
+
+        Returns:
+            True when the voiceprint was updated. False -- never an exception
+            -- when the offer is stale, the worker could not produce a
+            centroid, or the store refused the merge (spec §6: the previous
+            voiceprint stays intact either way). The worker kept for the offer
+            is released on every path out.
+        """
+        if offer is None or offer is not self._pending_offer:
+            return False
+        try:
+            sample = self._sample_for(offer)
+            if sample is None:
+                return False
+            centroid, seconds = sample
+            from .diarizer_worker import MODEL_ID
+
+            self._voiceprint_store().merge_sample(centroid, weight=seconds, model_id=MODEL_ID)
+            self._voice_load = None      # the vector moved; the next meeting re-reads it
+            return True
+        except Exception as exc:  # noqa: BLE001 - the offer reports failure (spec §6)
+            logger.warning("meeting: voiceprint learning failed ({})", type(exc).__name__)
+            return False
+        finally:
+            self._clear_offer()
+
+    def _sample_for(self, offer: LearningOffer) -> tuple[list[float], float] | None:
+        """The centroid (and its seconds) this offer would merge, or None."""
+        diarizer = self._embedding_diarizer()
+        if diarizer is None:
+            return None
+        if offer.kind == "matched_cluster":
+            return diarizer.export_centroid(offer.cluster_id)
+        pcm, sample_rate = _read_wav_pcm(offer.folder / "you.wav", LEARN_PCM_MAX_SECONDS)
+        if not pcm:
+            return None
+        return diarizer.enroll_from_pcm(pcm, sample_rate)
+
+    def decline_learning(self, offer: LearningOffer | None = None) -> None:
+        """The user said no: keep nothing, release the worker."""
+        self.dismiss_learning()
+
+    def dismiss_learning(self) -> None:
+        """The offer lapsed (the screen hid it): same cleanup as a decline."""
+        self._clear_offer()
+
+    # ---- explicit enrollment ----------------------------------------------
+    def _embedding_diarizer(self, progress: Callable[[str], None] | None = None) -> Any | None:
+        """A diarizer able to embed audio, spawning (and warming) one if needed.
+
+        Reuses the worker kept from the last meeting when there is one --
+        that one is already warm. A freshly spawned worker is stored as the
+        retained diarizer too, so `_clear_offer` closes it on every path and
+        the subprocess is never leaked.
+
+        Args:
+            progress: Optional `(status) -> None` for the warm-up indicator.
+
+        Returns:
+            The diarizer, or None when one cannot be built or never warms up.
+        """
+        diarizer = self._retained_diarizer
+        if diarizer is not None and hasattr(diarizer, "enroll_from_pcm"):
+            return diarizer
+        try:
+            from .diarizer_local import READY_TIMEOUT_S, SpeechBrainDiarizer
+
+            spawned = SpeechBrainDiarizer(max_speakers=self.settings.max_speakers)
+        except Exception as exc:  # noqa: BLE001 - best-effort, never raises at the user
+            logger.warning("meeting: diarizer unavailable for embedding ({})", type(exc).__name__)
+            return None
+        self._retained_diarizer = spawned
+        self._report(progress, "warming up")
+        if not spawned.wait_ready(READY_TIMEOUT_S):
+            # First run downloads the ECAPA model; giving up here is the only
+            # honest answer -- the embed op would silently return None anyway.
+            self._close_retained_diarizer()
+            return None
+        return spawned
+
+    @staticmethod
+    def _report(progress: Callable[[str], None] | None, status: str) -> None:
+        """Best-effort progress ping; a raising callback never fails a run."""
+        if progress is None:
+            return
+        try:
+            progress(status)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("meeting: enrollment progress callback failed ({})", type(exc).__name__)
+
+    def enroll_from_mic(
+        self, seconds: float = 30.0, progress: Callable[[str], None] | None = None
+    ) -> EnrollResult:
+        """Record a mic sample and store it as the user's voiceprint (§3.4).
+
+        Synchronous -- the caller runs it on a worker thread. The sample lives
+        in memory only: it is never written to a file, and neither it nor the
+        resulting vector is ever logged. This is where the store's key is
+        first minted, deliberately: the user initiated this flow, so a
+        Keychain prompt is expected here rather than at a meeting Start.
+
+        Args:
+            seconds: How long to record.
+            progress: Optional `(status) -> None` receiving short, static
+                strings ("warming up", "recording", "embedding") -- never a
+                path, a level, or anything derived from the audio.
+
+        Returns:
+            `EnrollResult(ok=True, seconds=<embedded>)`, or `ok=False` with a
+            static reason. Refused outright while a meeting is running.
+        """
+        if self.is_active:
+            return EnrollResult(ok=False, reason="capture_busy")
+        try:
+            recorder = self._mic_factory(use_vad=False, retain_audio=True, chunk_size=320)
+        except Exception as exc:  # noqa: BLE001 - no usable recorder: say so
+            return EnrollResult(ok=False, reason=_missing_recorder_message(exc) or type(exc).__name__)
+        diarizer = self._embedding_diarizer(progress=progress)
+        if diarizer is None:
+            return EnrollResult(ok=False, reason="diarizer_unavailable")
+        try:
+            self._report(progress, "recording")
+            try:
+                if not recorder.start_recording(callback=None, save_to_file=None):   # memory only
+                    return EnrollResult(ok=False, reason="capture_failed")
+                self._sleep(max(0.0, float(seconds)))
+                pcm = recorder.stop_recording() or b""
+            except Exception as exc:  # noqa: BLE001
+                return EnrollResult(ok=False, reason=_missing_recorder_message(exc) or type(exc).__name__)
+            if not pcm:
+                return EnrollResult(ok=False, reason="no_audio")
+            self._report(progress, "embedding")
+            sample = diarizer.enroll_from_pcm(pcm, MIC_SAMPLE_RATE)
+            if sample is None:
+                return EnrollResult(ok=False, reason="embed_failed")
+            centroid, embedded_s = sample
+            try:
+                from .diarizer_worker import MODEL_ID
+                from .voiceprint import Voiceprint, unit_normalise
+
+                now = datetime.now().isoformat(timespec="seconds")
+                self._voiceprint_store().save(Voiceprint(
+                    model_id=MODEL_ID, centroid=unit_normalise(centroid),
+                    sample_count=float(embedded_s), meetings_contributed=0,
+                    created_at=now, updated_at=now,
+                    threshold_used=float(self.settings.voice_match_threshold),
+                ))
+            except Exception as exc:  # noqa: BLE001 - types only, never the vector
+                logger.warning("meeting: voiceprint save failed ({})", type(exc).__name__)
+                return EnrollResult(ok=False, reason="store_unavailable")
+            self._voice_load = None      # the next meeting reads the new print
+            return EnrollResult(ok=True, seconds=float(embedded_s))
+        finally:
+            # The worker used here (kept or freshly spawned) goes now, and an
+            # explicit enrollment supersedes any pending learning offer.
+            self._clear_offer()
 
     # ---- watchdog ---------------------------------------------------------
     def _start_watchdog(self) -> None:

@@ -5227,6 +5227,20 @@ max_speakers = 8
 # of always pre-naming them as you. Off by default -- turning it on means a
 # mic segment may render as a diarized speaker instead of your own name.
 diarize_mic_channel = false
+# Tag your own speech with your display name using an enrolled voiceprint
+# ("Enroll my voice" on the Meetings screen). No effect until you enroll one,
+# and never used in a plain call, where the mic channel is already you.
+voice_match = true
+# Cosine-distance ceiling for calling a cluster you. Lower = stricter. A
+# starting value: raise it if you are never matched, lower it if someone else
+# is matched as you.
+voice_match_threshold = 0.2
+# Seconds of your speech a cluster must accumulate before it can be matched
+# at all, so one short window can never claim to be you.
+voice_match_min_seconds = 4
+# After a meeting that matched you cleanly, offer to learn from it and
+# improve the stored voiceprint (at most one offer per meeting).
+voice_learn_offer = true
 
 [transcription]
 # Default transcription provider

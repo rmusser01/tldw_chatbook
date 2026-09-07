@@ -84,7 +84,7 @@ class FakeJobRegistry:
             callback()
 
 
-def _owner(tmp_path, *, tap_kind="unavailable", job_state=None, registry=None, **over):
+def _owner(tmp_path, *, tap_kind="unavailable", job_state=None, registry=None, voiceprint_store=None, **over):
     marshalled: list[tuple] = []
     submitted: list[dict] = []
 
@@ -111,6 +111,7 @@ def _owner(tmp_path, *, tap_kind="unavailable", job_state=None, registry=None, *
         vad_factory=EnergyVad,
         watchdog_interval_s=0.01,
         stall_after_s=0.05,
+        voiceprint_store_factory=(lambda: voiceprint_store) if voiceprint_store is not None else None,
     )
     return owner, marshalled, submitted
 
@@ -246,7 +247,7 @@ def test_no_diarizer_built_when_live_off(tmp_path, monkeypatch):
 def test_diarizer_built_when_live_on_and_deps_present(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
     built = {}
-    monkeypatch.setattr(mo, "build_diarizer", lambda settings: built.setdefault("d", object()))
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: built.setdefault("d", object()))
     owner, _, _ = _owner(tmp_path, live_diarization=True)
     owner.prepare(); session = owner.start()
     assert session._diarizer is built["d"]
@@ -270,7 +271,7 @@ def test_a_live_diarizer_does_not_force_the_offline_ingest_pass(tmp_path, monkey
     The live backend's own Stop pass is driven by the session's `_diarizer`,
     so building one must not override an explicit `post_diarize = false`."""
     monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
-    monkeypatch.setattr(mo, "build_diarizer", lambda settings: object())
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: object())
     owner, _, _ = _owner(tmp_path, live_diarization=True, post_diarize=False)
     owner.prepare()
     session = owner.start()
@@ -829,3 +830,469 @@ def test_prepare_enumerates_input_devices_and_choice_persists(tmp_path, monkeypa
     assert owner.settings.system_source == "BlackHole 2ch" and owner.prepared is None
     owner.apply_device_choice("mic", "default")
     assert saved == [("meetings", "system_source", "BlackHole 2ch"), ("meetings", "mic_device", "")]
+
+
+# ---- 31826 task 4: voiceprint match, learning offer, explicit enrollment ----
+
+@pytest.fixture
+def captured_lines():
+    """Collect every loguru message emitted during the test.
+
+    `caplog` does not see loguru's own sink -- mirrors the fixture of the same
+    name in `Tests/Audio/test_meeting_diarization_session.py`.
+    """
+    from loguru import logger as loguru_logger
+
+    lines: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: lines.append(message.record["message"]),
+        level="TRACE", format="{message}", diagnose=False,
+    )
+    try:
+        yield lines
+    finally:
+        loguru_logger.remove(sink_id)
+
+
+class FakeKeys:
+    """Injected key provider (never touches the real keyring)."""
+
+    mode = "keyring"
+
+    def __init__(self, key="k" * 32, delay=0.0):
+        self.key, self.delay, self.reads = key, delay, 0
+
+    def get_or_create(self):
+        return self.key
+
+    def get(self, timeout_s):
+        self.reads += 1
+        if self.delay:
+            time.sleep(self.delay)
+        return self.key
+
+
+def _store(tmp_path, *, keys=None, centroid=(0.6, 0.8), enrolled=True, meetings=1):
+    """A real `VoiceprintStore` on a temp path with an injected key provider."""
+    from tldw_chatbook.Audio import voiceprint as vp
+    from tldw_chatbook.Audio.diarizer_worker import MODEL_ID
+
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", keys or FakeKeys())
+    if enrolled:
+        store.save(vp.Voiceprint(
+            model_id=MODEL_ID, centroid=vp.unit_normalise(centroid), sample_count=10.0,
+            meetings_contributed=meetings, created_at="2026-09-06T00:00:00",
+            updated_at="2026-09-06T00:00:00", threshold_used=0.2,
+        ))
+    return store
+
+
+class FakeBackend:
+    """Stands in for `SpeechBrainDiarizer` (its whole task-4 surface)."""
+
+    def __init__(self, *, voiceprint=None, centroid=(0.0, 1.0), seconds=5.0, **kwargs):
+        self.voiceprint = list(voiceprint) if voiceprint else None
+        self.kwargs = kwargs
+        self.centroid = list(centroid)
+        self.seconds = seconds
+        self.closed = 0
+        self.exports: list[str] = []
+        self.enrolled: list[tuple[bytes, int]] = []
+        self.self_cluster_id = None
+        self.stop_self = None
+        self.self_candidates_seen = 0
+
+    def assign(self, pcm, sample_rate, seq):
+        return None
+
+    def diarize(self, wav_path, start_s, end_s):
+        return []
+
+    def pin(self, cluster_id):
+        return None
+
+    def centroids(self):
+        return {}
+
+    def wait_ready(self, timeout):
+        return True
+
+    def export_centroid(self, cluster_id):
+        self.exports.append(cluster_id)
+        return list(self.centroid), self.seconds
+
+    def enroll_from_pcm(self, pcm, sample_rate):
+        self.enrolled.append((pcm, sample_rate))
+        return list(self.centroid), self.seconds
+
+    def close(self):
+        self.closed += 1
+
+
+def _backend_spy(monkeypatch, backend=None):
+    """Replace `build_diarizer` with a spy; returns (backend, seen kwargs)."""
+    seen: dict = {}
+    made = backend if backend is not None else FakeBackend()
+
+    def build(settings, **kwargs):
+        seen.update(kwargs)
+        made.voiceprint = list(kwargs.get("voiceprint") or []) or None
+        return made
+
+    monkeypatch.setattr(mo, "build_diarizer", build)
+    return made, seen
+
+
+def _write_wav(path: Path, pcm: bytes, sample_rate: int = 16000) -> None:
+    import wave
+
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(pcm)
+
+
+def test_voice_settings_round_trip_and_bounds(tmp_path):
+    values = {
+        "voice_match": False, "voice_match_threshold": 0.35,
+        "voice_match_min_seconds": 2.0, "voice_learn_offer": False,
+    }
+    settings = mo.MeetingSettings.from_config(lambda s, k, d: values.get(k, d), data_dir=tmp_path)
+    assert settings.voice_match is False and settings.voice_learn_offer is False
+    assert settings.voice_match_threshold == 0.35 and settings.voice_match_min_seconds == 2.0
+
+    default = mo.MeetingSettings.from_config(lambda s, k, d: d, data_dir=tmp_path)
+    assert default.voice_match is True and default.voice_learn_offer is True
+    assert default.voice_match_threshold == 0.2 and default.voice_match_min_seconds == 4.0
+
+    import pydantic
+
+    for bad in ({"voice_match_threshold": 0.0}, {"voice_match_threshold": 1.5}, {"voice_match_min_seconds": -1.0}):
+        with pytest.raises(pydantic.ValidationError):
+            _settings(tmp_path, **bad)
+
+
+def test_room_mode_builds_the_diarizer_with_the_stored_vector(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, seen = _backend_spy(monkeypatch)
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path, centroid=(0.6, 0.8)),
+    )
+    prepared = owner.prepare()
+    assert prepared.voice_match.state == "on" and prepared.voice_match.reason is None
+    session = owner.start()
+    assert session._diarizer is backend and backend.voiceprint == [0.6, 0.8]
+    assert seen["voiceprint"] == [0.6, 0.8]
+    owner.stop()
+
+
+def test_build_diarizer_forwards_the_vector_and_the_match_settings(tmp_path, monkeypatch):
+    """The thresholds are the worker's match gate -- they must travel with
+    the vector, not stay behind in the settings object."""
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    seen: dict = {}
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda **kw: seen.update(kw) or object())
+    settings = _settings(
+        tmp_path, live_diarization=True, voice_match_threshold=0.3, voice_match_min_seconds=6.0,
+    )
+    mo.build_diarizer(settings, voiceprint=[0.6, 0.8])
+    assert seen["voiceprint"] == [0.6, 0.8]
+    assert seen["match_threshold"] == 0.3 and seen["match_min_seconds"] == 6.0
+    assert seen["max_speakers"] == settings.max_speakers
+
+
+def test_no_stored_voiceprint_reports_no_voiceprint_and_passes_no_vector(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, _ = _backend_spy(monkeypatch)
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path, enrolled=False))
+    assert owner.prepare().voice_match.reason == "no_voiceprint"
+    owner.start()
+    assert backend.voiceprint is None
+    owner.stop()
+
+
+def test_voice_match_off_never_reads_the_store(tmp_path, monkeypatch):
+    """Matching off (and no learning offer) means the key is never touched --
+    no Keychain prompt for a feature the user turned off."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    _backend_spy(monkeypatch)
+    keys = FakeKeys()
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voice_match=False, voice_learn_offer=False,
+        voiceprint_store=_store(tmp_path, keys=keys),
+    )
+    reads_after_save = keys.reads
+    assert owner.prepare().voice_match.reason == "disabled"
+    owner.start()
+    owner.stop()
+    assert keys.reads == reads_after_save        # no key read at all
+
+
+def test_plain_call_mode_never_matches(tmp_path, monkeypatch):
+    """Spec §3.4: in plain call mode the mic channel already IS the user, so
+    remote clusters are never compared against the voiceprint."""
+    _backend_spy(monkeypatch)
+    keys = FakeKeys()
+    owner = _tap_owner(
+        tmp_path, monkeypatch, live_diarization=True, voiceprint_store=_store(tmp_path, keys=keys),
+    )
+    reads_after_save = keys.reads
+    assert owner.prepare().voice_match.reason == "plain_call_mode"
+    session = owner.start()
+    assert getattr(session._diarizer, "voiceprint", None) is None
+    assert keys.reads == reads_after_save        # no Keychain prompt either
+    owner.stop()
+
+
+def test_hybrid_call_mode_does_match(tmp_path, monkeypatch):
+    """`diarize_mic_channel` makes the mic one cluster among many again, so
+    matching is back on in call mode."""
+    backend, _ = _backend_spy(monkeypatch)
+    owner = _tap_owner(
+        tmp_path, monkeypatch, live_diarization=True, diarize_mic_channel=True,
+        voiceprint_store=_store(tmp_path, centroid=(0.6, 0.8)),
+    )
+    assert owner.prepare().voice_match.state == "on"
+    owner.start()
+    assert backend.voiceprint == [0.6, 0.8]
+    owner.stop()
+
+
+def test_locked_keyring_never_delays_start(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    _backend_spy(monkeypatch)
+    store = _store(tmp_path, keys=FakeKeys(delay=5.0))
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=store)
+    started = time.monotonic()
+    owner.start()
+    elapsed = time.monotonic() - started
+    assert elapsed < 2.0
+    assert owner.prepare().voice_match.reason == "keyring_locked"
+    owner.stop()
+
+
+def _stopped_owner(tmp_path, monkeypatch, *, backend=None, matched="S1", **over):
+    """Run one whole meeting and return (owner, result, backend)."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    made, _ = _backend_spy(monkeypatch, backend)
+    owner, _, _ = _owner(tmp_path, live_diarization=True, **over)
+    owner.prepare()
+    session = owner.start()
+    if matched:
+        session.meta.matched_self = matched
+    result = owner.stop()
+    return owner, result, made
+
+
+def test_learning_offer_once_and_merge_on_accept(tmp_path, monkeypatch):
+    store = _store(tmp_path, meetings=1)
+    owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=store)
+
+    offer = owner.learning_offer(result)
+    assert offer is not None and offer.kind == "matched_cluster" and offer.cluster_id == "S1"
+    assert owner.learning_offer(result) is None          # at most one per meeting
+    assert backend.closed == 0                            # kept alive for the export
+
+    assert owner.accept_learning(offer) is True
+    assert backend.exports == ["S1"]
+    assert store.load().voiceprint.meetings_contributed == 2
+    assert backend.closed == 1                            # ... and closed after it
+
+
+def test_no_offer_for_an_overridden_match(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, _ = _backend_spy(monkeypatch)
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=store)
+    owner.prepare()
+    session = owner.start()
+    session.meta.matched_self = "S1"
+    session.meta.matched_self_overridden = True
+    result = owner.stop()
+    assert owner.learning_offer(result) is None
+    assert backend.closed == 1                            # nothing to offer -> released
+
+
+def test_no_offer_without_a_stored_voiceprint(tmp_path, monkeypatch):
+    """Learning MERGES into an enrolled voiceprint; with none stored there is
+    nothing to improve (that is what explicit enrollment is for)."""
+    owner, result, backend = _stopped_owner(
+        tmp_path, monkeypatch, voiceprint_store=_store(tmp_path, enrolled=False),
+    )
+    assert owner.learning_offer(result) is None
+    assert backend.closed == 1
+
+
+def test_learning_offer_off_never_retains_the_worker(tmp_path, monkeypatch):
+    owner, result, backend = _stopped_owner(
+        tmp_path, monkeypatch, voiceprint_store=_store(tmp_path), voice_learn_offer=False,
+    )
+    assert owner.learning_offer(result) is None
+    assert backend.closed == 1
+
+
+def test_learning_in_plain_call_mode_embeds_you_wav(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    backend, _ = _backend_spy(monkeypatch)
+    owner = _tap_owner(tmp_path, monkeypatch, live_diarization=True, voiceprint_store=store)
+    session = owner.start()
+    folder = Path(session.meta.folder)
+    result = owner.stop()
+
+    pcm = b"\x01\x02" * 1600
+    _write_wav(folder / "you.wav", pcm)                   # the mic track, post-finalise
+    offer = owner.learning_offer(result)
+    assert offer is not None and offer.kind == "mic_channel" and offer.cluster_id is None
+
+    assert owner.accept_learning(offer) is True
+    assert backend.enrolled == [(pcm, 16000)]
+    assert store.load().voiceprint.meetings_contributed == 2
+    assert backend.closed == 1
+
+
+def test_decline_and_dismiss_release_the_worker(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=store)
+    offer = owner.learning_offer(result)
+    owner.decline_learning(offer)
+    assert backend.closed == 1
+    assert store.load().voiceprint.meetings_contributed == 1     # nothing kept
+    owner.decline_learning(offer)                                # no-op, no raise
+    owner.dismiss_learning()                                     # no-op, no raise
+    assert backend.closed == 1
+    assert owner.accept_learning(offer) is False                 # the offer is gone
+
+
+def test_an_unanswered_offer_lapses_when_the_screen_dismisses_it(tmp_path, monkeypatch):
+    owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=_store(tmp_path))
+    owner.learning_offer(result)
+    owner.dismiss_learning()
+    assert backend.closed == 1
+
+
+def test_a_new_meeting_lapses_the_previous_offer(tmp_path, monkeypatch):
+    owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=_store(tmp_path))
+    owner.learning_offer(result)
+    owner.start()                                         # next meeting: the old worker goes
+    assert backend.closed == 1
+    owner.stop()
+
+
+def test_shutdown_lapses_the_offer_and_closes_the_worker(tmp_path, monkeypatch):
+    owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=_store(tmp_path))
+    owner.learning_offer(result)
+    owner.shutdown()
+    assert backend.closed == 1
+
+
+def test_accept_reports_failure_without_raising_when_the_export_fails(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    backend = FakeBackend()
+    backend.export_centroid = lambda cluster_id: None      # worker not ready / degraded
+    owner, result, _ = _stopped_owner(tmp_path, monkeypatch, backend=backend, voiceprint_store=store)
+    offer = owner.learning_offer(result)
+    assert owner.accept_learning(offer) is False
+    assert store.load().voiceprint.meetings_contributed == 1   # untouched
+    assert backend.closed == 1
+
+
+def test_enroll_from_mic_refused_while_meeting_active(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
+    owner.prepare()
+    owner.start()
+    res = owner.enroll_from_mic(seconds=1)
+    assert res.ok is False and res.reason == "capture_busy"
+    owner.stop()
+
+
+class PcmRecorder(FakeRecorder):
+    """A mic recorder that hands back a fixed buffer, and records how it was
+    started (the sample must never be written to a file)."""
+
+    instances: list = []
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.kwargs = kwargs
+        self.save_to_file = "unset"
+        PcmRecorder.instances.append(self)
+
+    def start_recording(self, callback=None, save_to_file=None):
+        self.save_to_file = save_to_file
+        return True
+
+    def stop_recording(self):
+        return b"\x03\x04" * 4000
+
+
+def test_enroll_from_mic_saves_a_voiceprint_from_memory_only(tmp_path, monkeypatch):
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+    from tldw_chatbook.Audio.diarizer_worker import MODEL_ID
+
+    backend = FakeBackend(centroid=(3.0, 4.0), seconds=27.0)
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    PcmRecorder.instances = []
+    store = _store(tmp_path, enrolled=False)
+    owner, _, _ = _owner(tmp_path, voiceprint_store=store)
+    owner._mic_factory = PcmRecorder
+    owner._sleep = lambda seconds: None
+    seen: list[str] = []
+
+    res = owner.enroll_from_mic(seconds=30, progress=seen.append)
+
+    assert res.ok is True and res.reason is None and res.seconds == 27.0
+    assert seen == ["warming up", "recording", "embedding"]
+    assert backend.enrolled == [(b"\x03\x04" * 4000, 16000)]
+    assert PcmRecorder.instances[-1].save_to_file is None      # memory only
+    record = store.load().voiceprint
+    assert record.model_id == MODEL_ID and record.centroid == pytest.approx([0.6, 0.8])
+    assert backend.closed == 1                                  # the worker is not leaked
+
+
+def test_enroll_from_mic_reports_a_failed_embed_without_saving(tmp_path, monkeypatch):
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    backend = FakeBackend()
+    backend.enroll_from_pcm = lambda pcm, sr: None
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    store = _store(tmp_path, enrolled=False)
+    owner, _, _ = _owner(tmp_path, voiceprint_store=store)
+    owner._mic_factory = PcmRecorder
+    owner._sleep = lambda seconds: None
+
+    res = owner.enroll_from_mic(seconds=1)
+    assert res.ok is False and res.reason == "embed_failed"
+    assert store.load().voiceprint is None
+    assert backend.closed == 1
+
+
+def test_enroll_from_mic_reports_a_missing_recorder(tmp_path, monkeypatch):
+    from tldw_chatbook.Audio.recording_service import AudioRecordingError
+
+    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
+
+    def no_recorder(**kwargs):
+        raise AudioRecordingError("Audio recording functionality requires NumPy\nfor efficient processing.")
+
+    owner._mic_factory = no_recorder
+    res = owner.enroll_from_mic(seconds=1)
+    assert res.ok is False and res.reason == "Audio recording functionality requires NumPy"
+
+
+def test_the_voiceprint_vector_never_reaches_a_log_line(tmp_path, monkeypatch, captured_lines):
+    """Spec §6: logs carry modes, counts and exception types -- never the
+    vector, a speaker name, or a path."""
+    store = _store(tmp_path, centroid=(0.123456, 0.987654))
+    owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=store)
+    offer = owner.learning_offer(result)
+    owner.accept_learning(offer)
+    joined = "\n".join(captured_lines)
+    assert "0.123456" not in joined and "0.987654" not in joined
+    # ... and no meeting log line carries the recordings path either (the
+    # config bootstrap's own startup logs are not this module's).
+    meeting_lines = [line for line in captured_lines if "meeting" in line.lower()]
+    assert not [line for line in meeting_lines if str(tmp_path) in line]
