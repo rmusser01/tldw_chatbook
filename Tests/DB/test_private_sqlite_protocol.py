@@ -600,3 +600,96 @@ def test_leaf_parent_replaced_by_symlink_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(files, "_prepare_artifact", replace_parent)
     with pytest.raises(PrivatePathError):
         files.prepare_batch(codec.PrepareRequest(str(target), False, False, False))
+
+
+@pytest.mark.parametrize("change", ["missing", "symlink"])
+@pytest.mark.parametrize("dispatch", [False, True], ids=["constructor", "dispatcher"])
+def test_source_pin_initialization_path_failure_is_classified(
+    tmp_path, monkeypatch, change, dispatch
+):
+    codec = protocol()
+    files = importlib.import_module("tldw_chatbook.DB.private_sqlite_files")
+    helper = importlib.import_module("tldw_chatbook.DB.private_sqlite_helper")
+    from tldw_chatbook.Utils.private_paths import PrivatePathError
+
+    target = tmp_path / "db"
+    target.touch(mode=0o600)
+    other = tmp_path / "other"
+    other.write_bytes(b"must remain unchanged")
+    other.chmod(0o644)
+    real_prepare = files.prepare_batch
+    real_open = files._open_artifact_fd
+    pinned_parent_fds = []
+
+    def observe_pin_open(parent_fd, *args, **kwargs):
+        pinned_parent_fds.append(parent_fd)
+        return real_open(parent_fd, *args, **kwargs)
+
+    def substitute_after_preparation(selected):
+        result = real_prepare(selected)
+        monkeypatch.setattr(files, "_open_artifact_fd", observe_pin_open)
+        target.unlink()
+        if change == "symlink":
+            target.symlink_to(other)
+        return result
+
+    expected_status = (
+        "operation_failed" if change == "missing" else "link_or_non_regular"
+    )
+    expected_reason = "FileNotFoundError" if change == "missing" else "OSError"
+    if dispatch:
+        # Exercise the actual fixed dispatcher with private in-memory pipes;
+        # only the deterministic prepare→pin mutation is injected.
+        input_pipe = io.BytesIO(codec.encode_frame(request(target, "pin_source")))
+        output_pipe = io.BytesIO()
+
+        class PrivatePipe:
+            deadline = None
+            read = input_pipe.read
+            write = output_pipe.write
+
+        monkeypatch.setattr(helper, "_PrivatePipe", PrivatePipe)
+        monkeypatch.setattr(files, "prepare_batch", substitute_after_preparation)
+        assert helper.run() == 0
+        assert codec.decode_frame(output_pipe.getvalue()) == {
+            "version": 1,
+            "operation": "pin_source",
+            "status": "private_path_error",
+            "privacy_status": expected_status,
+            "reason": expected_reason,
+        }
+    else:
+        selected = codec.PrepareRequest(str(target), False, False, False)
+        result = substitute_after_preparation(selected)
+        with pytest.raises(PrivatePathError) as caught:
+            helper.SourcePin(selected, result)
+        assert caught.value.result.status.value == expected_status
+        assert caught.value.result.reason == expected_reason
+    assert len(pinned_parent_fds) == 1
+    with pytest.raises(OSError):
+        os.fstat(pinned_parent_fds[0])
+    assert other.read_bytes() == b"must remain unchanged"
+    assert other.stat().st_mode & 0o777 == 0o644
+
+
+def test_source_pin_preserves_existing_private_path_error(tmp_path, monkeypatch):
+    codec = protocol()
+    files = importlib.import_module("tldw_chatbook.DB.private_sqlite_files")
+    helper = importlib.import_module("tldw_chatbook.DB.private_sqlite_helper")
+    from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
+
+    target = tmp_path / "db"
+    target.touch(mode=0o600)
+    selected = codec.PrepareRequest(str(target), False, False, False)
+    prepared = files.prepare_batch(selected)
+    original = files._failure(
+        target, PrivatePathStatus.WRONG_OWNER, "unsafe_sqlite_artifact"
+    )
+
+    def refuse_open(*args, **kwargs):
+        raise original
+
+    monkeypatch.setattr(files, "_open_artifact_fd", refuse_open)
+    with pytest.raises(PrivatePathError) as caught:
+        helper.SourcePin(selected, prepared)
+    assert caught.value is original

@@ -42,8 +42,10 @@ class SourcePin:
                 self.parent_fd, leaf, writable=False, create=False
             )
             self.recheck()
-        except BaseException:
+        except BaseException as exc:
             self.close()
+            if isinstance(exc, OSError) and not isinstance(exc, PrivatePathError):
+                raise files._path_error_from_oserror(self.selected, exc) from None
             raise
 
     def recheck(self) -> PrepareResult:
