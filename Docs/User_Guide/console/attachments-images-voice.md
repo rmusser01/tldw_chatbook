@@ -138,6 +138,9 @@ is never sent automatically, so you can edit before pressing Enter.
 
 ### Hands-free — the voice conversation loop
 
+Using the floating companion alongside voice? See the [Persona Buddy guide](../buddy.md)
+for selection, animation meaning, and troubleshooting.
+
 Dictation's big sibling: instead of one capture at a time, **Hands-free**
 (`Ctrl+Shift+H`, or the control bar's **Hands-free** switch next to
 **Speak replies**) runs a continuous speak → transcribe → reply →

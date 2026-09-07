@@ -155,6 +155,19 @@ A per-trajectory-marker close was removed because it split the real worker
 lifetime and added unnecessary checkpoint work. Broader older fixtures still
 retain handles, so this scoped result is not a claim of repository-wide cleanup.
 
+**TASK-31245, Library inspection qualification, 2026-09-07.** Closing the
+inspection fixture's SQLite registry, collections and evaluation owners removed
+the warning but still left seven regular descriptors per mounted case. A full
+post-teardown `fstat` census plus basename-only Darwin `F_GETPATH` and successful
+`lsof` identified the never-run app's workspace/subscriptions SQLite handles and
+profile lock. Capturing those exact constructor owners and disposing them only
+after harness/worker completion made the 103-case affected gate plateau at seven
+regular descriptors (logs/capture files), without changing production pooling or
+GC. An empty filtered basename report had initially missed those resource names.
+Measure all resource types after teardown, record diagnostic exit/stderr, and
+distinguish fixture lifetime from ordinary production reads; falling below the
+warning threshold is not evidence of a plateau.
+
 ## Capture queued UI ownership in the row, not only in the event
 
 **PR #2432, Canvas review, 2026-09-05.** A queued card-open event originally
@@ -11828,6 +11841,15 @@ question. Executable worker probes were stopped; the coordinator took ownership
 of all subsequent pytest execution while the worker was limited to static edits.
 When a procedural warning demonstrably fails, narrow the execution workflow
 instead of repeating the warning and treating intent as isolation evidence.
+
+Follow-up incident (TASK-31245 activation review, 2026-09-07): a coordinator-only
+stdin diagnostic imported `Chat.__init__` → server/runtime-policy bootstrap →
+config before establishing a disposable profile. Logs showed ambient config
+loading and chat_dicts ensure; no prior metadata established whether directory
+creation or permission hardening occurred. No real-profile inspection/undo was
+attempted. The regression belongs in repository pytest's pre-import disposable
+bootstrap (with compatible qualification dependencies), not a raw import probe;
+an apparently pure coordinator module does not bypass its package initializer.
 
 ## Parameter IDs can accidentally activate keyword-based test gates
 

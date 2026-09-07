@@ -41,6 +41,13 @@ caps, conceal inherited failures or waive native/platform/human evidence.
 No repository-wide suite, live profile, unapproved native foreground action,
 dependency change or unrelated main-checkout cleanup is authorized.
 
+The user's 2026-09-07 release-repair request subsequently authorizes the remaining
+destination-only Library rollback and correction of resource warnings, including
+the demonstrated Requests/chardet compatibility constraint. This narrow exception
+does not authorize unrelated upgrades or changes to the shared environment. It
+also requires completing the available native/scale checks rather than accepting
+the earlier proposed deferral; unavailable external checks remain open below.
+
 Native terminal/equal-cell and moderated-user obligations remain explicit when
 not executable here. Missing evidence is neither a product defect nor a pass.
 Full Meaning task criteria remain open on the preserved branch; excluding that
