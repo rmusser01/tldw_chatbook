@@ -1034,6 +1034,15 @@ class LibraryScreen(BaseAppScreen):
         # the current item's done mark (the manual counterpart to ]'s auto-mark).
         Binding("R", "library_media_exit_review", "Exit review", show=False),
         Binding("m", "library_media_toggle_reviewed", "Toggle reviewed", show=False),
+        # task-31635 (critique #5 item 3): the Trash view's two row actions
+        # were mouse-or-six-Tabs only. Both gate on the SAME predicate the
+        # buttons do (``_library_media_trash_actions_live``), so a key can
+        # never fire where its button is disabled, and the footer chips
+        # below appear and disappear with them. "r" is also the Ingest
+        # canvas's "Retry this batch" -- disjoint contexts, and Textual
+        # tries each binding for a key until one's ``check_action`` passes.
+        Binding("r", "library_media_trash_restore", "Restore", show=False),
+        Binding("x", "library_media_trash_delete", "Delete forever", show=False),
     ]
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
@@ -3901,6 +3910,39 @@ class LibraryScreen(BaseAppScreen):
                 if escape_label:
                     shortcuts.append(("esc", escape_label))
                 return tuple(shortcuts)
+            if (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._library_media_view == "trash"
+            ):
+                # task-31635 item 3: the detail-back set this view already
+                # returned, plus its own two keys spliced in before the
+                # Escape chip -- gated through the same ``check_action`` the
+                # bindings use, so a stale page or an armed confirmation
+                # drops both instead of teaching a key that no-ops
+                # (task-28005's rule). Spliced, never re-literalled: the
+                # constant stays the one definition of the other three.
+                trash_keys = tuple(
+                    (key, label)
+                    for key, gated_action, label in (
+                        ("r", "library_media_trash_restore", "restore"),
+                        ("x", "library_media_trash_delete", "delete"),
+                    )
+                    if self.check_action(gated_action, ())
+                )
+                escape_chip = tuple(
+                    pair
+                    for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                    if pair[0] == "esc"
+                )
+                return (
+                    tuple(
+                        pair
+                        for pair in self.LIBRARY_DETAIL_BACK_SHORTCUTS
+                        if pair[0] != "esc"
+                    )
+                    + trash_keys
+                    + escape_chip
+                )
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -3982,7 +4024,11 @@ class LibraryScreen(BaseAppScreen):
                 ("", progress),
             )
         return (
-            ("]", "finish review" if at_last else "next in set"),
+            # task-31635 (critique #5 item 9, ruling): a forward step marks
+            # the item you leave done, and "next in set" hid that -- users
+            # read the mark as an accident. The behaviour stays (it is the
+            # set's contract since task-31233); the chip stops being coy.
+            ("]", "finish review" if at_last else "next (marks reviewed)"),
             ("[", "prev in set"),
             ("m", "toggle reviewed"),
             ("R", "exit review"),
@@ -15776,6 +15822,11 @@ class LibraryScreen(BaseAppScreen):
             # ONE recovery callout, Retry inside it. ``None`` whenever the
             # last load of each fence succeeded.
             "load_failure": controller.failure,
+            # task-31635 fix round 1: the NARROWER predicate the list-wide
+            # actions gate on -- a failure with no rows behind it. The
+            # callout above is broader on purpose (a page failure retains
+            # its rows); those rows still export fine.
+            "list_unselectable": self._library_media_list_unselectable(),
             "compact": False,
             "show_preview": False,
             # Task 8 (meeting diarization spec): whether the selected item is
@@ -16225,6 +16276,16 @@ class LibraryScreen(BaseAppScreen):
             # Treat that automatic fallback as part of this guarded restore;
             # keyboard and mouse input disarm the generation before callback.
             self._library_notes_restoring_focus = True
+        # task-31635 (critique #5 item 12): the EMPTY Reader's placeholder is
+        # derived from this controller's failure state, and the canvas sync
+        # below only rebuilds the Items pane -- so without this a failed page
+        # left "Select a media item to read it here." standing beside the
+        # recovery callout that says nothing could be loaded. Patched in
+        # place (never a recompose): a loaded Reader must not re-parse its
+        # document because the list beside it failed.
+        viewer = self._mounted_library_media_viewer()
+        if viewer is not None:
+            viewer.sync_list_failed(self._library_media_list_unselectable())
         _sync_library_canvas(self, "media", then=then)
 
     def _focus_library_media_page_control(self, invoked: str) -> None:
@@ -16513,6 +16574,45 @@ class LibraryScreen(BaseAppScreen):
             )
         return presentation
 
+    def _library_media_trash_action_disabled_reason(self) -> str:
+        """Why the Trash row actions cannot run right now, or "".
+
+        One predicate, read by the Restore / Delete-forever buttons' F-018
+        tooltips, by the ``r``/``x`` bindings' ``check_action`` gate, and
+        by the footer chips that advertise them (task-31635 item 3) -- so a
+        key can never fire where its button is disabled, and the footer can
+        never advertise a key that would no-op.
+
+        Returns:
+            The blocking reason in user language, or "" when both actions
+            are genuinely pressable.
+        """
+        state = self._library_media_trash_browse_controller.state
+        if (
+            state.loading
+            or state.mutation_pending
+            or self._library_media_bulk_delete_in_flight
+        ):
+            return "Trash is refreshing."
+        if state.freshness != "fresh":
+            return "Refresh Trash before changing this item."
+        if not state.selected_id:
+            return "Select a Trash item first."
+        return ""
+
+    def _library_media_trash_actions_live(self) -> bool:
+        """Whether the Trash view's row actions are on screen and pressable."""
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+            or getattr(self, "_library_media_view", _MEDIA_VIEW_LIST) != "trash"
+        ):
+            return False
+        # The confirmation replaces the whole action row with Cancel /
+        # Delete permanently, so neither key has a control to stand for.
+        if self._library_media_trash_browse_controller.state.confirmation_target:
+            return False
+        return not self._library_media_trash_action_disabled_reason()
+
     def _library_media_trash_canvas_presentation(self) -> dict[str, Any]:
         """Return screen-owned Trash controls without re-deriving page authority."""
         controller = self._library_media_trash_browse_controller
@@ -16528,14 +16628,7 @@ class LibraryScreen(BaseAppScreen):
         mutation_in_flight = bool(
             state.mutation_pending or self._library_media_bulk_delete_in_flight
         )
-        if state.loading or mutation_in_flight:
-            action_disabled_reason = "Trash is refreshing."
-        elif state.freshness != "fresh":
-            action_disabled_reason = "Refresh Trash before changing this item."
-        elif not state.selected_id:
-            action_disabled_reason = "Select a Trash item first."
-        else:
-            action_disabled_reason = ""
+        action_disabled_reason = self._library_media_trash_action_disabled_reason()
         return {
             "pager": controller.pager,
             "types": state.types,
@@ -24592,6 +24685,30 @@ class LibraryScreen(BaseAppScreen):
         """Compatibility callback for restore paths; resolve semantic intent."""
         self._focus_library_media_trash_intent()
 
+    def _press_library_media_trash_action(self, selector: str) -> None:
+        """Route a Trash accelerator through its own button (task-31635).
+
+        Pressing the control rather than re-entering its handler keeps one
+        implementation of each action -- including ``Button.press``'s own
+        refusal to fire while the button is disabled, which is the second
+        guard behind ``check_action``.
+
+        Args:
+            selector: Id selector of the Trash action button to press.
+        """
+        try:
+            self.query_one(selector, Button).press()
+        except (NoMatches, QueryError):
+            return
+
+    def action_library_media_trash_restore(self) -> None:
+        """Keyboard "r": restore the selected Trash item (task-31635 item 3)."""
+        self._press_library_media_trash_action("#library-media-trash-restore")
+
+    def action_library_media_trash_delete(self) -> None:
+        """Keyboard "x": arm the permanent-delete confirmation (task-31635)."""
+        self._press_library_media_trash_action("#library-media-trash-delete")
+
     @on(Button.Pressed, "#library-media-trash-delete")
     def handle_library_media_trash_delete(self, event: Button.Pressed) -> None:
         """Open inline confirmation for one captured fresh Trash identity."""
@@ -26240,6 +26357,13 @@ class LibraryScreen(BaseAppScreen):
                 and getattr(self, "_library_media_view", "list") == "trash"
                 and not bool(getattr(trash_state, "mutation_pending", False))
             )
+        if action in {
+            "library_media_trash_restore",
+            "library_media_trash_delete",
+        }:
+            # task-31635 item 3: exactly when the buttons these keys stand
+            # for are pressable -- see ``_library_media_trash_actions_live``.
+            return self._library_media_trash_actions_live()
         if action == "library_note_editor_back":
             return (
                 self._library_note_editor_active()
@@ -32547,6 +32671,46 @@ class LibraryScreen(BaseAppScreen):
             self._notify_review_set(f"All {live_count} reviewed.")
         return True
 
+    def _review_cursor_for_display(self, review_set) -> int:
+        """The set position the READER is on, else the persisted cursor.
+
+        task-31635 (critique #5 item 10): clicking a row inside the active
+        set loads it without committing a walk position, so the persisted
+        cursor stayed put and every "X of M" readout described an item
+        nobody was looking at. ``_walk_active_review_set_unguarded`` has
+        measured from the DISPLAYED item since Qodo #2333 and
+        ``_active_review_loaded_at_last`` since Qodo on #2386 -- this is the
+        same rule, shared by the two readouts that were still on the cursor.
+
+        Deliberately READ-ONLY: no ``set_cursor`` here. A click moves what
+        the readouts describe, not where the set resumes -- that stays the
+        walk's own gesture.
+
+        Args:
+            review_set: The active set.
+
+        Returns:
+            The loaded item's position when the Reader holds one of the
+            set's items, else ``review_set.cursor``.
+        """
+        loaded = getattr(
+            self._library_media_reader_session, "loaded_backing_id", None
+        )
+        try:
+            loaded = int(loaded) if loaded is not None else None
+        except (TypeError, ValueError):
+            loaded = None
+        if loaded is None:
+            return review_set.cursor
+        return next(
+            (
+                item.position
+                for item in review_set.items
+                if item.backing_media_id == loaded
+            ),
+            review_set.cursor,
+        )
+
     def _active_review_progress(self) -> ReviewProgress | None:
         """Return the active set's live progress, or ``None``.
 
@@ -32574,7 +32738,11 @@ class LibraryScreen(BaseAppScreen):
             item.backing_media_id for item in review_set.items
         )
         is_live = lambda backing_id: backing_id in live_ids  # noqa: E731
-        return review_progress(review_set.items, review_set.cursor, is_live)
+        return review_progress(
+            review_set.items,
+            self._review_cursor_for_display(review_set),
+            is_live,
+        )
 
     def _active_review_loaded_at_last(self) -> bool:
         """True when the Reader's LOADED item is the set's last live item.
@@ -32645,7 +32813,9 @@ class LibraryScreen(BaseAppScreen):
             progress = format_review_progress(
                 review_progress(
                     review_set.items,
-                    review_set.cursor,
+                    # task-31635 item 10: the ordinal names the item the
+                    # Reader is SHOWING, so a click inside the set moves it.
+                    self._review_cursor_for_display(review_set),
                     lambda candidate: candidate in live_ids,
                 )
             )
@@ -32994,7 +33164,13 @@ class LibraryScreen(BaseAppScreen):
                 f"Review set capped at the first {REVIEW_SET_CAP} items.",
                 severity="warning",
             )
-        else:
+        elif self._active_review_set_banner() is None:
+            # task-31635 (critique #5 item 17, ruling): the Reader this
+            # create is about to open paints "Reviewing: <name> — 1 of N ·
+            # 0 reviewed" -- strictly more than this toast said, and at
+            # 100x30 the toast landed ON that Reader's border. So it is
+            # dropped whenever the banner can carry the fact, and kept as
+            # the fallback when it cannot (no active set to describe).
             self._notify_review_set(f"Reviewing {len(items)} items.")
         if displaced is not None and displaced.completed_at is None:
             from rich.markup import escape
@@ -34297,6 +34473,24 @@ class LibraryScreen(BaseAppScreen):
             id="library-media-canvas",
         )
 
+    def _library_media_list_unselectable(self) -> bool:
+        """Whether the Media list load failed leaving NOTHING to select.
+
+        task-31635 (critique #5 item 12), fix round 1: ``controller.failure``
+        alone is too broad. A page failure RETAINS the rows it already
+        applied (``retained_items``) and a facet-only failure never touches
+        them at all -- in both states the rows stay painted, enabled, and
+        pressable, so telling the reader nothing could be loaded is simply
+        wrong. The critique's case is the first load failing with an empty
+        list behind it.
+
+        Returns:
+            True when the browse controller carries a failure AND no rows
+            survive to be selected.
+        """
+        controller = self._library_media_browse_controller
+        return controller.failure is not None and not controller.retained_items
+
     def _build_library_media_reader(self) -> LibraryMediaViewer:
         """Build the permanent Reader from loaded detail or its empty state."""
         detail = (
@@ -34356,6 +34550,13 @@ class LibraryScreen(BaseAppScreen):
             image_preview_source=preview_source,
             review_banner=self._active_review_set_banner() or "",
             back_visible=self._library_media_reader_exit_available(),
+            # task-31635 (critique #5 item 12): only the EMPTY Reader reads
+            # this -- with the list load failed there is nothing to select.
+            list_failed=self._library_media_list_unselectable(),
+            # task-31635 (critique #5 item 11): the Items pane beside this
+            # Reader is the Trash list, so the Reader names the list its own
+            # (live) item actually belongs to.
+            trash_list_open=self._library_media_view == "trash",
             # TASK-31745: what the speaker-rename legend needs to actually
             # persist a rename (harmless when the state says it cannot).
             media_db=getattr(self.app_instance, "media_db", None),
@@ -34619,6 +34820,11 @@ class LibraryScreen(BaseAppScreen):
         # decides it changes under resizes and pane toggles, and a viewer
         # attribute missing from this compare silently never updates.
         back_visible = self._library_media_reader_exit_available()
+        # task-31635 item 11: a compose input like any other -- the Trash
+        # entry recomposes the screen today, but a viewer-scoped sync landing
+        # after it must not paint a Reader that has forgotten which list it
+        # is standing beside.
+        trash_list_open = self._library_media_view == "trash"
         # task-28007 AC#5: a compose input like any other -- resolved once
         # per sync and read by both halves below.
         # Review I1: only ``_compose_analysis`` consumes this, and
@@ -34638,6 +34844,7 @@ class LibraryScreen(BaseAppScreen):
             (viewer.viewer is viewer_state or viewer.viewer == viewer_state)
             and viewer.review_banner == review_banner
             and viewer.back_visible == back_visible
+            and viewer.trash_list_open == trash_list_open
             and viewer.editing == self._library_media_editing
             and viewer.confirming_delete == self._library_media_confirming_delete
             and tuple(viewer.highlights) == highlights
@@ -34709,6 +34916,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.image_preview_source = preview_source
             viewer.review_banner = review_banner
             viewer.back_visible = back_visible
+            viewer.trash_list_open = trash_list_open
             # TASK-31745: the backing id follows the selection like any other
             # compose input (the state's own rename fields are in the compare
             # above, so a stale id here could never outlive them).
@@ -35310,9 +35518,19 @@ class LibraryScreen(BaseAppScreen):
         pending = viewer._post_recompose_callback
 
         def follow_up_then_pending() -> None:
-            callback()
-            if pending is not None:
-                pending()
+            # Qodo on #2473: ``finally``, not a bare sequence. A raising
+            # follow-up (the scroll-progress restore is one) used to take
+            # task-31567's focus restore down with it and strand focus on a
+            # pane grip -- the exact defect that restore exists to prevent.
+            # The exception still propagates; only the ordering guarantee
+            # changes. (If ``pending()`` itself raises inside the ``finally``,
+            # its exception replaces the follow-up's -- accepted: the restore
+            # is the invariant, and both surface in the log either way.)
+            try:
+                callback()
+            finally:
+                if pending is not None:
+                    pending()
 
         viewer.queue_after_recompose(follow_up_then_pending)
 
@@ -35786,6 +36004,14 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_media_analysis_warning(
                 "Analysis editing is unavailable."
             )
+        if saved:
+            # Qodo on #2475: the list row learns about the analysis the app
+            # just made durable, instead of waiting for the next page fetch.
+            # One seam covers both producers -- the Reader's Generate/Save
+            # and the bulk Analyze run -- because both persist through here.
+            # Outside the try above on purpose: this is a READ, and a read
+            # that fails must not be reported as a failed save.
+            await self._reproject_library_media_analysis_row(media_id)
         if viewer_owned:
             self._library_media_editing_analysis = False
         if viewer_owned or media_id == self._selected_media_id:
@@ -35795,6 +36021,71 @@ class LibraryScreen(BaseAppScreen):
             # so the Reader never shows a stale analysis.
             await self._refresh_library_media_detail(media_id)
         return saved
+
+    async def _reproject_library_media_analysis_row(self, media_id: str) -> None:
+        """Re-read one row's ``has_analysis`` from the projection after a write.
+
+        Qodo on #2475: ``has_analysis`` is a SQL projection frozen into the
+        retained row when the page applied, so a freshly saved analysis left
+        its own row unmarked until something re-paged the list.
+
+        Asks the projection rather than trusting the write's own claim. Live
+        on 2026-09-07 the two disagreed: the Reader's Save returned a version
+        record while nothing reached the database (``create_document_version``
+        documents that it "assumes it's called within an existing transaction
+        context", and this service calls it standalone), so a row patched
+        from the write said "analysed" beside a Reader still saying "No
+        analysis yet.". One targeted id-scoped SELECT on a human-paced
+        gesture cannot say that; it is never on the page path.
+
+        Args:
+            media_id: The canonical media id whose row should be re-read.
+
+        Returns:
+            None. A missing service, an unresolvable id, or a failed read
+            leaves the row exactly as it was -- the next page fetch is still
+            authoritative.
+        """
+        controller = self._library_media_browse_controller
+        if not controller.retained_items:
+            return
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        search_media = getattr(service, "search_media", None)
+        backing_id = self._library_media_int_backing_id(media_id)
+        if not callable(search_media) or backing_id is None:
+            return
+        try:
+            payload = await self._run_library_service_call(
+                search_media,
+                mode="local",
+                query="",
+                library_summary=True,
+                isolate_in_worker=True,
+                id_allowlist=[backing_id],
+                limit=1,
+                offset=0,
+            )
+        except Exception:
+            # Silent on purpose (and no new diagnostic owner): this is a
+            # decoration read. A row that keeps its previous marker for one
+            # more page fetch is the understating direction, and the save
+            # itself already reported its own outcome.
+            return
+        items = payload.get("items", []) if isinstance(payload, Mapping) else []
+        if not items:
+            return
+        row = items[0]
+        if controller.note_analysis_state(
+            str(row.get("id") or ""), has_analysis=bool(row.get("has_analysis"))
+        ):
+            _sync_library_canvas(self, "media", allow_screen_fallback=False)
+
+    def _library_media_int_backing_id(self, media_id: str) -> int | None:
+        """The integer backing id for ``media_id``, or None when it has none."""
+        try:
+            return int(self._library_media_backing_id(media_id))
+        except (TypeError, ValueError):
+            return None
 
     def _notify_library_media_analysis_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed analysis-edit save.

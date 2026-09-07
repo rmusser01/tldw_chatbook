@@ -375,8 +375,32 @@ class LocalMediaReadingService:
         limit: int = 20,
         offset: int = 0,
         library_summary: bool = False,
+        match_reasons: bool = False,
         **filters: Any,
     ) -> dict[str, Any]:
+        """Search media, optionally as one exact Library browse summary page.
+
+        Args:
+            query: Free-text search term; ``None`` or empty lists the scope
+                unfiltered.
+            limit: Page size (rows returned).
+            offset: Zero-based row offset of the page.
+            library_summary: When ``True``, return the Library browse's exact
+                seven-key summary rows for one page instead of full records.
+            match_reasons: Whether to run task-28008's keyword-only reason
+                probe for this page (Qodo on #2475: one extra SELECT per
+                queried summary page, so the Library browse's own fetch asks
+                for it and no other caller pays -- the "Review these"
+                enumeration loop pages the same scope and discards them).
+            **filters: Column filters forwarded to ``search_media_db``
+                (``fields``, ``media_types``, ``fts_match_query``, ...);
+                ``fields`` must equal the Library browse triple for
+                ``match_reasons`` to apply.
+
+        Returns:
+            The search envelope; ``match_reasons`` is present only when this
+            call asked for it AND the query/field set can answer honestly.
+        """
         db = self._require_db()
 
         if library_summary:
@@ -466,7 +490,7 @@ class LocalMediaReadingService:
             "offset": offset,
             "limit": limit,
         }
-        if library_summary and query:
+        if library_summary and query and match_reasons:
             # task-28008: ONE extra SELECT for the whole page, and only for
             # the Library browse's OWN field set. Fix round 1 (2): the
             # probe re-evaluates the title and content legs alone, but
@@ -4819,12 +4843,41 @@ class LocalMediaReadingService:
         analysis_content: str,
         prompt: Optional[str] = None,
     ) -> Any:
-        return self._require_db().create_document_version(
-            self._coerce_media_id(media_id),
-            content=content,
-            prompt=prompt,
-            analysis_content=analysis_content,
-        )
+        """Persist an analysis as a new ``DocumentVersions`` row, and commit it.
+
+        ``create_document_version`` documents that it assumes an already-open
+        transaction (its DB-internal callers -- ``add_media_with_keywords``,
+        ``rollback_to_version`` -- all supply one) and never commits. Called
+        bare from here the INSERT sat on the app's thread-local connection,
+        left it ``in_transaction``, and was lost on exit: the Reader's Save
+        and the bulk Analyze run both persisted nothing (TASK-31942). The
+        leak also poisoned the next write on that connection --
+        ``soft_delete_document_version``'s own ``transaction()`` merely
+        joined the open one, so deletes stopped committing too. Owning the
+        transaction here also makes a mid-write failure roll back whole.
+
+        Args:
+            media_id: Parent Media row id.
+            content: Document content stored alongside the analysis.
+            analysis_content: The analysis text to persist.
+            prompt: Prompt that produced the analysis, if any.
+
+        Returns:
+            The new version's descriptor from ``create_document_version``.
+
+        Raises:
+            MediaDatabaseError: The write failed; the transaction is rolled
+                back and no partial version row remains. The Reader's save
+                path catches this and shows its warning.
+        """
+        db = self._require_db()
+        with db.transaction():
+            return db.create_document_version(
+                self._coerce_media_id(media_id),
+                content=content,
+                prompt=prompt,
+                analysis_content=analysis_content,
+            )
 
     def overwrite_analysis_version(
         self,
@@ -4834,6 +4887,23 @@ class LocalMediaReadingService:
         analysis_content: str,
         prompt: Optional[str] = None,
     ) -> Any:
+        """Replace the current analysis by appending a newer version.
+
+        Delegates to ``save_analysis_version``; the newest version wins for
+        the Reader and the list's ``analysed`` marker.
+
+        Args:
+            media_id: Parent Media row id.
+            content: Document content stored alongside the analysis.
+            analysis_content: The replacement analysis text.
+            prompt: Prompt that produced the analysis, if any.
+
+        Returns:
+            The new version's descriptor from ``create_document_version``.
+
+        Raises:
+            MediaDatabaseError: The write failed and was rolled back.
+        """
         return self.save_analysis_version(
             media_id,
             content=content,
@@ -4842,6 +4912,18 @@ class LocalMediaReadingService:
         )
 
     def delete_analysis_version(self, version_uuid: str) -> Any:
+        """Soft-delete one analysis version by uuid, in its own transaction.
+
+        Args:
+            version_uuid: The ``DocumentVersions`` row's uuid.
+
+        Returns:
+            Whatever ``soft_delete_document_version`` returns (truthy on a
+            row marked deleted).
+
+        Raises:
+            MediaDatabaseError: The delete failed and was rolled back.
+        """
         return self._require_db().soft_delete_document_version(version_uuid)
 
     @staticmethod

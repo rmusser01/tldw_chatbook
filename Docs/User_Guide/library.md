@@ -272,7 +272,8 @@ to the current page and filter.
 
 **Restore** removes the item from Trash and marks the retained normal Media page
 stale; it does not insert or reorder the restored item without a fresh Media
-read. **Delete permanently** requires inline confirmation and cannot be undone.
+read. **Delete forever** (key `x`; `r` restores) requires inline confirmation
+and cannot be undone.
 Back returns to the exact normal Media page, selected item, list scroll, and
 control that opened Trash. Returning from the Media viewer likewise restores
 the exact list scroll and finishes focus on the item row. These returns settle

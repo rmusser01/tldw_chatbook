@@ -44,6 +44,38 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
 )
 
 
+#: task-31635 (critique #5 item 12): when the Media list load failed and
+#: left NO rows behind (see ``_library_media_list_unselectable``), there is
+#: nothing to select, so the invitation to select something was the one line
+#: on screen contradicting the recovery callout beside it. A failure that
+#: retained rows, or one that only hit the type facets, keeps the ordinary
+#: copy -- those rows are still painted and still pressable.
+READER_EMPTY_COPY = "Select a media item to read it here."
+READER_EMPTY_FAILED_COPY = "Nothing loaded — the list could not be loaded."
+
+#: task-31635 (critique #5 item 13): a non-Markdown text item simply dropped
+#: the Rendered|Raw strip, so nothing said whether a rendered view existed.
+#: Scoped to the text types a reader could plausibly expect one for -- a
+#: transcript that failed the Markdown sniff is already named by the copy.
+RENDERED_VIEW_NOTE = "Rendered view is for Markdown and transcripts"
+RENDERED_VIEW_NOTE_TYPES = frozenset({"article", "document"})
+
+
+def empty_reader_copy(*, loading: bool, list_failed: bool) -> str:
+    """Return the empty Reader's placeholder copy.
+
+    Args:
+        loading: Whether a detail request is pending.
+        list_failed: Whether the Media browse controller carries a failure.
+
+    Returns:
+        The one line the empty Reader paints.
+    """
+    if loading:
+        return "Loading media…"
+    return READER_EMPTY_FAILED_COPY if list_failed else READER_EMPTY_COPY
+
+
 class LibraryMediaViewer(PostRecomposeCallback, Vertical):
     """Render the full Library media item: metadata, content, and actions.
 
@@ -119,6 +151,8 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         image_preview_source: Any = None,
         review_banner: str = "",
         back_visible: bool = True,
+        list_failed: bool = False,
+        trash_list_open: bool = False,
         media_db: Any = None,
         speaker_rename_media_id: int | None = None,
         **kwargs: Any,
@@ -148,6 +182,15 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 list so Back changed no pixels while revoking every Reader
                 binding gated on the view flag (task-31272); the screen
                 decides from the shell's effective layout.
+            list_failed: Whether the Media browse controller carries a
+                failure state (task-31635). Only the EMPTY Reader reads
+                it, to say that nothing can be selected rather than
+                inviting a selection that cannot be made.
+            trash_list_open: Whether the Items pane beside this Reader is
+                showing the Trash list (task-31635, critique #5 item 11).
+                The Reader keeps the LIVE item it was on, so it says which
+                list that item belongs to -- the cheaper honest option than
+                clearing a reading position the user is coming back to.
             media_db: The real ``MediaDatabase`` and, with
                 ``speaker_rename_media_id``, the selected item's backing id
                 (TASK-31745). Breaks this canvas's otherwise pure-state
@@ -183,6 +226,8 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.image_preview_source = image_preview_source
         self.review_banner = review_banner
         self.back_visible = back_visible
+        self.list_failed = list_failed
+        self.trash_list_open = trash_list_open
         self.media_db = media_db
         self.speaker_rename_media_id = speaker_rename_media_id
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
@@ -225,9 +270,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             )
         if not self.viewer.media_id:
             yield Static(
-                "Loading media…"
-                if self.loading
-                else "Select a media item to read it here.",
+                empty_reader_copy(
+                    loading=self.loading, list_failed=self.list_failed
+                ),
                 id="library-media-reader-empty",
                 classes="destination-purpose",
                 markup=False,
@@ -247,13 +292,24 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         )
         banner.display = self.loading
         yield banner
-        if self.external_detail:
-            # task-31277 (critique #4 P2): only a SERVER item needs an
-            # identity line. "Local Media item" restated what the Media
-            # list beside it already said, at the cost of the top row of
-            # the reading surface on every local open.
+        # task-31277 (critique #4 P2): only a SERVER item needs an identity
+        # line. "Local Media item" restated what the Media list beside it
+        # already said, at the cost of the top row of the reading surface on
+        # every local open.
+        # task-31635 (critique #5 item 11): ...and so does a local item
+        # sitting beside the TRASH list, where the list no longer says it.
+        # Same slot, same grammar, never both -- a server item is not in
+        # the local Media list at all, which is the stronger statement.
+        identity_line = (
+            "Server item · not in local Media list"
+            if self.external_detail
+            else "Showing a Media item · not in Trash"
+            if self.trash_list_open
+            else ""
+        )
+        if identity_line:
             yield Static(
-                "Server item · not in local Media list",
+                identity_line,
                 id="library-media-reader-identity",
                 markup=False,
             )
@@ -491,11 +547,13 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 )
 
     def _compose_content_mode_toggle(self) -> ComposeResult:
-        """Render the Rendered|Raw content-view toggle for markdown-typed media.
+        """Render the Rendered|Raw toggle, or the note that replaces it.
 
-        Only rendered when ``self.viewer.is_markdown`` is true -- a
-        non-markdown item never offers a toggle and always shows the plain
-        Raw view (no behavior change from before LIB-13). Mirrors the
+        The toggle itself is offered only when ``self.viewer.is_markdown``
+        is true -- a non-markdown item always shows the plain Raw view (no
+        behavior change from before LIB-13). Since task-31635 a non-markdown
+        ``article``/``document`` gets a one-line note in the same slot
+        instead of nothing at all. Mirrors the
         screen's own "Database (selected) | Files" source-strip idiom
         exactly (``library_screen.py``'s notes-source strip): a plain
         ``Horizontal`` of two compact, unstyled ``Button``s with a "|"
@@ -504,10 +562,21 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         so the current mode reads correctly even without extra CSS.
 
         Returns:
-            ComposeResult for the toggle strip, or nothing for non-markdown
-            media.
+            ComposeResult for the toggle strip, or -- for a non-markdown
+            ``article``/``document`` -- the one-line note that names why
+            there is no toggle (task-31635).
         """
         if not self.viewer.is_markdown:
+            # task-31635 (critique #5 item 13): the slot names itself rather
+            # than vanishing. Text only -- there is no rendered view to
+            # offer, so a control here would be an affordance for nothing.
+            if self.viewer.media_type.strip().lower() in RENDERED_VIEW_NOTE_TYPES:
+                yield Static(
+                    RENDERED_VIEW_NOTE,
+                    id="library-media-content-mode-note",
+                    classes="destination-purpose",
+                    markup=False,
+                )
             return
         with Horizontal(id="library-media-content-mode-strip"):
             rendered_selected = self.content_mode == "rendered"
@@ -727,10 +796,8 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             except (NoMatches, QueryError):
                 # Not composed yet -- compose() reads the attributes above.
                 return
-            copy = (
-                "Loading media…"
-                if loading
-                else "Select a media item to read it here."
+            copy = empty_reader_copy(
+                loading=loading, list_failed=self.list_failed
             )
             if str(empty.content) != copy:
                 empty.update(copy)
@@ -744,6 +811,25 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             banner.update(message)
         if banner.display != loading:
             banner.display = loading
+
+    def sync_list_failed(self, list_failed: bool) -> None:
+        """Repaint the EMPTY Reader's placeholder when the list's health changes.
+
+        task-31635: the Media browse controller owns this fact, and only the
+        empty Reader reads it. Patched through the same in-place seam the
+        loading placeholder uses -- a recompose here would re-parse the
+        document of a LOADED Reader because the list beside it failed.
+
+        Args:
+            list_failed: Whether the browse controller carries a failure.
+
+        Returns:
+            None.
+        """
+        if self.list_failed == list_failed:
+            return
+        self.list_failed = list_failed
+        self.sync_loading_state(loading=self.loading, message=self.loading_message)
 
     def sync_query_state(
         self, *, query: str, matches: tuple[int, ...], match_index: int

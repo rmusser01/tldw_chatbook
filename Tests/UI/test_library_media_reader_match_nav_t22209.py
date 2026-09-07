@@ -319,7 +319,7 @@ async def test_a_new_query_rehighlights_the_document():
         await _submit_query(screen, pilot, NEEDLE)
         screen.query_one("#library-media-content-search-next", Button).press()
         await pilot.pause()
-        assert _status_text(screen) == "Match 2 of 50 matches"
+        assert _status_text(screen) == "Match 2 of 50"
 
         await _submit_query(screen, pilot, OTHER_NEEDLE)
 
@@ -327,12 +327,12 @@ async def test_a_new_query_rehighlights_the_document():
         assert _highlighted_words_in_raw(second) == {OTHER_NEEDLE}, (
             "The second query reused the first query's highlight spans."
         )
-        assert _status_text(screen) == "Match 1 of 20 matches", (
+        assert _status_text(screen) == "Match 1 of 20", (
             "The screen reused the first query's match list."
         )
         screen.query_one("#library-media-content-search-next", Button).press()
         await pilot.pause()
-        assert _status_text(screen) == "Match 2 of 20 matches"
+        assert _status_text(screen) == "Match 2 of 20"
 
 
 @pytest.mark.asyncio
@@ -346,14 +346,14 @@ async def test_a_new_document_rescans_for_the_same_query():
         await _load_row_with_document(screen, pilot, service, 0, _document(400))
         _seed_row_document(screen, service, 1, _document(80))
         await _submit_query(screen, pilot, NEEDLE)
-        assert _status_text(screen) == "Match 1 of 50 matches"
+        assert _status_text(screen) == "Match 1 of 50"
 
         await _traverse_to_row(screen, pilot, service, from_index=0, to_index=1)
         assert screen._library_media_content_query == NEEDLE
         screen.query_one("#library-media-content-search-next", Button).press()
         await pilot.pause()
 
-        assert _status_text(screen) == "Match 2 of 10 matches", (
+        assert _status_text(screen) == "Match 2 of 10", (
             "Match navigation reused the previous document's match list."
         )
         highlighted = _highlighted_words_in_raw(_raw_static(screen))

@@ -11966,6 +11966,45 @@ worktree run produced the identical 15 failures / 59 passes. Run the fast pure
 tree tests (`Tests/Library/test_library_notes_tree_*.py`) and a focused
 non-mounting wiring test instead of trusting these mounting suites' green/red.
 
+## "Base-red" means red at the MERGE-BASE, not at the branch's own earlier head (media wave 5 PR H / task-31633, 2026-09-06)
+
+PR H's Task 2 implementer compared its whole-file runs against a detached copy of
+7f3629949 — the branch head after Tasks 1 and 3 — and labelled three failures
+"known base-red … fails identically on the base". The final whole-branch reviewer
+re-ran them against the true merge-base (a9e13f4e3) with a control resolver:
+`test_library_media_reader_state.py:196` (56 vs 40 — Task 1's growth) and two
+`test_library_media_return_settlement.py` tests (a hard-coded `(0, 42)` scroll offset
+— Task 2's two-rows-per-item change) were green there and red on the branch. Task 1
+had never run those two files at all. Two task reviews approved the reports because
+the name-set tables looked complete; only the reviewer who chose a different base
+caught it.
+
+**What to do.** The comparison base for a task's evidence is the branch's merge-base
+with dev (`git merge-base origin/dev HEAD`), detached into its own worktree — never an
+earlier head of the same branch, which already contains the earlier tasks' behaviour.
+A controller dispatching Task N must hand the implementer the merge-base SHA
+explicitly, and the task reviewer should check which SHA the "base" column was
+measured against before trusting a "fails identically" claim. (This is the companion
+to the PR G lesson above: the rerun set is the census of files that assert on the
+change — this one is about the commit you compare that census against.)
+
+## A "both sides kept" conflict resolution can drop a line git factored out as shared context (media wave 5 PR I dev merge, 2026-09-06)
+
+Merging dev into PR I conflicted only in `test_library_media_render_fixes.py`, where
+both branches had appended tests. A mechanical both-keep (HEAD block, then the incoming
+block) produced a file that did not parse: git had factored the identical trailing
+`        )` of both blocks' last calls into the SHARED suffix, so the first block's call
+lost its closer; likewise the identical leading `@pytest.mark.asyncio` was factored into
+the shared prefix, so the second block's first test lost its decorator and would have run
+unmarked. The merge was committed before the parse check ran (a `;` instead of `&&` in
+the command chain) and had to be amended.
+
+**What to do.** Both-keep is fine for appended blocks, but the shared context around a
+hunk belongs to ONE side, not both: after resolving, run
+`python -c "import ast; ast.parse(open(f).read())"`, `pytest <file> --collect-only -q`,
+and an `awk` census of `async def test_` lines whose previous line is not a
+marker/parametrize — and gate the commit on all three with `&&`, never `;`.
+
 ### TASK-31826: every Meetings UI pilot ran at 160x45 -- seven new rail rows shipped clipped out of the compositor
 
 Task 5 of the voiceprint program added seven rows to the Meetings rail (a plain `Vertical`) and its

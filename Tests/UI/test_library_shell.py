@@ -559,7 +559,7 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
                     title=row.get("title"),
                     media_type=row.get("type"),
                     updated_at=row.get("last_modified"),
-                    has_analysis=bool(row.get("has_analysis")),
+                    has_analysis=self._has_analysis(row),
                 )
                 for index, row in enumerate(page, start=offset)
             ],
@@ -571,6 +571,28 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
         if reasons:
             payload["match_reasons"] = reasons
         return payload
+
+    @staticmethod
+    def _has_analysis(row) -> bool:
+        """Mirror the real ``has_analysis`` projection (task-31635 Task 3).
+
+        Production projects it in SQL from the NEWEST ``DocumentVersions``
+        row's analysis text, so a fake that read only a hand-set
+        ``has_analysis`` flag could not see an analysis this same fake had
+        just persisted through ``save_analysis_version`` -- and every test
+        of "the row learns about a save" would have been passing against a
+        page that structurally could not learn.
+        """
+        if row.get("has_analysis"):
+            return True
+        versions = row.get("versions") or ()
+        # NEWEST only, like the projection: this fake's
+        # ``_append_document_version`` prepends, so index 0 is the newest --
+        # a cleared analysis must read as cleared, not as "some old version
+        # had one".
+        return bool(
+            versions and str(versions[0].get("analysis_content") or "").strip()
+        )
 
     def _match_reasons(self, page, query, offset) -> dict[str, str]:
         """Mirror task-28008's keyword-ONLY match reasons for the page.
@@ -10949,7 +10971,7 @@ async def test_library_shell_media_content_search_shows_match_count():
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 1 of 2 matches"
+        assert status == "Match 1 of 2"
         assert screen._library_media_content_query == "budget"
         assert screen._library_media_content_match_index == 0
 
@@ -10977,7 +10999,7 @@ async def test_library_shell_media_content_search_enter_advances_to_next_match()
         assert screen._library_media_content_match_index == 1
         assert str(
             screen.query_one("#library-media-content-search-status").renderable
-        ) == "Match 2 of 2 matches"
+        ) == "Match 2 of 2"
 
         # Wraps back to the first match.
         await pilot.press("enter")
@@ -11030,7 +11052,7 @@ async def test_library_shell_media_content_search_one_mark_per_matching_line():
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 1 of 1 matches"
+        assert status == "Match 1 of 1"
         # ...and exactly one styled mark in the body, so count == visible marks.
         content = screen.query_one(
             "#library-media-viewer-content-text", VirtualizedRawContent
@@ -11114,7 +11136,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 2 of 2 matches"
+        assert status == "Match 2 of 2"
 
         # Next wraps back around to the first match.
         screen.query_one("#library-media-content-search-next").press()
@@ -11125,7 +11147,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 1 of 2 matches"
+        assert status == "Match 1 of 2"
 
         # Prev wraps backwards to the last match.
         screen.query_one("#library-media-content-search-prev").press()
@@ -11136,7 +11158,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         status = str(
             screen.query_one("#library-media-content-search-status").renderable
         )
-        assert status == "Match 2 of 2 matches"
+        assert status == "Match 2 of 2"
 
 
 @pytest.mark.asyncio
@@ -11475,7 +11497,7 @@ async def test_library_shell_media_viewer_inplace_navigation_holds_at_compact_si
             "#library-media-viewer-content", LibraryMediaContentBody
         )
         assert status.region.bottom <= body.region.y
-        assert str(status.render()) == "Match 1 of 101 matches"
+        assert str(status.render()) == "Match 1 of 101"
 
         parses_before_navigation = len(markdown_updates)
         next_button.focus()
@@ -11494,7 +11516,7 @@ async def test_library_shell_media_viewer_inplace_navigation_holds_at_compact_si
         assert screen.query_one("#library-media-content-search-next") is next_button
         assert screen.query_one("#library-media-content-search-status") is status
         assert screen.focused is next_button
-        assert str(status.render()) == "Match 2 of 101 matches"
+        assert str(status.render()) == "Match 2 of 101"
         assert len(markdown_updates) == parses_before_navigation
 
 
@@ -11701,7 +11723,7 @@ async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size()
             print(f"TASK-15774 row {index:02d} |{row.rstrip()}")
 
         assert len(rows) == 24
-        assert "Match 1 of 101 matches" in painted
+        assert "Match 1 of 101" in painted
         assert "◀ Prev" in painted
         assert "Next ▶" in painted
         # The chrome and the content region never overlap (the 170x48
@@ -11715,7 +11737,7 @@ async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size()
         await pilot.pause()
         await pilot.pause()
         painted_after_navigation = "\n".join(_painted_rows(screen))
-        assert "Match 2 of 101 matches" in painted_after_navigation
+        assert "Match 2 of 101" in painted_after_navigation
         assert "◀ Prev" in painted_after_navigation
         assert "Next ▶" in painted_after_navigation
 
@@ -11775,7 +11797,7 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
         assert controls_active.region.y == inactive_y
         assert header.region.y < controls_active.region.y
         assert len(screen.query("#library-media-content-search")) == 1
-        assert "Match 1 of 101 matches" in "\n".join(_painted_rows(screen))
+        assert "Match 1 of 101" in "\n".join(_painted_rows(screen))
 
         # Cleared: the chrome hides again and nothing has moved.
         search_input = screen.query_one("#library-media-content-search", Input)
@@ -11846,7 +11868,7 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         visible_strings = tuple(
             text
             for text in (
-                "Match 1 of 101 matches",
+                "Match 1 of 101",
                 "◀ Prev",
                 "Next ▶",
                 "Large budget document",
@@ -11865,7 +11887,7 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         assert status.region.bottom <= body.region.y
         assert previous.region.bottom <= body.region.y
         assert next_button.region.bottom <= body.region.y
-        assert "Match 1 of 101 matches" in painted
+        assert "Match 1 of 101" in painted
         assert "◀ Prev" in painted
         assert "Next ▶" in painted
         assert heading_row is not None
@@ -34450,7 +34472,7 @@ async def test_library_media_analysis_tab_is_searchable():
                 .first()
                 .renderable
             )
-            == "Match 1 of 2 matches",
+            == "Match 1 of 2",
             message="Analysis-tab search did not report its two matches.",
         )
         # Two analysis lines contain "budget" -> the search corpus is the

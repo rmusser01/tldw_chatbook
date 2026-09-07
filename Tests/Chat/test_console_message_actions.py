@@ -121,6 +121,8 @@ def test_assistant_message_actions_include_required_order():
         "--->",
         "Feedback",
         "🗑",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
 
 
@@ -164,6 +166,8 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
         "--->",
         "Feedback",
         "🗑",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -192,6 +196,8 @@ def test_pending_assistant_message_shows_completed_actions_disabled_with_reasons
         "--->",
         "Feedback",
         "🗑",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -279,6 +285,8 @@ def test_variant_action_labels_use_symbolic_navigation():
         "--->",
         "Feedback",
         "🗑",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
 
 
@@ -359,8 +367,11 @@ def test_failed_action_labels_offer_retry_instead_of_continue():
 
     assert "retry" in action_ids
     assert "continue" not in action_ids
-    assert " ".join(labels) == "Copy Edit Save as... Fork Retry 👍 👎 🗑"
-    assert len(" ".join(labels)) <= 52
+    assert " ".join(labels) == (
+        "Copy Edit Save as... Fork Retry 👍 👎 🗑 "
+        "Summarize up to here as note Save transcript up to here as note"
+    )
+    assert len(" ".join(labels)) <= 120
 
 
 def test_copy_action_returns_clipboard_text():
@@ -477,6 +488,8 @@ def test_regression_no_generation_kwargs_matches_text_sibling_gating():
         "--->",
         "Feedback",
         "🗑",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
     by_id = {action.action_id: action for action in actions}
     assert by_id["variant-previous"].enabled is True
@@ -985,6 +998,8 @@ def test_speak_action_swaps_to_stop_when_message_is_speaking():
         "continue",
         "feedback",
         "delete",
+        "summarize-note",
+        "save-transcript-note",
     ]
 
 
@@ -1102,6 +1117,8 @@ def test_original_attempt_is_an_exceptional_diagnostic_in_more() -> None:
         "feedback-up",
         "feedback-down",
         "delete",
+        "summarize-note",
+        "save-transcript-note",
     )
     assert groups.media == ()
 
@@ -1484,6 +1501,8 @@ def test_action_groups_separate_primary_overflow_and_media_actions() -> None:
         "Helpful",
         "Not helpful",
         "Delete",
+        "Summarize up to here as note",
+        "Save transcript up to here as note",
     ]
     assert [action.action_id for action in groups.media] == [
         "variant-previous",
@@ -1570,6 +1589,8 @@ def test_user_and_stopped_assistant_action_groups_are_exact(
         "feedback-up",
         "feedback-down",
         "delete",
+        "summarize-note",
+        "save-transcript-note",
     )
     assert groups.media == ()
 
@@ -1606,6 +1627,8 @@ def test_video_actions_are_an_exact_separate_media_group() -> None:
         "feedback-up",
         "feedback-down",
         "delete",
+        "summarize-note",
+        "save-transcript-note",
     )
     assert tuple(action.action_id for action in groups.media) == (
         "video-play",

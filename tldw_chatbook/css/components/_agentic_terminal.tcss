@@ -3664,6 +3664,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-width: 92;
 }
 
+/* task-31635 (critique #5 item 14): Textual's ``MarkdownH1`` DEFAULT_CSS is
+   ``content-align: center middle``, so a document's own title floated to the
+   middle of the 92-cell reading measure while every other line -- H2s
+   included -- began at its left edge; the heading read as a detached banner
+   rather than as the first line of the text it introduces. Scoped to the
+   Library Reader's Markdown body, so every other Markdown surface in the app
+   keeps Textual's default. */
+#library-media-viewer-content-markdown MarkdownH1 {
+    content-align: left middle;
+}
+
 /* task-31272 (critique #4, B cap_57): F6's first Reader stop IS this box
    (``_MEDIA_WORKBENCH_FOCUS_TARGETS``), but nothing on screen said so --
    a keyboard user could not tell the scroll keys had somewhere to land.
