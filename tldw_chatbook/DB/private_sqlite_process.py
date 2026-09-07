@@ -403,7 +403,9 @@ class HelperLease:
         if self._busy or self._failed or self._reaped_child:
             raise HelperUnavailableError()
         remaining = deadline.remaining(5.0)
-        if self not in self._reservation._handoffs:
+        # Marking a handoff does not settle the enclosing initialization budget.
+        # Only a retained lease surviving owner exit starts its separate lifetime.
+        if not self._reservation._closed or self not in self._reservation._handoffs:
             remaining = min(remaining, self._reservation._deadline.remaining(5.0))
         budget = OperationDeadline(time.monotonic() + remaining)
         return self._exchange(

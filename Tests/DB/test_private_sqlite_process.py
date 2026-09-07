@@ -1105,3 +1105,49 @@ def test_new_start_cleanup_control_flow_supersedes_ordinary_launch_failure(
     assert cancellation.__notes__ == ["private_sqlite_operation_failed"]
     with admission.reserve(transient=4, retained=4, deadline=deadline()):
         pass
+
+
+@pytest.mark.parametrize("completed", [False, True], ids=["pending", "completed"])
+def test_retained_recheck_lifts_initial_deadline_only_after_handoff_completes(
+    tmp_path, monkeypatch, completed
+):
+    process = api()
+    codec = importlib.import_module("tldw_chatbook.DB.private_sqlite_protocol")
+    monkeypatch.setitem(process._LEASE_KINDS, "pin_source", "retained")
+    admission = process.HelperAdmission()
+    operation = deadline()
+    owner = admission.reserve(transient=1, retained=1, deadline=operation)
+    path = tmp_path / "source"
+    path.touch(mode=0o600)
+    lease = process.HelperLease.start(
+        codec.PrepareRequest(str(path), False, False, True),
+        operation="pin_source",
+        reservation=owner,
+        deadline=operation,
+    )
+    try:
+        owner.handoff_retained(lease)
+        if completed:
+            owner.__exit__(None, None, None)
+        real_clock = time.monotonic
+        offset = operation.expires_at + 1 - real_clock()
+        with monkeypatch.context() as patch:
+            patch.setattr(process.time, "monotonic", lambda: real_clock() + offset)
+            if completed:
+                assert (
+                    lease.request(
+                        "recheck_source", deadline=process.OperationDeadline(None)
+                    )["status"]
+                    == "ok"
+                )
+            else:
+                with pytest.raises(process.HelperTimeoutError):
+                    lease.request(
+                        "recheck_source", deadline=process.OperationDeadline(None)
+                    )
+    finally:
+        lease.close()
+        owner.__exit__(None, None, None)
+    assert lease.cleanup_state == "reaped"
+    with admission.reserve(transient=4, retained=4, deadline=deadline()):
+        pass
