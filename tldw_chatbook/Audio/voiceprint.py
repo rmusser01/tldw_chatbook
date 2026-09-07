@@ -21,6 +21,7 @@ import math
 import os
 import secrets
 import stat
+import tempfile
 import threading
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
@@ -36,7 +37,23 @@ _KEYRING_USERNAME = "meeting-voiceprint"
 
 
 class ModelMismatch(Exception):
-    """Raised by `VoiceprintStore.import_` when models differ and replace=False."""
+    """Raised by `VoiceprintStore.import_` when models differ and replace=False,
+    and by `merge_sample` for a centroid of a different DIMENSION -- same
+    model id, different shape is still a model the stored vector cannot be
+    averaged with (final review I2)."""
+
+
+class WrongPassphrase(ValueError):
+    """Raised by `VoiceprintStore.import_` when the passphrase does not open
+    the file. A `ValueError` still, so existing callers are unaffected; named
+    so the screen can say "Wrong passphrase" instead of the class name
+    (final review Minor 4)."""
+
+
+class ExportRefused(ValueError):
+    """Raised by `VoiceprintStore.export` for a destination that IS the
+    store's own record -- writing a passphrase envelope over it makes every
+    later load report `cannot_decrypt`, unrecoverably (final review Minor 3)."""
 
 
 class StoreUnavailable(Exception):
@@ -81,7 +98,12 @@ class KeyProvider(Protocol):
         ...
 
     def get(self, timeout_s: float) -> str | None:
-        """Return the store's key, or None if missing/blocked. Never raises."""
+        """Return the store's key, or None if missing/blocked.
+
+        Raises `StoreUnavailable` only for a store the user must REPAIR (a
+        key file with loose permissions) -- never for one that may simply
+        unblock itself, which is what None means (task 6 review M8).
+        """
         ...
 
 
@@ -95,31 +117,25 @@ def unit_normalise(v: Sequence[float]) -> list[float]:
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    """Write `content` to `path` via temp-file + `os.replace` (crash-safe)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
-    try:
-        tmp_path.write_text(content)
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    """Write `content` to `path` atomically, owner-only (0o600).
 
-
-def _write_restricted(path: Path, content: str) -> None:
-    """Atomically write `content` to `path`, owner-only (0o600) from the
-    moment the file is created -- never briefly world/group-readable under
-    a permissive umask."""
+    The temp file is `tempfile.mkstemp`-unique, not `path.with_suffix(".tmp")`
+    (final review Minor 1): `export()` writes to a path the USER typed, and a
+    `<name>.tmp` of their own next to it was created and then replaced away.
+    mkstemp also opens at 0o600, so neither the key file nor the record --
+    both biometric-derived -- is ever briefly world-readable under a
+    permissive umask (Minor 2), which is what the separate `_write_restricted`
+    used to buy for the key file alone.
+    """
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.unlink(missing_ok=True)  # clear a stray leftover before O_EXCL
-    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as handle:
             handle.write(content)
-        os.replace(tmp_path, path)
+        os.replace(tmp_name, path)
     except Exception:
-        tmp_path.unlink(missing_ok=True)
+        Path(tmp_name).unlink(missing_ok=True)
         raise
 
 
@@ -187,13 +203,21 @@ class KeyfileKeyProvider:
                 )
             return self._path.read_text().strip()
         key = secrets.token_urlsafe(32)
-        _write_restricted(self._path, key)
+        _atomic_write(self._path, key)
         return key
 
     def get(self, timeout_s: float) -> str | None:
         try:
-            if not self._path.exists() or not self._has_safe_permissions():
+            if not self._path.exists():
                 return None
+            if not self._has_safe_permissions():
+                # RAISED, not None (task 6 review M8): None means "blocked
+                # key", which the rail renders as "keyring locked" -- and a
+                # key-file install has no keyring to unlock. This surfaces as
+                # `store_unavailable`, whose repair is the chmod below.
+                raise StoreUnavailable(
+                    f"key file {self._path} has unsafe permissions; chmod it to 600"
+                )
             return self._path.read_text().strip()
         except OSError:
             return None
@@ -317,6 +341,13 @@ class VoiceprintStore:
     def export(self, dest: Path, passphrase: str) -> None:
         if not passphrase:
             raise ValueError("export requires a non-empty passphrase")
+        dest = Path(dest)
+        if dest.resolve() == self._path.resolve():
+            # The one destination that destroys the thing being exported
+            # (final review Minor 3): a passphrase envelope over the record
+            # makes every later `load()` report `cannot_decrypt`, with the
+            # store's own key no longer able to open it.
+            raise ExportRefused("that file is the stored voiceprint itself")
         result = self.load()
         if result.voiceprint is None:
             raise ValueError(f"cannot export voiceprint: {result.reason or 'no_voiceprint'}")
@@ -327,7 +358,7 @@ class VoiceprintStore:
             "mode": "passphrase",
             "payload": ConfigEncryption().encrypt_value(payload_json, passphrase),
         }
-        _atomic_write(Path(dest), json.dumps(envelope))
+        _atomic_write(dest, json.dumps(envelope))
 
     def import_(self, src: Path, passphrase: str, *, replace: bool) -> Voiceprint:
         try:
@@ -337,7 +368,11 @@ class VoiceprintStore:
         if envelope.get("mode") != "passphrase":
             raise ValueError("import source is not passphrase-encrypted")
 
-        payload_json = ConfigEncryption().decrypt_value(envelope["payload"], passphrase)
+        try:
+            payload_json = ConfigEncryption().decrypt_value(envelope["payload"], passphrase)
+        except Exception as exc:  # noqa: BLE001 - a bare ValueError reached the
+            # screen as "Import failed (ValueError)." (final review Minor 4).
+            raise WrongPassphrase("the passphrase did not open this file") from exc
         imported = Voiceprint(**json.loads(payload_json))
 
         # The existing record's readability gates whether -- and how -- we

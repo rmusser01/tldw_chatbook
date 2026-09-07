@@ -63,6 +63,14 @@ ENROLL_REASON_COPY = {
     "mic_device_not_found": "the selected microphone was not found",
     "store_unavailable": "the voiceprint store is unavailable",
 }
+#: Static copy for a failed voiceprint export/import, most specific first.
+#: The keys index `_build_store`'s resolved exception classes.
+VOICE_TRANSFER_FAILURE_COPY = (
+    ("passphrase", "Wrong passphrase"),
+    ("destination", "That file is your stored voiceprint — choose another destination"),
+    ("model", "Different model — choose Replace"),
+    ("locked", "Store locked — try again after unlocking the keyring"),
+)
 #: The owner's static progress words, as Voice-row copy (final review I3).
 #: An unmapped word shows nothing rather than being interpolated.
 LEARN_PROGRESS_COPY = {"warming up": "Warming up the voice model…"}
@@ -120,8 +128,10 @@ class MeetingsScreen(BaseAppScreen):
         # keyring backend, which boot must not (Task 6's import invariant).
         self._store: Any | None = None
         self._store_unavailable = False
-        #: `(StoreUnavailable, ModelMismatch)`, resolved with the store.
-        self._store_errors: tuple = ()
+        #: The store's named exception classes, resolved WITH the store and
+        #: keyed by `VOICE_TRANSFER_FAILURE_COPY`'s keys (never re-imported
+        #: while handling a failure, review M9).
+        self._store_errors: dict = {}
         self._offer: Any | None = None
         self._enroll_cancel: threading.Event | None = None
         self._enroll_timer = None
@@ -953,7 +963,7 @@ class MeetingsScreen(BaseAppScreen):
             return
         self.query_one("#meetings-voice-message", Static).update(copy)
 
-    def _build_store(self) -> tuple[Any | None, tuple]:
+    def _build_store(self) -> tuple[Any | None, dict]:
         """Build the store and resolve its exception classes.
 
         Pure: it returns, it never assigns, so the prepare worker can call it
@@ -965,17 +975,22 @@ class MeetingsScreen(BaseAppScreen):
         keyring backend, and boot must import neither (Task 6's invariant).
 
         Returns:
-            `(store, (StoreUnavailable, ModelMismatch))`, or `(None, ())`.
+            `(store, {copy key: exception class})`, or `(None, {})`.
         """
         try:
-            from ...Audio.voiceprint import ModelMismatch, StoreUnavailable, default_store
+            from ...Audio.voiceprint import (
+                ExportRefused, ModelMismatch, StoreUnavailable, WrongPassphrase, default_store,
+            )
 
-            return default_store(), (StoreUnavailable, ModelMismatch)
+            return default_store(), {
+                "passphrase": WrongPassphrase, "destination": ExportRefused,
+                "model": ModelMismatch, "locked": StoreUnavailable,
+            }
         except Exception as exc:  # noqa: BLE001 - the screen still works
             logger.warning("meetings: voiceprint store unavailable ({})", type(exc).__name__)
-            return None, ()
+            return None, {}
 
-    def _adopt_store(self, store: Any | None, errors: tuple) -> None:
+    def _adopt_store(self, store: Any | None, errors: dict) -> None:
         """Take the store built elsewhere (UI thread only)."""
         if self._store is not None or self._store_unavailable:
             return
@@ -1330,14 +1345,15 @@ class MeetingsScreen(BaseAppScreen):
     def _transfer_failure_copy(self, action: str, exc: Exception) -> str:
         """Static copy for a failed export/import -- never the path or message.
 
-        The two named classes were resolved with the store (review M9), so
-        this path never imports while handling a failure.
+        The named classes were resolved with the store (review M9), so this
+        path never imports while handling a failure. Most specific first:
+        `WrongPassphrase` and `ExportRefused` are both `ValueError`s, so only
+        their order relative to each other would ever matter.
         """
-        store_unavailable, model_mismatch = self._store_errors or (None, None)
-        if store_unavailable is not None and isinstance(exc, store_unavailable):
-            return "Store locked — try again after unlocking the keyring"
-        if model_mismatch is not None and isinstance(exc, model_mismatch):
-            return "Different model — choose Replace"
+        for key, copy in VOICE_TRANSFER_FAILURE_COPY:
+            error = self._store_errors.get(key)
+            if error is not None and isinstance(exc, error):
+                return copy
         return f"{action.capitalize()} failed ({type(exc).__name__})."
 
     def _voice_transfer_done(self, action: str, ok: bool, copy: str) -> None:

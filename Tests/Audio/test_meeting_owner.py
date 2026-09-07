@@ -1220,6 +1220,26 @@ def test_prepare_reports_store_unavailable_without_raising(tmp_path, monkeypatch
     assert owner.prepare().voice_match.reason == "store_unavailable"
 
 
+def test_a_key_file_with_loose_permissions_reports_store_unavailable(tmp_path, monkeypatch):
+    """Task 6 review M8: the key provider returned None for a key file the
+    user (or an installer) chmod'd wide, which `_load_voiceprint` read as
+    "keyring locked" -- so a key-FILE install was told to unlock a keyring it
+    does not have. The repair is a chmod, i.e. `store_unavailable`."""
+    from tldw_chatbook.Audio import voiceprint as vp
+
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, _ = _backend_spy(monkeypatch)
+    keyfile = tmp_path / "voiceprint.key"
+    store = _store(tmp_path, keys=vp.KeyfileKeyProvider(keyfile))    # mints it at 0o600
+    keyfile.chmod(0o644)
+
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=store)
+    owner.start()
+    assert owner.voice_match == mo.VoiceMatchState("off", "store_unavailable")
+    assert backend.voiceprint is None
+    owner.stop()
+
+
 def test_start_reports_store_unavailable_when_the_store_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     backend, _ = _backend_spy(monkeypatch)

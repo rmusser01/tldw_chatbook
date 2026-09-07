@@ -1404,7 +1404,9 @@ async def test_import_merge_and_replace_call_the_store_with_the_choice(tmp_path)
 
 @pytest.mark.asyncio
 async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path):
-    from tldw_chatbook.Audio.voiceprint import ModelMismatch, StoreUnavailable
+    from tldw_chatbook.Audio.voiceprint import (
+        ExportRefused, ModelMismatch, StoreUnavailable, WrongPassphrase,
+    )
 
     host, owner = await _boot(tmp_path)
     async with host.run_test(size=(160, 45)) as pilot:
@@ -1419,6 +1421,10 @@ async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path)
              "Store locked — try again after unlocking the keyring"),
             (ModelMismatch("stored model 'a' does not match 'b'"),
              "Different model — choose Replace"),
+            # Final review Minor 4: this used to read "Import failed
+            # (ValueError)." -- the one failure a user can actually fix.
+            (WrongPassphrase("the passphrase did not open this file"),
+             "Wrong passphrase"),
         ):
             store.raises = exc
             screen.query_one("#meetings-voice-import", Button).press()
@@ -1429,6 +1435,12 @@ async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path)
             await pilot.pause(0.4)
             assert _text(message) == expected
             assert owner.invalidated == 0
+
+        # Export's own named refusal (final review Minor 3): the destination
+        # IS the store, and overwriting it destroys the voiceprint for good.
+        assert screen._transfer_failure_copy("export", ExportRefused("...")) == (
+            "That file is your stored voiceprint — choose another destination"
+        )
 
 
 def test_unmounted_screen_never_touches_the_voice_widgets(tmp_path):

@@ -58,8 +58,46 @@ def test_export_import_with_passphrase_and_model_gate(tmp_path):
     assert other.import_(tmp_path / "out.json", "correct horse", replace=True).model_id == "ecapa@rev1"
 
 def test_keyfile_provider_refuses_broad_permissions(tmp_path):
+    """Task 6 review M8: refused, and refused LOUDLY -- returning None made
+    `_load_voiceprint` report "keyring locked", which sends a key-file user
+    off to unlock a keyring they do not have. The repair is a chmod."""
     p = tmp_path / "voiceprint.key"; p.write_text("k" * 32); p.chmod(0o644)
-    assert vp.KeyfileKeyProvider(p).get(timeout_s=0.1) is None
+    with pytest.raises(vp.StoreUnavailable):
+        vp.KeyfileKeyProvider(p).get(timeout_s=0.1)
+
+def test_export_never_clobbers_a_neighbouring_tmp_file(tmp_path):
+    """Final review Minor 1/2: the temp name was `dest.with_suffix(".tmp")`,
+    so exporting to a path the USER typed destroyed their own `<name>.tmp`."""
+    store = vp.VoiceprintStore(tmp_path / "store" / "voiceprint.json", FakeKeys()); store.save(_rec())
+    bystander = tmp_path / "vp.tmp"
+    bystander.write_text("someone else's file")
+
+    store.export(tmp_path / "vp.json", "correct horse")
+
+    assert bystander.read_text() == "someone else's file"
+    assert stat.S_IMODE((tmp_path / "vp.json").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "store" / "voiceprint.json").stat().st_mode) == 0o600
+    assert [f.name for f in tmp_path.glob("*.tmp")] == ["vp.tmp"]   # no leftovers
+
+def test_export_refuses_the_stores_own_record_as_the_destination(tmp_path):
+    """Final review Minor 3: exporting over `voiceprint.json` replaces it with
+    a passphrase envelope -- every later load reads `cannot_decrypt` and the
+    voiceprint is gone with no way back."""
+    path = tmp_path / "voiceprint.json"
+    store = vp.VoiceprintStore(path, FakeKeys()); store.save(_rec())
+    raw = path.read_bytes()
+    with pytest.raises(vp.ExportRefused):
+        store.export(tmp_path / "sub" / ".." / "voiceprint.json", "correct horse")
+    assert path.read_bytes() == raw and store.load().voiceprint is not None
+
+def test_a_wrong_import_passphrase_is_a_named_failure(tmp_path):
+    """Final review Minor 4: it escaped as a bare ValueError, which the screen
+    rendered as "Import failed (ValueError)." instead of "Wrong passphrase"."""
+    out = _export_donor_record(tmp_path, "donor", "ecapa@rev1")
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys())
+    with pytest.raises(vp.WrongPassphrase):
+        store.import_(out, "not the passphrase", replace=False)
+    assert not (tmp_path / "voiceprint.json").exists()
 
 def test_merge_refuses_a_centroid_of_a_different_length(tmp_path):
     """Final review I2: `zip` truncated silently, so a same-model import with
@@ -167,14 +205,17 @@ def test_atomic_write_removes_stray_tmp_on_replace_failure(tmp_path, monkeypatch
     monkeypatch.setattr(os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
     with pytest.raises(OSError):
         store.save(_rec((0.0, 1.0)))
-    assert not (tmp_path / "voiceprint.tmp").exists()
+    # By GLOB, not by one guessed name: the temp file is `mkstemp`-unique
+    # since final review Minor 1, so asserting on "voiceprint.tmp" alone would
+    # pass even if every failed write left a file behind.
+    assert list(tmp_path.glob("*.tmp")) == [] and list(tmp_path.glob(".*")) == []
 
 def test_keyfile_provider_removes_stray_tmp_on_replace_failure(tmp_path, monkeypatch):
     p = tmp_path / "voiceprint.key"
     monkeypatch.setattr(os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
     with pytest.raises(OSError):
         vp.KeyfileKeyProvider(p).get_or_create()
-    assert not p.with_suffix(".tmp").exists()
+    assert list(tmp_path.glob("*.tmp")) == [] and list(tmp_path.glob(".*")) == []
 
 
 # --- Task 4 fix round 1: a stat-only presence check (no Keychain prompt) ---
