@@ -37,6 +37,8 @@ def test_scene_default_typography_and_intrinsic_scrolling(
     chromium_browser, asset_server, egress_server
 ):
     sources = [
+        "flowchart LR\nA -->|First| B{Long label}\nA -->|Second| C",
+        "flowchart TD\nA -->|First| B[Long label]\nA -->|Second!!| C",
         "flowchart TD\nA[Start] --> B{Ready?}\nB -->|Yes| C(Continue)\nB -->|No| D[Revise]\nC --> E[Join]\nD --> E",
         "sequenceDiagram\nparticipant A as Alice\nparticipant B as Bob\nparticipant C as Carol\nA->>B: Hello\nNote left of A: 左 é\nNote right of B: 😀 שלום\nNote over A,C: Shared note\nB-->>C: Reply",
         'flowchart LR\nA["中文 é 👨‍👩‍👧‍👦 שלום"] --> B["' + "unbreakable" * 10 + '"]',

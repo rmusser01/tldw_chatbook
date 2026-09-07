@@ -1,6 +1,8 @@
 """Geometry contracts exercised in the packaged QuickJS runtime."""
 
 import json
+import re
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,40 @@ import pytest
 from Tests.Canvas.mermaid_probe import run_mermaid_case
 
 CASES = json.loads((Path(__file__).parent / "fixtures/mermaid/layout.json").read_text())
+
+
+@pytest.mark.parametrize("direction,label", [("LR", "Second"), ("TD", "Second!!")])
+def test_branch_routes_do_not_intersect_edge_label_rectangles(direction, label):
+    shape = "{Long label}" if direction == "LR" else "[Long label]"
+    source = f"flowchart {direction}\nA -->|First| B{shape}\nA -->|{label}| C"
+    result = run_mermaid_case({"operation": "layout", "source": source})
+    assert result["ok"], result
+    nodes = list(walk(result["scene"]["root"]))
+    rectangles = []
+    for node in nodes:
+        if node["tag"] == "text" and node["text"] in {"First", label}:
+            attrs = dict(node["attributes"])
+            x, y = float(attrs["x"]), float(attrs["y"]) - 18
+            rectangles.append((x, y, x + len(node["text"]) * 16, y + 24))
+    assert len(rectangles) == 2
+    for node in nodes:
+        attrs = dict(node["attributes"])
+        if node["tag"] != "path" or attrs.get("fill") != "none":
+            continue
+        points = [
+            tuple(map(float, pair))
+            for pair in re.findall(r"[ML]([\d.]+) ([\d.]+)", attrs["d"])
+        ]
+        for (x1, y1), (x2, y2) in pairwise(points):
+            for left, top, right, bottom in rectangles:
+                if x1 == x2:
+                    assert not (
+                        left < x1 < right and max(y1, y2) > top and min(y1, y2) < bottom
+                    )
+                elif y1 == y2:
+                    assert not (
+                        top < y1 < bottom and max(x1, x2) > left and min(x1, x2) < right
+                    )
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case["name"])

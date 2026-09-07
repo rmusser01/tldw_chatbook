@@ -139,8 +139,10 @@ parses and lays out each declaration in order, and returns scenes only when all
 declarations succeed. Worker allocation and declaration integration remain Task 4.
 
 Flow diagrams use Kahn ranks with source-order ties, two forward/backward
-barycentric ordering sweeps, and orthogonal rank lanes. Long edge labels reserve
-lane space; rank-skipping edges route outside the node columns. Sequence headers
+barycentric ordering sweeps, and orthogonal rank lanes. Edge labels reserve
+lane space in an outer strip beyond all node columns; labeled and rank-skipping
+edges route through trunks beyond that strip. A charged segment/label-rectangle
+check refuses any intersection before returning the scene. Sequence headers
 keep declared order and messages/notes share their original event order. Side
 notes reserve horizontal margins, two-participant notes span their columns, and
 every note reserves a separate vertical interval. Arrows use ordinary paths,
