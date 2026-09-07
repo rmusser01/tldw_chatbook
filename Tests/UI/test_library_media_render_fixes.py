@@ -30,6 +30,9 @@ from textual.worker import WorkerState
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Library.library_media_state import (
+    library_media_int_backing_id,
+)
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
@@ -1784,6 +1787,49 @@ def _keyword_media_items() -> list[dict[str, object]]:
             "version": 1,
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_reprojection_skips_rows_the_page_does_not_retain():
+    """task-31961: a bulk Analyze over a multi-page selection reads ONE page.
+
+    ``has_analysis`` is re-read per saved item, and every read costs an
+    id-scoped SELECT. An item outside the retained page has no mounted row
+    to repaint, so its read can only ever be thrown away -- the membership
+    test that decides that belongs ABOVE the fetch, not after it.
+    """
+    host = _review_state_host(count=24, analysed=0)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+
+        retained = {
+            str(item["id"])
+            for item in screen._library_media_browse_controller.retained_items
+        }
+        assert len(retained) == 20, retained
+        off_page = [
+            media_id
+            for media_id in (f"local:media:{index}" for index in range(1, 25))
+            if media_id not in retained
+        ]
+        assert len(off_page) == 4, off_page
+        on_page = sorted(retained)[:2]
+
+        service = host.app_instance.media_reading_scope_service
+        searches_before = len(service.search_calls)
+        # The selection spans both pages, exactly as a bulk Analyze over a
+        # "select all" does.
+        for media_id in [*on_page, *off_page]:
+            await screen._reproject_library_media_analysis_row(media_id)
+
+        extra = service.search_calls[searches_before:]
+        assert len(extra) == len(on_page), extra
+        allowlists = [call["id_allowlist"] for call in extra]
+        assert allowlists == [
+            [library_media_int_backing_id(media_id)] for media_id in on_page
+        ], allowlists
 
 
 async def _apply_media_filter(screen, pilot, query: str) -> None:

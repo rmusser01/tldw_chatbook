@@ -36046,7 +36046,14 @@ class LibraryScreen(BaseAppScreen):
             authoritative.
         """
         controller = self._library_media_browse_controller
-        if not controller.retained_items:
+        # task-31961: the membership test goes ABOVE the fetch. A bulk
+        # Analyze over a multi-page selection saves items the retained page
+        # never mounted, and an id-scoped SELECT for one of those can only
+        # be thrown away -- ``note_analysis_state`` would refuse it anyway,
+        # one round trip later. (This subsumes the old "no retained items at
+        # all" guard: an empty page holds no member.)
+        target = str(media_id)
+        if not any(str(item["id"]) == target for item in controller.retained_items):
             return
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         search_media = getattr(service, "search_media", None)
