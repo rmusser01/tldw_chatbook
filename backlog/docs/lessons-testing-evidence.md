@@ -9,6 +9,25 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Lifecycle tests must include startup and cleanup interruptions
+
+**TASK-31942, SQLite helper review, 2026-09-07.** A 118-pass helper selection
+missed two real-child failures. Interrupting the first child's actual close path
+replaced an active `SystemExit`, left the second child alive, and retained all
+three reserved slots, including unused capacity. Delaying helper entry until its
+launcher had exited let a late `getppid()` capture the replacement parent; the
+helper then accepted preparation and stayed alive on an inherited input pipe.
+The existing tests injected only `HelperCleanupError` and exited the parent only
+after successful initialization. Regressions at those missing boundaries drove
+settle-all cleanup and original-parent metadata captured before exec; the corrected
+focused selection passed 136 tests in independent implementation/spec-review runs.
+
+**What to do.** Inject control flow from the real cleanup path, not just a cleanup
+status exception. Gate initialization so the owner can disappear before the child
+captures state. Verify untouched targets, remaining children, exception precedence,
+and unused capacity explicitly; successful ready-state shutdown proves none of those
+earlier or interrupted transitions.
+
 ## Transport failure must not change a served process into a native owner
 
 **TASK-31939, Canvas snapshot delivery, 2026-09-06.** A regression with a

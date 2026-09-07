@@ -147,7 +147,9 @@ Use this object hook with `json.loads`, reject non-finite constants and cap nest
 - `HelperLease.start(request: PrepareRequest, *, operation: str, reservation: HelperReservation, deadline: OperationDeadline) -> HelperLease`; `request(operation: str, *, deadline: OperationDeadline) -> dict[str, object]`; `close() -> None`. The parent call validates operation membership; rechecks cannot retarget the lease.
 - `HelperUnavailableError`, `HelperTimeoutError`, `HelperProtocolError`, `HelperCleanupError` have closed source-free reasons. Cleanup results distinguish reaped, still-owned and terminal-retained resources.
 
-- [ ] Add isolated admission tests, starting with capacity that a retained owner cannot borrow:
+Original-parent identity must be captured before exec: the launcher overwrites the fixed internal `_TLDW_PRIVATE_SQLITE_PARENT_PID` child-environment field, and the entry consumes/validates it before imports and file preparation. No caller-configurable environment patch or wire field is added. Direct-entry test fixtures supply this required launcher metadata; include parent death before delayed entry initialization, not only after successful initialization.
+
+- [x] Add isolated admission tests, starting with capacity that a retained owner cannot borrow:
 
 ```python
 from contextlib import ExitStack
@@ -176,8 +178,8 @@ def test_retained_admission_leaves_transient_headroom():
                 )
 ```
 
-- [ ] Run `../../.venv/bin/python -m pytest -q Tests/DB/test_private_sqlite_process.py`, record RED, then implement reservation accounting under one condition/lock. Atomically acquire the entire requested pair or acquire nothing. Capacity tests use barriers, not scheduling sleeps; include two concurrent two-slot operations, four TTS initializers, an excess admission, nested reservation borrowing and oversized-envelope refusal.
-- [ ] Implement nonblocking pipe read/write with selector waits against the same absolute deadline. Check response length before reading its body. Use one request at a time, no background unbounded output collector. Partial header/body writes and reads consume the same budget.
+- [x] Run `../../.venv/bin/python -m pytest -q Tests/DB/test_private_sqlite_process.py`, record RED, then implement reservation accounting under one condition/lock. Atomically acquire the entire requested pair or acquire nothing. Capacity tests use barriers, not scheduling sleeps; include two concurrent two-slot operations, four TTS initializers, an excess admission, nested reservation borrowing and oversized-envelope refusal.
+- [x] Implement nonblocking pipe read/write with selector waits against the same absolute deadline. Check response length before reading its body. Use one request at a time, no background unbounded output collector. Partial header/body writes and reads consume the same budget.
 
 ```python
 wait_seconds = deadline.remaining(cap=5.0)
@@ -186,10 +188,10 @@ if not events:
     raise HelperTimeoutError()
 ```
 
-- [ ] Add actual-child tests for EOF, crash, malformed/oversized/truncated replies, stalled input/output, short caller deadlines, parent exit and an inherited-pipe orphan scenario. Fault child programs belong only to test fixtures; production never accepts a test executable/request option. Assert only the captured child is signaled and there are no descendants.
-- [ ] Implement close with one-second normal exit, then terminate/kill/reap within the further two-second bound. Retain the child object and capacity charge if reaping fails; report cleanup failure without masking `KeyboardInterrupt`/`SystemExit`/worker cancellation. Parent identity polling runs at least once per second while idle. Check captured parent/process identity after fork rather than reusing inherited reservations or pipes.
-- [ ] Run protocol/process tests together and repeat bounded create/close cycles while measuring live child counts and FD counts. Tests assert no growth on normal/early-failure paths, not on explicitly retained failure states.
-- [ ] Commit the parent process module, helper changes and process tests with message `feat(db): bound SQLite helper ownership and deadlines`; review capacity, cancellation and failure ownership before integration.
+- [x] Add actual-child tests for EOF, crash, malformed/oversized/truncated replies, stalled input/output, short caller deadlines, parent exit and an inherited-pipe orphan scenario. Fault child programs belong only to test fixtures; production never accepts a test executable/request option. Assert only the captured child is signaled and there are no descendants.
+- [x] Implement close with one-second normal exit, then terminate/kill/reap within the further two-second bound. Retain the child object and capacity charge if reaping fails; report cleanup failure without masking `KeyboardInterrupt`/`SystemExit`/worker cancellation. Parent identity polling runs at least once per second while idle. Check captured parent/process identity after fork rather than reusing inherited reservations or pipes.
+- [x] Run protocol/process tests together and repeat bounded create/close cycles while measuring live child counts and FD counts. Tests assert no growth on normal/early-failure paths, not on explicitly retained failure states.
+- [x] Commit the parent process module, helper changes and process tests with message `feat(db): bound SQLite helper ownership and deadlines`; review capacity, cancellation and failure ownership before integration.
 
 ### Task 3: Repair normal connection and online-backup lock ownership
 
@@ -444,6 +446,7 @@ On the existing implementation the fstat assertion fails with a closed FD after 
 completed = subprocess.run(
     [sys.executable, "-I", "-S", str(installed_entry)],
     input=encode_frame({"version": 1, "operation": "close"}),
+    env={**os.environ, "_TLDW_PRIVATE_SQLITE_PARENT_PID": str(os.getpid())},
     capture_output=True, cwd=hostile_cwd, timeout=5, check=True,
 )
 assert decode_frame(completed.stdout)["operation"] == "close"

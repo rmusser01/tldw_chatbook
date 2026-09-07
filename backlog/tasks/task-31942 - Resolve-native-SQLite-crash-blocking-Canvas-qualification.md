@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 15:33'
-updated_date: '2026-09-07 20:52'
+updated_date: '2026-09-07 23:33'
 labels:
   - database
   - canvas
@@ -52,5 +52,5 @@ Detailed plan: Docs/superpowers/plans/2026-09-07-sqlite-lock-safe-private-valida
 5. Integrate TTS live proof, explicit restore/directory handoffs, shielded-worker ownership and bounded restart-required quarantine; qualify both orderly and abrupt process exit.
 6. Correct exclusive descriptor/finalizer ownership and complete the raw-close consumer census.
 7. Qualify installed-wheel/import isolation, targeted DB/TTS/privacy/lifetime/performance tests and the previously failing actual Canvas child workflows; independently review the complete correction before returning to TASK-31941.
-Execution has not begun. Keep V2 disabled; no full repository sweep, PR, push, rebase or merge.
+Subagent-driven execution started at 6601eba5d. Task1 passed independent spec and quality review through 83f0be4e9. Task2 passed both gates through 5faa04887; root final process/protocol verification 138 passed with one existing dependency warning, five touched Python files passed static checks. Task3 starts next with a fresh implementer. The live-lock correction and all-task qualification remain outstanding. Keep V2 disabled; no full repository sweep, PR, push, rebase or merge.
 <!-- SECTION:PLAN:END -->
