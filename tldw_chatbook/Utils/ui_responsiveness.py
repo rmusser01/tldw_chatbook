@@ -37,9 +37,7 @@ class UIResponsivenessSnapshot:
 class UIResponsivenessMonitor:
     """Collect low-cost counters that make UI stalls diagnosable."""
 
-    #: One stall record at a time in the dispatch queue: a wedged loop cannot
-    #: pile up records faster than a background thread drains them, and the
-    #: queue itself is bounded so enqueueing can never fail noisily.
+    #: Shared bound for queued send, stall and refresh-churn records.
     _STALL_QUEUE_DEPTH = 64
 
     def __init__(
@@ -82,7 +80,17 @@ class UIResponsivenessMonitor:
         self._stall_records_processed = 0
 
     def record_diagnostic(self, component: str, event: str, **fields: object) -> None:
-        """Queue code-owned metadata without doing file I/O on the caller's loop."""
+        """Queue metadata from UI or worker threads without caller-side file I/O.
+
+        A full queue drops the event and counts the loss. Calls after close
+        are ignored. The persistent sink applies the final field allowlist.
+
+        Args:
+            component: Code-owned subsystem token, such as ``console`` or ``ui``.
+            event: Code-owned event token, such as ``console_send_stage``.
+            **fields: Schema-approved metadata and optional logging ``level``.
+                Never include content, credentials, paths or private identifiers.
+        """
         with self._diagnostic_lock:
             if self._diagnostic_closed:
                 return
@@ -99,7 +107,7 @@ class UIResponsivenessMonitor:
                 return
             if self._stall_thread is None:
                 self._stall_thread = threading.Thread(
-                    target=self._drain_stalls, name="ui-diagnostic-persist", daemon=True
+                    target=self._drain_stalls, name="ui-stall-persist", daemon=True
                 )
                 self._stall_thread.start()
 
@@ -134,7 +142,14 @@ class UIResponsivenessMonitor:
                 self._stall_queue.task_done()
 
     def close(self, timeout: float = 1.0) -> None:
-        """Stop accepting events and drain with a bounded wait; call off the UI loop."""
+        """Stop accepting events and drain with a bounded wait off the UI loop.
+
+        The daemon may finish pending writes after the wait expires. Repeated
+        calls are safe; callers must not use this blocking wait on the UI loop.
+
+        Args:
+            timeout: Maximum seconds to wait for the drain thread to exit.
+        """
         with self._diagnostic_lock:
             self._diagnostic_closed = True
             thread = self._stall_thread
@@ -142,7 +157,12 @@ class UIResponsivenessMonitor:
             thread.join(timeout=timeout)
 
     def record_refresh(self, operation: str) -> None:
-        """Count only fixed UI activity names; do not retain widget identities."""
+        """Count fixed activity names on the UI loop without retaining widgets.
+
+        Args:
+            operation: ``console_sync`` or ``screen_recompose``. Other values
+                are ignored, as are all calls when responsiveness is disabled.
+        """
         if self.enabled and operation in self._refresh_counts:
             self._refresh_counts[operation] += 1
 
@@ -193,7 +213,12 @@ class UIResponsivenessMonitor:
         self._active_timers.discard(name)
 
     def record_worker_started(self, name: str) -> None:
-        """Record a worker as active by stable diagnostic name."""
+        """Record an active worker on the UI loop and count Console syncs.
+
+        Args:
+            name: Stable code-owned worker name; ``console-sync`` also records
+                refresh activity. Never include user content or identifiers.
+        """
         if self.enabled:
             self._active_workers.add(name)
             if name == "console-sync":

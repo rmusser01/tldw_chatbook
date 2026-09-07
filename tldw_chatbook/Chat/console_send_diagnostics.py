@@ -15,6 +15,8 @@ from uuid import uuid4
 
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
+_SEND_DIAGNOSTIC_EVENT_LIMIT = 64
+
 # Exact code-owned categories only; never derive a token from arbitrary error text.
 _TRACE_FAILURE_CATEGORIES = frozenset(
     {
@@ -49,7 +51,14 @@ class SendDiagnostic:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def record(self, phase: str, status: str = "entered", **fields: object) -> None:
-        """Record a finite number of code-owned fields for this attempt."""
+        """Record bounded metadata for this attempt in its submitting context.
+
+        Args:
+            phase: Code-owned lifecycle stage, never user-provided text.
+            status: Code-owned outcome; ``failed`` retains cached metadata.
+            **fields: Metadata allowed by the persistent diagnostic schema.
+                Exclude content, credentials, paths and private identifiers.
+        """
         self.phase = phase
         self.metadata.update(
             {
@@ -67,8 +76,8 @@ class SendDiagnostic:
         if status == "failed":
             fields = {**self.metadata, **fields}
         self.count += 1
-        if self.count > 64:
-            if self.count == 65:
+        if self.count > _SEND_DIAGNOSTIC_EVENT_LIMIT:
+            if self.count == _SEND_DIAGNOSTIC_EVENT_LIMIT + 1:
                 self.monitor.record_diagnostic(
                     "console", "diagnostic_events_dropped", item_count=1
                 )
@@ -97,7 +106,19 @@ def record_send_stage(
     error: BaseException | None = None,
     **fields: object,
 ) -> None:
-    """Record a stage without changing delivery if diagnostic emission fails."""
+    """Record a stage without changing delivery if diagnostic emission fails.
+
+    Call within ``send_diagnostic_scope`` or its inherited worker context;
+    without an active scope this is a no-op. No file I/O runs on the caller.
+
+    Args:
+        phase: Code-owned lifecycle stage, never user-provided text.
+        status: Code-owned outcome; ``failed`` emits at ERROR severity.
+        error: Optional failure to classify without logging its message.
+        **fields: Metadata allowed by the persistent diagnostic schema, such
+            as runtime versions and capture state. Never pass private content,
+            credentials, paths or database identifiers.
+    """
     with contextlib.suppress(Exception):
         current = _CURRENT.get()
         if current is None:
@@ -143,7 +164,23 @@ def record_send_stage(
 async def send_diagnostic_scope(
     phase: str, monitor: UIResponsivenessMonitor | None = None
 ) -> AsyncIterator[SendDiagnostic]:
-    """Share one attempt across UI/controller/workers and flush standalone sends."""
+    """Share an attempt across nested async scopes and inherited worker contexts.
+
+    Subsequent controller submissions get their own token and event budget.
+    A scope that creates its own monitor drains it off-loop on exit; the app
+    remains responsible for closing a supplied monitor during teardown.
+
+    Args:
+        phase: Code-owned entry stage; ``controller_submit`` marks a submission.
+        monitor: App-owned monitor for an outer UI scope. Nested scopes reuse
+            the current monitor; standalone scopes create a temporary one.
+
+    Yields:
+        The active diagnostic attempt; callers may set its terminal outcome.
+
+    Raises:
+        BaseException: Re-raises exceptions from the wrapped send unchanged.
+    """
     current = _CURRENT.get()
     owns_monitor = current is None and monitor is None
     token = None

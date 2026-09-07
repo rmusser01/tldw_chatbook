@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 21:58'
-updated_date: '2026-09-07 22:26'
+updated_date: '2026-09-07 22:39'
 labels: []
 dependencies: []
 ---
@@ -49,4 +49,6 @@ Validation: 133 diagnostic, mounted Console, trace-recovery/runtime, responsiven
 Known baseline verification limitation: Tests/test_persistent_diagnostic_boundary.py::test_persona_workspace_diagnostics_do_not_interpolate_private_values fails on an unchanged MCP logging call. Reproduced against the original dev archive; the remaining 47 tests in that targeted run passed. The repository also has pre-existing whole-file lint debt. Task remains In Progress rather than claiming the all-green Definition of Done. The original reporter-specific trace failure/flicker has not been reproduced or fixed by this diagnostic extension.
 
 Prepared together with the previously verified TASK-31976 recovery fix for the user-requested PR against dev. Full suite not run per repository policy; targeted validation and the baseline limitations above accompany the PR.
+
+PR #2490 review follow-up: documented parameter, lifecycle and threading contracts on the new diagnostic APIs; derived both per-attempt overflow checks from one named event limit. Restored the existing ui-stall-persist thread name so the shared drain retains its reviewed boot-census identity without increasing the allowlist or boot budget. The CI boot-worker census exposed the rename; 37 focused diagnostic, mounted-flow, responsiveness and boot-worker tests now pass, with Ruff and formatting clean. No behavioral allowance, ownership, privacy or ADR policy change.
 <!-- SECTION:NOTES:END -->
