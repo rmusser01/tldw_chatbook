@@ -1253,9 +1253,7 @@ ConsoleTerminalWorkspace#console-main-column {
     text-style: bold underline;
 }
 
-/* TASK-31245: the three-mode switcher shares the Console surface vocabulary.
-   Geometry lives in the widget; the dense search field also overrides the
-   app-wide focused Input border so focus cannot consume its compact budget. */
+/* Keep focused search one row. */
 #console-switcher-query,
 #console-switcher-query:focus {
     height: 1;
@@ -1266,10 +1264,14 @@ ConsoleTerminalWorkspace#console-main-column {
     padding: 0;
 }
 
-#console-switcher-query:focus {
-    border-left: thick $ds-action-focus;
+#console-switcher-query:focus,
+.console-switcher-result-candidate {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
+}
+
+#console-switcher-query:focus {
+    border-left: thick $ds-action-focus;
     text-style: bold;
 }
 
@@ -1284,11 +1286,6 @@ ConsoleTerminalWorkspace#console-main-column {
 #console-switcher-page-status,
 #console-switcher-hints {
     color: $ds-text-muted;
-}
-
-.console-switcher-result-candidate {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
 }
 
 .console-switcher-result-error {
