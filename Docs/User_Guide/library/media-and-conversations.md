@@ -103,8 +103,8 @@ adds **· keyword: \<term\>** — the filter searches titles, item text and
 keywords, so without it a hit whose title and body hold nothing you typed
 reads as a mistake (`article · 2m · keyword: notes`). A row whose title or
 text carries the term already shows you why it is there and says nothing
-extra. Long tags are cut to ten characters (`keyword: quokkasand…`) to keep
-the line short. It can still be too long for a narrow Items pane: at the
+extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
+wide CJK characters) to keep the line short. It can still be too long for a narrow Items pane: at the
 pane's narrowest the row clips mid-term at the pane edge, and a row that is
 both analysed and a keyword hit can clip at the default width too.
 
