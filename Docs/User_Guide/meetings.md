@@ -124,7 +124,15 @@ config keys, not switches on this screen.
   file's instead — the only option when the model differs, reported as
   "Different model — choose Replace"). A passphrase that does not open the
   file is reported as "Wrong passphrase", and exporting *onto* your own
-  stored voiceprint is refused rather than destroying it.
+  stored voiceprint is refused rather than destroying it. The typed path is
+  checked before anything is read or written: an import must name a file that
+  is actually there ("Import needs a file that is there to read."), and an
+  export must name a plain file in a folder that exists ("Export needs a
+  plain file in a folder that exists.") — a symlinked destination is refused,
+  so an export can never be redirected somewhere you did not name. A file
+  that opens with the right passphrase but does not hold a usable voiceprint
+  is refused too ("Import file is not a valid voiceprint"), leaving what you
+  already have untouched.
 - **Encryption.** The voiceprint is one JSON record encrypted with its own
   random key, stored at `voiceprint.json` in the app's user data directory
   (not the configurable `recordings_dir`, which may be a synced folder).
@@ -363,8 +371,9 @@ what happens to a meeting once it's queued.
   real screen.
 
 —
-*Verified against dev @ 15254e860 + feat/meeting-voiceprint @ 50c0bdb0c and
-its final fix wave —
+*Verified against dev @ 15254e860 + feat/meeting-voiceprint @ 74b771396 (its
+final fix wave plus the Qodo review round, which added the transfer-path and
+import-record refusals documented above) —
 2026-09-07. That branch added self-voiceprint enrollment and matching
 (TASK-31826): the "Remember my voice" section and the four `voice_*`
 config keys above document `Enroll my voice`, the "Voice match: …" rail
