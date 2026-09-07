@@ -246,6 +246,24 @@ def test_real_child_missing_path_returns_only_fixed_failure(tmp_path):
     assert "private-sentinel" not in json.dumps(result)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX filename length limit")
+@pytest.mark.parametrize("artifact", ["main", "sidecar"])
+def test_real_child_lstat_failure_remains_a_private_path_error(tmp_path, artifact):
+    name_limit = os.pathconf(tmp_path, "PC_NAME_MAX")
+    target = tmp_path / ("x" * (name_limit + (artifact == "main")))
+    if artifact == "sidecar":
+        # Main fits the filesystem limit; its fixed -wal sibling does not.
+        target.touch(mode=0o600)
+    result = run_child(request(target), tmp_path)
+    assert result == {
+        "version": 1,
+        "operation": "prepare",
+        "status": "private_path_error",
+        "privacy_status": "operation_failed",
+        "reason": "OSError",
+    }
+
+
 def test_batch_identity_is_from_validated_descriptor_not_later_path(
     tmp_path, monkeypatch
 ):
