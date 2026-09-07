@@ -60,6 +60,7 @@ from tldw_chatbook.Library.library_skills_state import (
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
+    library_row_button,
 )
 
 _SORT_LABELS = {"name": "Name", "status": "Status"}
@@ -1282,7 +1283,10 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                         classes = f"{classes} library-skill-row-blocked"
                     if row.selected:
                         classes = f"{classes} is-selected"
-                    button = Button(
+                    # task-31945: the fifth list canvas gets the shared
+                    # row press behaviour too -- the flash swallows a fast
+                    # second click here exactly as it did on the other four.
+                    button = library_row_button(
                         f"{'› ' if row.selected else ''}{row.trust_glyph} {name}",
                         id=f"library-skill-row-{row.name}",
                         classes=classes,
