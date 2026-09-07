@@ -50,6 +50,8 @@ try {
   const empty = owned(vm.newArray());
   const budget = check(vm.callFunction(construct, reflect, budgetClass, empty));
   const models = [];
+  const scenes = [];
+  const layout = owned(vm.getProp(api, "layoutDiagram"));
   let failure = null;
   if (request.operation === "text") {
     const segment = owned(vm.getProp(api, "segmentGraphemes"));
@@ -61,23 +63,52 @@ try {
       models.push({clusters, widths});
     }
   } else {
-    for (const source of request.sources ?? [request.source]) {
-      const arg = owned(vm.newString(source));
-      const result = vm.callFunction(parse, vm.undefined, arg, budget);
+    for (const source of request.operation === "render" ? [null] : request.sources ?? [request.source]) {
+      let result;
+      if (request.operation === "render") {
+        const render = owned(vm.getProp(api, "renderDiagrams"));
+        const records = owned(vm.newArray());
+        for (const [index, text] of (request.sources ?? [request.source]).entries()) {
+          const record = owned(vm.newObject());
+          vm.setProp(record, "source", owned(vm.newString(text)));
+          vm.setProp(records, index, record);
+        }
+        result = vm.callFunction(render, vm.undefined, records);
+      } else {
+        const arg = owned(vm.newString(source));
+        result = vm.callFunction(parse, vm.undefined, arg, budget);
+      }
+      if (!result.error && request.operation === "layout") {
+        const model = owned(result.value);
+        models.push(vm.dump(model));
+        // Component tests exhaust one real budget scope without raising its caps.
+        for (const scope of ["diagram", "document"]) {
+          const counts = owned(vm.getProp(budget, scope));
+          const set = owned(vm.getProp(counts, "set"));
+          for (const [kind, amount] of Object.entries(request.seed?.[scope] ?? {})) {
+            check(vm.callFunction(set, counts, owned(vm.newString(kind)), owned(vm.newNumber(amount))));
+          }
+        }
+        result = vm.callFunction(layout, vm.undefined, model, budget);
+      }
       if (result.error) {
         const error = owned(result.error);
         const code = owned(vm.getProp(error, "code"));
         const value = vm.dump(code);
-        const codes = new Set(["parse-error", "unsupported-syntax", "unsupported-label", "invalid-id", "invalid-text", "conflicting-node", "missing-endpoint", "cycle", "self-message", "duplicate-participant", "empty-diagram", "declaration-limit", "input-limit", "labels-limit", "label-limit", "nodes-limit", "edges-limit", "participants-limit", "messages-limit", "notes-limit"]);
+        const codes = new Set(["parse-error", "unsupported-syntax", "unsupported-label", "invalid-id", "invalid-text", "conflicting-node", "missing-endpoint", "cycle", "self-message", "duplicate-participant", "empty-diagram", "declaration-limit", "input-limit", "labels-limit", "label-limit", "nodes-limit", "edges-limit", "participants-limit", "messages-limit", "notes-limit", "work-limit", "elements-limit", "output-limit", "area-limit", "geometry-limit"]);
         if (!codes.has(value)) throw new Error("unexpected guest failure: " + JSON.stringify(vm.dump(error)));
         failure = {code: value};
         for (const key of ["ordinal", "line", "column"]) failure[key] = vm.dump(owned(vm.getProp(error, key)));
         break;
       }
-      models.push(vm.dump(owned(result.value)));
+      const value = vm.dump(owned(result.value));
+      if (request.operation === "render") scenes.push(...value);
+      else (request.operation === "layout" ? scenes : models).push(value);
     }
   }
-  process.stdout.write(JSON.stringify({ok: failure === null, model: request.sources ? models : models[0] ?? null, error: failure}));
+  const output = {ok: failure === null, model: request.sources ? models : models[0] ?? null, error: failure};
+  if (["layout", "render"].includes(request.operation)) output.scene = request.sources ? scenes : scenes[0] ?? null;
+  process.stdout.write(JSON.stringify(output));
 } finally {
   for (const handle of handles.reverse()) handle.dispose();
   vm.dispose(); runtime.dispose();

@@ -47,13 +47,13 @@ def test_pinned_graphemes_and_width_preserve_codepoints():
         }
     )
     assert result["model"] == [
-        {"clusters": ["e\u0301"], "widths": [8]},
-        {"clusters": ["👨‍👩‍👧‍👦"], "widths": [16]},
-        {"clusters": ["🇦🇧", "🇨"], "widths": [16, 16]},
-        {"clusters": ["क्ष"], "widths": [8]},
-        {"clusters": ["中"], "widths": [16]},
+        {"clusters": ["e\u0301"], "widths": [16]},
+        {"clusters": ["👨‍👩‍👧‍👦"], "widths": [32]},
+        {"clusters": ["🇦🇧", "🇨"], "widths": [32, 32]},
+        {"clusters": ["क्ष"], "widths": [16]},
+        {"clusters": ["中"], "widths": [32]},
         {"clusters": ["\r\n"], "widths": [0]},
-        {"clusters": ["א"], "widths": [8]},
+        {"clusters": ["א"], "widths": [16]},
     ]
 
 
@@ -215,7 +215,7 @@ def test_four_small_diagrams_share_one_startup_vm():
 
 def test_keycap_emoji_uses_the_pinned_vs16_width_rule():
     result = run_mermaid_case({"operation": "text", "sources": ["1️⃣"]})
-    assert result["model"] == [{"clusters": ["1️⃣"], "widths": [16]}]
+    assert result["model"] == [{"clusters": ["1️⃣"], "widths": [32]}]
 
 
 @pytest.mark.parametrize(

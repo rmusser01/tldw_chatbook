@@ -1,0 +1,3671 @@
+[
+  {
+    "name": "branch_td",
+    "source": "flowchart TD\nA[Start] --> B{Ready?}\nB -->|Yes| C(Continue)\nB -->|No| D[Revise]\nC --> E[Join]\nD --> E",
+    "expected": {
+      "ok": true,
+      "model": {
+        "kind": "flow",
+        "direction": "TD",
+        "nodes": [
+          {
+            "id": "A",
+            "label": "Start",
+            "shape": "rect"
+          },
+          {
+            "id": "B",
+            "label": "Ready?",
+            "shape": "diamond"
+          },
+          {
+            "id": "C",
+            "label": "Continue",
+            "shape": "rounded"
+          },
+          {
+            "id": "D",
+            "label": "Revise",
+            "shape": "rect"
+          },
+          {
+            "id": "E",
+            "label": "Join",
+            "shape": "rect"
+          }
+        ],
+        "edges": [
+          {
+            "from": "A",
+            "to": "B",
+            "label": ""
+          },
+          {
+            "from": "B",
+            "to": "C",
+            "label": "Yes"
+          },
+          {
+            "from": "B",
+            "to": "D",
+            "label": "No"
+          },
+          {
+            "from": "C",
+            "to": "E",
+            "label": ""
+          },
+          {
+            "from": "D",
+            "to": "E",
+            "label": ""
+          }
+        ]
+      },
+      "error": null,
+      "scene": {
+        "width": 408,
+        "height": 624,
+        "root": {
+          "tag": "div",
+          "attributes": [
+            [
+              "style",
+              "overflow:auto;max-width:100%"
+            ]
+          ],
+          "text": "",
+          "children": [
+            {
+              "tag": "p",
+              "attributes": [],
+              "text": "Flowchart. Diagram source follows.",
+              "children": []
+            },
+            {
+              "tag": "svg",
+              "attributes": [
+                [
+                  "width",
+                  "408"
+                ],
+                [
+                  "height",
+                  "624"
+                ],
+                [
+                  "viewBox",
+                  "0 0 408 624"
+                ],
+                [
+                  "style",
+                  "display:block;max-width:none;flex-shrink:0"
+                ]
+              ],
+              "text": "",
+              "children": [
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M80 72L80 96L152 96L152 144"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M148 136L152 144L156 136"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M152 240L152 288L104 288L104 384"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M100 376L104 384L108 376"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "160"
+                    ],
+                    [
+                      "y",
+                      "278"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Yes",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M152 240L152 336L296 336L296 384"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M292 376L296 384L300 376"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "160"
+                    ],
+                    [
+                      "y",
+                      "326"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "No",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M104 432L104 456L72 456L72 528"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M68 520L72 528L76 520"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M296 432L296 480L72 480L72 528"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M68 520L72 528L76 520"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 24H136V72H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Start",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M152 144L280 192L152 240L24 192Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "104"
+                    ],
+                    [
+                      "y",
+                      "198"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Ready?",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M32 384H176Q184 384 184 392V424Q184 432 176 432H32Q24 432 24 424V392Q24 384 32 384Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "414"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Continue",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M232 384H360V432H232Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "248"
+                    ],
+                    [
+                      "y",
+                      "414"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Revise",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 528H120V576H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "558"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Join",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "pre",
+              "attributes": [],
+              "text": "flowchart TD\nA[Start] --> B{Ready?}\nB -->|Yes| C(Continue)\nB -->|No| D[Revise]\nC --> E[Join]\nD --> E",
+              "children": []
+            }
+          ]
+        },
+        "metrics": {
+          "input": 100,
+          "nodes": 5,
+          "labels": 34,
+          "edges": 5,
+          "work": 438,
+          "elements": 23,
+          "output": 3855,
+          "area": 254592
+        }
+      }
+    }
+  },
+  {
+    "name": "branch_tb",
+    "source": "flowchart TB\nA[Start] --> B{Ready?}\nB -->|Yes| C(Continue)\nB -->|No| D[Revise]\nC --> E[Join]\nD --> E",
+    "expected": {
+      "ok": true,
+      "model": {
+        "kind": "flow",
+        "direction": "TD",
+        "nodes": [
+          {
+            "id": "A",
+            "label": "Start",
+            "shape": "rect"
+          },
+          {
+            "id": "B",
+            "label": "Ready?",
+            "shape": "diamond"
+          },
+          {
+            "id": "C",
+            "label": "Continue",
+            "shape": "rounded"
+          },
+          {
+            "id": "D",
+            "label": "Revise",
+            "shape": "rect"
+          },
+          {
+            "id": "E",
+            "label": "Join",
+            "shape": "rect"
+          }
+        ],
+        "edges": [
+          {
+            "from": "A",
+            "to": "B",
+            "label": ""
+          },
+          {
+            "from": "B",
+            "to": "C",
+            "label": "Yes"
+          },
+          {
+            "from": "B",
+            "to": "D",
+            "label": "No"
+          },
+          {
+            "from": "C",
+            "to": "E",
+            "label": ""
+          },
+          {
+            "from": "D",
+            "to": "E",
+            "label": ""
+          }
+        ]
+      },
+      "error": null,
+      "scene": {
+        "width": 408,
+        "height": 624,
+        "root": {
+          "tag": "div",
+          "attributes": [
+            [
+              "style",
+              "overflow:auto;max-width:100%"
+            ]
+          ],
+          "text": "",
+          "children": [
+            {
+              "tag": "p",
+              "attributes": [],
+              "text": "Flowchart. Diagram source follows.",
+              "children": []
+            },
+            {
+              "tag": "svg",
+              "attributes": [
+                [
+                  "width",
+                  "408"
+                ],
+                [
+                  "height",
+                  "624"
+                ],
+                [
+                  "viewBox",
+                  "0 0 408 624"
+                ],
+                [
+                  "style",
+                  "display:block;max-width:none;flex-shrink:0"
+                ]
+              ],
+              "text": "",
+              "children": [
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M80 72L80 96L152 96L152 144"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M148 136L152 144L156 136"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M152 240L152 288L104 288L104 384"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M100 376L104 384L108 376"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "160"
+                    ],
+                    [
+                      "y",
+                      "278"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Yes",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M152 240L152 336L296 336L296 384"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M292 376L296 384L300 376"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "160"
+                    ],
+                    [
+                      "y",
+                      "326"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "No",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M104 432L104 456L72 456L72 528"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M68 520L72 528L76 520"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M296 432L296 480L72 480L72 528"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M68 520L72 528L76 520"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 24H136V72H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Start",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M152 144L280 192L152 240L24 192Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "104"
+                    ],
+                    [
+                      "y",
+                      "198"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Ready?",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M32 384H176Q184 384 184 392V424Q184 432 176 432H32Q24 432 24 424V392Q24 384 32 384Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "414"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Continue",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M232 384H360V432H232Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "248"
+                    ],
+                    [
+                      "y",
+                      "414"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Revise",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 528H120V576H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "558"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Join",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "pre",
+              "attributes": [],
+              "text": "flowchart TB\nA[Start] --> B{Ready?}\nB -->|Yes| C(Continue)\nB -->|No| D[Revise]\nC --> E[Join]\nD --> E",
+              "children": []
+            }
+          ]
+        },
+        "metrics": {
+          "input": 100,
+          "nodes": 5,
+          "labels": 34,
+          "edges": 5,
+          "work": 438,
+          "elements": 23,
+          "output": 3855,
+          "area": 254592
+        }
+      }
+    }
+  },
+  {
+    "name": "branch_lr",
+    "source": "flowchart LR\nA[Start] --> B{Ready?}\nB -->|Yes| C(Continue)\nB -->|No| D[Revise]\nC --> E[Join]\nD --> E",
+    "expected": {
+      "ok": true,
+      "model": {
+        "kind": "flow",
+        "direction": "LR",
+        "nodes": [
+          {
+            "id": "A",
+            "label": "Start",
+            "shape": "rect"
+          },
+          {
+            "id": "B",
+            "label": "Ready?",
+            "shape": "diamond"
+          },
+          {
+            "id": "C",
+            "label": "Continue",
+            "shape": "rounded"
+          },
+          {
+            "id": "D",
+            "label": "Revise",
+            "shape": "rect"
+          },
+          {
+            "id": "E",
+            "label": "Join",
+            "shape": "rect"
+          }
+        ],
+        "edges": [
+          {
+            "from": "A",
+            "to": "B",
+            "label": ""
+          },
+          {
+            "from": "B",
+            "to": "C",
+            "label": "Yes"
+          },
+          {
+            "from": "B",
+            "to": "D",
+            "label": "No"
+          },
+          {
+            "from": "C",
+            "to": "E",
+            "label": ""
+          },
+          {
+            "from": "D",
+            "to": "E",
+            "label": ""
+          }
+        ]
+      },
+      "error": null,
+      "scene": {
+        "width": 1040,
+        "height": 264,
+        "root": {
+          "tag": "div",
+          "attributes": [
+            [
+              "style",
+              "overflow:auto;max-width:100%"
+            ]
+          ],
+          "text": "",
+          "children": [
+            {
+              "tag": "p",
+              "attributes": [],
+              "text": "Flowchart. Diagram source follows.",
+              "children": []
+            },
+            {
+              "tag": "svg",
+              "attributes": [
+                [
+                  "width",
+                  "1040"
+                ],
+                [
+                  "height",
+                  "264"
+                ],
+                [
+                  "viewBox",
+                  "0 0 1040 264"
+                ],
+                [
+                  "style",
+                  "display:block;max-width:none;flex-shrink:0"
+                ]
+              ],
+              "text": "",
+              "children": [
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M136 48L160 48L160 72L208 72"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M200 76L208 72L200 68"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M464 72L536 72L536 48L640 48"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M632 52L640 48L632 44"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "488"
+                    ],
+                    [
+                      "y",
+                      "98"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Yes",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M464 72L592 72L592 168L640 168"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M632 172L640 168L632 164"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "560"
+                    ],
+                    [
+                      "y",
+                      "98"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "No",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M800 48L824 48L824 48L896 48"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M888 52L896 48L888 44"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M768 168L848 168L848 48L896 48"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M888 52L896 48L888 44"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 24H136V72H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Start",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M336 24L464 72L336 120L208 72Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "288"
+                    ],
+                    [
+                      "y",
+                      "78"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Ready?",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M648 24H792Q800 24 800 32V64Q800 72 792 72H648Q640 72 640 64V32Q640 24 648 24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "656"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Continue",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M640 144H768V192H640Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "656"
+                    ],
+                    [
+                      "y",
+                      "174"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Revise",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M896 24H992V72H896Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "912"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Join",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "pre",
+              "attributes": [],
+              "text": "flowchart LR\nA[Start] --> B{Ready?}\nB -->|Yes| C(Continue)\nB -->|No| D[Revise]\nC --> E[Join]\nD --> E",
+              "children": []
+            }
+          ]
+        },
+        "metrics": {
+          "input": 100,
+          "nodes": 5,
+          "labels": 34,
+          "edges": 5,
+          "work": 438,
+          "elements": 23,
+          "output": 3835,
+          "area": 274560
+        }
+      }
+    }
+  },
+  {
+    "name": "sequence_notes",
+    "source": "sequenceDiagram\nparticipant A as Alice\nparticipant B as Bob\nparticipant C as Carol\nA->>B: Hello\nNote left of A: Left\nNote right of B: Right\nNote over B: One\nNote over A,C: Shared note\nB-->>C: Reply",
+    "expected": {
+      "ok": true,
+      "model": {
+        "kind": "sequence",
+        "participants": [
+          {
+            "id": "A",
+            "label": "Alice"
+          },
+          {
+            "id": "B",
+            "label": "Bob"
+          },
+          {
+            "id": "C",
+            "label": "Carol"
+          }
+        ],
+        "messages": [
+          {
+            "from": "A",
+            "to": "B",
+            "label": "Hello",
+            "dashed": false,
+            "order": 0
+          },
+          {
+            "from": "B",
+            "to": "C",
+            "label": "Reply",
+            "dashed": true,
+            "order": 5
+          }
+        ],
+        "notes": [
+          {
+            "side": "left",
+            "participants": [
+              "A"
+            ],
+            "label": "Left",
+            "order": 1
+          },
+          {
+            "side": "right",
+            "participants": [
+              "B"
+            ],
+            "label": "Right",
+            "order": 2
+          },
+          {
+            "side": "over",
+            "participants": [
+              "B"
+            ],
+            "label": "One",
+            "order": 3
+          },
+          {
+            "side": "over",
+            "participants": [
+              "A",
+              "C"
+            ],
+            "label": "Shared note",
+            "order": 4
+          }
+        ]
+      },
+      "error": null,
+      "scene": {
+        "width": 1144,
+        "height": 544,
+        "root": {
+          "tag": "div",
+          "attributes": [
+            [
+              "style",
+              "overflow:auto;max-width:100%"
+            ]
+          ],
+          "text": "",
+          "children": [
+            {
+              "tag": "p",
+              "attributes": [],
+              "text": "Sequence diagram. Diagram source follows.",
+              "children": []
+            },
+            {
+              "tag": "svg",
+              "attributes": [
+                [
+                  "width",
+                  "1144"
+                ],
+                [
+                  "height",
+                  "544"
+                ],
+                [
+                  "viewBox",
+                  "0 0 1144 544"
+                ],
+                [
+                  "style",
+                  "display:block;max-width:none;flex-shrink:0"
+                ]
+              ],
+              "text": "",
+              "children": [
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M304 72V520"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ],
+                    [
+                      "stroke-dasharray",
+                      "4 4"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M576 72V520"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ],
+                    [
+                      "stroke-dasharray",
+                      "4 4"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M880 72V520"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ],
+                    [
+                      "stroke-dasharray",
+                      "4 4"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "312"
+                    ],
+                    [
+                      "y",
+                      "122"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Hello",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M304 136L576 136"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M568 140L576 136L568 132"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M192 168H288V216H192Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "208"
+                    ],
+                    [
+                      "y",
+                      "198"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Left",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M592 240H704V288H592Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "608"
+                    ],
+                    [
+                      "y",
+                      "270"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Right",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M536 312H616V360H536Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "552"
+                    ],
+                    [
+                      "y",
+                      "342"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "One",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M288 384H896V432H288Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "304"
+                    ],
+                    [
+                      "y",
+                      "414"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Shared note",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "584"
+                    ],
+                    [
+                      "y",
+                      "474"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Reply",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M576 488L880 488"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ],
+                    [
+                      "stroke-dasharray",
+                      "6 4"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M872 492L880 488L872 484"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M248 24H360V72H248Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "264"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Alice",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M536 24H616V72H536Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "552"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Bob",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M824 24H936V72H824Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "840"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "Carol",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "pre",
+              "attributes": [],
+              "text": "sequenceDiagram\nparticipant A as Alice\nparticipant B as Bob\nparticipant C as Carol\nA->>B: Hello\nNote left of A: Left\nNote right of B: Right\nNote over B: One\nNote over A,C: Shared note\nB-->>C: Reply",
+              "children": []
+            }
+          ]
+        },
+        "metrics": {
+          "input": 197,
+          "participants": 3,
+          "labels": 46,
+          "messages": 2,
+          "notes": 4,
+          "work": 213,
+          "elements": 24,
+          "output": 4142,
+          "area": 622336
+        }
+      }
+    }
+  },
+  {
+    "name": "unicode",
+    "source": "flowchart TD\nA[\"中文 é 👨‍👩‍👧‍👦 שלום\"] --> B[\"क्ष 1️⃣\"]",
+    "expected": {
+      "ok": true,
+      "model": {
+        "kind": "flow",
+        "direction": "TD",
+        "nodes": [
+          {
+            "id": "A",
+            "label": "中文 é 👨‍👩‍👧‍👦 שלום",
+            "shape": "rect"
+          },
+          {
+            "id": "B",
+            "label": "क्ष 1️⃣",
+            "shape": "rect"
+          }
+        ],
+        "edges": [
+          {
+            "from": "A",
+            "to": "B",
+            "label": ""
+          }
+        ]
+      },
+      "error": null,
+      "scene": {
+        "width": 296,
+        "height": 264,
+        "root": {
+          "tag": "div",
+          "attributes": [
+            [
+              "style",
+              "overflow:auto;max-width:100%"
+            ]
+          ],
+          "text": "",
+          "children": [
+            {
+              "tag": "p",
+              "attributes": [],
+              "text": "Flowchart. Diagram source follows.",
+              "children": []
+            },
+            {
+              "tag": "svg",
+              "attributes": [
+                [
+                  "width",
+                  "296"
+                ],
+                [
+                  "height",
+                  "264"
+                ],
+                [
+                  "viewBox",
+                  "0 0 296 264"
+                ],
+                [
+                  "style",
+                  "display:block;max-width:none;flex-shrink:0"
+                ]
+              ],
+              "text": "",
+              "children": [
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M136 96L136 120L72 120L72 168"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M68 160L72 168L76 160"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 24H248V96H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "中文 é 👨‍👩‍👧‍👦 של",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "78"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "ום",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 168H120V216H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "198"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "क्ष 1️⃣",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "pre",
+              "attributes": [],
+              "text": "flowchart TD\nA[\"中文 é 👨‍👩‍👧‍👦 שלום\"] --> B[\"क्ष 1️⃣\"]",
+              "children": []
+            }
+          ]
+        },
+        "metrics": {
+          "input": 90,
+          "nodes": 2,
+          "labels": 62,
+          "edges": 1,
+          "work": 103,
+          "elements": 8,
+          "output": 1713,
+          "area": 78144
+        }
+      }
+    }
+  },
+  {
+    "name": "unbreakable",
+    "source": "flowchart LR\nA[\"unbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakable\"] --> B[End]",
+    "expected": {
+      "ok": true,
+      "model": {
+        "kind": "flow",
+        "direction": "LR",
+        "nodes": [
+          {
+            "id": "A",
+            "label": "unbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakable",
+            "shape": "rect"
+          },
+          {
+            "id": "B",
+            "label": "End",
+            "shape": "rect"
+          }
+        ],
+        "edges": [
+          {
+            "from": "A",
+            "to": "B",
+            "label": ""
+          }
+        ]
+      },
+      "error": null,
+      "scene": {
+        "width": 448,
+        "height": 336,
+        "root": {
+          "tag": "div",
+          "attributes": [
+            [
+              "style",
+              "overflow:auto;max-width:100%"
+            ]
+          ],
+          "text": "",
+          "children": [
+            {
+              "tag": "p",
+              "attributes": [],
+              "text": "Flowchart. Diagram source follows.",
+              "children": []
+            },
+            {
+              "tag": "svg",
+              "attributes": [
+                [
+                  "width",
+                  "448"
+                ],
+                [
+                  "height",
+                  "336"
+                ],
+                [
+                  "viewBox",
+                  "0 0 448 336"
+                ],
+                [
+                  "style",
+                  "display:block;max-width:none;flex-shrink:0"
+                ]
+              ],
+              "text": "",
+              "children": [
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M248 156L272 156L272 48L320 48"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M312 52L320 48L312 44"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 24H248V288H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "unbreakableu",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "78"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "nbreakableun",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "102"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "breakableunb",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "126"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "reakableunbr",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "150"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "eakableunbre",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "174"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "akableunbrea",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "198"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "kableunbreak",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "222"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "ableunbreaka",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "246"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "bleunbreakab",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "40"
+                    ],
+                    [
+                      "y",
+                      "270"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "le",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M320 24H400V72H320Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "336"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "End",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "pre",
+              "attributes": [],
+              "text": "flowchart LR\nA[\"unbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakableunbreakable\"] --> B[End]",
+              "children": []
+            }
+          ]
+        },
+        "metrics": {
+          "input": 139,
+          "nodes": 2,
+          "labels": 113,
+          "edges": 1,
+          "work": 210,
+          "elements": 16,
+          "output": 3257,
+          "area": 150528
+        }
+      }
+    }
+  },
+  {
+    "name": "long_edge",
+    "source": "flowchart TD\nA -->|xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx| B",
+    "expected": {
+      "ok": true,
+      "model": {
+        "kind": "flow",
+        "direction": "TD",
+        "nodes": [
+          {
+            "id": "A",
+            "label": "A",
+            "shape": "rect"
+          },
+          {
+            "id": "B",
+            "label": "B",
+            "shape": "rect"
+          }
+        ],
+        "edges": [
+          {
+            "from": "A",
+            "to": "B",
+            "label": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      },
+      "error": null,
+      "scene": {
+        "width": 216,
+        "height": 624,
+        "root": {
+          "tag": "div",
+          "attributes": [
+            [
+              "style",
+              "overflow:auto;max-width:100%"
+            ]
+          ],
+          "text": "",
+          "children": [
+            {
+              "tag": "p",
+              "attributes": [],
+              "text": "Flowchart. Diagram source follows.",
+              "children": []
+            },
+            {
+              "tag": "svg",
+              "attributes": [
+                [
+                  "width",
+                  "216"
+                ],
+                [
+                  "height",
+                  "624"
+                ],
+                [
+                  "viewBox",
+                  "0 0 216 624"
+                ],
+                [
+                  "style",
+                  "display:block;max-width:none;flex-shrink:0"
+                ]
+              ],
+              "text": "",
+              "children": [
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M56 72L56 480L56 480L56 528"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M52 520L56 528L60 520"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "110"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "134"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "158"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "182"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "206"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "230"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "254"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "278"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "302"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "326"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "350"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "374"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "398"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "422"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "446"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "64"
+                    ],
+                    [
+                      "y",
+                      "470"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "xxxxxxxx",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 24H88V72H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "48"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "A",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 528H88V576H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "48"
+                    ],
+                    [
+                      "y",
+                      "558"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "B",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "pre",
+              "attributes": [],
+              "text": "flowchart TD\nA -->|xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx| B",
+              "children": []
+            }
+          ]
+        },
+        "metrics": {
+          "input": 150,
+          "nodes": 2,
+          "labels": 130,
+          "edges": 1,
+          "work": 240,
+          "elements": 23,
+          "output": 4538,
+          "area": 134784
+        }
+      }
+    }
+  },
+  {
+    "name": "skip_rank",
+    "source": "flowchart TD\nA-->B\nB-->C\nA-->C",
+    "expected": {
+      "ok": true,
+      "model": {
+        "kind": "flow",
+        "direction": "TD",
+        "nodes": [
+          {
+            "id": "A",
+            "label": "A",
+            "shape": "rect"
+          },
+          {
+            "id": "B",
+            "label": "B",
+            "shape": "rect"
+          },
+          {
+            "id": "C",
+            "label": "C",
+            "shape": "rect"
+          }
+        ],
+        "edges": [
+          {
+            "from": "A",
+            "to": "B",
+            "label": ""
+          },
+          {
+            "from": "B",
+            "to": "C",
+            "label": ""
+          },
+          {
+            "from": "A",
+            "to": "C",
+            "label": ""
+          }
+        ]
+      },
+      "error": null,
+      "scene": {
+        "width": 216,
+        "height": 384,
+        "root": {
+          "tag": "div",
+          "attributes": [
+            [
+              "style",
+              "overflow:auto;max-width:100%"
+            ]
+          ],
+          "text": "",
+          "children": [
+            {
+              "tag": "p",
+              "attributes": [],
+              "text": "Flowchart. Diagram source follows.",
+              "children": []
+            },
+            {
+              "tag": "svg",
+              "attributes": [
+                [
+                  "width",
+                  "216"
+                ],
+                [
+                  "height",
+                  "384"
+                ],
+                [
+                  "viewBox",
+                  "0 0 216 384"
+                ],
+                [
+                  "style",
+                  "display:block;max-width:none;flex-shrink:0"
+                ]
+              ],
+              "text": "",
+              "children": [
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M56 72L56 96L56 96L56 168"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M52 160L56 168L60 160"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M56 216L56 240L56 240L56 288"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M52 280L56 288L60 280"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M56 72L56 120L192 120L192 268L56 268L56 288"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M52 280L56 288L60 280"
+                    ],
+                    [
+                      "fill",
+                      "none"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 24H88V72H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "48"
+                    ],
+                    [
+                      "y",
+                      "54"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "A",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 168H88V216H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "48"
+                    ],
+                    [
+                      "y",
+                      "198"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "B",
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "attributes": [
+                    [
+                      "d",
+                      "M24 288H88V336H24Z"
+                    ],
+                    [
+                      "fill",
+                      "white"
+                    ],
+                    [
+                      "stroke",
+                      "black"
+                    ]
+                  ],
+                  "text": "",
+                  "children": []
+                },
+                {
+                  "tag": "text",
+                  "attributes": [
+                    [
+                      "x",
+                      "48"
+                    ],
+                    [
+                      "y",
+                      "318"
+                    ],
+                    [
+                      "style",
+                      "font-family:monospace;font-size:16px;font-weight:normal;font-style:normal;line-height:24px"
+                    ]
+                  ],
+                  "text": "C",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "pre",
+              "attributes": [],
+              "text": "flowchart TD\nA-->B\nB-->C\nA-->C",
+              "children": []
+            }
+          ]
+        },
+        "metrics": {
+          "input": 30,
+          "nodes": 3,
+          "labels": 3,
+          "edges": 3,
+          "work": 205,
+          "elements": 13,
+          "output": 2209,
+          "area": 82944
+        }
+      }
+    }
+  }
+]

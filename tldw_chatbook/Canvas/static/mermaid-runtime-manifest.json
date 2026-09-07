@@ -24,10 +24,10 @@
     "version": "0.25.9"
   },
   "mermaid_candidate": {
-    "inputs_sha256": "a752af0d16458944596bec569bbb68db8ece98171fecd4d034ca45aa5e952857",
+    "inputs_sha256": "9c5f36f3d5f1da0af23835c88dd1c1f135cc489835838e4a86878914a7fe7e94",
     "qualification": "not-qualified",
-    "source_bytes": 151289,
-    "source_sha256": "58285a5acf73c60ff269948622435c5d0b778f4002d6490257defc6c1b7ad514"
+    "source_bytes": 164420,
+    "source_sha256": "1bf4d4a5c8cd68b41a9b101784cbe9c5d687a7d1ab6917f6939b85bed25be4d0"
   },
   "outputs": {
     "THIRD_PARTY_LICENSES.txt": {
@@ -129,11 +129,11 @@
     },
     "grammar": {
       "id": "mermaid-11.17.2-jison-0.4.18-canvas-subset-1",
-      "sha256": "58285a5acf73c60ff269948622435c5d0b778f4002d6490257defc6c1b7ad514"
+      "sha256": "1bf4d4a5c8cd68b41a9b101784cbe9c5d687a7d1ab6917f6939b85bed25be4d0"
     },
     "layout": {
-      "id": "canvas-v1-layout-1",
-      "sha256": "de26e4be2a38ef2fad687bc33ab34416d805e61791433d8e3c1b614133c94878"
+      "id": "canvas-mermaid-layout-1",
+      "sha256": "3d4eac345d55fcf867321e410ef99bec55c6fec8fa834385424d73ed4bce6af5"
     },
     "plan": {
       "id": "canvas-v1-plan-1",
@@ -180,9 +180,9 @@
     },
     "unicode": {
       "segmentation": "UAX29-revision45-extended-grapheme-clusters",
-      "sha256": "ff73a1a3b3d6ecbb14f4f3e11bb4234beac2d8891bcc6ef952b3bb228d8bf295",
+      "sha256": "a39857c21838d48fe2db0db96d529b3c2876abddc3092112feab14fb1082550f",
       "version": "16.0.0",
-      "width": "canvas-cell-width-1"
+      "width": "canvas-cell-width-2"
     }
   },
   "quickjs": {
