@@ -102,11 +102,17 @@ class NavigateToScreen(Message):
         screen_context: dict[str, object] | None = None,
         *,
         on_completion: Callable[[bool], None] | None = None,
+        require_character_inspection_admission: bool = False,
+        is_current: Callable[[], bool] | None = None,
+        on_commit_started: Callable[[], bool] | None = None,
     ):
         super().__init__()
         self.screen_name = screen_name
         self.screen_context = dict(screen_context or {})
         self._on_completion = on_completion
+        self.require_character_inspection_admission = require_character_inspection_admission
+        self.is_current = is_current
+        self.on_commit_started = on_commit_started
         self._completion_reported = False
         self._target_ownership_committed = False
 

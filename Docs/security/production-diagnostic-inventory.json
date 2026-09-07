@@ -4090,7 +4090,7 @@
     },
     {
       "call_count": 394,
-      "diagnostic_digest": "541f4e9d263e89759fd9",
+      "diagnostic_digest": "7856c082f9ff9b55f58a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"

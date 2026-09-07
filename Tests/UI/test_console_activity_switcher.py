@@ -746,7 +746,7 @@ async def test_modal_opens_on_active_without_loading_history():
         active_results=(_active_entry("session:one", "Live deploy", session_id="one"),),
         history_loader=load_history,
     )
-    async with app.run_test(size=(90, 30)) as pilot:
+    async with app.run_test(size=(52, 20)) as pilot:
         await pilot.pause()
         assert isinstance(app.focused, Input)
         assert app.screen._entries, (
@@ -1061,7 +1061,7 @@ async def test_history_page_buttons_keep_pages_bounded():
         )
 
     app = _ActivitySwitcherApp(history_loader=load_history)
-    async with app.run_test(size=(90, 30)) as pilot:
+    async with app.run_test(size=(52, 20)) as pilot:
         await pilot.press("f3")
         await pilot.pause()
         assert len(app.screen.query(".console-switcher-result")) == 2
