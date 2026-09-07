@@ -3,11 +3,11 @@ id: TASK-31901
 title: >-
   Console note follow-ups: save-as-Note owner fix + settings surface for
   console.summarize_note
-status: In Progress
+status: Done
 assignee:
   - '@robert'
 created_date: '2026-09-07 06:04'
-updated_date: '2026-09-07 06:06'
+updated_date: '2026-09-07 22:07'
 labels: []
 dependencies: []
 ---
@@ -28,3 +28,9 @@ PR #2467 follow-ups: (1) the pre-existing save-as-Note path saves under current_
 <!-- SECTION:PLAN:BEGIN -->
 1. Fix user_id in _save_console_message_as_note; assert owner in tests\n2. Add summarize_note prompt surface to settings_context_memory\n3. Run targeted tests
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Save-as Note owner fixed (notes_user_id) with test; console.summarize_note surfaced in Settings > Console Behavior with a jump button + test; live smoke passed against local llama.cpp (summary factual, provenance present, zero compaction side-effects, note persisted via real notes facade); boot-census flake fixed by polling. Transcript-suite triage split to TASK-31902.
+<!-- SECTION:NOTES:END -->
