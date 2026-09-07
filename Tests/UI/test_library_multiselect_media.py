@@ -3142,3 +3142,85 @@ async def test_media_row_title_click_still_opens_the_item_in_browse_mode():
             message="A browse-mode title click did not open the item.",
         )
         assert screen._library_media_row_selection.count == 0
+
+
+# ---------------------------------------------------------------------------
+# task-28009: ONE state slot per row (controller ruling 4)
+# ---------------------------------------------------------------------------
+
+
+def _review_state_canvas_state(*, select_mode: bool) -> LibraryMediaCanvasState:
+    """Three rows: reviewed, in-set-not-yet, and off-set (the selected one)."""
+    rows = (
+        LibraryMediaRow(
+            media_id="1",
+            title="First item",
+            media_type="video",
+            secondary="video · today",
+            reviewed=True,
+        ),
+        LibraryMediaRow(
+            media_id="2",
+            title="Second item",
+            media_type="audio",
+            secondary="audio · today",
+            reviewed=False,
+        ),
+        LibraryMediaRow(
+            media_id="3",
+            title="Third item",
+            media_type="audio",
+            secondary="audio · today",
+            selected=True,
+        ),
+    )
+    return LibraryMediaCanvasState(
+        rows=rows,
+        type_options=("All", "audio", "video"),
+        active_type="All",
+        status_copy="",
+        empty_copy="",
+        selected_id="3",
+        preview_lines=(),
+        count=len(rows),
+        select_mode=select_mode,
+    )
+
+
+class _ReviewStateCanvasApp(ConsolidatedCSSApp):
+    def compose(self):
+        yield LibraryMediaCanvas(
+            canvas=_review_state_canvas_state(select_mode=False),
+            id="library-media-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_select_mode_marker_replaces_the_review_state_slot_in_place():
+    """The ☑/☐ takes the state slot rather than adding a second one -- through
+    the in-place select-mode and density patchers, not just a recompose."""
+    app = _ReviewStateCanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one("#library-media-canvas", LibraryMediaCanvas)
+
+        def slots() -> list[str]:
+            return [
+                str(button.label)[0]
+                for button in canvas.query(".library-media-row")
+            ]
+
+        assert slots() == ["✓", "·", "▸"]
+
+        canvas.apply_reader_state(_review_state_canvas_state(select_mode=True))
+        await pilot.pause()
+        assert slots() == ["☐", "☐", "☐"]
+
+        canvas.apply_reader_state(_review_state_canvas_state(select_mode=False))
+        await pilot.pause()
+        assert slots() == ["✓", "·", "▸"]
+
+        # The density patcher rebuilds from the stash, so the slot survives it
+        # (compact drops the ▸ current-row cue, exactly as it always has).
+        canvas.apply_compact_presentation(True)
+        await pilot.pause()
+        assert slots() == ["✓", "·", " "]

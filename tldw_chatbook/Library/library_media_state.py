@@ -38,6 +38,13 @@ LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_LOADING_TOOLTIP = "Trash is still loading."
 LIBRARY_MEDIA_TRASH_RESTORE_DISABLED_ERROR_TOOLTIP = "Trash could not be loaded."
 
 LIBRARY_MEDIA_BROWSE_PAGE_SIZE = 20
+#: Characters of a match-reason keyword a row shows before eliding
+#: (task-28008). It keeps the line SHORT; it does not make it fit
+#: everywhere. At the Items pane's 36-cell floor a keyword row still clips
+#: at the pane edge (pinned by
+#: ``test_keyword_reason_clips_at_the_36_cell_items_floor``), and an
+#: analysed + keyword row clips at the default width too.
+_KEYWORD_REASON_CHARS = 10
 _SQLITE_INTEGER_MAX = 2**63 - 1
 _MEDIA_BROWSE_SORTS = frozenset(
     {
@@ -62,8 +69,23 @@ MEDIA_SORT_CHOICES = (
     ("title_asc", "Title A-Z"),
     ("title_desc", "Title Z-A"),
 )
+#: The exact Library Media browse row contract (task-28008). ``has_analysis``
+#: is projected in SQL from the newest ``DocumentVersions`` row, so the list
+#: and the Reader can never disagree about whether an item is analysed.
+#: ``reviewed`` is NOT a media-DB fact: the projection leaves it ``None`` and
+#: the screen decorates it from the active review set (``None`` = no active
+#: set; ``False``/``True`` = in the set, not-yet/reviewed). Keyword match
+#: reasons stay a per-query side channel, deliberately not an eighth key.
 _MEDIA_SUMMARY_KEYS = frozenset(
-    {"id", "backing_media_id", "title", "media_type", "updated_at"}
+    {
+        "id",
+        "backing_media_id",
+        "title",
+        "media_type",
+        "updated_at",
+        "has_analysis",
+        "reviewed",
+    }
 )
 _MEDIA_TRASH_SUMMARY_KEYS = frozenset(
     {"id", "backing_media_id", "title", "media_type", "trash_date"}
@@ -154,7 +176,7 @@ def _freeze_media_summary_value(value: Any) -> Any:
 def validate_media_browse_items(
     items: Sequence[Mapping[str, Any]],
 ) -> tuple[Mapping[str, Any], ...]:
-    """Validate and detach exact five-key Library Media summary rows."""
+    """Validate and detach exact seven-key Library Media summary rows."""
     if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
         raise TypeError("Media browse result items must be a sequence.")
     stable_ids: set[str] = set()
@@ -165,8 +187,12 @@ def validate_media_browse_items(
             raise TypeError("Media browse result items must be mappings.")
         if set(item) != _MEDIA_SUMMARY_KEYS:
             raise ValueError(
-                "Media browse items must contain exactly five summary keys."
+                "Media browse items must contain exactly seven summary keys."
             )
+        if type(item["has_analysis"]) is not bool:
+            raise TypeError("has_analysis must be an exact bool.")
+        if item["reviewed"] is not None and type(item["reviewed"]) is not bool:
+            raise TypeError("reviewed must be True, False or None.")
         backing_id = item["backing_media_id"]
         if type(backing_id) is not int or backing_id < 1:
             raise ValueError("backing_media_id must be a positive integer.")
@@ -194,6 +220,13 @@ class MediaBrowseResult:
     total: int
     limit: int
     offset: int
+    #: task-28008: row id -> the keyword that put an OTHERWISE invisible row
+    #: on this page. Deliberately NOT an eighth summary key: the summary
+    #: contract describes a row's own identity, which is the same whatever
+    #: was typed, while a match reason is a fact about THIS query. It rides
+    #: the page envelope instead, the way ``analysis_action_reason`` rides
+    #: the canvas presentation. Empty whenever nothing needs explaining.
+    match_reasons: Mapping[str, str] = MappingProxyType({})
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, MediaBrowseScope):
@@ -216,6 +249,18 @@ class MediaBrowseResult:
         if len(frozen_items) != expected_count:
             raise ValueError("Media browse result item count is invalid for this page.")
         object.__setattr__(self, "items", frozen_items)
+        reasons = self.match_reasons
+        if not isinstance(reasons, Mapping):
+            raise TypeError("match_reasons must be a mapping.")
+        if any(
+            type(key) is not str
+            or type(value) is not str
+            or not key
+            or not value.strip()
+            for key, value in reasons.items()
+        ):
+            raise ValueError("match_reasons must map row ids to non-empty text.")
+        object.__setattr__(self, "match_reasons", MappingProxyType(dict(reasons)))
 
     @property
     def last_page(self) -> int:
@@ -246,6 +291,7 @@ def build_media_browse_result(
         total=payload["total"],
         limit=payload["limit"],
         offset=payload["offset"],
+        match_reasons=payload.get("match_reasons") or {},
     )
 
 
@@ -740,6 +786,11 @@ class LibraryMediaRow:
     checked: bool = False
     loading: bool = False
     loaded: bool = False
+    # task-28009: the row's review state -- ``True`` reviewed, ``False`` in
+    # the active set but not yet, ``None`` outside any active set (the
+    # screen decorates the browse rows; see
+    # ``LibraryScreen._decorate_library_media_reviewed``).
+    reviewed: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -1016,11 +1067,14 @@ def build_library_media_browse_state(
                 format_console_relative_age(
                     _first_present_text(item, ("updated_at",)), now=reference_now
                 ),
+                analysed=bool(item["has_analysis"]),
+                keyword=result.match_reasons.get(str(item["id"]), ""),
             ),
             selected=item["id"] == resolved_selected_id,
             checked=item["id"] in selected_ids,
             loading=item["id"] == loading_id,
             loaded=item["id"] == loaded_id,
+            reviewed=item["reviewed"],
         )
         for item in items
     )
@@ -1110,24 +1164,48 @@ def _parse_timestamp(value: str) -> datetime | None:
     return parsed
 
 
-def _secondary_text(media_type: str, age: str) -> str:
+def _secondary_text(
+    media_type: str, age: str, *, analysed: bool = False, keyword: str = ""
+) -> str:
     """Return secondary display text: '{type} · {age}' or fallback.
 
     Rules:
     - If type and age both present: 'type · age'
     - If only type (no age): 'type'
     - If no type: 'media' (regardless of age)
+    - task-28008: an item whose newest version carries analysis text gets a
+      trailing ' · analysed'. A WORD, not a colour or a glyph: the row has
+      to say what it means at the Items pane's 36-cell floor, which
+      'document · 5m · analysed' (24 cells) fits.
+    - task-28008 (critique #5 P2): a row the browse filter found through a
+      keyword alone gets a trailing ' · keyword: <term>', the term capped
+      at ten characters so an arbitrarily long tag cannot run away with
+      the line. The cap does NOT buy a fit: at the Items pane's 36-cell
+      floor 'article · 2m · keyword: notes' already clips at the pane edge,
+      and 'type · age · analysed · keyword: term' clips at the default
+      width too -- the cap bounds the damage, it does not remove it. It is
+      unconditional (not width-aware) so the line does not change under the
+      in-place density and select-mode rebuilds, which re-derive the label
+      from this text.
     """
     has_type = bool(media_type)
     has_age = bool(age)
 
     if has_type and has_age:
-        return f"{media_type} · {age}"
+        text = f"{media_type} · {age}"
     elif has_type:
-        return media_type
+        text = media_type
     else:
         # When no type, return 'media' regardless of age
-        return "media"
+        text = "media"
+    if analysed:
+        text = f"{text} · analysed"
+    if keyword:
+        term = keyword[:_KEYWORD_REASON_CHARS]
+        if len(keyword) > _KEYWORD_REASON_CHARS:
+            term += "…"
+        text = f"{text} · keyword: {term}"
+    return text
 
 
 def _sort_key(entry: _MediaEntry) -> tuple[int, float]:

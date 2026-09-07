@@ -159,6 +159,9 @@ class LibrarySummaryRecordingDb:
                 "title": "Summary title",
                 "type": "article",
                 "last_modified": "2026-08-16T12:00:00Z",
+                # Projected by the real DB as SQLite's 1/0, passed straight
+                # through by this service (task-28008).
+                "has_analysis": 1,
             }
         ], 45
 
@@ -245,6 +248,7 @@ def test_local_service_library_media_summary_uses_exact_db_offset_and_projection
                 "title": "Summary title",
                 "type": "article",
                 "last_modified": "2026-08-16T12:00:00Z",
+                "has_analysis": 1,
             }
         ],
         "total": 45,

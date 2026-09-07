@@ -14,16 +14,11 @@ from tldw_chatbook.UI.Library_Modules.library_media_browse_controller import (
     LibraryMediaBrowseController,
     _redact_paths,
 )
+from Tests.UI.library_media_rows import summary_row
 
 
 def _item(media_id: int) -> dict[str, object]:
-    return {
-        "id": f"local:media:{media_id}",
-        "backing_media_id": media_id,
-        "title": f"Media {media_id}",
-        "media_type": "video",
-        "updated_at": "2026-08-16T00:00:00+00:00",
-    }
+    return summary_row(id=media_id, media_type="video")
 
 
 def _page(page: int, total: int) -> dict[str, object]:

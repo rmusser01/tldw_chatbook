@@ -77,6 +77,39 @@ but names both items until the new detail settles. Late or failed loads cannot
 replace a newer selection. Conversations retains its existing paged
 list-and-preview layout.
 
+**Row markers.** An item's second row says what it is and how old it is, and
+adds **· analysed** when that item already carries an analysis — so you can
+see what is worth generating without opening anything (`document · 5m ·
+analysed`). Its title row starts with a single one-cell **state slot**. With
+no review set active it carries only the current-row pointer **▸** in the wide
+layout (blank otherwise); once a set is active (see "Review these" below),
+every item in the set carries **·** until you review it and **✓** afterwards,
+and items outside the set keep the pointer or stay blank — the current row is
+still highlighted, so nothing is lost when its **▸** gives way to a mark. The
+marks update the moment you mark an item reviewed in the Reader, without
+leaving it. Select mode
+reuses that same cell for its **☑/☐**, so a row never carries two markers.
+
+While a filter is active, a row it found only through one of its **keywords**
+adds **· keyword: \<term\>** — the filter searches titles, item text and
+keywords, so without it a hit whose title and body hold nothing you typed
+reads as a mistake (`article · 2m · keyword: notes`). A row whose title or
+text carries the term already shows you why it is there and says nothing
+extra. Long tags are cut to ten characters (`keyword: quokkasand…`) to keep
+the line short. It can still be too long for a narrow Items pane: at the
+pane's narrowest the row clips mid-term at the pane edge, and a row that is
+both analysed and a keyword hit can clip at the default width too.
+
+*Verified against fix/media-wave5-i @ c9838b5e4 — 2026-09-06 (tasks 28008/28009: four
+seeded `document` items, two of them analysed, live at 235x52 and 100x30.
+Both analysed rows painted `document · 5m · analysed` in full at the Items
+pane's 36-cell floor; "Review these" put `·` on every row, two `]` presses
+turned the first two into `✓`, and `s` replaced the slot with `☐` on every
+row rather than adding a second marker. task-28008 match reasons: three
+seeded `article` items filtered live at 235x52 on `quokka` — the two
+keyword-only rows painted `article · 1m · keyword: quokka` and `article · 1m ·
+keyword: quokkasand…`, the title hit painted `article · 1m`.)*
+
 ## Features & controls
 
 ### The shared select / export grammar

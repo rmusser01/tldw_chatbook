@@ -9,6 +9,7 @@ from types import MethodType, SimpleNamespace
 import pytest
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.library_media_rows import summary_row
 from Tests.UI.test_library_media_side_by_side import (
     WIDE_SIZE,
     _build_media_test_app,
@@ -730,20 +731,8 @@ def test_rows_expose_textual_loading_and_loaded_state():
         scope,
         {
             "items": [
-                {
-                    "id": "local:media:1",
-                    "backing_media_id": 1,
-                    "title": "A",
-                    "media_type": "audio",
-                    "updated_at": None,
-                },
-                {
-                    "id": "local:media:2",
-                    "backing_media_id": 2,
-                    "title": "B",
-                    "media_type": "video",
-                    "updated_at": None,
-                },
+                summary_row(id=1, title="A", media_type="audio", updated_at=None),
+                summary_row(id=2, title="B", media_type="video", updated_at=None),
             ],
             "total": 2,
             "limit": 20,
