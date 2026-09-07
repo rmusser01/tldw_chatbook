@@ -23,21 +23,12 @@ from ...Audio.meeting_session import (
     MeetingSegment,
     format_clock,
     is_widget_safe_cluster_id,
-    normalize_speaker_name,
     render_label,
-    update_meeting_json,
 )
+from ...config import save_setting_to_cli_config
 from ...Constants import LIBRARY_NAV_CONTEXT_INGEST, TAB_LIBRARY
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-
-# Absolute import (not this file's usual relative style): the diagnostic
-# inventory checker's safe-path-transform recognizer
-# (`scripts/check_persistent_diagnostic_inventory.py`) only matches
-# `redact_user_paths` imported as `tldw_chatbook.Utils.log_sanitizer`, not a
-# relative `from ...Utils.log_sanitizer import ...` -- matches
-# `meeting_session.py`/`library_media_canvas.py`'s own import of it.
-from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
 # "you"/"both" are NOT here (task 31746 review): `_coarse_label` resolves
 # them through the configured display-name helper instead, so a stale
@@ -48,6 +39,33 @@ STOP_REASON_COPY = {
     "mic_lost": "Microphone stopped delivering audio; the meeting was ended.",
     "disk_error": "Recording stopped: the disk write failed.",
 }
+#: Rail copy for every `VoiceMatchState.reason` (spec §3.5). Static strings:
+#: never a path, a device name or anything derived from the audio.
+VOICE_MATCH_OFF_COPY = {
+    "disabled": "disabled",
+    "plain_call_mode": "plain call mode",
+    "no_voiceprint": "no voiceprint",
+    "needs_reenrollment": "needs re-enrollment",
+    "cannot_decrypt": "store unreadable",
+    "keyring_locked": "keyring locked",
+    "store_unavailable": "store unavailable",
+}
+#: Why an enrollment did not produce a voiceprint (`EnrollResult.reason`).
+#: Anything unmapped is a recorder's own first line, already user-facing.
+ENROLL_REASON_COPY = {
+    "capture_busy": "the microphone is already in use",
+    "cancelled": "cancelled",
+    "no_audio": "no audio was captured",
+    "embed_failed": "the voice model could not use the sample",
+    "diarizer_unavailable": "the speaker model is unavailable",
+    "capture_failed": "the microphone could not be opened",
+    "mic_device_not_found": "the selected microphone was not found",
+    "store_unavailable": "the voiceprint store is unavailable",
+}
+#: Marker on the auto-matched cluster's label, so an automatic name is never
+#: mistaken for one the user typed (spec §3.4).
+SELF_MARKER = " ·"
+ENROLL_SECONDS = 30.0
 
 
 class MeetingsScreen(BaseAppScreen):
@@ -92,6 +110,17 @@ class MeetingsScreen(BaseAppScreen):
         # show the indicator rather than being permanently suppressed by a
         # previous session's loss.
         self._lost_shown = False
+        # ---- self voiceprint (TASK-31826) ----
+        # The store is built lazily, OFF the UI thread (the prepare worker),
+        # and never imported at module scope: `Audio.voiceprint` pulls the
+        # keyring backend, which boot must not (Task 6's import invariant).
+        self._store: Any | None = None
+        self._store_unavailable = False
+        self._offer: Any | None = None
+        self._enroll_cancel: threading.Event | None = None
+        self._enroll_timer = None
+        self._enroll_seconds_left = 0
+        self._delete_armed = False
 
     # ---- compose ----------------------------------------------------------
     def compose_content(self) -> ComposeResult:
@@ -114,6 +143,7 @@ class MeetingsScreen(BaseAppScreen):
                     yield Static("Transcriber: probing…", id="meetings-provider-status")
                     yield Static("Speaker labels after the meeting: probing…", id="meetings-diarization-status")
                     yield Static("Live speaker labels: probing…", id="meetings-live-diarization-status")
+                    yield Static("Voice match: probing…", id="meetings-voice-match-status")
                     yield Static("Recording other people may require their consent.", id="meetings-consent", classes="destination-note")
                     with Horizontal(id="meetings-controls"):
                         yield Button(
@@ -136,6 +166,65 @@ class MeetingsScreen(BaseAppScreen):
                         "Recover", id="meetings-recover", disabled=True,
                         tooltip="Recover the unfinished meeting recording found in this folder.",
                     )
+                    # ---- learning offer (post-Stop, never modal) -----------
+                    with Vertical(id="meetings-learn-offer"):
+                        yield Static("", id="meetings-learn-offer-copy", markup=False)
+                        with Horizontal(id="meetings-learn-offer-actions"):
+                            yield Button(
+                                "Accept", id="meetings-learn-accept", variant="success",
+                                tooltip="Add this meeting's sample to your stored voiceprint.",
+                            )
+                            yield Button(
+                                "Not now", id="meetings-learn-decline",
+                                tooltip="Keep nothing from this meeting; ask again next time.",
+                            )
+                            yield Button(
+                                "Don't ask again", id="meetings-learn-never",
+                                tooltip="Keep nothing and stop offering to learn your voice.",
+                            )
+                    # ---- your voice ----------------------------------------
+                    yield Static("Your voice", classes="destination-section")
+                    yield Static("Voice: checking…", id="meetings-voice-status")
+                    with Horizontal(id="meetings-voice-actions"):
+                        yield Button(
+                            "Enroll my voice", id="meetings-enroll",
+                            tooltip="Record about 30 seconds of your voice so meetings can label you.",
+                        )
+                        yield Button(
+                            "Delete", id="meetings-voice-delete",
+                            tooltip="Delete the stored voiceprint from this device.",
+                        )
+                        yield Button(
+                            "Export…", id="meetings-voice-export",
+                            tooltip="Save an encrypted copy of your voiceprint to a file.",
+                        )
+                        yield Button(
+                            "Import…", id="meetings-voice-import",
+                            tooltip="Load a voiceprint from a file you exported.",
+                        )
+                    yield Static("", id="meetings-voice-message", markup=False)
+                    with Horizontal(id="meetings-enroll-progress-row"):
+                        yield Static("", id="meetings-enroll-progress")
+                        yield Button(
+                            "Cancel", id="meetings-enroll-cancel",
+                            tooltip="Stop this recording and keep nothing.",
+                        )
+                    with Vertical(id="meetings-voice-form"):
+                        yield Input(placeholder="Passphrase", password=True, id="meetings-voice-passphrase")
+                        yield Input(placeholder="File path", id="meetings-voice-path")
+                        with Horizontal(id="meetings-voice-form-actions"):
+                            yield Button(
+                                "Export to file", id="meetings-voice-export-run",
+                                tooltip="Write your voiceprint to this file, encrypted with this passphrase.",
+                            )
+                            yield Button(
+                                "Merge", id="meetings-voice-merge",
+                                tooltip="Blend the file's voiceprint into the one stored here.",
+                            )
+                            yield Button(
+                                "Replace", id="meetings-voice-replace",
+                                tooltip="Discard the stored voiceprint and keep the file's instead.",
+                            )
                 with Vertical(id="meetings-canvas", classes="destination-workbench-pane"):
                     yield Static("Speakers", id="meetings-speaker-legend-title", classes="destination-section")
                     yield Vertical(id="meetings-speaker-legend")
@@ -153,7 +242,13 @@ class MeetingsScreen(BaseAppScreen):
 
     # ---- lifecycle --------------------------------------------------------
     def on_mount(self) -> None:
+        for widget_id in ("#meetings-learn-offer", "#meetings-enroll-progress-row",
+                          "#meetings-voice-form"):
+            self.query_one(widget_id).display = False
         self._attach_if_running()
+        # An offer the owner is still holding (this screen answered nothing
+        # before it was remounted) is shown again rather than left orphaned.
+        self._show_learning_offer(getattr(self._owner, "pending_offer", None))
         self._run_prepare()
         self._level_timer = self.set_interval(0.2, self._tick)
 
@@ -161,6 +256,19 @@ class MeetingsScreen(BaseAppScreen):
         self._detach()
         if self._level_timer is not None:
             self._level_timer.stop()
+        self._stop_countdown()
+        if self._enroll_cancel is not None:
+            # A recording that outlives its countdown and Cancel button has
+            # no way to be stopped: end it with the screen.
+            self._enroll_cancel.set()
+        if self._offer is not None and self._owner is not None:
+            # The offer lapses with the screen (spec §3.4): the warm worker it
+            # holds must not outlive the surface that offered to use it.
+            self._offer = None
+            try:
+                self._owner.dismiss_learning()
+            except Exception as exc:  # noqa: BLE001 - teardown must not raise
+                logger.debug("meetings offer dismiss: {}", type(exc).__name__)
         # No super().on_unmount(): the dispatcher already invokes
         # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
 
@@ -186,8 +294,11 @@ class MeetingsScreen(BaseAppScreen):
             self._session = None
 
     # ---- prepare (worker) -------------------------------------------------
-    @work(exclusive=True, group="meetings-prepare", thread=True)
+    @work(exclusive=True, group="meetings-prepare", thread=True, exit_on_error=False)
     def _run_prepare(self) -> None:
+        # Building the store imports the keyring backend, so it happens here,
+        # on the prepare thread, not on the first paint of the Voice row.
+        self._voice_store()
         if self._owner is None:
             self.app.call_from_thread(self._show_prepare_error, "Meetings are unavailable in this build.")
             return
@@ -202,6 +313,7 @@ class MeetingsScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         self.query_one("#meetings-provider-status", Static).update(f"Transcriber: {reason}")
+        self._refresh_voice_row()
 
     def _live_diarization_copy(self, prepared: PrepareResult) -> str:
         """Rail copy for `PrepareResult.live_diarization_active` (fix I4).
@@ -247,6 +359,10 @@ class MeetingsScreen(BaseAppScreen):
         self.query_one("#meetings-live-diarization-status", Static).update(
             f"Live speaker labels: {self._live_diarization_copy(prepared)}"
         )
+        # Provisional: `prepare()` only stats the store, so "on" here means
+        # "a voiceprint exists and will be verified at Start" (Task 4).
+        self._render_voice_match(getattr(prepared, "voice_match", None))
+        self._refresh_voice_row()
         devices = list(prepared.input_devices)
         settings = getattr(self._owner, "settings", None)
         self._syncing_pickers = True
@@ -278,7 +394,7 @@ class MeetingsScreen(BaseAppScreen):
             recovery.update("")
             recover.disabled = True
         if not prepared.capture_error and not (self._owner is not None and self._owner.is_active):
-            self.query_one("#meetings-start", Button).disabled = False
+            self.query_one("#meetings-start", Button).disabled = self._enrolling()
 
     # ---- device pickers ---------------------------------------------------
     def _clear_syncing_pickers(self) -> None:
@@ -346,6 +462,9 @@ class MeetingsScreen(BaseAppScreen):
         self._live_labels_requested = bool(getattr(prepared, "live_diarization_active", False))
         self._live_labels_built = getattr(session, "_diarizer", None) is not None
         session.subscribe(self._on_session_event)
+        # The verified verdict: `start()` performed the one decrypt, so the
+        # provisional "on" the rail may be showing is now settled either way.
+        self._render_voice_match(getattr(self._owner, "voice_match", None))
         self._set_buttons(session.state)
 
     @on(Button.Pressed, "#meetings-pause")
@@ -415,6 +534,7 @@ class MeetingsScreen(BaseAppScreen):
         self._detach()
         self._set_buttons("stopped")
         self._stop_requested = False
+        self._render_voice_match(getattr(self._owner, "voice_match", None))
         if result is None:
             return
         sink = getattr(self._owner, "local_sink", None)
@@ -447,6 +567,15 @@ class MeetingsScreen(BaseAppScreen):
         self.query_one("#meetings-footer", Static).update(" ".join(parts))
         self.query_one("#meetings-open-library", Button).disabled = not bool(job_id)
         self.query_one("#meetings-partial", Static).update("")
+        # ponytail: `learning_offer` may load the store, bounded by the
+        # owner's 1.5 s timeout and cached after Start -- once per meeting on
+        # the UI thread. Move it to the stop worker if that ever shows.
+        owner = self._owner
+        if owner is not None:
+            try:
+                self._show_learning_offer(owner.learning_offer(result))
+            except Exception as exc:  # noqa: BLE001 - an offer never fails a stop
+                logger.warning("meetings: learning offer failed ({})", type(exc).__name__)
 
     # ---- session events (capture threads -> loop) -------------------------
     def _on_session_event(self, kind: str, payload: Any) -> None:
@@ -476,6 +605,10 @@ class MeetingsScreen(BaseAppScreen):
                 partial.update("transcribing…")
             elif not self._transcribing and str(getattr(partial.renderable, "plain", partial.renderable)) == "transcribing…":
                 partial.update("")
+        elif kind == "speakers":
+            # A rename, or the self-voiceprint match naming a cluster with the
+            # user's display name: both change every row for that speaker.
+            self._refresh_speaker_labels()
         elif kind == "state":
             self._set_buttons(str(payload))
             if payload == "stopped" and self._session is not None and not self._stop_requested:
@@ -557,19 +690,55 @@ class MeetingsScreen(BaseAppScreen):
             return f"{self._user_display_name()} + Others"
         return LABELS.get(label, label)
 
+    def _matched_marker(self, cluster_id: str | None) -> str:
+        """`SELF_MARKER` for the cluster the voiceprint matched, else "".
+
+        Spec §3.4: the marker says "this name was chosen for you". An
+        override (a rename to anything but the user's own display name)
+        clears `matched_self_overridden`'s False, and with it the marker.
+
+        Args:
+            cluster_id: The cluster being rendered; None/"" never matches.
+
+        Returns:
+            The marker suffix, or an empty string.
+        """
+        session = self._session
+        if not cluster_id or session is None:
+            return ""
+        meta = session.meta
+        matched = getattr(meta, "matched_self", None) == cluster_id
+        return SELF_MARKER if matched and not getattr(meta, "matched_self_overridden", False) else ""
+
     def _line_for_segment(self, segment: MeetingSegment) -> str:
         stamp = f"[{format_clock(segment.t_audio_start)}]"
         names = self._session.meta.speaker_names if self._session is not None else {}
         diarize_mic = self._session.meta.diarize_mic_channel if self._session is not None else False
         label = render_label(segment, names, self._user_display_name(), diarize_mic=diarize_mic)
-        return f"{stamp} {label}: {segment.text}" if label else f"{stamp} {segment.text}"
+        if not label:
+            return f"{stamp} {segment.text}"
+        return f"{stamp} {label}{self._matched_marker(segment.speaker_id)}: {segment.text}"
 
     def _speaker_label(self, cluster_id: str) -> str:
         """The legend row's current display name for `cluster_id`."""
         names = self._session.meta.speaker_names if self._session is not None else {}
         diarize_mic = self._session.meta.diarize_mic_channel if self._session is not None else False
         placeholder = MeetingSegment(0, 0.0, 0.0, 0.0, 0.0, "others", "", speaker_id=cluster_id)
-        return render_label(placeholder, names, self._user_display_name(), diarize_mic=diarize_mic) or cluster_id
+        label = render_label(placeholder, names, self._user_display_name(), diarize_mic=diarize_mic)
+        return (label or cluster_id) + self._matched_marker(cluster_id)
+
+    def _refresh_speaker_labels(self) -> None:
+        """Repaint every legend label and the transcript from the name map."""
+        if not self.is_mounted:
+            return
+        for cluster_id in self._seen_speakers:
+            try:
+                self.query_one(f"#speaker-label-{cluster_id}", Static).update(
+                    self._speaker_label(cluster_id)
+                )
+            except NoMatches:
+                continue
+        self._rerender_transcript()
 
     def _note_speaker(self, segment: MeetingSegment) -> None:
         """Track a newly-seen `speaker_id`, mounting its legend row once."""
@@ -606,32 +775,17 @@ class MeetingsScreen(BaseAppScreen):
     def _apply_rename(self, cluster_id: str, name: str) -> None:
         """Rename `cluster_id` to `name` (blank removes it from the map).
 
-        Updates the session's live name map, pins the cluster with the
-        diarizer when it offers `pin` (most backends won't -- this is
-        optional by design), persists to `meeting.json`, and re-renders the
-        transcript. The state work below runs unconditionally so a rename
-        racing screen teardown still lands and persists; only the widget
-        refresh is `is_mounted`-guarded (phase-1 rule).
+        The session owns the sequence (TASK-31826): normalise, override the
+        self-voiceprint match when the matched cluster is renamed, pin the
+        cluster with the diarizer when it offers `pin`, persist to
+        `meeting.json` and re-emit. The state work runs unconditionally so a
+        rename racing screen teardown still lands and persists; only the
+        widget refresh is `is_mounted`-guarded (phase-1 rule).
         """
         session = self._session
         if session is None:
             return
-        name = normalize_speaker_name(name)
-        if name:
-            session.meta.speaker_names[cluster_id] = name
-        else:
-            session.meta.speaker_names.pop(cluster_id, None)
-        diarizer = getattr(session, "_diarizer", None)
-        if diarizer is not None and hasattr(diarizer, "pin"):
-            diarizer.pin(cluster_id)
-        try:
-            update_meeting_json(session.meta.folder, speaker_names=dict(session.meta.speaker_names))
-        except Exception as exc:  # noqa: BLE001 - a rename must not crash the screen
-            # `update_meeting_json` failures are usually filesystem errors,
-            # whose `str()` embeds the meeting folder path (task-9 diagnostic
-            # inventory review) -- same treatment as `meeting_session.py`'s
-            # other file-write failure logs.
-            logger.debug("meetings rename persist failed: {}", redact_user_paths(str(exc)))
+        session.rename_speaker(cluster_id, name)
         self._rerender_transcript()
         if not self.is_mounted:
             return
@@ -658,11 +812,21 @@ class MeetingsScreen(BaseAppScreen):
     def _set_buttons(self, state: str) -> None:
         active = state in ("starting", "recording", "paused", "stopping")
         controls_active = state in ("starting", "recording", "paused")
-        self.query_one("#meetings-start", Button).disabled = active
+        # Start is refused outright while an enrollment holds the microphone
+        # (`owner.start()` raises "enrolling: ..."), so it is not offered.
+        self.query_one("#meetings-start", Button).disabled = active or self._enrolling()
         self.query_one("#meetings-stop", Button).disabled = not controls_active
         pause = self.query_one("#meetings-pause", Button)
         pause.disabled = not controls_active
         pause.label = "Resume" if state == "paused" else "Pause"
+        # ... and the reverse: enrolling needs the mic a meeting is holding.
+        self.query_one("#meetings-enroll", Button).disabled = active or self._enrolling()
+
+    def _sync_controls(self) -> None:
+        """Re-apply the button rules for the current session state."""
+        if not self.is_mounted:
+            return
+        self._set_buttons(self._session.state if self._session is not None else "stopped")
 
     def _tick(self) -> None:
         session = self._session
@@ -680,6 +844,369 @@ class MeetingsScreen(BaseAppScreen):
                 )
         except Exception as exc:  # noqa: BLE001
             logger.debug("meetings tick: {}", exc)
+
+    # ---- self voiceprint: rail line, offer, enrollment, Voice row ---------
+    def _voice_match_copy(self, state: Any | None) -> str:
+        """Rail copy for a `VoiceMatchState` (spec §3.5).
+
+        Args:
+            state: The owner's verdict, or None when there is none yet.
+
+        Returns:
+            "Voice match: on", or "Voice match: off (<static reason>)".
+        """
+        if getattr(state, "state", "off") == "on":
+            return "Voice match: on"
+        reason = VOICE_MATCH_OFF_COPY.get(getattr(state, "reason", None) or "")
+        return f"Voice match: off ({reason})" if reason else "Voice match: off"
+
+    def _render_voice_match(self, state: Any | None) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#meetings-voice-match-status", Static).update(self._voice_match_copy(state))
+
+    def _voice_message(self, copy: str) -> None:
+        """The Voice row's one status line. Never carries a passphrase."""
+        if not self.is_mounted:
+            return
+        self.query_one("#meetings-voice-message", Static).update(copy)
+
+    def _voice_store(self) -> Any | None:
+        """The app's voiceprint store, built once, lazily.
+
+        Imported inside the method on purpose: `Audio.voiceprint` pulls the
+        keyring backend, and boot must import neither (Task 6's invariant).
+
+        Returns:
+            The store, or None when one cannot be built at all.
+        """
+        if self._store is None and not self._store_unavailable:
+            try:
+                from ...Audio.voiceprint import default_store
+
+                self._store = default_store()
+            except Exception as exc:  # noqa: BLE001 - the screen still works
+                self._store_unavailable = True
+                logger.warning("meetings: voiceprint store unavailable ({})", type(exc).__name__)
+        return self._store
+
+    def _refresh_voice_row(self) -> None:
+        """Repaint "Voice: ..." from the store. Never touches the key."""
+        if not self.is_mounted:
+            return
+        store = self._voice_store()
+        try:
+            if store is None:
+                copy = "Voice: unavailable"
+            elif not store.exists():
+                copy = "Voice: not enrolled"
+            else:
+                mode = "keyring" if store.mode == "keyring" else "key file"
+                copy = f"Voice: enrolled ({mode})"
+        except Exception as exc:  # noqa: BLE001 - a rail line, not a feature
+            logger.warning("meetings: voiceprint status failed ({})", type(exc).__name__)
+            copy = "Voice: unavailable"
+        self.query_one("#meetings-voice-status", Static).update(copy)
+
+    # ---- learning offer ----------------------------------------------------
+    def _show_learning_offer(self, offer: Any | None) -> None:
+        """Show (or hide) the post-Stop offer as a rail prompt, never a modal."""
+        self._offer = offer
+        if not self.is_mounted:
+            return
+        block = self.query_one("#meetings-learn-offer")
+        if offer is None:
+            block.display = False
+            return
+        copy = (
+            "Was it only you on the mic?"
+            if getattr(offer, "kind", "") == "mic_channel"
+            else "Remember this voice as yours for future meetings?"
+        )
+        self.query_one("#meetings-learn-offer-copy", Static).update(copy)
+        block.display = True
+
+    def _hide_learning_offer(self) -> Any | None:
+        """Take the pending offer off screen and return it."""
+        offer, self._offer = self._offer, None
+        if self.is_mounted:
+            self.query_one("#meetings-learn-offer").display = False
+        return offer
+
+    @on(Button.Pressed, "#meetings-learn-accept")
+    def _learn_accept(self) -> None:
+        offer = self._hide_learning_offer()
+        if offer is None or self._owner is None:
+            return
+        self._voice_message("Learning from this meeting…")
+        self._accept_learning_worker(offer)
+
+    @work(exclusive=True, group="meetings-learn", thread=True, exit_on_error=False)
+    def _accept_learning_worker(self, offer: Any) -> None:
+        ok = bool(self._owner.accept_learning(offer))
+        self.app.call_from_thread(self._learning_accepted, ok)
+
+    def _learning_accepted(self, ok: bool) -> None:
+        if not self.is_mounted:
+            return
+        self._voice_message(
+            "Your voice was updated from this meeting."
+            if ok
+            else "Could not update your voice from this meeting."
+        )
+        self._refresh_voice_row()
+
+    @on(Button.Pressed, "#meetings-learn-decline")
+    def _learn_decline(self) -> None:
+        offer = self._hide_learning_offer()
+        if self._owner is not None:
+            self._owner.decline_learning(offer)
+
+    @on(Button.Pressed, "#meetings-learn-never")
+    def _learn_never(self) -> None:
+        offer = self._hide_learning_offer()
+        owner = self._owner
+        if owner is not None:
+            owner.decline_learning(offer)
+            settings = getattr(owner, "settings", None)
+            if settings is not None:
+                # The running owner keeps a warm worker for the next offer
+                # until this lands, so it is set here and not only on disk.
+                settings.voice_learn_offer = False
+        try:
+            save_setting_to_cli_config("meetings", "voice_learn_offer", False)
+        except Exception as exc:  # noqa: BLE001 - the answer still holds
+            logger.warning("meetings: saving voice_learn_offer failed ({})", type(exc).__name__)
+        self._voice_message("Meetings will not offer to learn your voice again.")
+
+    # ---- enrollment --------------------------------------------------------
+    def _enrolling(self) -> bool:
+        return self._enroll_cancel is not None or bool(getattr(self._owner, "is_enrolling", False))
+
+    @on(Button.Pressed, "#meetings-enroll")
+    def _enroll_pressed(self) -> None:
+        owner = self._owner
+        if owner is None or self._enroll_cancel is not None:
+            return
+        if owner.is_active:
+            self._voice_message("The microphone is busy — stop the meeting first.")
+            return
+        self._delete_armed = False
+        self._enroll_cancel = threading.Event()
+        self._sync_controls()
+        self.query_one("#meetings-enroll-progress-row").display = True
+        self._set_enroll_progress("Warming up…")
+        self._voice_message("")
+        self._enroll_worker(self._enroll_cancel)
+
+    @work(exclusive=True, group="meetings-enroll", thread=True, exit_on_error=False)
+    def _enroll_worker(self, cancel: threading.Event) -> None:
+        try:
+            result = self._owner.enroll_from_mic(
+                ENROLL_SECONDS, progress=self._enroll_progress_from_thread, cancel=cancel
+            )
+        except Exception as exc:  # noqa: BLE001 - report, never crash the screen
+            self.app.call_from_thread(self._enroll_finished, None, type(exc).__name__)
+            return
+        self.app.call_from_thread(self._enroll_finished, result, None)
+
+    def _enroll_progress_from_thread(self, status: str) -> None:
+        try:
+            self.app.call_from_thread(self._enroll_progress, status)
+        except Exception as exc:  # noqa: BLE001 - screen may be tearing down
+            logger.debug("meetings enrollment progress dropped: {}", type(exc).__name__)
+
+    def _enroll_progress(self, status: str) -> None:
+        """Show the owner's static progress word; count down while recording."""
+        if not self.is_mounted:
+            return
+        if status == "recording":
+            self._enroll_seconds_left = int(ENROLL_SECONDS)
+            self._tick_countdown()
+            if self._enroll_timer is None:
+                self._enroll_timer = self.set_interval(1.0, self._tick_countdown)
+            return
+        self._stop_countdown()
+        self._set_enroll_progress(f"{status.capitalize()}…")
+
+    def _tick_countdown(self) -> None:
+        if not self.is_mounted:
+            return
+        self._set_enroll_progress(f"Recording… {max(self._enroll_seconds_left, 0)}s left")
+        self._enroll_seconds_left -= 1
+
+    def _stop_countdown(self) -> None:
+        if self._enroll_timer is not None:
+            self._enroll_timer.stop()
+            self._enroll_timer = None
+
+    def _set_enroll_progress(self, copy: str) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#meetings-enroll-progress", Static).update(copy)
+
+    @on(Button.Pressed, "#meetings-enroll-cancel")
+    def _enroll_cancel_pressed(self) -> None:
+        if self._enroll_cancel is None:
+            return
+        self._enroll_cancel.set()
+        self._stop_countdown()
+        self._set_enroll_progress("Cancelling…")
+
+    def _enroll_finished(self, result: Any | None, error: str | None) -> None:
+        self._enroll_cancel = None
+        self._stop_countdown()
+        if result is not None and getattr(result, "ok", False) and self._owner is not None:
+            # A new voiceprint invalidates the owner's cached verdict, so the
+            # next meeting reads the one just saved (Task 4).
+            self._owner.invalidate_voiceprint()
+        if not self.is_mounted:
+            return
+        self.query_one("#meetings-enroll-progress-row").display = False
+        self._set_enroll_progress("")
+        if error is not None:
+            self._voice_message(f"Enrollment failed ({error}).")
+        elif result.ok:
+            self._voice_message(f"Your voice was enrolled from {result.seconds:.0f}s of audio.")
+        else:
+            reason = ENROLL_REASON_COPY.get(result.reason or "", result.reason or "unknown")
+            self._voice_message(f"Enrollment failed: {reason}.")
+        self._refresh_voice_row()
+        self._render_voice_match(getattr(self._owner, "voice_match", None))
+        self._sync_controls()
+
+    # ---- Voice row: Delete / Export / Import -------------------------------
+    @on(Button.Pressed, "#meetings-voice-delete")
+    def _voice_delete_pressed(self) -> None:
+        if not self._delete_armed:
+            # The confirm step: a stored voiceprint cannot be recovered.
+            self._delete_armed = True
+            self._voice_message("Press Delete again to remove your stored voiceprint.")
+            return
+        self._delete_armed = False
+        store = self._voice_store()
+        if store is None:
+            self._voice_message("The voiceprint store is unavailable.")
+            return
+        try:
+            removed = store.delete()
+        except Exception as exc:  # noqa: BLE001
+            self._voice_message(f"Delete failed ({type(exc).__name__}).")
+            return
+        if self._owner is not None:
+            self._owner.invalidate_voiceprint()
+        self._voice_message("Your voiceprint was deleted." if removed else "No voiceprint to delete.")
+        self._refresh_voice_row()
+        self._render_voice_match(getattr(self._owner, "voice_match", None))
+
+    @on(Button.Pressed, "#meetings-voice-export")
+    def _voice_export_pressed(self) -> None:
+        self._open_voice_form("export")
+
+    @on(Button.Pressed, "#meetings-voice-import")
+    def _voice_import_pressed(self) -> None:
+        self._open_voice_form("import")
+
+    def _open_voice_form(self, mode: str) -> None:
+        self._delete_armed = False
+        if not self.is_mounted:
+            return
+        self.query_one("#meetings-voice-form").display = True
+        self.query_one("#meetings-voice-export-run", Button).display = mode == "export"
+        for widget_id in ("#meetings-voice-merge", "#meetings-voice-replace"):
+            self.query_one(widget_id, Button).display = mode == "import"
+        self._voice_message(
+            "Type a passphrase and a destination file, then Export to file."
+            if mode == "export"
+            else "Type the file's passphrase and path, then Merge or Replace."
+        )
+
+    def _voice_form_values(self, action: str) -> tuple[Path, str] | None:
+        """The typed path and passphrase, refusing an empty either way.
+
+        Args:
+            action: "Export" or "Import", for the refusal copy.
+
+        Returns:
+            `(path, passphrase)`, or None when something was missing (the
+            refusal is already on screen).
+        """
+        passphrase = self.query_one("#meetings-voice-passphrase", Input).value
+        text = self.query_one("#meetings-voice-path", Input).value.strip()
+        if not passphrase:
+            self._voice_message(f"{action} needs a passphrase.")
+            return None
+        if not text:
+            self._voice_message(f"{action} needs a file path.")
+            return None
+        return Path(text).expanduser(), passphrase
+
+    @on(Button.Pressed, "#meetings-voice-export-run")
+    def _voice_export_run(self) -> None:
+        values = self._voice_form_values("Export")
+        if values is None:
+            return
+        if self._voice_store() is None:
+            self._voice_message("The voiceprint store is unavailable.")
+            return
+        self._voice_message("Exporting…")
+        self._voice_transfer_worker("export", values[0], values[1], False)
+
+    @on(Button.Pressed, "#meetings-voice-merge")
+    def _voice_import_merge(self) -> None:
+        self._start_import(replace=False)
+
+    @on(Button.Pressed, "#meetings-voice-replace")
+    def _voice_import_replace(self) -> None:
+        self._start_import(replace=True)
+
+    def _start_import(self, *, replace: bool) -> None:
+        values = self._voice_form_values("Import")
+        if values is None:
+            return
+        if self._voice_store() is None:
+            self._voice_message("The voiceprint store is unavailable.")
+            return
+        self._voice_message("Importing…")
+        self._voice_transfer_worker("import", values[0], values[1], replace)
+
+    @work(exclusive=True, group="meetings-voice-transfer", thread=True, exit_on_error=False)
+    def _voice_transfer_worker(self, action: str, path: Path, passphrase: str, replace: bool) -> None:
+        store = self._voice_store()
+        try:
+            if action == "export":
+                store.export(path, passphrase)
+                copy = "Your voiceprint was exported."
+            else:
+                store.import_(path, passphrase, replace=replace)
+                copy = "The voiceprint was imported."
+            ok = True
+        except Exception as exc:  # noqa: BLE001 - reported as static copy
+            ok, copy = False, self._transfer_failure_copy(action, exc)
+        self.app.call_from_thread(self._voice_transfer_done, action, ok, copy)
+
+    def _transfer_failure_copy(self, action: str, exc: Exception) -> str:
+        """Static copy for a failed export/import -- never the path or message."""
+        from ...Audio.voiceprint import ModelMismatch, StoreUnavailable
+
+        if isinstance(exc, StoreUnavailable):
+            return "Store locked — try again after unlocking the keyring"
+        if isinstance(exc, ModelMismatch):
+            return "Different model — choose Replace"
+        return f"{action.capitalize()} failed ({type(exc).__name__})."
+
+    def _voice_transfer_done(self, action: str, ok: bool, copy: str) -> None:
+        if ok and action == "import" and self._owner is not None:
+            self._owner.invalidate_voiceprint()
+        if not self.is_mounted:
+            return
+        self._voice_message(copy)
+        if not ok:
+            return
+        self.query_one("#meetings-voice-form").display = False
+        self.query_one("#meetings-voice-passphrase", Input).value = ""
+        self._refresh_voice_row()
+        self._render_voice_match(getattr(self._owner, "voice_match", None))
 
     # ---- recovery + Library -----------------------------------------------
     @on(Button.Pressed, "#meetings-recover")

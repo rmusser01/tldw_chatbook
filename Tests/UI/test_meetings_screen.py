@@ -1,6 +1,7 @@
 """Task 11: Meetings screen pilots with a faked owner (no hardware, no STT)."""
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,8 +11,18 @@ from textual.widgets import Button, Input, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from tldw_chatbook.Audio.meeting_owner import PrepareResult
-from tldw_chatbook.Audio.meeting_session import MeetingMeta, MeetingResult, MeetingSegment
+from tldw_chatbook.Audio.meeting_owner import (
+    EnrollResult,
+    LearningOffer,
+    PrepareResult,
+    VoiceMatchState,
+)
+from tldw_chatbook.Audio.meeting_session import (
+    MeetingMeta,
+    MeetingResult,
+    MeetingSegment,
+    MeetingSession,
+)
 from tldw_chatbook.Audio.system_audio_tap import TapMode
 from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST, TAB_LIBRARY
 from tldw_chatbook.UI.Screens.meetings_screen import MeetingsScreen
@@ -40,6 +51,7 @@ class FakeSession:
         )
         self._result = None
         self._diarizer = None
+        self._lock = threading.RLock()
 
     def subscribe(self, listener):
         self.listeners.append(listener)
@@ -50,6 +62,14 @@ class FakeSession:
     def emit(self, kind, payload):
         for listener in list(self.listeners):
             listener(kind, payload)
+
+    _emit = emit
+    # The screen delegates the whole rename sequence to the session
+    # (TASK-31826): normalise -> override bookkeeping -> pin -> persist ->
+    # re-emit. Borrow the REAL methods rather than re-implementing them, so
+    # the fake cannot drift away from what the screen actually calls.
+    rename_speaker = MeetingSession.rename_speaker
+    _persist_speakers = MeetingSession._persist_speakers
 
     def add_segment(self, text, label, speaker_id=None):
         seg = MeetingSegment(len(self.segments), 0.0, 2.0, 0.0, 2.0, label, text, speaker_id=speaker_id)
@@ -69,8 +89,19 @@ class FakeOwner:
         self.mode = mode
         self.session: FakeSession | None = None
         self.local_sink = SimpleNamespace(job_id=None, last_submit_error=None)
-        self.settings = SimpleNamespace(post_diarize=True, mic_device="", system_source="auto")
+        self.settings = SimpleNamespace(post_diarize=True, mic_device="", system_source="auto",
+                                        voice_learn_offer=True)
         self.choices: list[tuple[str, str]] = []
+        # ---- self-voiceprint surface (TASK-31826) ----
+        self.voice_match = VoiceMatchState("off", "no_voiceprint")
+        self.offer: LearningOffer | None = None      # what learning_offer() returns
+        self.accept_result = True
+        self.learning_calls: list[tuple] = []
+        self.enroll_calls: list[tuple] = []
+        self.enroll_release: threading.Event | None = None
+        self.invalidated = 0
+        self._pending_offer: LearningOffer | None = None
+        self._enrolling = False
         self.prepared = PrepareResult(
             tap_mode=TapMode(tap_kind, "Native (macOS tap)" if tap_kind == "native_macos" else "Unavailable, mic only"),
             provider="faster-whisper", model="base.en", diarization_available=False,
@@ -120,6 +151,84 @@ class FakeOwner:
 
     def cleanup_raw_tracks_if_done(self):
         return False
+
+    # ---- self-voiceprint surface (TASK-31826) ------------------------------
+    @property
+    def is_enrolling(self):
+        return self._enrolling
+
+    @property
+    def pending_offer(self):
+        return self._pending_offer
+
+    def invalidate_voiceprint(self):
+        self.invalidated += 1
+
+    def learning_offer(self, result):
+        self.learning_calls.append(("offer", result))
+        self._pending_offer = self.offer
+        return self.offer
+
+    def accept_learning(self, offer):
+        self.learning_calls.append(("accept", offer))
+        self._pending_offer = None
+        return self.accept_result
+
+    def decline_learning(self, offer=None):
+        self.learning_calls.append(("decline", offer))
+        self._pending_offer = None
+
+    def dismiss_learning(self):
+        self.learning_calls.append(("dismiss", None))
+        self._pending_offer = None
+
+    def enroll_from_mic(self, seconds=30.0, progress=None, cancel=None):
+        self.enroll_calls.append((seconds, cancel))
+        if self.is_active or self._enrolling:
+            return EnrollResult(ok=False, reason="capture_busy")
+        self._enrolling = True
+        try:
+            if progress is not None:
+                progress("warming up")
+                progress("recording")
+            if self.enroll_release is not None:
+                self.enroll_release.wait(5.0)
+            if cancel is not None and cancel.is_set():
+                return EnrollResult(ok=False, reason="cancelled")
+            if progress is not None:
+                progress("embedding")
+            return EnrollResult(ok=True, seconds=seconds)
+        finally:
+            self._enrolling = False
+
+
+class FakeStore:
+    """Stands in for `VoiceprintStore` in the Voice row (no real crypto)."""
+
+    def __init__(self, *, exists=True, mode="keyring"):
+        self._exists = exists
+        self.mode = mode
+        self.calls: list[tuple] = []
+        self.raises: Exception | None = None
+
+    def exists(self):
+        return self._exists
+
+    def delete(self):
+        self.calls.append(("delete",))
+        removed, self._exists = self._exists, False
+        return removed
+
+    def export(self, dest, passphrase):
+        self.calls.append(("export", Path(dest), passphrase))
+        if self.raises is not None:
+            raise self.raises
+
+    def import_(self, src, passphrase, *, replace):
+        self.calls.append(("import", Path(src), passphrase, replace))
+        if self.raises is not None:
+            raise self.raises
+        self._exists = True
 
 
 class FakeDiarizer:
@@ -562,13 +671,18 @@ def test_rename_persists_to_meeting_json(meetings_screen_with_session):
 def test_rename_persist_failure_log_carries_no_path(meetings_screen_with_session, monkeypatch, captured_lines):
     """TASK-31748: `update_meeting_json` failures are usually filesystem
     errors whose `str()` embeds the meeting folder path -- the persist-
-    failure log must redact it."""
-    import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
+    failure log must redact it.
+
+    TASK-31826: the screen delegates the persist to `session.rename_speaker`,
+    so the seam moved to `meeting_session`; the guarantee this pins is
+    unchanged -- a rename typed on the screen never puts a path in the log.
+    """
+    import tldw_chatbook.Audio.meeting_session as meeting_session_module
 
     def boom(*a, **k):
         raise OSError("/Users/alice/meeting.json: denied")
 
-    monkeypatch.setattr(meetings_screen_module, "update_meeting_json", boom)
+    monkeypatch.setattr(meeting_session_module, "update_meeting_json", boom)
     screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
     screen._apply_rename("S1", "Alice")  # must not raise
     joined = "\n".join(captured_lines)
@@ -857,3 +971,383 @@ def test_live_legend_skips_a_hostile_speaker_id(meetings_screen_with_session):
     seg = MeetingSegment(0, 0.0, 2.0, 0.0, 2.0, "others", "hi", speaker_id="bad id #1")
     screen._note_speaker(seg)
     assert screen._seen_speakers == set()
+
+
+# ---- TASK-31826: self-voiceprint match, learning offer, enrollment, Voice row
+
+
+@pytest.mark.parametrize(
+    "reason, expected",
+    [
+        (None, "Voice match: off"),
+        ("disabled", "Voice match: off (disabled)"),
+        ("plain_call_mode", "Voice match: off (plain call mode)"),
+        ("no_voiceprint", "Voice match: off (no voiceprint)"),
+        ("needs_reenrollment", "Voice match: off (needs re-enrollment)"),
+        ("cannot_decrypt", "Voice match: off (store unreadable)"),
+        ("keyring_locked", "Voice match: off (keyring locked)"),
+        ("store_unavailable", "Voice match: off (store unavailable)"),
+    ],
+)
+def test_voice_match_rail_copy_per_reason(tmp_path, reason, expected):
+    """Spec §3.5: every degradation reason gets its own static copy -- a bare
+    "off" leaves the user with no way to learn why their voice is not being
+    matched (and none of these strings may name a path or a person)."""
+    app = _build_test_app()
+    app.meeting_session_owner = FakeOwner(tmp_path)
+    screen = MeetingsScreen(app)
+    assert screen._voice_match_copy(VoiceMatchState("off", reason)) == expected
+    assert screen._voice_match_copy(VoiceMatchState("on", None)) == "Voice match: on"
+
+
+@pytest.mark.asyncio
+async def test_rail_shows_the_prepared_voice_match_then_the_verified_one(tmp_path):
+    """The pre-Start verdict is provisional (`prepare()` only stats the
+    store); `start()` performs the one decrypt and overwrites it, so the rail
+    must re-read `owner.voice_match` after Start rather than keep the probe's
+    optimistic answer."""
+    host, owner = await _boot(tmp_path)
+    owner.prepared.voice_match = VoiceMatchState("on", None)
+    owner.voice_match = VoiceMatchState("off", "keyring_locked")
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        status = screen.query_one("#meetings-voice-match-status", Static)
+        assert _text(status) == "Voice match: on"
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.3)
+        assert _text(status) == "Voice match: off (keyring locked)"
+
+
+def test_matched_cluster_carries_the_marker_in_legend_and_transcript(
+    meetings_screen_with_session,
+):
+    """Spec §3.4: the auto-matched cluster is named with the user's display
+    name and marked, so an automatic name is never mistaken for a typed one."""
+    screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
+    session = screen._session
+    session.meta.matched_self = "S1"
+    session.meta.speaker_names["S1"] = session.meta.user_display_name
+    screen._rerender_transcript()
+    assert screen._speaker_label("S1") == "You ·"
+    assert screen.rendered_lines == ["[00:00:00] You ·: hello"]
+
+
+def test_overriding_the_match_clears_the_marker(meetings_screen_with_session):
+    screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
+    session = screen._session
+    session.meta.matched_self = "S1"
+    session.meta.speaker_names["S1"] = session.meta.user_display_name
+    screen._apply_rename("S1", "Alice")
+    assert session.meta.matched_self_overridden is True
+    assert screen._speaker_label("S1") == "Alice"
+    assert screen.rendered_lines == ["[00:00:00] Alice: hello"]
+
+
+def test_unmatched_clusters_never_get_the_marker(meetings_screen_with_session):
+    screen = meetings_screen_with_session(segments=[("others", "S2", "hi")])
+    screen._session.meta.matched_self = "S1"
+    assert screen._speaker_label("S2") == "Speaker 2"
+
+
+@pytest.mark.asyncio
+async def test_stop_shows_the_learning_offer_and_accept_calls_the_owner(tmp_path):
+    host, owner = await _boot(tmp_path)
+    offer = LearningOffer(kind="matched_cluster", folder=tmp_path, cluster_id="S1")
+    owner.offer = offer
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        block = screen.query_one("#meetings-learn-offer")
+        assert block.display is False
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+        assert block.display is True
+        screen.query_one("#meetings-learn-accept", Button).press()
+        await pilot.pause(0.3)
+        assert ("accept", offer) in owner.learning_calls
+        assert block.display is False
+
+
+@pytest.mark.asyncio
+async def test_mic_channel_offer_asks_whether_it_was_only_you(tmp_path):
+    host, owner = await _boot(tmp_path)
+    owner.offer = LearningOffer(kind="mic_channel", folder=tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+        assert _text(screen.query_one("#meetings-learn-offer-copy", Static)) == (
+            "Was it only you on the mic?"
+        )
+
+
+@pytest.mark.asyncio
+async def test_not_now_declines_without_touching_the_setting(tmp_path, monkeypatch):
+    import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(meetings_screen_module, "save_setting_to_cli_config",
+                        lambda *a: saved.append(a) or True)
+    host, owner = await _boot(tmp_path)
+    offer = LearningOffer(kind="matched_cluster", folder=tmp_path, cluster_id="S1")
+    owner.offer = offer
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+        screen.query_one("#meetings-learn-decline", Button).press()
+        await pilot.pause(0.1)
+        assert ("decline", offer) in owner.learning_calls
+        assert saved == [] and owner.settings.voice_learn_offer is True
+        assert screen.query_one("#meetings-learn-offer").display is False
+
+
+@pytest.mark.asyncio
+async def test_dont_ask_again_persists_the_setting_and_stops_the_running_owner(
+    tmp_path, monkeypatch
+):
+    """Spec §3.4: "don't ask again" flips `voice_learn_offer` off. It has to
+    land in BOTH places -- the config file (for next launch) and the live
+    settings object (so the running owner stops retaining a worker for an
+    offer the user just said they never want)."""
+    import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
+
+    saved: list[tuple] = []
+    monkeypatch.setattr(meetings_screen_module, "save_setting_to_cli_config",
+                        lambda *a: saved.append(a) or True)
+    host, owner = await _boot(tmp_path)
+    owner.offer = LearningOffer(kind="matched_cluster", folder=tmp_path, cluster_id="S1")
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+        screen.query_one("#meetings-learn-never", Button).press()
+        await pilot.pause(0.1)
+        assert saved == [("meetings", "voice_learn_offer", False)]
+        assert owner.settings.voice_learn_offer is False
+        assert owner.learning_calls[-1][0] == "decline"
+
+
+@pytest.mark.asyncio
+async def test_an_unanswered_offer_lapses_when_the_screen_goes_away(tmp_path):
+    """A warm diarizer worker must not outlive the screen that offered to use
+    it: leaving Meetings with the offer still on screen dismisses it."""
+    host, owner = await _boot(tmp_path)
+    owner.offer = LearningOffer(kind="matched_cluster", folder=tmp_path, cluster_id="S1")
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+    assert ("dismiss", None) in owner.learning_calls
+
+
+@pytest.mark.asyncio
+async def test_enroll_is_refused_while_a_meeting_is_running(tmp_path):
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        assert screen.query_one("#meetings-enroll", Button).disabled is True
+        # Pressed anyway (a click can race the state change): refused, with copy.
+        screen._enroll_pressed()
+        await pilot.pause(0.1)
+        assert owner.enroll_calls == []
+        assert "microphone" in _text(screen.query_one("#meetings-voice-message", Static))
+
+
+@pytest.mark.asyncio
+async def test_enrollment_shows_a_countdown_and_cancel_stops_it(tmp_path):
+    host, owner = await _boot(tmp_path)
+    owner.enroll_release = threading.Event()
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        screen.query_one("#meetings-enroll", Button).press()
+        await pilot.pause(0.3)
+        assert screen.query_one("#meetings-enroll-progress-row").display is True
+        assert "Recording" in _text(screen.query_one("#meetings-enroll-progress", Static))
+        # Start stays disabled while the microphone is held by the enrollment.
+        assert screen.query_one("#meetings-start", Button).disabled is True
+        screen.query_one("#meetings-enroll-cancel", Button).press()
+        await pilot.pause(0.1)
+        cancel = owner.enroll_calls[0][1]
+        assert cancel is not None and cancel.is_set()
+        owner.enroll_release.set()
+        await pilot.pause(0.4)
+        assert screen.query_one("#meetings-enroll-progress-row").display is False
+        assert "cancelled" in _text(screen.query_one("#meetings-voice-message", Static)).lower()
+        assert owner.invalidated == 0
+
+
+@pytest.mark.asyncio
+async def test_a_successful_enrollment_refreshes_the_voice_row(tmp_path):
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        store = FakeStore(exists=False)
+        screen._store = store
+        screen._refresh_voice_row()
+        assert _text(screen.query_one("#meetings-voice-status", Static)) == "Voice: not enrolled"
+        store._exists = True
+        screen.query_one("#meetings-enroll", Button).press()
+        await pilot.pause(0.5)
+        assert owner.invalidated == 1
+        assert _text(screen.query_one("#meetings-voice-status", Static)) == (
+            "Voice: enrolled (keyring)"
+        )
+        assert screen.query_one("#meetings-start", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_voice_row_reports_the_key_file_mode(tmp_path):
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        screen._store = FakeStore(mode="keyfile")
+        screen._refresh_voice_row()
+        assert _text(screen.query_one("#meetings-voice-status", Static)) == (
+            "Voice: enrolled (key file)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_asks_for_confirmation_before_removing_the_voiceprint(tmp_path):
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        store = FakeStore()
+        screen._store = store
+        screen.query_one("#meetings-voice-delete", Button).press()
+        await pilot.pause(0.1)
+        assert store.calls == []                      # first press only arms it
+        assert "again" in _text(screen.query_one("#meetings-voice-message", Static))
+        screen.query_one("#meetings-voice-delete", Button).press()
+        await pilot.pause(0.1)
+        assert store.calls == [("delete",)]
+        assert owner.invalidated == 1
+        assert _text(screen.query_one("#meetings-voice-status", Static)) == "Voice: not enrolled"
+
+
+@pytest.mark.asyncio
+async def test_export_needs_a_passphrase_and_then_calls_the_store(tmp_path):
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        store = FakeStore()
+        screen._store = store
+        screen.query_one("#meetings-voice-export", Button).press()
+        await pilot.pause(0.1)
+        assert screen.query_one("#meetings-voice-form").display is True
+        passphrase = screen.query_one("#meetings-voice-passphrase", Input)
+        assert passphrase.password is True            # never echoed on screen
+        screen.query_one("#meetings-voice-path", Input).value = str(tmp_path / "vp.json")
+        screen.query_one("#meetings-voice-export-run", Button).press()
+        await pilot.pause(0.2)
+        assert store.calls == []                      # refused: no passphrase
+        assert "passphrase" in _text(screen.query_one("#meetings-voice-message", Static))
+        passphrase.value = "hunter2"
+        screen.query_one("#meetings-voice-export-run", Button).press()
+        await pilot.pause(0.4)
+        assert store.calls == [("export", tmp_path / "vp.json", "hunter2")]
+        # The passphrase never reaches the message line, and the form closes.
+        assert "hunter2" not in _text(screen.query_one("#meetings-voice-message", Static))
+        assert screen.query_one("#meetings-voice-form").display is False
+        assert passphrase.value == ""
+
+
+@pytest.mark.asyncio
+async def test_import_merge_and_replace_call_the_store_with_the_choice(tmp_path):
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        store = FakeStore(exists=False)
+        screen._store = store
+        screen.query_one("#meetings-voice-import", Button).press()
+        await pilot.pause(0.1)
+        screen.query_one("#meetings-voice-path", Input).value = "~/vp.json"
+        screen.query_one("#meetings-voice-passphrase", Input).value = "hunter2"
+        screen.query_one("#meetings-voice-merge", Button).press()
+        await pilot.pause(0.4)
+        assert store.calls == [("import", Path("~/vp.json").expanduser(), "hunter2", False)]
+        assert owner.invalidated == 1
+        assert _text(screen.query_one("#meetings-voice-status", Static)) == (
+            "Voice: enrolled (keyring)"
+        )
+        screen.query_one("#meetings-voice-import", Button).press()
+        await pilot.pause(0.1)
+        screen.query_one("#meetings-voice-path", Input).value = "~/vp.json"
+        screen.query_one("#meetings-voice-passphrase", Input).value = "hunter2"
+        screen.query_one("#meetings-voice-replace", Button).press()
+        await pilot.pause(0.4)
+        assert store.calls[-1] == ("import", Path("~/vp.json").expanduser(), "hunter2", True)
+
+
+@pytest.mark.asyncio
+async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path):
+    from tldw_chatbook.Audio.voiceprint import ModelMismatch, StoreUnavailable
+
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        store = FakeStore()
+        screen._store = store
+        message = screen.query_one("#meetings-voice-message", Static)
+
+        for exc, expected in (
+            (StoreUnavailable("/Users/alice/voiceprint.json is locked"),
+             "Store locked — try again after unlocking the keyring"),
+            (ModelMismatch("stored model 'a' does not match 'b'"),
+             "Different model — choose Replace"),
+        ):
+            store.raises = exc
+            screen.query_one("#meetings-voice-import", Button).press()
+            await pilot.pause(0.1)
+            screen.query_one("#meetings-voice-path", Input).value = "/Users/alice/vp.json"
+            screen.query_one("#meetings-voice-passphrase", Input).value = "hunter2"
+            screen.query_one("#meetings-voice-merge", Button).press()
+            await pilot.pause(0.4)
+            assert _text(message) == expected
+            assert owner.invalidated == 0
+
+
+def test_unmounted_screen_never_touches_the_voice_widgets(tmp_path):
+    """Every worker completion and owner callback added by TASK-31826 can land
+    after navigation unmounted the screen."""
+    app = _build_test_app()
+    owner = FakeOwner(tmp_path)
+    app.meeting_session_owner = owner
+    screen = MeetingsScreen(app)
+    assert screen.is_mounted is False
+
+    screen._render_voice_match(VoiceMatchState("off", "keyring_locked"))
+    screen._refresh_voice_row()
+    screen._voice_message("something happened")
+    screen._show_learning_offer(LearningOffer(kind="mic_channel", folder=tmp_path))
+    screen._enroll_progress("recording")
+    screen._enroll_finished(EnrollResult(ok=True, seconds=30.0), None)
+    screen._learning_accepted(True)
+    screen._voice_transfer_done("import", True, "Voiceprint imported.")
+    # State work still lands (the owner is not a widget).
+    assert owner.invalidated == 2
