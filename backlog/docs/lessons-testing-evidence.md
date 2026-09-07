@@ -11965,3 +11965,26 @@ pre-existing red baseline on dev — `Tests/UI/test_library_notes_reader.py`
 worktree run produced the identical 15 failures / 59 passes. Run the fast pure
 tree tests (`Tests/Library/test_library_notes_tree_*.py`) and a focused
 non-mounting wiring test instead of trusting these mounting suites' green/red.
+
+### TASK-31826: every Meetings UI pilot ran at 160x45 -- seven new rail rows shipped clipped out of the compositor
+
+Task 5 of the voiceprint program added seven rows to the Meetings rail (a plain `Vertical`) and its
+tests all passed: every pilot in `Tests/UI/test_meetings_screen.py` used `size=(160, 45)`. The
+task reviewer re-ran the screen at 100x30 and 80x24 and found the learning-offer buttons and the
+whole Voice row outside the compositor -- the offer was unanswerable on a normal laptop terminal.
+Rule: a change that adds rows to a rail gets a pilot at 100x30 and 80x24 that asserts the new
+widgets' `region` is non-zero after `scroll_end()` (a `VerticalScroll` rail) and that the primary
+control stays reachable.
+
+Second half of the same incident: the reviewer's "regression" baseline was measured in a harness
+WITHOUT the app stylesheet (see lessons-textual.md, "A geometry or `.display` test without
+`CSS_PATH = BUNDLED_STYLESHEET` measures nothing"): with the bundle loaded the parent commit
+already had Start below the fold at <=120x32. Measure layout baselines with the real bundle, on
+both commits, before calling something a regression.
+
+### TASK-31826: a controller-applied fix runs preflight like any implementer's commit
+
+The SDD controller applied a three-line round-2 fix by hand (a `logger.debug` in `on_unmount`)
+and committed without `./scripts/preflight.sh`; the next task's implementer hit the diagnostic
+inventory drift and had to re-pin someone else's row. The rule the implementers follow ("any
+`logger.*` change -> read the rows, `--write`") binds the controller too.
