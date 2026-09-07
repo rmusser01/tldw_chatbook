@@ -18,6 +18,7 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 from textual.worker import Worker, WorkerState
@@ -47,6 +48,7 @@ from ...Third_Party.textual_fspicker import FileSave
 from ...TTS.audio_player import play_audio_file
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.path_validation import validate_path_simple
+from ...Web_Server.artifact_share import ArtifactShareError, ShareStatus
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -55,6 +57,7 @@ from ..Navigation.pending_handoff_store import (
     HandoffChannel,
     HandoffClaim,
 )
+from .artifact_share_dialog import ArtifactShareDialog
 from .destination_recovery import DestinationRecoveryState
 
 
@@ -114,6 +117,8 @@ ARTIFACTS_CHATBOOK_TARGET_MISSING_RECOVERY = DestinationRecoveryState(
 class ArtifactsScreen(BaseAppScreen):
     """Generated outputs, portable bundles, reports, datasets, and Chatbooks."""
 
+    BINDINGS = [Binding("s", "share_artifacts", "Share")]
+
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "artifacts", **kwargs)
         self._latest_chatbook_console_launch: dict[str, Any] | None = None
@@ -136,6 +141,9 @@ class ArtifactsScreen(BaseAppScreen):
         self._report_preview_worker: Worker[Any] | None = None
         self._keep_in_flight = False
         self._report_export_in_flight = False
+        # The artifact-share dialog-open worker (listing chatbooks off-thread);
+        # start/stop share workers own no screen-held refs.
+        self._share_dialog_worker: Worker[Any] | None = None
 
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
@@ -143,6 +151,15 @@ class ArtifactsScreen(BaseAppScreen):
         self._chatbook_unmounted = False
         self._start_chatbook_refresh()
         self._start_daily_reports_refresh()
+        # ADR-031: the footer hint must stay 1:1 with a working binding;
+        # `s` -> action_share_artifacts is registered alongside it.
+        self.register_footer_shortcuts(
+            source="artifacts-screen", shortcuts=(("s", "Share"),)
+        )
+        # Renders "" and keeps #artifacts-share-stop hidden when no share is
+        # active (compose also seeds it hidden pre-yield; this render pass is
+        # the live truth once mounted).
+        self._render_share_banner()
 
     def on_screen_resume(self) -> None:
         """Refresh daily reports, and one-shot Chatbook handoffs, on resume."""
@@ -154,6 +171,7 @@ class ArtifactsScreen(BaseAppScreen):
             )
         ):
             self._start_chatbook_refresh()
+        self._render_share_banner()
 
     def on_unmount(self) -> None:
         self._chatbook_unmounted = True
@@ -175,6 +193,12 @@ class ArtifactsScreen(BaseAppScreen):
             worker.cancel()
         self._report_preview_generation += 1
         worker = self._report_preview_worker
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        # Same teardown shape for the artifact-share dialog-open worker: an
+        # unmount mid-listing would otherwise push the dialog onto an app the
+        # screen no longer belongs to.
+        worker = self._share_dialog_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
         # No super().on_unmount(): the dispatcher already invokes
@@ -995,6 +1019,30 @@ class ArtifactsScreen(BaseAppScreen):
                         id="artifacts-open-console",
                         tooltip="Open Console to create, review, or save Chatbook artifacts.",
                     )
+                    with Horizontal(id="artifacts-share-row"):
+                        yield Button(
+                            "Share artifacts",
+                            id="artifacts-share",
+                            tooltip=(
+                                "Serve selected Chatbook artifacts from a "
+                                "temporary local web page."
+                            ),
+                        )
+                    yield Static(
+                        "", id="artifacts-share-status", classes="destination-purpose"
+                    )
+                    stop_share_button = Button(
+                        "Stop sharing",
+                        id="artifacts-share-stop",
+                        tooltip="Stop the running artifact share and revoke its links.",
+                    )
+                    # Textual 8.x Button has no `styles=` init kwarg, so the
+                    # initial hidden state is set pre-yield (safe to mutate
+                    # before mount, like the footer's pre-mount seeding in
+                    # BaseAppScreen.compose); `_render_share_banner()` re-shows
+                    # it whenever a share is actually running.
+                    stop_share_button.display = False
+                    yield stop_share_button
                     yield Button(
                         "Open Library",
                         id="artifacts-open-library",
@@ -1155,6 +1203,110 @@ class ArtifactsScreen(BaseAppScreen):
     @on(Button.Pressed, "#artifacts-open-console")
     def open_console(self) -> None:
         self.post_message(NavigateToScreen("chat"))
+
+    def action_share_artifacts(self) -> None:
+        self._open_share_dialog()
+
+    @on(Button.Pressed, "#artifacts-share")
+    def share_artifacts(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._open_share_dialog()
+
+    def _open_share_dialog(self) -> None:
+        from ...Web_Server import is_web_server_available
+
+        if not is_web_server_available():
+            self._notify(
+                "Web sharing needs extra packages: pip install tldw_chatbook[web]",
+                "warning",
+            )
+            return
+        self._share_dialog_worker = self._run_share_dialog_open()
+
+    @work(exclusive=True, thread=True, group="artifacts-share-dialog")
+    def _run_share_dialog_open(self) -> None:
+        service = getattr(self.app_instance, "local_chatbook_service", None)
+        if service is None:
+            self.app.call_from_thread(self._notify, CHATBOOK_SERVICE_ERROR_COPY)
+            return
+        try:
+            records = asyncio.run(service.list_chatbooks(limit=1000))
+        except Exception as exc:
+            logger.warning(f"Artifact share: listing chatbooks failed: {exc}")
+            self.app.call_from_thread(self._notify, CHATBOOK_SERVICE_ERROR_COPY)
+            return
+        controller = getattr(self.app_instance, "artifact_share_controller", None)
+        notice = None
+        if controller is not None and controller.status is not None:
+            notice = "A share is already running; starting a new one will stop it."
+        dialog = ArtifactShareDialog(records, active_share_notice=notice)
+        self.app.call_from_thread(
+            self.app.push_screen, dialog, self._on_share_dialog_result
+        )
+
+    def _on_share_dialog_result(self, result: object) -> None:
+        if not isinstance(result, dict):
+            return
+        self._start_share(result)
+
+    @work(exclusive=True, thread=True, group="artifacts-share-start")
+    def _start_share(self, options: dict) -> None:
+        controller = getattr(self.app_instance, "artifact_share_controller", None)
+        if controller is None:
+            self.app.call_from_thread(
+                self._notify, "Artifact sharing is unavailable in this session.", "error"
+            )
+            return
+        try:
+            status = controller.start_share(
+                records=options["selected_records"],
+                share_name=options["share_name"],
+                username=options.get("username") or None,
+                password=options.get("password") or None,
+                bind=options["bind"],
+                port=options["port"],
+            )
+        except ArtifactShareError as exc:
+            self.app.call_from_thread(self._notify, f"Sharing failed: {exc}", "error")
+            self.app.call_from_thread(self._render_share_banner)
+            return
+        url = status.urls[-1] if status.urls else "the assigned port"
+        self.app.call_from_thread(
+            self._notify, f"Sharing {status.artifact_count} artifact(s) at {url}"
+        )
+        self.app.call_from_thread(self._render_share_banner)
+
+    @on(Button.Pressed, "#artifacts-share-stop")
+    def stop_artifact_share(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._stop_share()
+
+    @work(exclusive=True, thread=True, group="artifacts-share-stop")
+    def _stop_share(self) -> None:
+        controller = getattr(self.app_instance, "artifact_share_controller", None)
+        if controller is None:
+            return
+        controller.stop_share()
+        self.app.call_from_thread(self._notify, "Stopped sharing artifacts.")
+        self.app.call_from_thread(self._render_share_banner)
+
+    def _render_share_banner(self) -> None:
+        try:
+            banner = self.query_one("#artifacts-share-status", Static)
+            stop_button = self.query_one("#artifacts-share-stop", Button)
+        except Exception:  # screen not composed yet
+            return
+        controller = getattr(self.app_instance, "artifact_share_controller", None)
+        status: ShareStatus | None = getattr(controller, "status", None)
+        if status is None:
+            banner.update("")
+            stop_button.display = False
+            return
+        urls = "  ·  ".join(status.urls)
+        banner.update(
+            f"Sharing {status.artifact_count} artifact(s) as '{status.share_name}': {urls}"
+        )
+        stop_button.display = True
 
     @on(Button.Pressed, "#artifacts-use-in-console")
     def use_in_console(self, event: Button.Pressed) -> None:

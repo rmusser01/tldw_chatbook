@@ -10210,6 +10210,13 @@ class TldwCli(
         self.local_chatbook_service = LocalChatbookService(
             self._build_chatbook_db_paths()
         )
+        from .Web_Server.artifact_share import ArtifactShareController
+
+        self.artifact_share_controller = ArtifactShareController()
+        try:
+            self.artifact_share_controller.startup_sweep()
+        except Exception as exc:
+            logger.warning(f"Artifact share startup sweep failed: {exc}")
         self.server_chatbook_service = (
             ServerChatbookService.from_server_context_provider(
                 self.server_context_provider,
@@ -18266,6 +18273,21 @@ class TldwCli(
             pass
         super()._handle_exception(error)
 
+    def _shutdown_artifact_share(self) -> None:
+        """Stop any running artifact share; safe to call repeatedly."""
+        controller = getattr(self, "artifact_share_controller", None)
+        if controller is None:
+            return
+        try:
+            controller.stop_share()
+        except Exception as exc:
+            logger.warning(f"Artifact share shutdown failed: {exc}")
+        finally:
+            # Drop the reference so a second call (or a late on_unmount
+            # re-entry) never re-issues stop_share -- shutdown is strictly
+            # once per controller.
+            self.artifact_share_controller = None
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
@@ -18426,6 +18448,14 @@ class TldwCli(
                 self.loguru_logger.error(
                     f"Error disconnecting local MCP client sessions: {e}"
                 )
+
+            # Stop any running artifact share (child web server) before the
+            # process goes away; idempotent and failure-tolerant.
+            try:
+                self._shutdown_artifact_share()
+                self.loguru_logger.info("Artifact share stopped (if running)")
+            except Exception as e:
+                self.loguru_logger.error(f"Error stopping artifact share: {e}")
 
             # Cancel any pending workers and wait for them, bounded.
             await self._cancel_and_settle_workers("unmount")
