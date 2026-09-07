@@ -32,6 +32,9 @@ from textual.worker import WorkerState
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Library.library_media_state import (
+    library_media_int_backing_id,
+)
 from tldw_chatbook.UI.Screens.library_screen import _sync_library_canvas
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
@@ -1786,6 +1789,49 @@ def _keyword_media_items() -> list[dict[str, object]]:
             "version": 1,
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_reprojection_skips_rows_the_page_does_not_retain():
+    """task-31961: a bulk Analyze over a multi-page selection reads ONE page.
+
+    ``has_analysis`` is re-read per saved item, and every read costs an
+    id-scoped SELECT. An item outside the retained page has no mounted row
+    to repaint, so its read can only ever be thrown away -- the membership
+    test that decides that belongs ABOVE the fetch, not after it.
+    """
+    host = _review_state_host(count=24, analysed=0)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+
+        retained = {
+            str(item["id"])
+            for item in screen._library_media_browse_controller.retained_items
+        }
+        assert len(retained) == 20, retained
+        off_page = [
+            media_id
+            for media_id in (f"local:media:{index}" for index in range(1, 25))
+            if media_id not in retained
+        ]
+        assert len(off_page) == 4, off_page
+        on_page = sorted(retained)[:2]
+
+        service = host.app_instance.media_reading_scope_service
+        searches_before = len(service.search_calls)
+        # The selection spans both pages, exactly as a bulk Analyze over a
+        # "select all" does.
+        for media_id in [*on_page, *off_page]:
+            await screen._reproject_library_media_analysis_row(media_id)
+
+        extra = service.search_calls[searches_before:]
+        assert len(extra) == len(on_page), extra
+        allowlists = [call["id_allowlist"] for call in extra]
+        assert allowlists == [
+            [library_media_int_backing_id(media_id)] for media_id in on_page
+        ], allowlists
 
 
 async def _apply_media_filter(screen, pilot, query: str) -> None:
@@ -3725,3 +3771,266 @@ async def test_more_row_actions_share_one_grid_column_grammar(size):
         assert {min(xs) for xs in rows.values()} == {columns[0]}, rows
         painted = _painted(host, grid.region)
         assert "Open manager" in painted, painted
+
+
+# ---------------------------------------------------------------------------
+# task-31956: the reviewed decoration costs O(visible rows), not O(active set)
+# ---------------------------------------------------------------------------
+
+
+def _count_set_loads(service) -> list[str]:
+    """Count whole-set loads through ``service``, returning the tally list."""
+    loads: list[str] = []
+    inner = service.get_active_review_set
+
+    def counted():
+        review_set = inner()
+        loads.append("" if review_set is None else review_set.set_id)
+        return review_set
+
+    service.get_active_review_set = counted
+    return loads
+
+
+async def _decoration_fixture(host, pilot):
+    """A settled Media list with a two-item active set over four rows.
+
+    The load tally starts counting BEFORE the canvas build that follows the
+    create, so it covers the first real decoration rather than a cache the
+    fixture already warmed.
+    """
+    screen = await _open_media_list(host, pilot)
+    service = screen._review_set_service()
+    set_id = service.create_review_set(
+        "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
+    )
+    loads = _count_set_loads(service)
+    _sync_library_canvas(screen, "media")
+    for _ in range(3):
+        await pilot.pause()
+    items = screen._library_media_browse_controller.retained_items
+    assert len(items) == 4, items
+    return screen, service, set_id, items, loads
+
+
+def _reviewed(rows) -> list[bool | None]:
+    return [row["reviewed"] for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_decorating_a_page_loads_the_active_set_once_not_per_build():
+    """task-31956 AC#1: an unchanged set is read once, not per canvas build.
+
+    ``get_active_review_set`` loads the header AND every pinned item row (up
+    to ``REVIEW_SET_CAP`` = 500) and the decoration ran it at every one of
+    the ~30 viewer-flip sync sites, to stamp at most a page of rows. The
+    map is now cached against the service's write revision, so repeated
+    builds cost the rows they decorate and nothing else.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, _service, _set_id, items, loads = await _decoration_fixture(
+            host, pilot
+        )
+        # The canvas build inside the fixture already decorated this page.
+        assert len(loads) == 1, loads
+
+        first = screen._decorate_library_media_reviewed(items)
+        for _ in range(20):
+            screen._decorate_library_media_reviewed(items)
+
+        assert len(loads) == 1, loads
+        assert _reviewed(first) == [False, False, None, None], first
+
+
+@pytest.mark.asyncio
+async def test_marking_an_item_done_invalidates_the_decoration_cache():
+    """task-31956 AC#2: the mark seam is a write, so the next page is right.
+
+    Every write goes through the service's one transaction helper, which is
+    what the cache keys off -- so this holds for the ``m`` gesture, the
+    walker's auto-mark, and a direct service call alike.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, loads = await _decoration_fixture(
+            host, pilot
+        )
+        assert len(loads) == 1, loads
+
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            False,
+            False,
+            None,
+            None,
+        ]
+        service.mark_item_done(set_id, backing_media_id=1, done=True)
+        marked = screen._decorate_library_media_reviewed(items)
+
+        assert _reviewed(marked) == [True, False, None, None], marked
+        assert len(loads) == 2, loads
+
+
+@pytest.mark.asyncio
+async def test_leaving_and_re_entering_review_invalidates_the_decoration_cache():
+    """task-31956 AC#2: activation is a write too -- the markers follow it."""
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, _loads = await _decoration_fixture(
+            host, pilot
+        )
+
+        service.deactivate_active()
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            None,
+            None,
+            None,
+            None,
+        ]
+
+        service.activate(set_id)
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            False,
+            False,
+            None,
+            None,
+        ]
+
+
+@pytest.mark.asyncio
+async def test_a_write_landing_during_the_load_is_not_stamped_as_included():
+    """Fix round 1: the stamp is the revision read BEFORE the load.
+
+    `dismiss`/`undismiss` commit on a thread (`asyncio.to_thread`) while
+    this thread decorates, so a write can land between the read of the set
+    and the stamp. Stamping the revision read AFTER the load would claim
+    that write was included, freezing a map that no later sync repairs --
+    the rows would keep painting marks the set no longer has. Stamping the
+    earlier value only costs one extra read.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, _loads = await _decoration_fixture(
+            host, pilot
+        )
+
+        healthy = service.get_active_review_set
+
+        def racing():
+            # The snapshot this call will cache...
+            review_set = healthy()
+            # ...and a write that commits (and bumps) before it is stamped.
+            service.mark_item_done(set_id, backing_media_id=1, done=True)
+            return review_set
+
+        # Invalidate first, so the racing build is the one that loads.
+        service.set_cursor(set_id, 0)
+        service.get_active_review_set = racing
+        stale = screen._decorate_library_media_reviewed(items)
+        assert _reviewed(stale) == [False, False, None, None], stale
+
+        service.get_active_review_set = healthy
+        fresh = screen._decorate_library_media_reviewed(items)
+        assert _reviewed(fresh) == [True, False, None, None], fresh
+
+
+@pytest.mark.asyncio
+async def test_a_storage_error_is_never_cached_as_no_active_set():
+    """task-30042 doctrine survives the cache: it fails OPEN, and forgets.
+
+    A cached failure would cost the markers for the rest of the session on
+    one transient read error, so the failure is what is NOT remembered --
+    every build retries while the cache is invalid, and the markers return
+    with the storage.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, service, set_id, items, _loads = await _decoration_fixture(
+            host, pilot
+        )
+        # A write invalidates the cache, so the next decoration must read.
+        service.mark_item_done(set_id, backing_media_id=1, done=True)
+
+        attempts: list[str] = []
+        healthy = service.get_active_review_set
+
+        def boom():
+            attempts.append("read")
+            raise sqlite3.OperationalError("database is locked")
+
+        service.get_active_review_set = boom
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            None,
+            None,
+            None,
+            None,
+        ]
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            None,
+            None,
+            None,
+            None,
+        ]
+        assert len(attempts) == 2, attempts
+
+        service.get_active_review_set = healthy
+        assert _reviewed(screen._decorate_library_media_reviewed(items)) == [
+            True,
+            False,
+            None,
+            None,
+        ]
+
+
+# ---------------------------------------------------------------------------
+# task-31957: the preview pane names the analysis state the row names
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("row_index", "expected", "other"),
+    [(0, "Analysed: yes", "Analysed: no"), (2, "Analysed: no", "Analysed: yes")],
+)
+@pytest.mark.asyncio
+async def test_the_preview_pane_paints_the_selected_items_analysis_state(
+    row_index: int, expected: str, other: str
+):
+    """task-31957: the pane answers for an analysed AND an un-analysed item.
+
+    Painted on the real screen, over the real projection: rows 1-2 of
+    ``_review_state_host`` carry an analysis and rows 3-4 do not, and the
+    pane has to say which one the selection is on -- the row's line says
+    "· analysed" or nothing, and until now the pane said neither.
+
+    ``show_preview`` is flipped on for the assertion: since the permanent
+    Reader shipped (``d99fb4a9c``) the screen passes ``show_preview=False``
+    for every Media canvas path, so this pane is not on screen today -- see
+    the batch-2 report. Everything else here is production: the screen's
+    stylesheet, the pane's real geometry (a ~15-cell text measure inside
+    the Items pane, which is why the line is kept short), and the state
+    built by the same browse projection the rows come from.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+        screen.query_one(f"#library-media-row-{row_index}", Button).press()
+        for _ in range(3):
+            await pilot.pause()
+
+        canvas = screen.query_one("#library-media-canvas")
+        canvas.show_preview = True
+        await canvas.recompose()
+        for _ in range(3):
+            await pilot.pause()
+
+        preview = screen.query_one("#library-media-preview")
+        assert preview.region.area > 0, preview.region
+        painted = _painted(host, preview.region)
+
+        assert expected in painted, painted
+        assert other not in painted, painted
+        # The pane describes the item whose row is selected, not a
+        # neighbour: its title is painted right above the answer.
+        assert f"Doc {row_index + 1}" in painted, painted

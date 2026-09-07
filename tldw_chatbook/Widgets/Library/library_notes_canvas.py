@@ -716,12 +716,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # label stashed for `_apply_library_row_toggle`'s
                     # in-place patch (compact and full spellings differ,
                     # so the patcher must not hard-code either).
-                    library_disabled_action_label(export_base, export_disabled),
+                    # task-31959: the enabled spelling reserves the
+                    # marker's own width, so the word holds its column
+                    # when the first selection enables this in place.
+                    library_disabled_action_label(
+                        export_base, export_disabled, align=True
+                    ),
                     id="library-notes-export-selected",
                     classes="library-canvas-action",
                     compact=True,
                 )
                 export_selected._library_disabled_marker_base = export_base
+                export_selected._library_disabled_marker_align = True
                 export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
@@ -1511,7 +1517,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 export_base = "Export" if compact else "Export selected"
                 button._library_disabled_marker_base = export_base
                 button.label = library_disabled_action_label(
-                    export_base, button.disabled
+                    export_base, button.disabled, align=True
                 )
             return
         header_rows = self.query("#library-note-header-second-row")

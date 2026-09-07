@@ -103,8 +103,8 @@ adds **· keyword: \<term\>** — the filter searches titles, item text and
 keywords, so without it a hit whose title and body hold nothing you typed
 reads as a mistake (`article · 2m · keyword: notes`). A row whose title or
 text carries the term already shows you why it is there and says nothing
-extra. Long tags are cut to ten characters (`keyword: quokkasand…`) to keep
-the line short. It can still be too long for a narrow Items pane: at the
+extra. Long tags are cut to ten columns (`keyword: quokkasand…`; five
+wide CJK characters) to keep the line short. It can still be too long for a narrow Items pane: at the
 pane's narrowest the row clips mid-term at the pane edge, and a row that is
 both analysed and a keyword hit can clip at the default width too.
 
@@ -151,7 +151,15 @@ keyword: quokkasand…`, the title hit painted `article · 1m`.)*
   depends on colour alone — and their tooltips say what to do ("Select one
   or more items…"). The same goes for **"○ Select"** when the list is
   empty ("Nothing here to select yet."). Checking the first row flips the
-  labels back in place.
+  labels back in place — the word itself does not move: an enabled
+  select-mode action reserves the marker's own two cells, so "Export
+  selected" starts in the same column whether or not the "○" is showing.
+  You can see that on Media, Conversations and Prompts. Notes reserves the
+  same width, but its select-mode row overflows the notes pane at every
+  width today, so "Clear" and "Export selected" are off-screen there until
+  that row is reworked. On Conversations the pane is narrow enough that the
+  label is clipped either way — "○" alone while disabled, "Exp" once
+  enabled — but it is clipped in the same column, which is the point.
 
 **Media's "Analyze"** (Media only) generates an analysis for every checked
 item in one run, in list order, on its own row under Clear/Export/Review:
@@ -362,9 +370,13 @@ still spans the pane.
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
   "Raw" to see the plain source instead. A rendered heading starts in the
-  same column as the prose beneath it. A plain `article` or `document`
-  with no markdown gets no toggle; that slot reads "Rendered view is for
-  Markdown and transcripts" instead of going silently blank. Below the toggle (or directly
+  same column as the prose beneath it. Any item with content but no
+  markdown gets no toggle, whatever its media type; that slot reads
+  "No Markdown formatting to render — showing the stored text" instead of
+  going silently blank — it names what THIS item has, so a plain-prose
+  transcript is not told that rendering is "for transcripts". An item with no stored content shows no such note — the
+  box already says "No stored content." and there is no rendered view to
+  explain away. Below the toggle (or directly
   above Content for everything else) is a "Search content…" box — its
   placeholder reads "Search content (raw text)…" whenever the toggle is
   present, since search always matches the raw stored text regardless of
@@ -411,6 +423,13 @@ still spans the pane.
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
 | "Move to trash" | Two-step, title-specific confirmation. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+*Verified against fix/media-riders-o — 2026-09-07 (tasks 31958/31959: live
+in tmux at 235x52 on a seeded scratch profile. A `plaintext` item with
+content painted the no-Markdown note above its text; an empty `article` painted "No stored content." with no note above
+it. In Conversations select mode, checking the first row moved the count
+0 → 1 and left the Export selected label's first painted glyph on column
+83 — "○" before, "Exp" (clipped) after.)*
 
 *Verified against fix/media-wave5-j — 2026-09-06 (task-31635 items 1, 5, 13,
 14: a seeded Markdown item and a seeded plain `article` opened live at 235x52.
