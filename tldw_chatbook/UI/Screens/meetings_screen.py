@@ -63,6 +63,9 @@ ENROLL_REASON_COPY = {
     "mic_device_not_found": "the selected microphone was not found",
     "store_unavailable": "the voiceprint store is unavailable",
 }
+#: The owner's static progress words, as Voice-row copy (final review I3).
+#: An unmapped word shows nothing rather than being interpolated.
+LEARN_PROGRESS_COPY = {"warming up": "Warming up the voice model…"}
 #: Marker on the auto-matched cluster's label, so an automatic name is never
 #: mistaken for one the user typed (spec §3.4).
 SELF_MARKER = " ·"
@@ -1047,8 +1050,19 @@ class MeetingsScreen(BaseAppScreen):
     @work(exclusive=True, group="meetings-learn", thread=True, exit_on_error=False,
           description="voice learning accept")
     def _accept_learning_worker(self, offer: Any) -> None:
-        ok = bool(self._owner.accept_learning(offer))
+        ok = bool(self._owner.accept_learning(offer, progress=self._learn_progress_from_thread))
         self.app.call_from_thread(self._learning_accepted, ok)
+
+    def _learn_progress_from_thread(self, status: str) -> None:
+        """Show the owner's warm-up on the Voice row (final review I3).
+
+        Mapped, never interpolated: with no live diarizer, accepting spawns a
+        worker and waits out a cold ECAPA download, and the row would
+        otherwise read "Learning from this meeting…" for two minutes.
+        """
+        copy = LEARN_PROGRESS_COPY.get(status)
+        if copy is not None:
+            self._progress_from_thread(self._voice_message, copy)
 
     @work(group="meetings-learn-decline", thread=True, exit_on_error=False,
           description="voice learning decline")
@@ -1122,8 +1136,12 @@ class MeetingsScreen(BaseAppScreen):
         self.app.call_from_thread(self._enroll_finished, result, None)
 
     def _enroll_progress_from_thread(self, status: str) -> None:
+        self._progress_from_thread(self._enroll_progress, status)
+
+    def _progress_from_thread(self, render: Any, copy: str) -> None:
+        """Marshal one progress line onto the UI thread, best-effort."""
         try:
-            self.app.call_from_thread(self._enroll_progress, status)
+            self.app.call_from_thread(render, copy)
         except Exception as exc:  # noqa: BLE001 - screen may be tearing down
             logger.debug("meetings enrollment progress dropped: {}", type(exc).__name__)
 

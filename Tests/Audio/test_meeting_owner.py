@@ -1318,6 +1318,41 @@ def test_learning_in_plain_call_mode_embeds_you_wav(tmp_path, monkeypatch):
     assert backend.closed == 1
 
 
+def test_accepting_an_offer_reports_the_warm_up(tmp_path, monkeypatch):
+    """Final review I3: the mic-channel offer's common configuration has NO
+    live diarizer, so accepting spawns a fresh worker and blocks on
+    `wait_ready` -- up to 120 s, model download included. Without a progress
+    ping the Voice row says "Learning from this meeting…" for two minutes and
+    reads as a hang."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    store = _store(tmp_path)
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: None)   # the default config
+    owner = _tap_owner(tmp_path, monkeypatch, live_diarization=True, voiceprint_store=store)
+    session = owner.start()
+    folder = Path(session.meta.folder)
+    result = owner.stop()
+    _write_wav(folder / "you.wav", b"\x01\x02" * 1600)
+    offer = owner.learning_offer(result)
+    assert offer is not None and offer.kind == "mic_channel"
+    assert owner._retained_diarizer is None          # nothing warm to borrow
+
+    spawned = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: spawned)
+    seen: list[str] = []
+    assert owner.accept_learning(offer, progress=seen.append) is True
+    assert seen == ["warming up"]                    # the same static word enrollment uses
+    assert spawned.closed == 1
+
+
+def test_accepting_an_offer_without_a_progress_callback_still_works(tmp_path, monkeypatch):
+    """`progress` is optional: every existing caller passes nothing."""
+    store = _store(tmp_path)
+    owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=store)
+    offer = owner.learning_offer(result)
+    assert owner.accept_learning(offer) is True
+
+
 def test_decline_and_dismiss_release_the_worker(tmp_path, monkeypatch):
     store = _store(tmp_path)
     owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=store)

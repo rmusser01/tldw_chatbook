@@ -175,8 +175,10 @@ class FakeOwner:
         self._pending_offer = self.offer
         return self.offer
 
-    def accept_learning(self, offer):
+    def accept_learning(self, offer, progress=None):
         self.learning_calls.append(("accept", offer))
+        if progress is not None:
+            progress("warming up")          # what a cold worker reports (I3)
         self._pending_offer = None
         return self.accept_result
 
@@ -1139,6 +1141,33 @@ async def test_stop_shows_the_learning_offer_and_accept_calls_the_owner(tmp_path
         await pilot.pause(0.3)
         assert ("accept", offer) in owner.learning_calls
         assert block.display is False
+
+
+@pytest.mark.asyncio
+async def test_accepting_shows_the_warm_up_instead_of_a_silent_two_minutes(tmp_path):
+    """Final review I3: with no live diarizer, Accept spawns a worker and
+    waits out a cold model. The Voice row has to say something."""
+    host, owner = await _boot(tmp_path)
+    owner.offer = LearningOffer(kind="mic_channel", folder=tmp_path)
+    owner.accept_result = False              # so the run ends on a failure message
+    seen: list[str] = []
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        shown = screen._voice_message
+
+        def _record(copy: str) -> None:      # the row only holds the LAST line
+            seen.append(copy)
+            shown(copy)
+
+        screen._voice_message = _record
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.2)
+        await pilot.click("#meetings-stop")
+        await pilot.pause(0.3)
+        screen.query_one("#meetings-learn-accept", Button).press()
+        await pilot.pause(0.4)
+    assert "Warming up the voice model…" in seen
 
 
 @pytest.mark.asyncio

@@ -1163,11 +1163,18 @@ class MeetingSessionOwner:
             self._offer_handed = True
             return offer
 
-    def accept_learning(self, offer: LearningOffer) -> bool:
+    def accept_learning(
+        self, offer: LearningOffer, progress: Callable[[str], None] | None = None
+    ) -> bool:
         """Merge the meeting's clean sample into the stored voiceprint.
 
         Args:
             offer: The offer `learning_offer` handed out.
+            progress: Optional `(status) -> None` for the warm-up indicator,
+                the same static words `enroll_from_mic` reports (final review
+                I3). With no live diarizer -- the common case for a
+                `mic_channel` offer -- this call spawns a worker and waits out
+                a cold model, and the screen has nothing else to show.
 
         Returns:
             True when the voiceprint was updated. False -- never an exception
@@ -1179,7 +1186,7 @@ class MeetingSessionOwner:
         if offer is None or offer is not self._pending_offer:
             return False
         try:
-            sample = self._sample_for(offer)
+            sample = self._sample_for(offer, progress)
             if sample is None:
                 return False
             centroid, seconds = sample
@@ -1197,9 +1204,11 @@ class MeetingSessionOwner:
             # meeting now (review C1).
             self._clear_offer(offer)
 
-    def _sample_for(self, offer: LearningOffer) -> tuple[list[float], float] | None:
+    def _sample_for(
+        self, offer: LearningOffer, progress: Callable[[str], None] | None = None
+    ) -> tuple[list[float], float] | None:
         """The centroid (and its seconds) this offer would merge, or None."""
-        diarizer, spawned = self._embedding_diarizer()
+        diarizer, spawned = self._embedding_diarizer(progress)
         if diarizer is None:
             return None
         try:
