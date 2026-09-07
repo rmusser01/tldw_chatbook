@@ -9,12 +9,16 @@ run as ``python -m tldw_chatbook.Audio.diarizer_worker`` by
              an id the dead one already handed out (31749).
     stdin :  one JSON control line per command; an "assign" or "enroll_from_pcm"
              line is followed by exactly ``n`` bytes of raw PCM16 (16 kHz mono).
+             ``export_centroid``/``enroll_from_pcm`` also carry an ``op_id``,
+             echoed back on the reply (31826 fix round 1, Critical 1 -- lets
+             the app drop a late reply for a call it already gave up on).
     stdout:  one ``{"id": ..., "seq": ..., "self": ...}`` line per assign (the
              ``seq`` is echoed so the app can discard a reply whose window
              already gave up); ``{"segments": [...], "self": ...}`` for a
-             diarize; ``{"centroid": [...] | null, "seconds": ...}`` for
-             ``export_centroid`` / ``enroll_from_pcm``. ``enroll`` and ``pin``
-             send no reply.
+             diarize; ``{"centroid": [...] | null, "seconds": ..., "op_id":
+             ...}`` for ``export_centroid`` / ``enroll_from_pcm`` (``op_id``
+             echoed on every reply, including the framed-error fallback).
+             ``enroll`` and ``pin`` send no reply.
     stderr:  ``READY`` once the ECAPA model is warm; ``ERROR <op> <type>`` on a
              per-command failure. Never PCM, text, names, or paths -- and
              never the voiceprint vector (spec §3.2/§6).
@@ -391,6 +395,7 @@ def serve(stdin, stdout, live, embed, batch) -> int:
                     float(cmd.get("min_seconds", 4.0)),  # M1: the config default, not 0
                 )
             elif op == "export_centroid":
+                op_id = cmd.get("op_id")
                 cid = str(cmd.get("id", ""))
                 if cid in last_batch_centroids:
                     # Important 3: the BATCH centroid pairs with BATCH seconds
@@ -401,14 +406,19 @@ def serve(stdin, stdout, live, embed, batch) -> int:
                 else:
                     cen, secs = live.centroids().get(cid), live.seconds(cid)
                 unit = None if cen is None else _unit(cen)
-                _write(stdout, {"centroid": None} if unit is None else {"centroid": unit, "seconds": secs})
+                reply = {"centroid": None} if unit is None else {"centroid": unit, "seconds": secs}
+                reply["op_id"] = op_id  # C1: lets the app drop a late reply for a call it gave up on
+                _write(stdout, reply)
             elif op == "enroll_from_pcm":
+                op_id = cmd.get("op_id")
                 n = int(cmd.get("n", 0))
                 sr = int(cmd.get("sr", 16000)) or 16000
                 pcm = _read_exactly(stdin, n)
                 unit = _unit(embed(pcm))
                 seconds = len(pcm) / (2 * sr)  # Minor 2
-                _write(stdout, {"centroid": None} if unit is None else {"centroid": unit, "seconds": seconds})
+                reply = {"centroid": None} if unit is None else {"centroid": unit, "seconds": seconds}
+                reply["op_id"] = op_id
+                _write(stdout, reply)
             elif op == "close":
                 break
         except Exception as exc:  # noqa: BLE001 - framed, never a traceback (paths) on stderr
@@ -419,7 +429,7 @@ def serve(stdin, stdout, live, embed, batch) -> int:
             elif op == "diarize":
                 _write(stdout, {"segments": [], "self": None})
             elif op in ("export_centroid", "enroll_from_pcm"):
-                _write(stdout, {"centroid": None})
+                _write(stdout, {"centroid": None, "op_id": cmd.get("op_id")})
             # enroll/pin: no reply either way; `enrolled`/`live` are untouched
             # by a raise partway through, so the previous state stands.
     return 0

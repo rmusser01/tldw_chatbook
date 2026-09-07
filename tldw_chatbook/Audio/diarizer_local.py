@@ -9,11 +9,16 @@ protocol to it (spec §3.4):
                              followed by exactly ``n`` bytes of raw PCM16
                              (the length-prefix is the ``n`` field on the
                              control line). "enroll" and "pin" get no reply.
+                             "export_centroid"/"enroll_from_pcm" also carry
+                             an ``op_id`` the worker must echo back (C1: lets
+                             the caller drop a late reply for an op it
+                             already gave up on).
     stdout (worker -> app):  one ``{"id": "S1", "seq": ..., "self": ...}`` /
                              ``{"id": null, ...}`` line per assign;
                              ``{"segments": [...], "self": ...}`` for a
                              diarize; ``{"centroid": [...] | null, "seconds":
-                             ...}`` for "export_centroid"/"enroll_from_pcm".
+                             ..., "op_id": ...}`` for
+                             "export_centroid"/"enroll_from_pcm".
     stderr (worker -> app):  ``READY`` once, when the ECAPA model is warm.
 
 Crash rule (spec §7): a DEAD worker (exited process / broken pipe / stdout
@@ -47,8 +52,9 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -121,20 +127,33 @@ class SpeechBrainDiarizer:
         self._budget = assign_budget_s
         # Held privately and sent to the worker (never logged, spec §3.3) as
         # soon as it reports READY; re-sent after a restart for free since
-        # that spawns a fresh watcher (`_watch_stderr`).
-        self._voiceprint: list[float] | None = None if voiceprint is None else [float(x) for x in voiceprint]
+        # that spawns a fresh watcher (`_watch_stderr`). The constructor must
+        # never raise (M2/M3): a vector that fails float() conversion (a
+        # corrupt on-disk record) or is empty is treated as absent rather
+        # than breaking meeting Start.
+        try:
+            parsed_voiceprint = None if voiceprint is None else [float(x) for x in voiceprint]
+        except Exception as exc:  # noqa: BLE001 - never raise on a bad vector
+            logger.warning("diarizer: voiceprint rejected ({})", type(exc).__name__)
+            parsed_voiceprint = None
+        self._voiceprint: list[float] | None = parsed_voiceprint or None
         self._match_threshold = float(match_threshold)
         self._match_min_seconds = float(match_min_seconds)
         #: The first cluster id the worker ever flagged `self: true` (§3.3):
-        #: fixed here so a later, noisier match can never displace it.
-        self.self_cluster_id: str | None = None
+        #: fixed here so a later, noisier match can never displace it. Backed
+        #: by a private field; read via the `self_cluster_id` property.
+        self._self_cluster_id: str | None = None
         #: Every `assign` reply flagged `self: true` counts here, matched
         #: cluster or not -- diagnostic only; the session acts on
-        #: `self_cluster_id` alone.
-        self.self_candidates_seen: int = 0
+        #: `self_cluster_id` alone. Read via the `self_candidates_seen` property.
+        self._self_candidates_seen: int = 0
         #: The most recent Stop-pass (`diarize`) reply's `self` id, or None.
         #: Task 4's fallback: applied only when no live match was recorded.
         self.stop_self: str | None = None
+        #: Monotonic id stamped on every `export_centroid`/`enroll_from_pcm`
+        #: control line so `_await_centroid` can tell its own reply apart
+        #: from a late one for an op this call already gave up on (C1).
+        self._op_seq = 0
         self._proc: Any | None = None
         self._q: "queue.Queue[Any]" = queue.Queue()
         self._ready = threading.Event()
@@ -168,6 +187,18 @@ class SpeechBrainDiarizer:
         of the returned list must never reach the vector this backend
         (re-)sends to the worker on every restart."""
         return None if self._voiceprint is None else list(self._voiceprint)
+
+    @property
+    def self_cluster_id(self) -> str | None:
+        """The first cluster id the worker ever flagged `self: true` (spec
+        §3.3: a read-only attribute for the session, task 4, to read)."""
+        return self._self_cluster_id
+
+    @property
+    def self_candidates_seen(self) -> int:
+        """Every consumed `assign` reply flagged `self: true`, matched
+        cluster or not -- diagnostic only."""
+        return self._self_candidates_seen
 
     # ---- process lifecycle ------------------------------------------------
     def _command(self) -> list[str]:
@@ -260,6 +291,13 @@ class SpeechBrainDiarizer:
         the same lock as every other command (pipe writes are not atomic
         across threads); a no-op when no voiceprint was configured. Never
         logs the vector -- its length only, and only on a send failure.
+
+        A failed send (a broken pipe -- the worker died during warm-up) is a
+        worker failure, not a silently-ignored one (ruling 6): it goes
+        through the same `_fail` path as any other dead-worker detection, so
+        the meeting ends up coarse-and-flagged rather than "ready" with
+        self-matching silently off. `_fail` never takes `self._lock`, so
+        calling it from inside this `with` block cannot deadlock.
         """
         if self._voiceprint is None:
             return
@@ -278,6 +316,7 @@ class SpeechBrainDiarizer:
                 logger.warning(
                     "diarizer: enroll send failed ({}, vector_len={})", type(exc).__name__, len(self._voiceprint)
                 )
+                self._fail()
 
     def wait_ready(self, timeout: float) -> bool:
         """Block up to `timeout` seconds for the worker's warm-up handshake.
@@ -368,7 +407,14 @@ class SpeechBrainDiarizer:
         # downloading, and the transcript thread cannot wait for it.
         if not (self._ready.is_set() and self._ready_ok):
             return None
-        with self._lock:
+        # I2: a bounded acquire, not a blocking one -- `_centroid_op` can
+        # hold this same lock for up to CENTROID_BUDGET_S (5x this budget).
+        # A backend too busy to take the lock right now is exactly the same
+        # backpressure `_await_reply`'s own timeout already models: skip to
+        # coarse, do not touch the restart budget, never block the caller.
+        if not self._lock.acquire(timeout=self._budget):
+            return None
+        try:
             if self._degraded or self._coarse_only:
                 return None
             proc = self._proc
@@ -384,6 +430,8 @@ class SpeechBrainDiarizer:
             if sid and sid[:1] == "S" and sid[1:].isdigit():
                 self.max_id_seen = max(self.max_id_seen, int(sid[1:]))
             return sid
+        finally:
+            self._lock.release()
 
     def _await_reply(self, seq: int) -> str | None:
         """Read this assign's reply within the budget; None means coarse.
@@ -419,9 +467,9 @@ class SpeechBrainDiarizer:
                 # Fixed here, once: the FIRST flagged cluster is `self`, for
                 # good, no matter how many later windows also flag true
                 # (spec §3.3 -- stable first match lives in the backend).
-                self.self_candidates_seen += 1
-                if self.self_cluster_id is None:
-                    self.self_cluster_id = sid
+                self._self_candidates_seen += 1
+                if self._self_cluster_id is None:
+                    self._self_cluster_id = sid
             return sid
 
     def diarize(self, wav_path: Path, start_s: float, end_s: float) -> list[SpeakerSegment]:
@@ -434,6 +482,9 @@ class SpeechBrainDiarizer:
         reply by the budget. Best-effort: any trouble returns ``[]`` and the
         session keeps the near-live labels ``assign`` already placed.
         """
+        # M6: a timed-out or failed pass must not leave a PREVIOUS successful
+        # pass's verdict standing -- reset up front, not just on success.
+        self.stop_self = None
         budget = diarize_budget_s(end_s - start_s)
         if self._degraded:
             return []
@@ -537,12 +588,22 @@ class SpeechBrainDiarizer:
     def _centroid_op(self, control: dict, pcm: bytes | None = None) -> tuple[list[float], float] | None:
         """Shared plumbing for `export_centroid`/`enroll_from_pcm`.
 
-        Acquires the same lock `assign`/`diarize` use, so no other reply can
-        be in flight while this waits -- a queued line lacking a `centroid`
-        key is simply not an answer to this call and is skipped. Bounded by
-        `CENTROID_BUDGET_S` total, lock wait included. Never raises.
+        Ready-gated like `assign`/`pin` (ruling 2 / I1): a pre-READY caller
+        returns None at once, without ever taking `self._lock` -- so this can
+        never block the stderr watcher's `_send_enroll`, which also takes
+        that lock. Task 4 is expected to wait for readiness itself before
+        enrolling; this is the structural backstop.
+
+        Acquires the same lock `assign`/`diarize` use (bounded, like
+        `assign`'s own acquire), so no other reply can be in flight while
+        this waits. Every control line is stamped with a fresh `op_id`
+        (C1): a queued reply for an op this call already gave up on is
+        indistinguishable from a fresh one by shape alone (both are
+        `{"centroid": ...}`), so `_await_centroid` also checks it matches.
+        Bounded by `CENTROID_BUDGET_S` total, lock wait included. Never
+        raises.
         """
-        if self._degraded or self._coarse_only:
+        if self._degraded or self._coarse_only or not self.wait_ready(0):
             return None
         deadline = time.monotonic() + CENTROID_BUDGET_S
         if not self._lock.acquire(timeout=CENTROID_BUDGET_S):
@@ -553,22 +614,32 @@ class SpeechBrainDiarizer:
             proc = self._proc
             if proc is None or proc.poll() is not None:
                 return None
+            self._op_seq += 1
+            op_id = self._op_seq
             try:
-                self._send(proc, control, pcm)
+                self._send(proc, {**control, "op_id": op_id}, pcm)
             except (OSError, ValueError):
                 self._fail()
                 return None
             remaining = max(0.0, deadline - time.monotonic())
-            return self._await_centroid(remaining)
-        except Exception:  # noqa: BLE001 - best-effort, never raises
+            return self._await_centroid(remaining, op_id)
+        except Exception as exc:  # noqa: BLE001 - best-effort, never raises (M7)
+            logger.warning("diarizer: centroid op failed ({})", type(exc).__name__)
             return None
         finally:
             self._lock.release()
 
-    def _await_centroid(self, budget: float) -> tuple[list[float], float] | None:
-        """Read a `{"centroid": ...}` reply within `budget`; anything else
-        queued is ignored (an assign/diarize reply cannot be in flight while
-        the caller holds `self._lock`)."""
+    def _await_centroid(self, budget: float, op_id: int) -> tuple[list[float], float] | None:
+        """Read the `{"centroid": ..., "op_id": ...}` reply matching `op_id`
+        within `budget`.
+
+        A `centroid`-keyed reply whose `op_id` does not match is a late
+        answer to an op THIS call (or an earlier one) already gave up on
+        (C1) -- dropped and logged (ids only), never returned as this call's
+        answer. An assign/diarize reply cannot be in flight while the caller
+        holds `self._lock`, so those are simply skipped by the `"centroid"
+        not in reply` check, same as before.
+        """
         deadline = time.monotonic() + budget
         while True:
             remaining = deadline - time.monotonic()
@@ -587,10 +658,15 @@ class SpeechBrainDiarizer:
                 continue
             if not isinstance(reply, dict) or "centroid" not in reply:
                 continue
+            if reply.get("op_id") != op_id:
+                logger.warning(
+                    "diarizer: dropped a stale centroid reply (op_id={}, want={})", reply.get("op_id"), op_id
+                )
+                continue
             centroid = reply.get("centroid")
             if centroid is None:
                 return None
-            return list(centroid), float(reply.get("seconds", 0.0))
+            return [float(x) for x in centroid], float(reply.get("seconds") or 0.0)
 
     def close(self) -> None:
         """Best-effort: ask the worker to exit, then tear it down. Idempotent."""
