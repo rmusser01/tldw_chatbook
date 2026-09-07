@@ -11204,11 +11204,14 @@ class LibraryScreen(BaseAppScreen):
         and enabled, or ``None`` when the page offers none. One owner for
         both readers: ``_focus_library_list_entry`` lands on it, and
         ``_library_focus_channel_owns_this_window`` asks whether there is
-        anything to land on at all -- a filter MISS composes no recovery
-        action whatsoever (the canvas returns right after its
-        query-echoing status line), so the answer has to be the same in
-        both places or the seam stands down for a channel that never
-        arrives.
+        anything to land on at all -- a filter MISS composes none of these
+        four (the canvas returns right after its query-echoing status
+        line), so the answer has to be the same in both places or the seam
+        stands down for a channel that never arrives. The miss page's own
+        ``#library-media-filter-clear`` is deliberately NOT a fifth entry:
+        with nothing here the shared seam restores the filter ``Input``
+        (the right place to retype), and listing Clear would put the
+        predicate back into "owns" and re-open the gap.
         """
         for selector in (
             "#library-media-type-filter",
