@@ -403,6 +403,18 @@ def main() -> None:
         app._bindings.bind("f12", "canvas_fixture_reopen", priority=True)
 
         def acknowledge_composer_focus():
+            (data_root / "canvas-live-delivery-owner").write_text(
+                json.dumps(
+                    {
+                        "served": app._served_canvas_mode,
+                        "native_gateway": app.screen._console_runtime().canvas_gateway
+                        is not None,
+                        "enabled": app.screen._console_runtime()._canvas_enabled(),
+                        "control": app.served_canvas_control is not None,
+                    }
+                ),
+                encoding="ascii",
+            )
             focused = app.focused
             while focused is not None and focused.id != "console-native-composer":
                 focused = focused.parent

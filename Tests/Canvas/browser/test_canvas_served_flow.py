@@ -537,7 +537,7 @@ async def test_actual_chatbook_scripted_gateway_emits_create_then_stable_update(
 
 
 @pytest.mark.loopback_network
-@pytest.mark.parametrize("failure", ["snapshot", "old-version"])
+@pytest.mark.parametrize("failure", ["snapshot", "old-version", "absent-broker"])
 async def test_actual_child_control_refusal_keeps_terminal_usable(
     tmp_path, monkeypatch, failure
 ):
@@ -552,6 +552,10 @@ async def test_actual_child_control_refusal_keeps_terminal_usable(
         access_token=access_token,
         child_module="Tests.Canvas.browser.canvas_live_chatbook_child",
     )
+    if failure == "absent-broker":
+        # The parent remains latched off, but a fresh child reads enabled config.
+        await stack.server._disable_canvas_runtime()
+        assert stack.server._canvas_control_broker is None
     if failure == "old-version":
         issue_child = stack.server._canvas_control_broker.issue_child
 
@@ -579,13 +583,14 @@ async def test_actual_child_control_refusal_keeps_terminal_usable(
             await expect(page.locator("#terminal")).to_contain_text(
                 "Composer", timeout=45_000
             )
-            child_id = await _live_child_for_page(stack.server, page, port=stack.port)
-            with pytest.raises(
-                ControlProtocolError, match="connection_deadline_exceeded"
-            ):
-                await stack.server._canvas_control_broker.wait_connected(
-                    child_id, timeout=0.2
-                )
+            if failure != "absent-broker":
+                child_id = await _live_child_for_page(stack.server, page, port=stack.port)
+                with pytest.raises(
+                    ControlProtocolError, match="connection_deadline_exceeded"
+                ):
+                    await stack.server._canvas_control_broker.wait_connected(
+                        child_id, timeout=0.2
+                    )
             await _send_console_prompt(
                 page,
                 "Create the requested Canvas",
@@ -596,6 +601,20 @@ async def test_actual_child_control_refusal_keeps_terminal_usable(
             )
             await expect(page.locator("#terminal.-connected")).to_be_visible()
             await expect(page.locator("#served-canvas-region")).to_be_hidden()
+            owner_receipt = tmp_path / "test_data" / "canvas-live-delivery-owner"
+            previous_receipt = owner_receipt.stat().st_mtime_ns
+            await page.keyboard.press("F11")
+            for _ in range(50):
+                if owner_receipt.stat().st_mtime_ns != previous_receipt:
+                    break
+                await asyncio.sleep(0.1)
+            assert owner_receipt.stat().st_mtime_ns != previous_receipt
+            assert json.loads(owner_receipt.read_text()) == {
+                "served": True,
+                "native_gateway": False,
+                "enabled": True,
+                "control": failure == "snapshot",
+            }
             await browser.close()
     finally:
         await stack.aclose()

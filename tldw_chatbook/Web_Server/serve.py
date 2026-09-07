@@ -1287,6 +1287,8 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
         def _build_environment(self, width: int = 80, height: int = 24):
             environment = super()._build_environment(width, height)
             environment.update(self._canvas_control_environment)
+            # Launch identity survives disabled or unavailable Canvas transport.
+            environment["CHATBOOK_SERVED_CHILD"] = "1"
             return environment
 
         async def start(self, width: int, height: int) -> None:

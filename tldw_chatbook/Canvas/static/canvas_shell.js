@@ -29,6 +29,7 @@
   let displayedRevisionId = "";
   let selectionEpoch = -1;
   let selectionOperation = 0;
+  let loadOperation = 0;
   let pendingNavigations = 0;
   let displayedMetadata = {};
   let latestRevisionId = "";
@@ -604,16 +605,21 @@
     return (await post("api/actions", {action}, {}, signal)).capability;
   }
 
-  async function readSource() {
+  async function readSource(isCurrent = () => true) {
     const capability = await mintAction("source_read");
+    if (!isCurrent()) return;
     const response = await fetch(api("api/source"), {headers: {Authorization: `CanvasCapability ${capability}`}, cache: "no-store"});
+    if (!isCurrent()) return;
     if (!response.ok) throw new Error("Source is unavailable for this revision.");
     return response.text();
   }
 
   async function loadFrame({updated = false, scriptsDisabled = false, previousRevisionId = "", operation = selectionOperation} = {}) {
+    // Reloads of one selection still supersede each other's async recovery.
+    const load = ++loadOperation;
+    const isCurrent = () => !closed && operation === selectionOperation && load === loadOperation;
     await cancelPendingBridge({restoreFocus: false});
-    if (closed || operation !== selectionOperation) return;
+    if (!isCurrent()) return;
     rendererReady = false;
     pendingPlan = null;
     pendingRuntimeData = null;
@@ -623,19 +629,19 @@
     ui.loading.hidden = false;
     ui.loading.textContent = "Preparing isolated preview…";
     const frame = await post("api/frame", {});
-    if (closed || operation !== selectionOperation) return;
+    if (!isCurrent()) return;
     const planResponse = await fetch(api("api/plan"), {cache: "no-store"});
-    if (closed || operation !== selectionOperation) return;
+    if (!isCurrent()) return;
     if (!planResponse.ok) {
-      await openInertSource(operation);
+      await openInertSource(isCurrent);
       return;
     }
     const planPayload = await planResponse.json();
-    if (closed || operation !== selectionOperation) return;
+    if (!isCurrent()) return;
     const issues = Array.isArray(planPayload.compatibility_issues) ? planPayload.compatibility_issues : [];
     const {compatibility_issues: _shellOnlyIssues, runtime_data: runtimeData, ...rendererPlan} = planPayload;
     if (scriptsDisabled && rendererPlan.runtime_profile !== "canvas-v1") {
-      await openInertSource(operation);
+      await openInertSource(isCurrent);
       return;
     }
     pendingPlan = rendererPlan;
@@ -648,11 +654,11 @@
     if (scriptsDisabled) showNotice("Opened with generated scripts disabled.");
   }
 
-  async function openInertSource(operation) {
-    if (closed || operation !== selectionOperation) return;
+  async function openInertSource(isCurrent) {
+    if (!isCurrent()) return;
     ui.frame.src = "about:blank";
-    const source = await readSource();
-    if (closed || operation !== selectionOperation) return;
+    const source = await readSource(isCurrent);
+    if (!isCurrent()) return;
     pendingPlan = null;
     pendingRuntimeData = null;
     ui.loading.textContent = "Preview unavailable. Source is preserved.";

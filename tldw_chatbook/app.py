@@ -7600,8 +7600,8 @@ class TldwCli(
         super().__init__()
 
         # A textual-serve child receives a one-use, per-AppService control
-        # capability through its spawn environment. Native terminal launches
-        # have no such variables and need not import the served transport.
+        # capability through its spawn environment. A non-secret launch marker
+        # persists without a broker; native launches need no served transport.
         canvas_control_keys = (
             "CHATBOOK_CANVAS_CONTROL_HOST",
             "CHATBOOK_CANVAS_CONTROL_PORT",
@@ -7611,7 +7611,9 @@ class TldwCli(
         )
         self.served_canvas_handler = None
         self.served_canvas_control = None
-        self._served_canvas_mode = any(key in os.environ for key in canvas_control_keys)
+        self._served_canvas_mode = "CHATBOOK_SERVED_CHILD" in os.environ or any(
+            key in os.environ for key in canvas_control_keys
+        )
         if self._served_canvas_mode:
             from .Canvas.control_protocol import (
                 CanvasControlClient,

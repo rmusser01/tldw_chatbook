@@ -292,7 +292,9 @@ async def test_restarted_native_policy_preserves_inert_source_without_worker(
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
-async def test_old_plan_failure_cannot_blank_new_selection():
+@pytest.mark.parametrize("same_selection", [False, True])
+@pytest.mark.parametrize("delayed_source", [False, True])
+async def test_old_plan_failure_cannot_blank_new_selection(same_selection, delayed_source):
     authority = _NativeFlowAuthority()
     gateway = CanvasGateway(authority=authority)
     release = asyncio.Event()
@@ -309,21 +311,37 @@ async def test_old_plan_failure_cannot_blank_new_selection():
             await expect(preview.locator("h1")).to_have_text("revision-1")
 
             async def delayed_plan(route):
-                if not entered.is_set():
-                    entered.set()
-                    await release.wait()
+                if not failed[0]:
+                    failed[0] = True
+                    if not delayed_source:
+                        entered.set()
+                        await release.wait()
                     await route.fulfill(status=503, json={"error": "plan_unavailable"})
                 else:
                     await route.continue_()
 
+            async def delayed_source_response(route):
+                entered.set()
+                await release.wait()
+                await route.fulfill(status=200, body="<h1>old recovery source</h1>")
+
+            failed = [False]
             await page.route("**/api/plan", delayed_plan)
+            if delayed_source:
+                await page.route("**/api/source", delayed_source_response)
             await page.locator("#reload-button").click()
             await asyncio.wait_for(entered.wait(), 5)
-            authority.publish("revision-2", sequence=2)
-            await expect(preview.locator("h1")).to_have_text("revision-2")
+            if same_selection:
+                await page.locator("#reload-button").click()
+                await expect(page.locator("#loading-state")).to_be_hidden()
+            else:
+                authority.publish("revision-2", sequence=2)
+            revision = "revision-1" if same_selection else "revision-2"
+            await expect(preview.locator("h1")).to_have_text(revision)
             release.set()
             await page.wait_for_timeout(200)
-            await expect(preview.locator("h1")).to_have_text("revision-2")
+            await expect(preview.locator("h1")).to_have_text(revision)
+            await expect(page.locator("#source-panel")).to_be_hidden()
             await browser.close()
     finally:
         release.set()
