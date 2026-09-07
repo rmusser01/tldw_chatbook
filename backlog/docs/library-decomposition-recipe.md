@@ -1090,6 +1090,41 @@ rediscover the same red from scratch.
   navigation_controller.py` and `library_character_repair_controller.py`
   with no `_BUDGETS` rows), IS fixed at that merge, because governing a new
   file at its exact measured size is what that check asks for.
+  **Re-measured at wave 7's `origin/dev` merge (`0bb00beaf`, 2026-09-07):
+  649 against the same 371 pin.** Dev's creep has more than TRIPLED the
+  overshoot in one wave (410 -> 649) while the pin sat still, which is worth
+  stating plainly: a red left for its rightful owner does not stay the size
+  it was when you left it, and the refusal to re-pin has now been made four
+  waves running. It is red on `origin/dev` itself, verified in the isolated
+  baseline worktree with proven Python and package parity. Someone on dev
+  owns it; the fourth Library wave to leave it alone recorded the number
+  rather than the silence.
+- `Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_
+  not_left_slack_after_a_move[library_conversations_controller.py]` — the
+  MIRROR-IMAGE failure of the row above, and new at wave 7's merge: dev
+  SHRANK the file 1738 -> 1686 without lowering its row, leaving 52 lines of
+  slack against the 50-line tolerance. Red on `origin/dev` itself. Same
+  disposition and same reason: it is dev's move, so dev lowers the row.
+- Two `origin/dev` reds that are not ratchets and that wave 7's merge proved
+  in the same isolated baseline, recorded because they sit inside the
+  Library battery every future wave runs:
+  `Tests/UI/test_library_screen_reuse.py::test_on_screen_suspend_stops_
+  every_timer_in_isolation` (dev added `self._unavailable_navigation.
+  clear_character_return(self)` to `on_screen_suspend` without seeding that
+  attribute in the test's `LibraryScreen.__new__` fixture — the SAME
+  `__new__`-bypass shape every state PR in this program has had to seed, now
+  bitten from the dev side) and
+  `Tests/UI/test_library_modal_dismissal.py::test_library_modal_inventory_
+  matches_declared_edges_bidirectionally` (the inventory's AST resolver
+  cannot resolve dev's `SkillImportChoiceModal(snapshot.candidates)`).
+  Both are on TASK-31249.
+- `Tests/UI/test_screen_navigation.py` — **32 failed / 110 passed on
+  `origin/dev` (`0bb00beaf`), and the SAME 32 names on wave 7's merged
+  branch.** Wave 6 recorded ~30 churning failures here and called the file
+  flaky; at wave 7 the failing NAME set is stable and identical across the
+  two trees, which is a different and worse diagnosis: not flake, a standing
+  regression. Any future wave that runs this file should compare name sets,
+  never counts, and should not read a green expectation into it.
 - Wave-2 Task 2 (export state PR) found 14 more, all reconfirmed identical
   (same 14, no more/fewer) on a `git stash -u` baseline of the pre-task
   tree via a direct node-id rerun (not the xdist sweep):
