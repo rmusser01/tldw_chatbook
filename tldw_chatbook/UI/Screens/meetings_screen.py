@@ -111,7 +111,10 @@ def _validated_transfer_path(text: str, action: str) -> Path:
     if action == "Import":
         if not path.is_file():
             raise ValueError("import source is not a regular file")
-    elif path.is_symlink() or not path.parent.is_dir():
+    elif path.is_symlink() or path.is_dir() or not path.parent.is_dir():
+        # A directory would make the store's temp-then-replace land on a
+        # directory path (Qodo re-review minor); a symlink target is refused
+        # so the write can never follow it somewhere the user never named.
         raise ValueError("export destination is unusable")
     return path
 
@@ -1270,14 +1273,31 @@ class MeetingsScreen(BaseAppScreen):
         if store is None:
             self._voice_message("The voiceprint store is unavailable.")
             return
+        self._voice_message("Deleting…")
+        self._voice_delete_worker(store)
+
+    @work(exclusive=True, group="meetings-voice-delete", thread=True, exit_on_error=False,
+          description="voiceprint delete")
+    def _voice_delete_worker(self, store: Any) -> None:
+        # Off the UI thread (Qodo re-review): `delete()` takes the store's
+        # writer lock, which a learning merge or an enrollment save may hold
+        # across a keyring access -- on macOS that can be a Keychain prompt.
         try:
             removed = store.delete()
-        except Exception as exc:  # noqa: BLE001
-            self._voice_message(f"Delete failed ({type(exc).__name__}).")
+        except Exception as exc:  # noqa: BLE001 - type only
+            self.app.call_from_thread(self._voice_delete_done, False, f"Delete failed ({type(exc).__name__}).")
             return
-        if self._owner is not None:
+        copy = "Your voiceprint was deleted." if removed else "No voiceprint to delete."
+        self.app.call_from_thread(self._voice_delete_done, True, copy)
+
+    def _voice_delete_done(self, ok: bool, copy: str) -> None:
+        if ok and self._owner is not None:
             self._owner.invalidate_voiceprint()
-        self._voice_message("Your voiceprint was deleted." if removed else "No voiceprint to delete.")
+        if not self.is_mounted:
+            return
+        self._voice_message(copy)
+        if not ok:
+            return
         self._refresh_voice_row()
         self._render_voice_match(getattr(self._owner, "voice_match", None))
 

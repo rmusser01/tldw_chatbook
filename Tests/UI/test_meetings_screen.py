@@ -1340,10 +1340,23 @@ async def test_delete_asks_for_confirmation_before_removing_the_voiceprint(tmp_p
         assert store.calls == []                      # first press only arms it
         assert "again" in _text(screen.query_one("#meetings-voice-message", Static))
         screen.query_one("#meetings-voice-delete", Button).press()
-        await pilot.pause(0.1)
-        assert store.calls == [("delete",)]
+        # The delete runs on a worker thread (Qodo re-review): it takes the
+        # store's writer lock, which a merge may hold across a keyring access.
+        assert await _wait_until(pilot, lambda: store.calls == [("delete",)])
+        assert await _wait_until(
+            pilot, lambda: _text(screen.query_one("#meetings-voice-status", Static)) == "Voice: not enrolled"
+        )
         assert owner.invalidated == 1
-        assert _text(screen.query_one("#meetings-voice-status", Static)) == "Voice: not enrolled"
+
+
+def test_export_refuses_a_directory_destination(tmp_path):
+    """Qodo re-review minor: a directory passed the export check, which would
+    have made the store's temp-then-replace land on a directory path."""
+    from tldw_chatbook.UI.Screens.meetings_screen import _validated_transfer_path
+
+    with pytest.raises(ValueError):
+        _validated_transfer_path(str(tmp_path), "Export")
+    assert _validated_transfer_path(str(tmp_path / "vp.json"), "Export") == tmp_path / "vp.json"
 
 
 @pytest.mark.asyncio
