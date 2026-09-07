@@ -987,6 +987,17 @@ def test_room_mode_builds_the_diarizer_with_the_stored_vector(tmp_path, monkeypa
     owner.stop()
 
 
+def test_build_diarizer_without_a_vector_enrolls_nothing(tmp_path, monkeypatch):
+    """Review M5: the "no vector" half of the real path, not just the fake."""
+    monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    seen: dict = {}
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda **kw: seen.update(kw) or object())
+    mo.build_diarizer(_settings(tmp_path, live_diarization=True))
+    assert seen["voiceprint"] is None
+
+
 def test_build_diarizer_forwards_the_vector_and_the_match_settings(tmp_path, monkeypatch):
     """The thresholds are the worker's match gate -- they must travel with
     the vector, not stay behind in the settings object."""
@@ -1064,13 +1075,118 @@ def test_hybrid_call_mode_does_match(tmp_path, monkeypatch):
 def test_locked_keyring_never_delays_start(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     _backend_spy(monkeypatch)
-    store = _store(tmp_path, keys=FakeKeys(delay=5.0))
+    store = _store(tmp_path, keys=FakeKeys(delay=30.0))
     owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=store)
     started = time.monotonic()
     owner.start()
     elapsed = time.monotonic() - started
-    assert elapsed < 2.0
-    assert owner.prepare().voice_match.reason == "keyring_locked"
+    # Real headroom (review M7): the bound is 2x the join, so a slow host
+    # cannot make this flake -- only a broken join would blow it.
+    assert elapsed < 2 * mo.VOICEPRINT_LOAD_TIMEOUT_S
+    assert owner.voice_match.reason == "keyring_locked"
+    assert owner.prepare().voice_match.reason == "keyring_locked"   # sticky for the rail
+    owner.stop()
+
+
+def test_a_locked_keyring_is_retried_by_the_next_start(tmp_path, monkeypatch):
+    """Review I5: the design's own scenario is "the prompt appeared, the join
+    timed out, the user then approved it" -- the next meeting must try again
+    instead of staying off until an app restart."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, _ = _backend_spy(monkeypatch)
+    keys = FakeKeys(delay=30.0)
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path, keys=keys, centroid=(0.6, 0.8)),
+    )
+    owner.start()
+    assert owner.voice_match.reason == "keyring_locked"
+    owner.stop()
+
+    keys.delay = 0.0                       # the user approved the prompt
+    owner.start()
+    assert owner.voice_match.state == "on" and backend.voiceprint == [0.6, 0.8]
+    owner.stop()
+
+
+def test_a_terminal_verdict_is_not_retried_every_start(tmp_path, monkeypatch):
+    """... but a record that simply is not there stays cached: no repeated
+    reads, and `invalidate_voiceprint` is the escape."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    _backend_spy(monkeypatch)
+    keys = FakeKeys()
+    store = _store(tmp_path, keys=keys, enrolled=False)
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=store)
+    owner.start()
+    owner.stop()
+    assert owner.voice_match.reason == "no_voiceprint"
+    owner.start()
+    owner.stop()
+    assert owner.voice_match.reason == "no_voiceprint"
+
+
+def test_prepare_never_reads_the_key(tmp_path, monkeypatch):
+    """Controller ruling / review I2: `prepare()` runs at screen mount and
+    after every device change, so it may only STAT the store -- the decrypt
+    (and any Keychain prompt) belongs to Start, on its bounded thread."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    _backend_spy(monkeypatch)
+    keys = FakeKeys()
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path, keys=keys),
+    )
+    reads_after_save = keys.reads
+
+    prepared = owner.prepare()
+    assert keys.reads == reads_after_save                 # zero key reads
+    assert prepared.voice_match.state == "on"             # a record exists (unverified)
+
+    owner.prepared = None
+    owner.prepare()
+    assert keys.reads == reads_after_save                 # still zero, every time
+
+    owner.start()                                          # ... and Start does the read
+    assert keys.reads == reads_after_save + 1
+    assert owner.voice_match.state == "on" and owner.voice_match.reason is None
+    owner.stop()
+
+
+def test_prepare_reports_no_voiceprint_from_a_stat_alone(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    keys = FakeKeys()
+    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, keys=keys, enrolled=False))
+    assert owner.prepare().voice_match.reason == "no_voiceprint"
+    assert keys.reads == 0
+
+
+def test_prepare_reports_store_unavailable_without_raising(tmp_path, monkeypatch):
+    """Review M2: a store that cannot be opened at all is a different repair
+    from a record that would not decrypt."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+
+    def broken_store():
+        raise RuntimeError("keyfile permissions")
+
+    owner, _, _ = _owner(tmp_path)
+    owner._store_factory = broken_store
+    assert owner.prepare().voice_match.reason == "store_unavailable"
+
+
+def test_start_reports_store_unavailable_when_the_store_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, _ = _backend_spy(monkeypatch)
+
+    class Boom:
+        def exists(self):
+            return True
+
+        def load(self, expected_model_id=None, timeout_s=1.5):
+            raise RuntimeError("no key material")
+
+    owner, _, _ = _owner(tmp_path, live_diarization=True)
+    owner._store_factory = Boom
+    owner.start()
+    assert owner.voice_match == mo.VoiceMatchState("off", "store_unavailable")
+    assert backend.voiceprint is None
     owner.stop()
 
 
@@ -1219,6 +1335,7 @@ class PcmRecorder(FakeRecorder):
         super().__init__(**kwargs)
         self.kwargs = kwargs
         self.save_to_file = "unset"
+        self.stopped = 0
         PcmRecorder.instances.append(self)
 
     def start_recording(self, callback=None, save_to_file=None):
@@ -1226,6 +1343,7 @@ class PcmRecorder(FakeRecorder):
         return True
 
     def stop_recording(self):
+        self.stopped += 1
         return b"\x03\x04" * 4000
 
 
@@ -1271,8 +1389,11 @@ def test_enroll_from_mic_reports_a_failed_embed_without_saving(tmp_path, monkeyp
 
 
 def test_enroll_from_mic_reports_a_missing_recorder(tmp_path, monkeypatch):
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
     from tldw_chatbook.Audio.recording_service import AudioRecordingError
 
+    backend = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
     owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
 
     def no_recorder(**kwargs):
@@ -1281,6 +1402,295 @@ def test_enroll_from_mic_reports_a_missing_recorder(tmp_path, monkeypatch):
     owner._mic_factory = no_recorder
     res = owner.enroll_from_mic(seconds=1)
     assert res.ok is False and res.reason == "Audio recording functionality requires NumPy"
+
+
+def test_enroll_from_mic_never_opens_the_mic_when_the_worker_is_unavailable(tmp_path, monkeypatch):
+    """Review M8: the worker is built FIRST, so giving up on warm-up does not
+    leave a just-opened microphone behind."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    def no_worker(*a, **kw):
+        raise RuntimeError("spawn failed")
+
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", no_worker)
+    PcmRecorder.instances = []
+    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
+    owner._mic_factory = PcmRecorder
+    owner._sleep = lambda seconds: None
+
+    res = owner.enroll_from_mic(seconds=1)
+    assert res.ok is False and res.reason == "diarizer_unavailable"
+    assert PcmRecorder.instances == []
+
+
+def test_enroll_from_mic_uses_the_configured_microphone(tmp_path, monkeypatch):
+    """Review I5: enrolling from the default input while meetings record from
+    a chosen one is a silent, permanent channel mismatch."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    backend = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    selected: list = []
+
+    class DeviceRecorder(PcmRecorder):
+        def get_audio_devices(self):
+            return [{"id": 0, "name": "Built-in"}, {"id": 7, "name": "Shure MV7"}]
+
+        def set_device(self, device_id):
+            selected.append(device_id)
+            return True
+
+    owner, _, _ = _owner(
+        tmp_path, mic_device="Shure MV7", voiceprint_store=_store(tmp_path, enrolled=False),
+    )
+    owner._mic_factory = DeviceRecorder
+    owner._sleep = lambda seconds: None
+    assert owner.enroll_from_mic(seconds=1).ok is True
+    assert selected == [7]
+
+
+def test_enroll_from_mic_refuses_when_the_configured_microphone_is_gone(tmp_path, monkeypatch):
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    backend = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    store = _store(tmp_path, enrolled=False)
+    owner, _, _ = _owner(tmp_path, mic_device="Shure MV7", voiceprint_store=store)
+    owner._mic_factory = PcmRecorder          # enumerates nothing
+    owner._sleep = lambda seconds: None
+
+    res = owner.enroll_from_mic(seconds=1)
+    assert res.ok is False and res.reason == "mic_device_not_found"
+    assert store.load().voiceprint is None
+
+
+def test_enroll_from_mic_can_be_cancelled_mid_recording(tmp_path, monkeypatch):
+    """Spec §3.4: the user must be able to abort the sample, not be held for
+    the full 30 s (review I7)."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    backend = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    PcmRecorder.instances = []
+    store = _store(tmp_path, enrolled=False)
+    owner, _, _ = _owner(tmp_path, voiceprint_store=store)
+    owner._mic_factory = PcmRecorder
+    cancel = threading.Event()
+    slices: list[float] = []
+
+    def sleep(seconds):
+        slices.append(seconds)
+        if len(slices) == 3:
+            cancel.set()                       # the user hits Cancel
+
+    owner._sleep = sleep
+
+    res = owner.enroll_from_mic(seconds=30, cancel=cancel)
+
+    assert res.ok is False and res.reason == "cancelled"
+    assert max(slices) <= mo.ENROLL_SLICE_S    # sliced, not one 30 s wait
+    assert len(slices) < 30 / mo.ENROLL_SLICE_S
+    assert PcmRecorder.instances[-1].stopped == 1   # the mic was released
+    assert backend.enrolled == []                    # nothing embedded
+    assert store.load().voiceprint is None           # nothing kept
+    assert backend.closed == 1                       # the spawned worker went
+
+
+def test_enroll_from_mic_returns_cancelled_before_it_records(tmp_path, monkeypatch):
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    backend = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    PcmRecorder.instances = []
+    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
+    owner._mic_factory = PcmRecorder
+    owner._sleep = lambda seconds: None
+    cancel = threading.Event()
+    cancel.set()
+
+    res = owner.enroll_from_mic(seconds=1, cancel=cancel)
+    assert res.ok is False and res.reason == "cancelled"
+    assert PcmRecorder.instances == []
+
+
+def test_start_refuses_while_an_enrollment_holds_the_mic(tmp_path, monkeypatch):
+    """Review I4, the reverse guard: `enroll_from_mic` already refuses during
+    a meeting; a Start during an enrollment opened a second recorder on the
+    same device."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
+    owner._mic_factory = PcmRecorder
+    owner.prepare()
+    seen: list[bool] = []
+
+    def sleep(seconds):
+        if not seen:
+            seen.append(owner.is_enrolling)
+            with pytest.raises(RuntimeError, match="enrolling"):
+                owner.start()
+
+    owner._sleep = sleep
+    assert owner.enroll_from_mic(seconds=1).ok is True
+    assert seen == [True]
+    assert owner.is_enrolling is False          # cleared afterwards
+    assert owner.session is None                 # ... and no meeting was opened
+    owner.start()                                 # now it is allowed again
+    owner.stop()
+
+
+def test_enroll_from_mic_refuses_a_second_concurrent_enrollment(tmp_path, monkeypatch):
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    backend = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
+    owner._mic_factory = PcmRecorder
+    second: list = []
+
+    def sleep(seconds):
+        if not second:
+            second.append(owner.enroll_from_mic(seconds=1))
+
+    owner._sleep = sleep
+    assert owner.enroll_from_mic(seconds=1).ok is True
+    assert second[0].ok is False and second[0].reason == "capture_busy"
+
+
+# ---- review C1: an offer's release must never touch a live meeting --------
+
+def test_accepting_an_offer_after_a_new_start_leaves_the_live_worker_open(tmp_path, monkeypatch):
+    """The reviewer's repro 1: Accept is in flight (an export can take up to
+    10 s) when the user starts the next meeting. The lapse closes the offer's
+    worker; Accept's cleanup must not then close the NEW meeting's worker."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    first, second = FakeBackend(), FakeBackend()
+    built = iter([first, second])
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: next(built))
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path))
+    owner.prepare()
+    session = owner.start()
+    session.meta.matched_self = "S1"
+    result = owner.stop()
+    offer = owner.learning_offer(result)
+    assert offer is not None
+
+    # The Start lands while the export is in flight. Whether the in-flight
+    # sample still merges is not the point (it came from the old worker
+    # legitimately); WHICH worker gets closed is.
+    first.export_centroid = lambda cluster_id: (owner.start(), ([0.0, 1.0], 5.0))[1]
+    owner.accept_learning(offer)
+    assert first.closed == 1                             # the lapse closed the OLD worker
+    assert second.closed == 0                            # ... and left the live one alone
+    assert owner.session._diarizer is second
+    assert owner.pending_offer is None
+    owner.stop()
+
+
+def test_dismissing_a_lapsed_offer_leaves_the_live_worker_open(tmp_path, monkeypatch):
+    """The reviewer's repro 2 -- the likely Task-5 wiring: a new meeting hides
+    the offer card, and the screen calls `dismiss_learning()` afterwards."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    first, second = FakeBackend(), FakeBackend()
+    built = iter([first, second])
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: next(built))
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path))
+    owner.prepare()
+    session = owner.start()
+    session.meta.matched_self = "S1"
+    result = owner.stop()
+    owner.learning_offer(result)
+
+    owner.start()                       # the offer lapses here
+    owner.dismiss_learning()            # the screen tidies up afterwards
+    assert first.closed == 1
+    assert second.closed == 0 and owner.session._diarizer is second
+    owner.stop()
+
+
+def test_declining_a_stale_offer_is_a_no_op(tmp_path, monkeypatch):
+    """Review M9: `decline_learning` honours its argument."""
+    owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=_store(tmp_path))
+    offer = owner.learning_offer(result)
+    stale = mo.LearningOffer(kind="matched_cluster", folder=Path(tmp_path), cluster_id="S9")
+    owner.decline_learning(stale)
+    assert backend.closed == 0 and owner.pending_offer is offer   # untouched
+    owner.decline_learning(offer)
+    assert backend.closed == 1 and owner.pending_offer is None
+
+
+def test_dismiss_waits_for_an_in_flight_stop(tmp_path, monkeypatch):
+    """Ruling 6's third variant: a dismiss landing mid-Stop must not close the
+    worker while the batch pass is still using it."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, _ = _backend_spy(monkeypatch)
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path))
+    owner.prepare()
+    session = owner.start()
+    session.meta.matched_self = "S1"
+    during_pass: list[int] = []
+    dismisser: list[threading.Thread] = []
+
+    def slow_diarize(wav_path, start_s, end_s):
+        thread = threading.Thread(target=owner.dismiss_learning)
+        thread.start()
+        dismisser.append(thread)
+        time.sleep(0.1)                        # the dismiss is now waiting on the lock
+        during_pass.append(backend.closed)     # ... so the worker is still open
+        return []
+
+    backend.diarize = slow_diarize
+    owner.stop()
+    dismisser[0].join(2.0)
+    assert during_pass == [0]                  # never closed under the batch pass
+    assert backend.closed == 1                 # ... and released once it was over
+    assert owner.pending_offer is None
+
+
+def test_pending_offer_survives_a_screen_remount(tmp_path, monkeypatch):
+    """Review M11: `learning_offer()` stays one-shot, but a screen that
+    remounted between Stop and the answer can read the offer back."""
+    owner, result, _ = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=_store(tmp_path))
+    offer = owner.learning_offer(result)
+    assert owner.learning_offer(result) is None
+    assert owner.pending_offer is offer
+    owner.dismiss_learning()
+    assert owner.pending_offer is None
+
+
+def test_stop_without_a_qualifying_sample_never_reads_the_store(tmp_path, monkeypatch):
+    """Review I3: a meeting that could never produce a sample must not raise a
+    Keychain prompt at Stop just to discover that."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, _ = _backend_spy(monkeypatch)
+    keys = FakeKeys()
+    owner, _, _ = _owner(
+        tmp_path, live_diarization=True, voice_match=False,
+        voiceprint_store=_store(tmp_path, keys=keys),
+    )
+    reads_after_save = keys.reads
+    owner.prepare()
+    owner.start()                       # room mode, no match, no you.wav
+    result = owner.stop()
+    assert keys.reads == reads_after_save
+    assert owner.learning_offer(result) is None
+    assert backend.closed == 1
+
+
+def test_a_concurrent_second_stop_still_releases_the_worker(tmp_path, monkeypatch):
+    """Review M4: `session.stop()` returning None (a genuinely concurrent
+    second caller) computed no offer and left the worker running."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    backend, _ = _backend_spy(monkeypatch)
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path))
+    owner.prepare()
+    session = owner.start()
+    session.stop = lambda reason="user": None      # the concurrent-caller shape
+    assert owner.stop() is None
+    assert backend.closed == 1
 
 
 def test_the_voiceprint_vector_never_reaches_a_log_line(tmp_path, monkeypatch, captured_lines):

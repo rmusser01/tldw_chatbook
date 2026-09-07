@@ -587,6 +587,40 @@ class MeetingSession:
         self._emit("speakers", names)
         return name
 
+    def _remap_matched_self(self, transitions: list[tuple[str | None, str]], whole_recording: bool) -> None:
+        """Follow the matched cluster through the Stop pass's merges.
+
+        The batch pass can fold the matched cluster into a survivor id, just
+        as it does for named clusters (`merged_speaker_names`). Left stale,
+        `matched_self` would name a cluster the worker no longer has, and the
+        learning offer's `export_centroid` would come back empty with nothing
+        to tell the user (review M3).
+
+        Args:
+            transitions: The pass's `(old_id, new_id)` pairs.
+            whole_recording: False after a crash, where the pass covers only
+                the post-crash span -- a matched cluster it never saw is not
+                gone, it is simply outside the pass, and must be left alone.
+        """
+        with self._lock:
+            matched = self.meta.matched_self
+            if matched is None or not transitions:
+                return
+            moved = {old: new for old, new in transitions if old is not None}.get(matched)
+            if moved is not None:
+                self.meta.matched_self = moved
+            elif whole_recording:
+                # A full-recording pass that never saw the id means it no
+                # longer exists: drop the match rather than offer to learn
+                # from a cluster that cannot be exported.
+                self.meta.matched_self = None
+                self.meta.matched_self_overridden = False
+            else:
+                return
+            changed = self.meta.matched_self != matched
+        if changed:
+            self._persist_speakers()
+
     def _apply_self_match(self, cluster_id: str | None) -> None:
         """Name `cluster_id` as the user, at most once per meeting (spec §3.4).
 
@@ -717,6 +751,7 @@ class MeetingSession:
                     if merged_names:
                         with self._lock:
                             self.meta.speaker_names.update(merged_names)
+                    self._remap_matched_self(transitions, whole_recording=crash_seq is None)
                     # Persist the authoritative labels (idempotent by seq, I1):
                     # off `_lock` -- the sinks marshal onto the app thread.
                     for seg in changed:

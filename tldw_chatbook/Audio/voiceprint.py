@@ -220,6 +220,24 @@ class VoiceprintStore:
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
         self._per_meeting_cap = per_meeting_cap
 
+    @property
+    def mode(self) -> str:
+        """The key mode in force ("keyring" | "keyfile"), for Settings.
+
+        Reads the provider's declared mode -- no key access, no prompt.
+        """
+        return self._key_provider.mode
+
+    def exists(self) -> bool:
+        """Whether a stored record is present, WITHOUT touching the key.
+
+        A stat, so a rail that only needs "is there a voiceprint at all?"
+        (the Meetings prepare pass, which runs at screen mount) never raises
+        the Keychain prompt that `load` may -- that read belongs at meeting
+        Start, on a thread, with a timeout.
+        """
+        return self._path.exists()
+
     def load(self, expected_model_id: str | None = None, timeout_s: float = 1.5) -> LoadResult:
         if not self._path.exists():
             return LoadResult(voiceprint=None, reason="no_voiceprint", mode=None)

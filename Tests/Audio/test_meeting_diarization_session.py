@@ -571,10 +571,12 @@ def test_rename_speaker_normalizes_pins_and_persists(tmp_path, meeting_session_w
 class StopSelfDiarizer(SelfMatchDiarizer):
     """The Stop pass's `diarize` reply carries the batch `self` id."""
 
+    batch_id = "S3"
+
     def diarize(self, wav_path, start_s, end_s):
         self.stop_self = "S3"
         self.self_candidates_seen = 2
-        return [SpeakerSegment(0.0, 1e6, "S3")]
+        return [SpeakerSegment(0.0, 1e6, self.batch_id)]
 
 
 def test_stop_pass_self_is_applied_only_without_live_match(tmp_path, meeting_session_with_fake_capture):
@@ -593,6 +595,7 @@ def test_stop_pass_self_is_applied_only_without_live_match(tmp_path, meeting_ses
 def test_stop_pass_self_never_displaces_a_live_match(tmp_path, meeting_session_with_fake_capture):
     (tmp_path / "mixed.wav").write_bytes(b"")
     fake = StopSelfDiarizer(["S1"])
+    fake.batch_id = "S1"                             # the batch keeps the live id
     session = meeting_session_with_fake_capture(diarizer=fake, mode="room", user_display_name="Me")
     session.start()
     fake.self_cluster_id = "S1"
@@ -600,6 +603,90 @@ def test_stop_pass_self_never_displaces_a_live_match(tmp_path, meeting_session_w
     session.stop()
     assert session.meta.matched_self == "S1"
     assert "S3" not in session.meta.speaker_names
+
+
+# ---- review M3: the match follows the Stop pass's merges -------------------
+
+def test_matched_self_follows_a_stop_pass_merge(tmp_path, meeting_session_with_fake_capture):
+    """The batch pass can fold the matched cluster into a survivor id (the
+    same fold `merged_speaker_names` handles for names). Left stale,
+    `matched_self` names a cluster the worker no longer has and the learning
+    offer's export comes back empty for no visible reason."""
+    (tmp_path / "mixed.wav").write_bytes(b"")
+    fake = StopSelfDiarizer(["S2"])
+    fake.batch_id = "S1"                             # S2 folds into S1
+    fake.stop_self = None
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="room", user_display_name="Me")
+    session.start()
+    fake.self_cluster_id = "S2"
+    session._on_final_for_test("hi", label=None)
+    assert session.meta.matched_self == "S2"
+    session.stop()
+    assert session.meta.matched_self == "S1"
+    assert read_meeting_json(tmp_path)["matched_self"] == "S1"
+
+
+def test_matched_self_is_dropped_when_the_whole_pass_never_saw_it(
+    tmp_path, meeting_session_with_fake_capture
+):
+    """A full-recording pass that never saw the matched id means the cluster
+    is gone: drop the match rather than offer to learn from it."""
+    (tmp_path / "mixed.wav").write_bytes(b"")
+
+    class GhostMatch(StopSelfDiarizer):
+        def diarize(self, wav_path, start_s, end_s):
+            return [SpeakerSegment(0.0, 1e6, "S9")]
+
+    fake = GhostMatch(["S4"])
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="room", user_display_name="Me")
+    session.start()
+    fake.self_cluster_id = "S4"
+    session._on_final_for_test("hi", label=None)
+    session.meta.matched_self = "S7"                 # a cluster no segment carries
+    session.stop()
+    assert session.meta.matched_self is None
+    assert session.meta.matched_self_overridden is False
+
+
+def test_a_crash_limited_pass_leaves_a_pre_crash_match_alone(
+    tmp_path, meeting_session_with_fake_capture
+):
+    """After a crash the pass covers only the post-crash span, so a matched
+    cluster it never saw is outside the pass -- not gone."""
+    (tmp_path / "mixed.wav").write_bytes(b"")
+
+    class CrashedBatch(StopSelfDiarizer):
+        crashed_at_seq = 1        # only seq >= 1 is re-labelled
+
+        def diarize(self, wav_path, start_s, end_s):
+            return [SpeakerSegment(0.0, 1e6, "S9")]
+
+    # seq 0 (pre-crash) is the matched cluster; the pass only sees seq 1's id.
+    fake = CrashedBatch(["S1", "S5"])
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="room", user_display_name="Me")
+    session.start()
+    fake.self_cluster_id = "S1"
+    _advance(session, 2.0)
+    session._on_final_for_test("hi", label=None)
+    _advance(session, 4.0)
+    session._on_final_for_test("there", label=None)
+    session.stop()
+    assert session.meta.matched_self == "S1"
+
+
+# ---- review M6: the self-match re-emits like any speaker update -----------
+
+def test_self_match_emits_a_speakers_update(tmp_path, meeting_session_with_fake_capture):
+    fake = SelfMatchDiarizer(["S1"])
+    session = meeting_session_with_fake_capture(diarizer=fake, mode="room", user_display_name="Me")
+    events: list[tuple[str, object]] = []
+    session.subscribe(lambda kind, payload: events.append((kind, payload)))
+    session.start()
+    fake.self_cluster_id = "S1"
+    session._on_final_for_test("hi", label=None)
+    assert ("speakers", {"S1": "Me"}) in events
+    session.rename_speaker("S1", "Bob")
+    assert events[-1] == ("speakers", {"S1": "Bob"})
 
 
 def test_stop_leaves_the_diarizer_open_when_the_owner_claims_it(meeting_session_with_fake_capture):

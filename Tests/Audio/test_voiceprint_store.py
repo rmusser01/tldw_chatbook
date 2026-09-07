@@ -151,3 +151,38 @@ def test_keyfile_provider_removes_stray_tmp_on_replace_failure(tmp_path, monkeyp
     with pytest.raises(OSError):
         vp.KeyfileKeyProvider(p).get_or_create()
     assert not p.with_suffix(".tmp").exists()
+
+
+# --- Task 4 fix round 1: a stat-only presence check (no Keychain prompt) ---
+
+def test_exists_is_a_stat_and_never_touches_the_key(tmp_path):
+    """The Meetings rail asks "is there a voiceprint?" at screen mount; that
+    question must not raise a Keychain prompt (the decrypt at meeting Start
+    does, on a thread, with a timeout)."""
+
+    class CountingKeys(FakeKeys):
+        def __init__(self):
+            super().__init__()
+            self.reads = 0
+
+        def get(self, timeout_s):
+            self.reads += 1
+            return super().get(timeout_s)
+
+    keys = CountingKeys()
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", keys)
+    assert store.exists() is False
+    store.save(_rec())
+    assert store.exists() is True
+    assert keys.reads == 0                      # save mints via get_or_create, never get
+    store.delete()
+    assert store.exists() is False
+    assert keys.reads == 0
+
+
+def test_mode_reports_the_key_provider_in_use(tmp_path):
+    assert vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys()).mode == "keyring"
+    keyfile_store = vp.VoiceprintStore(
+        tmp_path / "b" / "voiceprint.json", vp.KeyfileKeyProvider(tmp_path / "b" / "voiceprint.key")
+    )
+    assert keyfile_store.mode == "keyfile"
