@@ -342,7 +342,7 @@ def test_reader_width_contract_rejects_one_column_mutation() -> None:
         library_width=0,
         items_width=56,
         reader_width=50,
-        grip_width=layout.grip_width,
+        grip_width=1,  # the Media profile's one-cell grip (PR H)
     )
     with pytest.raises(AssertionError):
         _assert_reader_width_contract(
