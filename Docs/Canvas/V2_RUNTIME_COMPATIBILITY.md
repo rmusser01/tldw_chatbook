@@ -72,8 +72,8 @@ credential.
 
 The production catalog admits only `canvas-v1`, with zero library bytes and
 `default_diagram_profile: null`. `canvas-v2-mermaid-1` is a verified development
-candidate with `executable: false`; its current engine, facade, plan and layout
-identities reference the real V1 assets until the later V2 slices replace them.
+candidate with `executable: false`; it shares the exact pinned QuickJS engine
+with V1 and owns separate V2 facade, plan, grammar and layout identities.
 V2 remains unavailable until all qualification gates are complete. Development
 candidate bytes can evolve before qualification; no normal revision admission may
 reference this candidate and its immutable release manifest is not yet frozen.
@@ -136,7 +136,8 @@ contain no IDs, executable source, links, or SVG reference attributes. An
 ordinary HTML description and exact source accompany an intrinsic-size SVG
 inside an overflow wrapper. `renderDiagrams([{source}, ...])` creates one budget,
 parses and lays out each declaration in order, and returns scenes only when all
-declarations succeed. Worker allocation and declaration integration remain Task 4.
+declarations succeed. The private worker startup applies these scenes through
+the existing virtual allocator and typed mutations before authored scripts.
 
 Flow diagrams use Kahn ranks with source-order ties, two forward/backward
 barycentric ordering sweeps, and orthogonal rank lanes. Edge labels reserve
@@ -173,3 +174,45 @@ extents, inherited typography, narrow scrolling, source identity and zero genera
 egress; it is not evidence of V2 startup integration or cross-platform pixel
 identity. The candidate remains non-executable with no diagram creation default
 until the complete Task 8 qualification gate.
+
+## Candidate compilation and startup (Task 4)
+
+`compile_canvas_document` defaults to unchanged V1. Explicit V2 compilation
+requires the exact retained verified snapshot. `prepare_canvas_document`
+performs one bounded HTML parse, inspects structural declarations, resolves the
+profile, and compiles inside the caller's existing compilation admission owner.
+The source-preserving frozen V2 plan contains the six V1 wire fields plus
+`diagrams` and `profile_manifest_sha256`. Diagnostics are never wire fields.
+Each diagram is exactly `{ordinal, target_node_id, kind, source}`; the source is
+decoded text from a nonempty, text-only Mermaid `pre`. The records must correspond
+one-to-one, in document order, with their virtual pre nodes.
+
+V2 pins `canvas_runtime_worker_v2.js` and `canvas_renderer_v2.js`. The V1 worker,
+renderer and manifest bytes remain frozen. Both profile layouts are fixed by the
+trusted loader; a browser plan cannot select asset paths. The Mermaid vendor
+build copies the V2 worker/renderer into independent output directories and pins
+their hashes. Separate files deliberately duplicate the established sandbox;
+future runtime maintenance must qualify each affected immutable closure.
+
+The private V2 renderer init envelope is exactly
+`{type: "canvas:init", nonce, plan, runtime_data}`. The worker prepare envelope
+is exactly `{type: "prepare", plan, runtime_data}`.
+`runtime_data` is exactly `{manifest, library, source}`, all UTF-8 strings:
+the exact captured manifest JSON, exact captured `mermaid-subset.json`, and
+the exact revision source. The trusted parent acquires these bytes before the
+execution acknowledgement. Renderer and worker independently verify the closed
+plan, manifest SHA-256, library JSON size/digest, evaluated source size/digest,
+exact revision source identity, declaration target/text correspondence, and
+combined library/authored byte ceiling. No library module is imported or
+evaluated in the native realm; no CSP or resource privilege changes.
+Task 6 supplies the product parent delivery; Task 4's owned harness exercises
+this exact consumer seam with recorded parent fetch acknowledgements.
+
+Startup begins the existing 250 ms operation before evaluating the library in
+QuickJS. One private budget prepares every scene, then applies them with virtual
+IDs and typed mutations (including per-property style setters). Authored scripts
+and bounded jobs run under that same deadline and transaction. Only successful
+startup publishes a transaction; diagram or authored failures publish no diagram
+mutations. Handles are disposed before authored code and never become globals.
+Later source/attribute mutation does not rerender. These browser tests qualify
+this consumer integration only; production candidate admission remains disabled.

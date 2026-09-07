@@ -23,6 +23,10 @@
     "source_url": "https://registry.npmjs.org/esbuild-wasm/-/esbuild-wasm-0.25.9.tgz",
     "version": "0.25.9"
   },
+  "library": {
+    "bytes": 172343,
+    "sha256": "f4c64ebced845d61c82232b229ab623011feeb94574344bd813bf0048cba6b5d"
+  },
   "mermaid_candidate": {
     "inputs_sha256": "9c5f36f3d5f1da0af23835c88dd1c1f135cc489835838e4a86878914a7fe7e94",
     "qualification": "not-qualified",
@@ -34,13 +38,13 @@
       "bytes": 6275,
       "sha256": "9b4caf7be494664ff543370a7b8e1d4972a196702149ae2b06c5a19a0e4a4e2f"
     },
-    "canvas_renderer.js": {
-      "bytes": 53675,
-      "sha256": "de26e4be2a38ef2fad687bc33ab34416d805e61791433d8e3c1b614133c94878"
+    "canvas_renderer_v2.js": {
+      "bytes": 58420,
+      "sha256": "9a7b47c1ee5dbdb9259bf43977d38fab96f390b9b9caf31670470fd64153b9d8"
     },
-    "canvas_runtime_worker.js": {
-      "bytes": 59122,
-      "sha256": "42246dd79d68be0445a81de58d7dc77f6b08bd9b718e4fa617af1488dd88c2e6"
+    "canvas_runtime_worker_v2.js": {
+      "bytes": 66055,
+      "sha256": "a7db7e540e3e24a917e3479325bb3d773c3e267a7484411e2efdbca8919baa97"
     },
     "quickjs-runtime.js": {
       "bytes": 737944,
@@ -124,8 +128,8 @@
       "sha256": "59db482b382f4da0c5d5f616954757a538a09e45bd1fce590e875abc6594b386"
     },
     "facade": {
-      "id": "canvas-v1-facade-1",
-      "sha256": "42246dd79d68be0445a81de58d7dc77f6b08bd9b718e4fa617af1488dd88c2e6"
+      "id": "canvas-virtual-dom-v2-mermaid-1",
+      "sha256": "a7db7e540e3e24a917e3479325bb3d773c3e267a7484411e2efdbca8919baa97"
     },
     "grammar": {
       "id": "mermaid-11.17.2-jison-0.4.18-canvas-subset-1",
@@ -136,8 +140,8 @@
       "sha256": "3fa2d55f42dab3108ad05b4c723e0e9143f2fdf3c456975b4fe73cc52108802c"
     },
     "plan": {
-      "id": "canvas-v1-plan-1",
-      "sha256": "de26e4be2a38ef2fad687bc33ab34416d805e61791433d8e3c1b614133c94878"
+      "id": "canvas-render-plan-v2-mermaid-1",
+      "sha256": "9a7b47c1ee5dbdb9259bf43977d38fab96f390b9b9caf31670470fd64153b9d8"
     },
     "quotas": {
       "css_rules": 900,
@@ -195,10 +199,10 @@
   "reproducible_command": "python scripts/vendor_canvas_mermaid.py --input-dir INPUTS",
   "runtime_layout": {
     "javascript": "quickjs-runtime.js",
-    "renderer": "canvas_renderer.js",
+    "renderer": "canvas_renderer_v2.js",
     "wasm": "embedded",
     "wasm_fetch_required": false,
-    "worker": "canvas_runtime_worker.js"
+    "worker": "canvas_runtime_worker_v2.js"
   },
   "runtime_profile": "canvas-v2-mermaid-1",
   "schema_version": 1

@@ -7,7 +7,24 @@ from collections.abc import Callable
 from threading import BoundedSemaphore
 from typing import TypeVar
 
+from .compiler import _compile_document
+from .models import CanvasCompiledPlan
+from .profiles import ProfileSnapshot
+
 T = TypeVar("T")
+
+
+def prepare_canvas_document(
+    source: str,
+    *,
+    operation: str,
+    parent_profile: str | None,
+    snapshot: ProfileSnapshot,
+) -> CanvasCompiledPlan:
+    """Inspect, select and compile in one parse inside the owner's admission slot."""
+    return _compile_document(
+        source, operation=operation, parent_profile=parent_profile, snapshot=snapshot
+    )
 
 
 class CanvasCompilation:

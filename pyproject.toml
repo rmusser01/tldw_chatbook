@@ -539,6 +539,8 @@ exclude = [
     "static/quickjs-runtime.js",
     "static/canvas_renderer.js",
     "static/canvas_runtime_worker.js",
+    "static/canvas_runtime_worker_v2.js",
+    "static/canvas_renderer_v2.js",
     "static/runtime-manifest.json",
     "static/THIRD_PARTY_LICENSES.txt",
     "static/profile-catalog.json",

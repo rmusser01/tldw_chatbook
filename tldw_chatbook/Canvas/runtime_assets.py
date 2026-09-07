@@ -131,23 +131,39 @@ def _load_profile_verified(
         or manifest.get("runtime_profile") != profile_id
     ):
         raise ValueError("unsupported Canvas runtime manifest")
+    worker_name = (
+        "canvas_runtime_worker_v2.js"
+        if profile_id == "canvas-v2-mermaid-1"
+        else "canvas_runtime_worker.js"
+    )
+    renderer_name = (
+        "canvas_renderer_v2.js"
+        if profile_id == "canvas-v2-mermaid-1"
+        else "canvas_renderer.js"
+    )
     if manifest.get("runtime_layout") != {
         "javascript": "quickjs-runtime.js",
-        "renderer": "canvas_renderer.js",
-        "worker": "canvas_runtime_worker.js",
+        "renderer": renderer_name,
+        "worker": worker_name,
         "wasm": "embedded",
         "wasm_fetch_required": False,
     }:
         raise ValueError("unsupported Canvas runtime layout")
     outputs = manifest.get("outputs")
-    if not isinstance(outputs, dict) or set(outputs) != _OUTPUT_NAMES:
+    expected_outputs = {
+        "quickjs-runtime.js",
+        worker_name,
+        renderer_name,
+        "THIRD_PARTY_LICENSES.txt",
+    }
+    if not isinstance(outputs, dict) or set(outputs) != expected_outputs:
         raise ValueError("unexpected Canvas runtime output inventory")
 
     loaded: dict[str, bytes] = {}
     for name, limit in (
         ("quickjs-runtime.js", _JAVASCRIPT_BYTES),
-        ("canvas_runtime_worker.js", _TRUSTED_JAVASCRIPT_BYTES),
-        ("canvas_renderer.js", _TRUSTED_JAVASCRIPT_BYTES),
+        (worker_name, _TRUSTED_JAVASCRIPT_BYTES),
+        (renderer_name, _TRUSTED_JAVASCRIPT_BYTES),
         ("THIRD_PARTY_LICENSES.txt", _NOTICE_BYTES),
     ):
         metadata = outputs.get(name)
@@ -193,8 +209,8 @@ def _load_profile_verified(
         manifest=_freeze_json(manifest),
         manifest_bytes=manifest_bytes,
         javascript=loaded["quickjs-runtime.js"],
-        worker_javascript=loaded["canvas_runtime_worker.js"],
-        renderer_javascript=loaded["canvas_renderer.js"],
+        worker_javascript=loaded[worker_name],
+        renderer_javascript=loaded[renderer_name],
         library_files=MappingProxyType(library_files),
     )
 

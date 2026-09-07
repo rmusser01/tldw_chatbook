@@ -11879,6 +11879,15 @@ the line/column positions of actual tokens. Raw input bytes are still charged
 before preprocessing; the corrected test reaches the third-diagram input limit
 under the unchanged shared startup deadline.
 
+**TASK-31937, 2026-09-06.** The V2 worker inherited a failure classifier that
+treated any exception after its deadline as a runtime-timeout. A fault-injected
+native engine exception with an expired deadline therefore reported a quota
+refusal, despite no QuickJS interrupt. The regression failed with runtime-timeout
+and passed with runtime-error after removing elapsed-time-only classification
+from the new V2 closure. Require an observed interrupt to classify a time refusal;
+wall time alone does not explain an engine exception. Published V1 bytes remain
+unchanged under the immutable-profile contract.
+
 ## A tested quota helper is not evidence that the production owner uses it
 
 Incident (TASK-31232 final Canvas review, 2026-09-05): the standalone staging
