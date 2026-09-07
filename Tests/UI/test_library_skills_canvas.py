@@ -77,6 +77,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _FakeSkillsScopeService,
     _active_library_screen,
+    _wait_for_condition,
     _wait_for_library_shell,
 )
 from Tests.UI.app_factory import _build_test_app as _build_shared_test_app
@@ -1624,6 +1625,73 @@ async def test_library_skills_retry_recovers_transient_list_failure():
                 break
         assert screen.query_one("#library-skill-row-code-review", Button)
         assert not screen.query("#library-skills-retry")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("width", "items_open", "items_width"),
+    # task-31951/31952: `_sync_library_skills_reader_layout_from_shell` gives
+    # the Items pane priority once the shell can hold both grips, the list's
+    # 32-cell floor and the 48-cell work minimum. That floor reads the
+    # profile's `grip_width`, so it moved with the one-cell grip: 2*5+32+48 =
+    # 90 before, 2*1+32+48 = 82 now. The band 82-89 is the difference -- the
+    # list paints there instead of collapsing -- so both edges are pinned.
+    [(81, False, 0), (82, True, 32)],
+)
+async def test_library_skills_items_priority_floor_moves_with_the_grip_width(
+    width: int,
+    items_open: bool,
+    items_width: int,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[
+            {"name": f"skill-{index:03d}", "description": f"Skill {index}"}
+            for index in range(45)
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(width, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        monkeypatch.setattr(
+            screen,
+            "_persist_library_reader_preference",
+            AsyncMock(),
+        )
+        screen.query_one("#library-row-browse-skills").press()
+
+        def _painted() -> bool:
+            # task-31953: anchor on the PAINTED Items width, not on
+            # `effective_layout.reader_width` alone -- the layout field lands
+            # a frame before the shell re-lays out its panes, so breaking on
+            # it read `items.region.width == 0` about one run in nine.
+            found = screen.query("#library-skills-reader-shell")
+            if not found:
+                return False
+            candidate = found.first()
+            return bool(
+                candidate.effective_layout.reader_width
+                and candidate.items.region.width == items_width
+            )
+
+        await _wait_for_condition(
+            pilot,
+            _painted,
+            message="Skills reader shell never painted the expected Items width.",
+        )
+        shell = screen.query_one("#library-skills-reader-shell")
+
+        assert shell.region.width == width
+        assert shell.effective_layout.items_open is items_open
+        assert shell.effective_layout.items_width == items_width
+        assert shell.items.region.width == items_width
+        assert shell.effective_layout.reader_width >= 48
 
 
 @pytest.mark.asyncio

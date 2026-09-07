@@ -70,10 +70,12 @@ class AdaptiveReaderLayoutProfile:
             opts in today.
         grip_width: Width of EACH of the two pane grips -- both what a grip
             paints and what the resolver holds back for it, so the two can
-            never disagree. Defaults to ``PANE_GRIP_WIDTH`` (5). Media passes
-            1: its two five-column grips left ten dead columns around the
-            Items pane (task-31633 AC#2). A grip narrower than four cells
-            paints the one-cell guillemet instead of the ``<---`` run.
+            never disagree (the resolved layout carries this width to the
+            shell). Defaults to ``PANE_GRIP_WIDTH`` (5). Media passes 1: its
+            two five-column grips left ten dead columns around the Items pane
+            (task-31633 AC#2), and task-31951 opted Conversations, Skills and
+            Collections in for the same reason. A grip narrower than four
+            cells paints the one-cell guillemet instead of the ``<---`` run.
     """
 
     list_min_width: int = 32
@@ -116,13 +118,19 @@ class AdaptiveReaderEffectiveLayout:
         priority_pane: Which pane a width-starved layout kept open
             (``"library"``/``"items"``), or ``None`` when nothing had to
             be dropped.
+        grip_width: The resolving profile's per-grip width in columns,
+            stamped here so the shell paints both grips from the same
+            number the resolver reserved (task-31952).
 
     The three widths are what each pane actually gets to paint: the pane
-    GRIPS are already deducted. The resolver holds back ``2 *
-    profile.grip_width`` (``AdaptiveReaderProfile.grip_width`` -- the same
-    value a grip paints, so the two can never disagree) before dividing
-    what is left, so ``library_width + items_width + reader_width`` plus
-    that reserve is the full terminal width.
+    GRIPS are already deducted. The resolver holds back ``2 * grip_width``
+    before dividing what is left, so ``library_width + items_width +
+    reader_width`` plus that reserve is the full terminal width.
+
+    ``grip_width`` carries the resolving profile's per-grip width through to
+    the shell, which sizes both grips from it (task-31952 AC#3): the columns
+    the resolver held back and the columns a grip paints are then literally
+    the same number, and a destination cannot reserve five and paint one.
     """
 
     library_open: bool
@@ -131,6 +139,7 @@ class AdaptiveReaderEffectiveLayout:
     items_width: int
     reader_width: int
     priority_pane: PaneName | None
+    grip_width: int = PANE_GRIP_WIDTH
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -237,6 +246,7 @@ def resolve_adaptive_reader_layout(
             items_width=0,
             reader_width=0,
             priority_pane=None,
+            grip_width=profile.grip_width,
         )
 
     requested_library_width = (
@@ -304,6 +314,7 @@ def resolve_adaptive_reader_layout(
                 items_width=items_width,
                 reader_width=max(width - grip_width - library_width - items_width, 0),
                 priority_pane=priority,
+                grip_width=profile.grip_width,
             )
         priority = None
 
@@ -339,6 +350,11 @@ def resolve_adaptive_reader_layout(
     library_width = requested_library_width if library_open else 0
     items_width = preferences.items_width if items_open else 0
     if items_open and not library_open:
+        # task-31953: this clamp is deliberately NOT gated on
+        # `custom_widths_enabled` -- with the Library pane gone a typed 32
+        # still widens to the comfort ceiling (52 at width 100 on Media), as
+        # does the priority-pane clamp above. Documented, not changed; see
+        # `test_a_typed_custom_items_width_is_still_widened_once_the_library_closes`.
         comfort_width = max(
             items_width,
             min(profile.list_comfort_width, profile.list_max_width),
@@ -379,4 +395,5 @@ def resolve_adaptive_reader_layout(
         items_width=items_width,
         reader_width=max(width - grip_width - library_width - items_width, 0),
         priority_pane=priority,
+        grip_width=profile.grip_width,
     )

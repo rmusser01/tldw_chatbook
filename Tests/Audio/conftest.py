@@ -66,11 +66,17 @@ class FakeDictation:
         return SimpleNamespace(transcription_complete=self.complete)
 
 
-def _meta(tmp_path, mode: str = "call", diarize_mic_channel: bool = False) -> MeetingMeta:
+def _meta(
+    tmp_path,
+    mode: str = "call",
+    diarize_mic_channel: bool = False,
+    user_display_name: str = "You",
+) -> MeetingMeta:
     return MeetingMeta(
         folder=tmp_path, mode=mode, started_at="2026-09-04T14:30:00",
         mic_device="MacBook Pro Microphone", system_source="Native (macOS tap)",
         provider="faster-whisper", model="base.en",
+        user_display_name=user_display_name,
         diarize_mic_channel=diarize_mic_channel,
     )
 
@@ -81,14 +87,16 @@ def meeting_session_with_fake_capture(tmp_path):
 
     def _build(
         *, mode: str = "call", diarizer: Any = None, sinks: Any = None, diarize_mic_channel: bool = False,
+        user_display_name: str = "You", close_diarizer_on_stop: bool = True,
     ) -> MeetingSession:
         capture = FakeCapture(mode)
         return MeetingSession(
-            meta=_meta(tmp_path, mode, diarize_mic_channel),
+            meta=_meta(tmp_path, mode, diarize_mic_channel, user_display_name),
             capture=capture,
             dictation_factory=lambda cap: FakeDictation(cap),
             sinks=sinks or [],
             diarizer=diarizer,
+            close_diarizer_on_stop=close_diarizer_on_stop,
         )
 
     return _build

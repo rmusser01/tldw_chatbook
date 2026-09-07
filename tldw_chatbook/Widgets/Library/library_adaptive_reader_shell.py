@@ -88,15 +88,27 @@ class LibraryAdaptiveReaderPaneGrip(Button):
         if extra_classes:
             classes = f"{classes} {extra_classes}"
         super().__init__(compact=True, flat=True, classes=classes, **kwargs)
-        self.styles.width = width
-        self.styles.min_width = width
-        self.styles.max_width = width
+        self.sync_width(width)
         self.styles.height = "100%"
         self.styles.padding = 0
         self.styles.line_pad = 0
         self.styles.border = ("none", "transparent")
         self.styles.content_align = ("center", "middle")
         self.sync_open(open)
+
+    def sync_width(self, width: int) -> None:
+        """Size the grip to the layout's reservation, in place.
+
+        Args:
+            width: The resolved layout's ``grip_width`` in cells.
+
+        Returns:
+            None.
+        """
+        self.grip_width = width
+        self.styles.width = width
+        self.styles.min_width = width
+        self.styles.max_width = width
 
     def sync_open(self, open: bool) -> None:
         """Patch arrow and action copy without changing geometry.
@@ -169,7 +181,6 @@ class LibraryAdaptiveReaderShell(Horizontal):
         library_label: str,
         items_label: str,
         grip_classes: str = "",
-        grip_width: int = PANE_GRIP_WIDTH,
         **kwargs: Any,
     ) -> None:
         """Assemble the three-pane shell around caller-owned pane widgets.
@@ -187,10 +198,11 @@ class LibraryAdaptiveReaderShell(Horizontal):
             items_label: Human name of the items pane, for grip copy.
             grip_classes: Extra CSS classes for both grips, for
                 per-destination styling.
-            grip_width: The destination profile's ``grip_width`` in cells,
-                passed to both grips so they paint exactly the columns the
-                resolver held back (task-31633 AC#2).
             **kwargs: Forwarded to ``Horizontal`` (``id``, ``classes``, ...).
+
+        Both grips are sized from ``layout.grip_width`` -- the width the
+        resolver held back for them (task-31952 AC#3), so a caller cannot
+        paint a grip the resolver never reserved.
         """
         super().__init__(**kwargs)
         self.add_class("library-adaptive-reader-shell")
@@ -205,7 +217,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             open=layout.library_open,
             pane_label=library_label,
             extra_classes=grip_classes,
-            width=grip_width,
+            width=layout.grip_width,
             id=f"{id_prefix}-library-grip",
         )
         self.items_grip = LibraryAdaptiveReaderPaneGrip(
@@ -213,7 +225,7 @@ class LibraryAdaptiveReaderShell(Horizontal):
             open=layout.items_open,
             pane_label=items_label,
             extra_classes=grip_classes,
-            width=grip_width,
+            width=layout.grip_width,
             id=f"{id_prefix}-items-grip",
         )
         self._last_focused_descendant: dict[PaneName, Widget | None] = {
@@ -336,6 +348,10 @@ class LibraryAdaptiveReaderShell(Horizontal):
                     ),
                     grip,
                 )
+            if grip.grip_width != layout.grip_width:
+                # Reserve-and-paint holds for every layout the shell is given,
+                # not only the one it was built with (task-31952 AC#3).
+                grip.sync_width(layout.grip_width)
             grip.sync_open(open)
             if open and not was_open and manual_reopen == pane_name:
                 manual_reopen_pane = pane

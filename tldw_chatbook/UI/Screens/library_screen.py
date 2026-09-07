@@ -101,7 +101,6 @@ from ...Library.library_content_evidence import (
 from ...Utils.adaptive_reader_state import (
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
-    PANE_GRIP_WIDTH,
     PaneName,
     normalize_adaptive_reader_preferences,
     resolve_adaptive_reader_layout,

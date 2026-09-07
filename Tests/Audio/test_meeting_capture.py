@@ -393,6 +393,23 @@ def test_unknown_microphone_refuses_to_start_instead_of_falling_back(tmp_path):
     assert all(w.closed for w in writers.values())
 
 
+def test_a_microphone_the_recorder_rejects_refuses_to_start(tmp_path):
+    """Qodo 6: the name resolved during enumeration, so the helper reported
+    success and threw away `set_device`'s verdict -- a device unplugged
+    between the two calls (or otherwise rejected) recorded from whatever the
+    backend fell back to, and only failed later in the recording thread."""
+
+    class RejectingRecorder(NamedRecorder):
+        def set_device(self, device_id):
+            super().set_device(device_id)
+            return False
+
+    cap, recorders, writers = _capture_with_mic(tmp_path, RejectingRecorder, mic_device_name="Shure MV7")
+    assert cap.start_recording(callback=lambda b: None) is False
+    assert isinstance(cap.fault, LookupError) and recorders[0].selected == [7]
+    assert all(w.closed for w in writers.values())
+
+
 def test_failed_mic_start_closes_every_writer(tmp_path):
     """Q3: a start that never got a microphone left three half-written WAVs
     with placeholder headers behind (and their descriptors open)."""

@@ -666,3 +666,15 @@ budget's history is three cycles of silent regrowth."*
 before opening a PR that adds CSS, and attribute any growth to the segment that caused it —
 the failure message names segments and sources precisely so that attribution is not
 guesswork.
+
+## A UI-thread owner method must never take the owner's stop lock (TASK-31826)
+
+`MeetingSessionOwner._stop_lock` is held across `session.stop()`, which blocks on
+`call_from_thread` (the ingest submit runs on the UI thread). A controller ruling had the
+learning-offer release path take `_stop_lock` "so nothing closes a worker under a batch pass";
+the re-reviewer's probe deadlocked the app: a "Not now" press on the UI thread waited for the
+lock while the stop worker waited for the UI thread. The phase-1 final review found the same
+shape (C2, the session RLock across the ingest submit). Rule: any owner method a screen may call
+on the UI thread takes only a short pointer-swap lock and runs `close()` outside every lock; the
+structural guarantee ("the retained slot is written only after `session.stop()` returned") is
+what prevents the mid-batch close, not a lock.
