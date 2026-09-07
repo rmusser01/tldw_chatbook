@@ -1382,24 +1382,86 @@ async def test_import_merge_and_replace_call_the_store_with_the_choice(tmp_path)
         screen = host.screen_stack[-1]
         store = FakeStore(exists=False)
         screen._store = store
+        # A real file: an import source that is not there is refused at the
+        # form boundary now (Qodo 1), before the store is ever called.
+        source = tmp_path / "vp.json"
+        source.write_text("{}")
         screen.query_one("#meetings-voice-import", Button).press()
         await pilot.pause(0.1)
-        screen.query_one("#meetings-voice-path", Input).value = "~/vp.json"
+        screen.query_one("#meetings-voice-path", Input).value = str(source)
         screen.query_one("#meetings-voice-passphrase", Input).value = "hunter2"
         screen.query_one("#meetings-voice-merge", Button).press()
         await pilot.pause(0.4)
-        assert store.calls == [("import", Path("~/vp.json").expanduser(), "hunter2", False)]
+        assert store.calls == [("import", source, "hunter2", False)]
         assert owner.invalidated == 1
         assert _text(screen.query_one("#meetings-voice-status", Static)) == (
             "Voice: enrolled (keyring)"
         )
         screen.query_one("#meetings-voice-import", Button).press()
         await pilot.pause(0.1)
-        screen.query_one("#meetings-voice-path", Input).value = "~/vp.json"
+        screen.query_one("#meetings-voice-path", Input).value = str(source)
         screen.query_one("#meetings-voice-passphrase", Input).value = "hunter2"
         screen.query_one("#meetings-voice-replace", Button).press()
         await pilot.pause(0.4)
-        assert store.calls[-1] == ("import", Path("~/vp.json").expanduser(), "hunter2", True)
+        assert store.calls[-1] == ("import", source, "hunter2", True)
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_transfer_path_is_refused_before_the_store(tmp_path):
+    """Qodo 1: the typed path went straight to the store, so traversal and
+    symlink checks -- the ones every other user-typed path in the app gets --
+    were never applied to the one file that holds a biometric."""
+    host, _owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        store = FakeStore()
+        screen._store = store
+        message = screen.query_one("#meetings-voice-message", Static)
+        passphrase = screen.query_one("#meetings-voice-passphrase", Input)
+        path_input = screen.query_one("#meetings-voice-path", Input)
+
+        real = tmp_path / "real.json"
+        real.write_text("{}")
+        link = tmp_path / "link.json"
+        link.symlink_to(real)
+
+        for typed in (f"{tmp_path}/../../etc/passwd", str(link)):
+            screen.query_one("#meetings-voice-export", Button).press()
+            await pilot.pause(0.1)
+            path_input.value = typed
+            passphrase.value = "hunter2"
+            screen.query_one("#meetings-voice-export-run", Button).press()
+            await pilot.pause(0.2)
+            assert store.calls == []
+            assert typed not in _text(message)      # static copy, never the path
+            assert passphrase.value == ""
+
+        screen.query_one("#meetings-voice-import", Button).press()
+        await pilot.pause(0.1)
+        path_input.value = str(tmp_path / "not-there.json")
+        passphrase.value = "hunter2"
+        screen.query_one("#meetings-voice-merge", Button).press()
+        await pilot.pause(0.2)
+        assert store.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_plain_home_relative_export_destination_still_works(tmp_path):
+    """The other half of Qodo 1: validation must not break the ordinary case."""
+    host, _owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        store = FakeStore()
+        screen._store = store
+        screen.query_one("#meetings-voice-export", Button).press()
+        await pilot.pause(0.1)
+        screen.query_one("#meetings-voice-path", Input).value = "~/vp.json"
+        screen.query_one("#meetings-voice-passphrase", Input).value = "hunter2"
+        screen.query_one("#meetings-voice-export-run", Button).press()
+        await pilot.pause(0.4)
+        assert store.calls == [("export", Path("~/vp.json").expanduser(), "hunter2")]
 
 
 @pytest.mark.asyncio
@@ -1415,6 +1477,8 @@ async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path)
         store = FakeStore()
         screen._store = store
         message = screen.query_one("#meetings-voice-message", Static)
+        source = tmp_path / "vp.json"
+        source.write_text("{}")
 
         for exc, expected in (
             (StoreUnavailable("/Users/alice/voiceprint.json is locked"),
@@ -1434,7 +1498,7 @@ async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path)
             store.raises = exc
             screen.query_one("#meetings-voice-import", Button).press()
             await pilot.pause(0.1)
-            screen.query_one("#meetings-voice-path", Input).value = "/Users/alice/vp.json"
+            screen.query_one("#meetings-voice-path", Input).value = str(source)
             screen.query_one("#meetings-voice-passphrase", Input).value = "hunter2"
             screen.query_one("#meetings-voice-merge", Button).press()
             await pilot.pause(0.4)
@@ -1623,7 +1687,7 @@ async def test_the_transfer_worker_description_carries_no_passphrase_or_path(tmp
         screen._store = store
         screen.query_one("#meetings-voice-export", Button).press()
         await pilot.pause(0.1)
-        screen.query_one("#meetings-voice-path", Input).value = "/Users/alice/vp.json"
+        screen.query_one("#meetings-voice-path", Input).value = str(tmp_path / "vp.json")
         screen.query_one("#meetings-voice-passphrase", Input).value = "hunter2"
         screen.query_one("#meetings-voice-export-run", Button).press()
         assert await _wait_until(pilot, lambda: bool(store.calls))
@@ -1633,7 +1697,8 @@ async def test_the_transfer_worker_description_carries_no_passphrase_or_path(tmp
         store.block.set()
         assert descriptions, "the transfer worker never appeared"
         joined = " ".join(descriptions)
-        assert "hunter2" not in joined and "alice" not in joined and "vp.json" not in joined
+        assert "hunter2" not in joined and "vp.json" not in joined
+        assert str(tmp_path) not in joined
         assert "voiceprint transfer" in joined
 
 

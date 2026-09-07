@@ -27,6 +27,7 @@ from ...Audio.meeting_session import (
 )
 from ...config import save_setting_to_cli_config
 from ...Constants import LIBRARY_NAV_CONTEXT_INGEST, TAB_LIBRARY
+from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -81,6 +82,38 @@ LEARN_PROGRESS_COPY = {"warming up": "Warming up the voice model…"}
 #: mistaken for one the user typed (spec §3.4).
 SELF_MARKER = " ·"
 ENROLL_SECONDS = 30.0
+
+
+def _validated_transfer_path(text: str, action: str) -> Path:
+    """Validate a typed voiceprint export/import path (Qodo review 1).
+
+    The store's own refusals (its own record as a destination, 0o600, a
+    unique temp file) stay where they are; this is the boundary check the
+    rest of the app puts on user-typed paths, applied before the value ever
+    reaches directory creation, file replacement, or a read.
+
+    Args:
+        text: The path exactly as typed (a leading `~` is expanded here).
+        action: "Import" or "Export" -- imports must find a regular file,
+            exports must land in an existing folder.
+
+    Returns:
+        The expanded path, unresolved, so the user gets the file they named.
+
+    Raises:
+        ValueError: Traversal or another dangerous pattern
+            (`validate_path_simple`), a missing or non-regular import source,
+            or an export destination whose folder is missing or which is
+            itself a symlink -- writing through one lands the record
+            somewhere the user never named.
+    """
+    path = validate_path_simple(Path(text).expanduser(), require_exists=action == "Import")
+    if action == "Import":
+        if not path.is_file():
+            raise ValueError("import source is not a regular file")
+    elif path.is_symlink() or not path.parent.is_dir():
+        raise ValueError("export destination is unusable")
+    return path
 
 
 class MeetingsScreen(BaseAppScreen):
@@ -1277,14 +1310,15 @@ class MeetingsScreen(BaseAppScreen):
             self.query_one("#meetings-voice-passphrase", Input).value = ""
 
     def _voice_form_values(self, action: str) -> tuple[Path, str] | None:
-        """The typed path and passphrase, refusing an empty either way.
+        """The typed path and passphrase, refusing an empty or unusable path.
 
         Args:
             action: "Export" or "Import", for the refusal copy.
 
         Returns:
-            `(path, passphrase)`, or None when something was missing (the
-            refusal is already on screen and the passphrase field is empty).
+            `(path, passphrase)`, or None when something was missing or the
+            path was refused (the refusal is already on screen and the
+            passphrase field is empty).
         """
         passphrase = self.query_one("#meetings-voice-passphrase", Input).value
         text = self.query_one("#meetings-voice-path", Input).value.strip()
@@ -1295,7 +1329,18 @@ class MeetingsScreen(BaseAppScreen):
             self._clear_passphrase()
             self._voice_message(f"{action} needs a file path.")
             return None
-        return Path(text).expanduser(), passphrase
+        try:
+            path = _validated_transfer_path(text, action)
+        except ValueError:
+            self._clear_passphrase()
+            # Static copy, and never the path itself (spec §6).
+            self._voice_message(
+                "Import needs a file that is there to read."
+                if action == "Import"
+                else "Export needs a plain file in a folder that exists."
+            )
+            return None
+        return path, passphrase
 
     @on(Button.Pressed, "#meetings-voice-export-run")
     def _voice_export_run(self) -> None:
