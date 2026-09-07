@@ -37,18 +37,24 @@ class ModelAsset:
     sha256: str
     size: int
     licence: str
+    #: Bytes of the thing actually DOWNLOADED when it differs from `size`
+    #: (the segmentation asset is fetched as a tarball but `size`/`sha256`
+    #: describe the extracted member). The streamed-byte cap uses this so a
+    #: 6.9 MB archive is not judged against its 6.0 MB member (re-review).
+    download_size: int | None = None
 
 
 #: The pyannote segmentation 3.0 model, used by every embedder's Stop pass
 #: (spec §3). `url` is the release TARBALL -- Task 3's downloader extracts
 #: `model.onnx` from it under this asset's `file_name`; `sha256`/`size` are
-#: of the extracted file, not the tarball.
+#: of the extracted file, not the tarball; `download_size` is the tarball's.
 SEGMENTATION = ModelAsset(
     "segmentation", "segmentation", "pyannote-segmentation-3-0.onnx",
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
     sha256="220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079",
     size=5_992_913,
     licence="MIT (pyannote/segmentation-3.0)",
+    download_size=6_958_444,
 )
 
 #: The int8 variant of the same tarball's `model.int8.onnx`, kept for the
@@ -314,7 +320,9 @@ def _fetch_asset(http_client, asset: ModelAsset, path: Path, deadline: float, on
     # future candidate), so the tarball member wanted is always the same.
     is_tarball = asset.kind == "segmentation"
     wanted_member = "model.onnx"
-    max_bytes = asset.size + _DOWNLOAD_SLACK_BYTES
+    # Cap the STREAM by what is downloaded (the archive for a tarball asset),
+    # never by the extracted member's size -- the two differ by ~1 MB here.
+    max_bytes = (asset.download_size or asset.size) + _DOWNLOAD_SLACK_BYTES
 
     for attempt in range(2):
         final_tmp = _temp_path_for(path)
