@@ -9144,27 +9144,22 @@ class LibraryScreen(BaseAppScreen):
         end in, and what ``_sync_library_canvas`` falls back to after
         CLEARING the follow-up it had queued -- bypassed both and left
         ``screen.focused`` at ``None`` (reproduced at 235x52 and 100x30).
-        This is the narrowest hook the screen already owns, so every such
-        call site is covered at once.
 
-        Gated on ``recompose`` (a plain repaint is the hot path and must
-        not capture, restore or queue anything) and on Media being the
-        active destination, so the other canvases are untouched. The
-        restore is queued with ``call_after_refresh`` -- correct for a
-        WHOLE-screen recompose, where ``Screen._on_timer_update`` runs the
-        recompose before ``_invoke_and_clear_callbacks``; a widget-scoped
-        recompose has no such ordering and keeps riding
-        ``queue_after_recompose`` instead. Explicit targets still win
-        exactly as ``_restore_library_media_focus`` already decides.
+        task-31946 moved the capture/restore PAIR itself down to
+        ``BaseAppScreen`` -- one seam for every screen and every route, not
+        a Media-only patch on this override -- and this screen composes its
+        Media rules into it through ``_focus_identity_for_recompose`` /
+        ``restore_focus_after_recompose`` below. There is therefore exactly
+        one restore callback queued per whole-screen recompose; nothing
+        here queues a second one.
+
+        What stays here is the NOTES recompose state, which is a rehydrate
+        (widget values, stage visibility, footer context), not a focus
+        restore. Gated on ``recompose``: a plain repaint is the hot path
+        and must not capture or queue anything.
         """
         if recompose:
             self._commit_library_note_widgets_before_recompose()
-        media_focus = (
-            self._capture_library_media_focus_identity()
-            if recompose
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-            else None
-        )
         restore = self._capture_library_notes_recompose_state() if recompose else None
         if restore is not None:
             self._library_notes_recompose_generation += 1
@@ -9186,9 +9181,47 @@ class LibraryScreen(BaseAppScreen):
         elif recompose:
             self.call_after_refresh(self._apply_library_notes_stage_visibility)
             self.call_after_refresh(self._apply_library_notes_footer_context)
-        if media_focus is not None:
-            self.call_after_refresh(self._restore_library_media_focus, media_focus)
         return result
+
+    def _focus_identity_for_recompose(self) -> str | None:
+        """Media's capture rules; the base rule everywhere else (task-31946).
+
+        The Media route refuses to record a reader pane GRIP -- Textual
+        dumps focus there by accident on exactly this recompose, so
+        restoring it would perpetuate the bug PR F fixed rather than undo
+        it. Every other route has no such trap and uses the base's plain
+        "the focused widget's id" rule.
+        """
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            return self._capture_library_media_focus_identity()
+        return super()._focus_identity_for_recompose()
+
+    def restore_focus_after_recompose(self, previous: str | None) -> None:
+        """One owner per recompose window (task-31946 AC#2).
+
+        The shared seam schedules this ONCE per whole-screen recompose, so
+        the Media restore and the generic one cannot double-fire: they are
+        two statements of the same callback, and the generic tail is a
+        no-op the moment ``_restore_library_media_focus`` has focused
+        something real (it only acts when focus is still ``None``). The
+        tail is the honest backstop for the cases Media's own rules leave
+        unfocused -- an empty list, ``rail-only`` emergency stage -- and
+        the only restore on the other three routes.
+
+        Both of the screen's one-shot focus CHANNELS stand the whole seam
+        down, not just the Media half: they land their focus in a LATER
+        callback, and a foreign ``set_focus`` inside their window
+        invalidates the pending media-return receipt
+        (``_library_media_live_focus_is_allowed``) -- the generic tail
+        would do exactly that while the channel is still armed.
+        """
+        if self._library_pending_list_entry_focus or (
+            self._library_media_find_focus_pending
+        ):
+            return
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            self._restore_library_media_focus(previous)
+        super().restore_focus_after_recompose(previous)
 
     async def action_library_notes_new(self) -> None:
         """Open Create only after the active canonical draft flushes."""
@@ -35377,11 +35410,14 @@ class LibraryScreen(BaseAppScreen):
         Three choke points reach here, covering every media recompose: the
         ``kind == "media"`` branch of ``_sync_library_canvas`` and
         ``_sync_library_media_viewer_state`` (both canvas-scoped, via
-        ``queue_after_recompose``), and ``LibraryScreen.refresh`` for any
-        WHOLE-screen ``refresh(recompose=True)``. The last was added in the
-        Qodo round: background workers and ``_sync_library_canvas``'s own
-        failure fallback both take that bare path -- the fallback after
-        CLEARING the follow-up it had queued -- and left focus at ``None``.
+        ``queue_after_recompose``), and -- for any WHOLE-screen
+        ``refresh(recompose=True)`` -- ``restore_focus_after_recompose``,
+        the shared ``BaseAppScreen`` seam this screen overrides (task-31946
+        moved that hop off ``LibraryScreen.refresh`` itself). The last was
+        added in the Qodo round: background workers and
+        ``_sync_library_canvas``'s own failure fallback both take that bare
+        path -- the fallback after CLEARING the follow-up it had queued --
+        and left focus at ``None``.
 
         Args:
             previous: Identity captured by

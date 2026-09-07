@@ -34511,3 +34511,77 @@ async def test_library_media_switching_tabs_clears_the_search():
         await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
         assert screen._library_media_content_query == ""
         assert screen._library_media_content_match_index == 0
+
+
+# ---------------------------------------------------------------------------
+# task-31946: a BARE whole-screen recompose -- what a background job tick or
+# an ad-hoc repaint does -- must not drop focus to None.
+#
+# PR F gave ``LibraryScreen.refresh`` a Media-only capture/restore. Every
+# other route still ended a whole-screen ``refresh(recompose=True)`` with
+# ``screen.focused is None``: Textual removes every child, nothing re-picks
+# focus after the remount, and the keyboard is dead until the user clicks.
+# Both routes are pinned so the shared seam can never be narrowed back to
+# Media without a red test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_keeps_focus_on_a_mounted_widget_conversations():
+    """task-31946 AC#1/#3: the non-Media route the PR F seam never covered."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        row = await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.set_focus(row)
+        await pilot.pause()
+        assert screen.focused is row
+
+        # No follow-up, no ``then=``, no sync seam: the bare call a
+        # background worker's own repaint ends in.
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a bare whole-screen recompose left the Conversations route with "
+            "no focused widget -- the keyboard is dead until the user clicks"
+        )
+        assert focused.is_attached, focused
+        assert focused.id == "library-conversation-row-0", focused.id
+
+
+@pytest.mark.asyncio
+async def test_background_recompose_keeps_focus_on_a_mounted_widget_media():
+    """task-31946 AC#1: the Media route keeps PR F's behaviour, once."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        row = await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.set_focus(row)
+        await pilot.pause()
+        assert screen.focused is row
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None, (
+            "a bare whole-screen recompose left Media with no focused widget"
+        )
+        assert focused.is_attached, focused
+        assert focused.id == "library-media-row-0", focused.id
