@@ -32,6 +32,14 @@ class TraceCallRecoveryState:
     temporary_capture: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class TraceCallRecoveryResult:
+    """Keep a controller's safe refusal copy alongside the recovery outcome."""
+
+    completed: bool
+    visible_copy: str = ""
+
+
 def trace_call_recovery_state(
     preparation: ConsoleTurnPreparation | None,
 ) -> TraceCallRecoveryState | None:
@@ -166,6 +174,7 @@ class TraceCallRecoveryCallout(Vertical):
         self.recovery_state = state
         self._on_action = on_action
         self._busy = False
+        self._status_copy = ""
 
     def compose(self) -> ComposeResult:
         yield Static("Trace capture blocked", id="console-trace-title")
@@ -199,6 +208,8 @@ class TraceCallRecoveryCallout(Vertical):
     def sync_recovery(self, state: TraceCallRecoveryState | None) -> None:
         """Update the always-mounted placeholder without recomposition."""
 
+        if state != self.recovery_state:
+            self._status_copy = ""
         self.recovery_state = state
         self.display = state is not None
         temporary = bool(state is not None and state.temporary_capture)
@@ -224,7 +235,7 @@ class TraceCallRecoveryCallout(Vertical):
         self.query_one("#console-trace-status", Static).update(
             "Working… actions are temporarily disabled."
             if self._busy
-            else "Choose one action."
+            else self._status_copy or "Choose one action."
         )
 
     @on(Button.Pressed)
@@ -240,6 +251,7 @@ class TraceCallRecoveryCallout(Vertical):
             return
         event.stop()
         self._busy = True
+        self._status_copy = ""
         self.sync_recovery(state)
         self.run_worker(
             self._dispatch(action, state),
@@ -258,18 +270,28 @@ class TraceCallRecoveryCallout(Vertical):
             raise
         except Exception:
             self._busy = False
-            self.sync_recovery(self.recovery_state)
-            self.query_one("#console-trace-status", Static).update(
+            self._status_copy = (
                 "Recovery did not complete. Try again or cancel the send."
             )
+            self.sync_recovery(self.recovery_state)
             return
         self._busy = False
-        if result:
+        completed = (
+            result.completed
+            if isinstance(result, TraceCallRecoveryResult)
+            else bool(result)
+        )
+        if completed:
             self.display = False
             return
+        self._status_copy = (
+            result.visible_copy
+            if isinstance(result, TraceCallRecoveryResult) and result.visible_copy
+            else "Recovery did not complete. Try again or cancel the send."
+        )
         self.sync_recovery(self.recovery_state)
-        self.query_one("#console-trace-status", Static).update(
-            "Recovery did not complete. Try again or cancel the send."
+        self.call_after_refresh(
+            self.query_one("#console-trace-status", Static).scroll_visible
         )
 
 
@@ -630,12 +652,17 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
             self._recovery_state()
         )
 
-    async def _recover_trace_call(self, action: str, preparation_id: str) -> bool:
+    async def _recover_trace_call(
+        self, action: str, preparation_id: str
+    ) -> TraceCallRecoveryResult:
         result = self._on_trace_recovery_action(action, preparation_id)
         if inspect.isawaitable(result):
-            await result
+            result = await result
         self.sync_recovery()
-        return self._trace_recovery_state_builder() is None
+        return TraceCallRecoveryResult(
+            completed=self._trace_recovery_state_builder() is None,
+            visible_copy=getattr(result, "visible_copy", ""),
+        )
 
     async def _recover(self, action: str, message_id: str, version: int) -> bool:
         result = self._on_recovery_action(action, message_id, version)

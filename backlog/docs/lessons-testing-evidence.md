@@ -12049,3 +12049,41 @@ The SDD controller applied a three-line round-2 fix by hand (a `logger.debug` in
 and committed without `./scripts/preflight.sh`; the next task's implementer hit the diagnostic
 inventory drift and had to re-pin someone else's row. The rule the implementers follow ("any
 `logger.*` change -> read the rows, `--write`") binds the controller too.
+
+
+## Trace recovery tests need the failure before a boundary exists
+
+**TASK-31976, 2026-09-07.** A user reported “Trace capture blocked” on a fresh
+Console send, then no send and no card after choosing Send without capture.
+The existing real trace/agent tests passed because their recovery failures had
+an established boundary. A mounted Console probe with a file-backed database
+and a failure in the first boundary factory reproduced the missing case: the
+controller demanded proof from a boundary that never existed, returned unknown
+delivery, and the UI discarded the result when the trace pause disappeared.
+Zero adapter calls and a rendered frame with no recovery guidance proved the
+failure; disappearance of the card alone would have looked like success.
+
+**What to do.** Cover construction failure separately from reservation/bind
+failure. Keep the real accepted-send, database, and agent paths; replace only
+the external adapter and inject the failing boundary operation. Assert one
+provider call and the completed original turn for successful recovery, or
+painted refusal/recovery actions for a refused action. An internal result or a
+hidden card is not evidence that a message sent or that the user can recover.
+
+## A trace-only probe cannot diagnose a send that never reaches tracing
+
+**TASK-31977, 2026-09-07.** A reporter reproduced Console flicker, but the
+throwaway launcher recorded only start/end: all its hooks began at trace
+reservation. New real-sink tests also showed that an existing durable-commit
+Loguru diagnostic never reached the support artifact. The responsiveness monitor
+recorded stalls but missed repeated syncs on a responsive loop. Instrumenting
+from the visible send action and testing both the private file and actual Copy
+all action produced useful evidence for those earlier failures. Independent
+review then found that nested queued sends shared one event allowance and
+WARNING thresholds dropped the runtime/capture context; separate submission
+budgets and self-contained failure records fixed both regression tests.
+
+**What to do.** Verify the artifact a reporter will share, from the earliest
+user action through refusal or completion. Test a responsive refresh episode
+separately from a stall, and test failure records at WARNING thresholds. A
+start/end-only log is absence of coverage, not proof that the send worked.
