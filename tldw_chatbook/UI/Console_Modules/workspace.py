@@ -4266,6 +4266,15 @@ class ConsoleWorkspaceController:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
             self._set_active_workspace_for_console_session(session_id)
+            session = next(item for item in store.sessions() if item.id == session_id)
+            try:
+                await self._refresh_console_effective_scope_and_sync(session)
+            except Exception:  # noqa: BLE001 - optional display must not block activation
+                logger.opt(exception=True).warning(
+                    "Failed to refresh retrieval scope display on saved "
+                    "conversation activation: {}",
+                    session_id,
+                )
             self._sync_console_chat_core_state()
             sync_result = self._sync_native_console_chat_ui_fn()
             if inspect.isawaitable(sync_result):
@@ -5208,8 +5217,16 @@ class ConsoleWorkspaceController:
         *,
         target_scope_type: str | None = None,
         target_workspace_id: str | None = None,
+        reuse_existing: bool = False,
     ) -> bool | None:
         """Load a persisted saved conversation into a native Console session.
+
+        Args:
+            conversation_id: Exact persisted conversation identity.
+            target_scope_type: Optional fallback scope for cold hydration.
+            target_workspace_id: Optional fallback workspace for cold hydration.
+            reuse_existing: Prefer an open runtime after validating the saved
+                record. History opts in; explicit fresh-session callers do not.
 
         Returns:
             True on success; None on a transient failure this method already
@@ -5265,6 +5282,21 @@ class ConsoleWorkspaceController:
                 store, prior_active_session_id
             )
             return False
+
+        if reuse_existing:
+            matches = [
+                session
+                for session in store.sessions()
+                if str(session.persisted_conversation_id or "") == target
+            ]
+            if matches:
+                session = next(
+                    (item for item in matches if item.id == store.active_session_id),
+                    matches[0],
+                )
+                return await self.open_console_workspace_conversation(
+                    f"native:{session.id}"
+                )
 
         conversation = tree.get("conversation")
         if not isinstance(conversation, dict):
