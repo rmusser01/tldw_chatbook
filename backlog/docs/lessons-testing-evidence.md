@@ -11830,6 +11830,13 @@ Rule: trace the actual provider-to-mutation-owner wiring before selecting a
 quota test target. Assert admission at the production owner with existing and
 concurrent work, not only on a similarly named helper or final durable commit.
 
+Follow-up (TASK-31938, 2026-09-06): V2 controller mutations passed, but the actual
+CanvasToolProvider returned `operation_failed` because both result serialization
+and projection still admitted only V1 metadata. A real provider transition test
+failed three V2 rows before those bounded metadata gates were corrected. Follow
+the successful mutation through its real result projection too: an owner-only
+test cannot prove that the caller receives the committed revision identity.
+
 The same review's raw Python probe imported application configuration before
 establishing owned test directories. Logs reported loading ambient config and
 ensuring the user's chat_dicts directory; no pre-probe snapshot could determine

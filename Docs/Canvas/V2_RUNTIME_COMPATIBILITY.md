@@ -225,3 +225,31 @@ CSSOM paint semantics and browser image decode remain renderer responsibilities;
 the worker does not gain DOM/CSSOM construction. Installation removes the original
 declaration text children through typed mutations before appending its scene, so
 the virtual text getter sees the same descendants as the rendered DOM.
+
+## Exact revision ownership (Task 5)
+
+The Console controller and its durable service share a captured profile snapshot.
+Creation and replacement preparation use the profile resolver in the compiler's
+single bounded parse. An internal preparation value carries that selected profile,
+source identity, parent profile and snapshot through the existing owner gate.
+An offered legacy prepared plan is compared with an independent preparation;
+its own fields cannot choose the profile. Normal native imports pass the internal
+value and do not parse again during mutation. Owner, parent, selection, cancellation
+and temporary-incarnation checks still run after compilation.
+
+V1 children upgrade when diagram declarations require the candidate. A V2 child
+retains its exact profile after diagram removal, while an explicit historical V1
+branch retains V1 semantics. Native stored reads compile the exact stored profile.
+Unknown, revoked and uninstalled sibling profiles remain source-only; title-only
+rename preserves source/profile without compiling them, and HTML updates refuse.
+Repository and tool projections validate bounded profile IDs as data, independently
+of execution admission. Promotion and turn contributions preserve every profile
+inside their existing transactions, including rollback/retry and origin remapping.
+
+Canvas-bearing conversation exports use ChatbookCreator/ChatbookImporter and
+archive format 3.0, for one or multiple selected conversations. Round trips preserve
+source, profiles, branches, renames and deleted origins without installing runtime
+bytes or changing the snapshot. Legacy plain-text/JSON conversation exports are
+not Canvas graph archives. Schema 68, archive format 3.0 and sync exclusion are
+unchanged. Tests explicitly admit the retained candidate closure; the packaged
+candidate remains disabled pending later delivery and qualification work.

@@ -631,8 +631,7 @@ def _validated_revision_payload(revision: Any) -> dict[str, object]:
     if revision.parent_revision_id is not None:
         _uuid(revision.parent_revision_id, "operation_failed")
     title = _validated_title(revision.title)
-    if revision.runtime_profile != "canvas-v1":
-        raise _ArgumentError("operation_failed")
+    profile = _validated_profile(revision.runtime_profile)
     _validated_digest(revision.content_sha256)
     if (
         type(revision.source_bytes) is not int
@@ -646,7 +645,7 @@ def _validated_revision_payload(revision: Any) -> dict[str, object]:
         "revision_id": revision.revision_id,
         "parent_revision_id": revision.parent_revision_id,
         "title": title,
-        "runtime_profile": "canvas-v1",
+        "runtime_profile": profile,
         "content_sha256": revision.content_sha256,
         "source_bytes": revision.source_bytes,
         "sequence": revision.sequence,
@@ -927,8 +926,7 @@ def _project_revision_metadata(
     parent = value["parent_revision_id"]
     if parent is not None:
         parent = _uuid(parent, "operation_failed")
-    if value["runtime_profile"] != "canvas-v1":
-        raise _ArgumentError("operation_failed")
+    profile = _validated_profile(value["runtime_profile"])
     _validated_digest(value["content_sha256"])
     if (
         type(value["source_bytes"]) is not int
@@ -941,7 +939,7 @@ def _project_revision_metadata(
         "revision_id": _uuid(value["revision_id"], "operation_failed"),
         "parent_revision_id": parent,
         "title": _validated_title(value["title"]),
-        "runtime_profile": "canvas-v1",
+        "runtime_profile": profile,
         "content_sha256": value["content_sha256"],
         "source_bytes": value["source_bytes"],
         "sequence": value["sequence"],
@@ -953,6 +951,18 @@ def _project_revision_metadata(
                 raise _ArgumentError("operation_failed")
             projected[key] = value[key]
     return projected
+
+
+def _validated_profile(value: object) -> str:
+    from tldw_chatbook.Canvas.archive import (
+        CanvasArchiveValidationError,
+        validate_runtime_profile,
+    )
+
+    try:
+        return validate_runtime_profile(value)
+    except CanvasArchiveValidationError:
+        raise _ArgumentError("operation_failed") from None
 
 
 def _project_origin(value: object) -> dict[str, str]:

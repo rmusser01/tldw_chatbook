@@ -8,13 +8,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Canvas.compilation import prepare_canvas_document
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.gateway import CanvasGatewayScope
 from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
 from tldw_chatbook.Chat.console_canvas_controller import ConsoleCanvasController
+from tldw_chatbook.Chat.console_canvas_controller import (
+    compile_canvas_document as prepare_controller_document,
+)
 
 SOURCE = "<!doctype html><title>Example</title><p>one</p>"
+DIAGRAM_SOURCE = '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Start]</pre>'
 
 
 def test_existing_block_replay_does_not_recompile_historical_source(monkeypatch):
@@ -40,9 +45,9 @@ def test_existing_block_replay_does_not_recompile_historical_source(monkeypatch)
     assert authority.import_html(**arguments) == original
 
 
-def setup_authority():
+def setup_authority(snapshot=None):
     scope = CanvasScope("session", "session", ("message",), None, None, "run")
-    controller = ConsoleCanvasController()
+    controller = ConsoleCanvasController(profile_snapshot=snapshot)
     controller.activate_session("session")
     live = {"scope": scope, "enabled": True}
     authority = NativeConsoleCanvasAuthority(
@@ -58,11 +63,19 @@ class DelayedCompiler:
         self.started = threading.Event()
         self.release = threading.Event()
 
-    def __call__(self, source):
+    def __call__(self, source, **kwargs):
         self.started.set()
         if not self.release.wait(2):
             raise AssertionError("compiler was not released")
-        return compile_canvas_document(source)
+        if "parent_profile" in kwargs:
+            parent = kwargs["parent_profile"]
+            return prepare_canvas_document(
+                source,
+                operation="create" if parent is None else "update",
+                parent_profile=parent,
+                snapshot=kwargs["snapshot"],
+            )
+        return compile_canvas_document(source, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -110,8 +123,13 @@ async def test_native_preview_yields_during_compilation(monkeypatch, invalidate)
 
 
 @pytest.mark.asyncio
-async def test_tool_compilation_releases_shared_lock_and_fences_cancel(monkeypatch):
-    _authority, controller, live = setup_authority()
+@pytest.mark.parametrize("candidate", [False, True])
+async def test_tool_compilation_releases_shared_lock_and_fences_cancel(
+    monkeypatch, candidate, candidate_snapshot
+):
+    _authority, controller, live = setup_authority(
+        candidate_snapshot if candidate else None
+    )
     controller.register_run(
         live["scope"], assistant_message_id="assistant", temporary=True
     )
@@ -125,7 +143,7 @@ async def test_tool_compilation_releases_shared_lock_and_fences_cancel(monkeypat
             live["scope"],
             tool_call_id="tool",
             title="Example",
-            html=SOURCE,
+            html=DIAGRAM_SOURCE if candidate else SOURCE,
         )
     )
     try:
@@ -310,13 +328,21 @@ async def test_worker_failure_is_consumed_and_restores_admission(cancel_waiter):
 
 
 @pytest.mark.asyncio
-async def test_tool_update_rechecks_parent_after_unlocked_compile(monkeypatch):
-    _authority, controller, live = setup_authority()
+@pytest.mark.parametrize("candidate", [False, True])
+async def test_tool_update_rechecks_parent_after_unlocked_compile(
+    monkeypatch, candidate, candidate_snapshot
+):
+    _authority, controller, live = setup_authority(
+        candidate_snapshot if candidate else None
+    )
     controller.register_run(
         live["scope"], assistant_message_id="assistant", temporary=True
     )
     root = controller.create_canvas(
-        live["scope"], tool_call_id="create", title="Example", html=SOURCE
+        live["scope"],
+        tool_call_id="create",
+        title="Example",
+        html=DIAGRAM_SOURCE if candidate else SOURCE,
     )
     delayed = DelayedCompiler()
     monkeypatch.setattr(
@@ -336,7 +362,7 @@ async def test_tool_update_rechecks_parent_after_unlocked_compile(monkeypatch):
         assert await asyncio.to_thread(delayed.started.wait, 1)
         monkeypatch.setattr(
             "tldw_chatbook.Chat.console_canvas_controller.compile_canvas_document",
-            compile_canvas_document,
+            prepare_controller_document,
         )
         winner = controller.update_canvas(
             live["scope"], tool_call_id="winner", **arguments
@@ -346,6 +372,9 @@ async def test_tool_update_rechecks_parent_after_unlocked_compile(monkeypatch):
     result = await task
     assert result.current_revision_id == winner.revision.revision_id
     assert controller.run_revision_count("run") == 2
+    assert winner.revision.runtime_profile == (
+        "canvas-v2-mermaid-1" if candidate else "canvas-v1"
+    )
 
 
 @pytest.mark.asyncio

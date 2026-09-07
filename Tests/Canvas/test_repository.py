@@ -88,6 +88,56 @@ def _message(
     return message_id
 
 
+@pytest.mark.parametrize(
+    "profile", ["canvas-v1", "canvas-v2-mermaid-1", "canvas-v2-mermaid-2", "canvas-v99"]
+)
+def test_revision_storage_keeps_exact_bounded_profile_data(db, profile):
+    conversation, message = _owner(db)
+    repository = CanvasRepository(db)
+    created = repository.create_canvas(
+        conversation,
+        title="Stored profile",
+        source="<p>same</p>",
+        runtime_profile=profile,
+        actor_kind="user_import",
+        origin_message_id=message,
+        origin_turn_id="import",
+    )
+    renamed = repository.append_revision(
+        conversation,
+        created.revision.canvas_id,
+        parent_revision_id=created.revision.revision_id,
+        title="Renamed",
+        source="<p>same</p>",
+        runtime_profile=profile,
+        actor_kind="user_rename",
+        origin_message_id=message,
+        origin_turn_id="rename",
+    )
+    assert renamed.runtime_profile == profile
+    assert (
+        repository.read_revision(conversation, renamed.revision_id).source
+        == "<p>same</p>"
+    )
+
+
+@pytest.mark.parametrize("profile", ["", "../canvas-v2", "v" * 65, "canvas-☃"])
+def test_revision_storage_rejects_unsafe_profile_identifiers(db, profile):
+    conversation, message = _owner(db)
+    repository = CanvasRepository(db)
+    with pytest.raises(CanvasValidationError):
+        repository.create_canvas(
+            conversation,
+            title="Invalid profile",
+            source="<p>same</p>",
+            runtime_profile=profile,
+            actor_kind="user_import",
+            origin_message_id=message,
+            origin_turn_id="import",
+        )
+    assert repository.list_revision_metadata(conversation) == ()
+
+
 def _create(
     repository: CanvasRepository,
     conversation_id: str,
