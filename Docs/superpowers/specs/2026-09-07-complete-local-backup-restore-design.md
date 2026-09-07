@@ -2,7 +2,7 @@
 
 Date: 2026-09-07
 
-Revision: 2 — second design-review corrections incorporated.
+Revision: 3 — third design-review corrections incorporated.
 
 Status: Draft for written user review. Conversational scope and review corrections
 approved; implementation and implementation planning have not started.
@@ -45,6 +45,9 @@ Approved decisions:
   immutable archive input, SQLite schema validation, custom-root startup discovery,
   and distinct backup/replacement downtime. Encryption packaging is an early gate;
   recovered media has a complete persistence and deletion lifecycle.
+- The third review separates damaged-installation recovery from backup discovery,
+  makes activation restrictions durable across launches, bounds credential rollback
+  claims, prevents archive-output overwrite, and preserves explicit folder structure.
 
 The remaining implementation choices below are concrete proposals for this written
 review, particularly the encryption helper, recovery catalog, and verification
@@ -90,8 +93,21 @@ but imported journals and bindings must never become live filesystem authority.
 An explicit storage inventory combines application storage-owner declarations,
 effective configuration, known profile locations, and user-added profile configs.
 It does not scan the entire home directory or import optional runtime engines just
-to discover their files. Profile configuration must parse successfully; a fallback
-to default_user is not an acceptable inventory result.
+to discover their files. For backup-source discovery, profile configuration must
+parse successfully; a fallback to default_user is not an acceptable inventory result.
+This precondition does not apply to inspecting an existing archive or restoring it
+into a new isolated destination.
+
+Restore-destination discovery is a separate read-only operation. Archive inspection
+uses only the archive, reader capabilities, and independent private working storage.
+An isolated restore uses the validated archive plus a newly selected destination,
+without opening or parsing damaged current profiles. Replacement needs independently
+verified target locators from intact local admission/catalog records or explicit
+user-selected targets checked against owner identity. Never guess custom database
+locations from fallback defaults or trust original archive paths as destination
+authority. If targets cannot be verified, replacement is unavailable while inspection
+and isolated recovery remain available. Reading raw corrupt config bytes into an
+encrypted rollback copy does not require treating them as parsed configuration.
 
 Each storage owner declares discovery, dependencies, classification, safe capture,
 validation, relocation, and activation behavior. Its declaration uses canonical
@@ -149,6 +165,23 @@ Phases are Discovering, Waiting for maintenance access, Capturing, Packaging,
 Verifying, and Complete / Partial / Failed / Cancelled. Counters derive from real
 work. Cancellation remains available before publication; a failed or interrupted
 output is a staging artifact, never a completed backup in the history list.
+
+Create backup publishes only to a new file in v1. Suggest a unique filename, report
+an existing destination, and let the user choose another name; there is no overwrite
+option in this flow. Validate the parent and reject destination/staging aliases to
+source files, active input archives, bootstrap/control state, and retained recovery
+artifacts. Reject output inside a selected source subtree unless its directory is
+an explicit inventory exclusion. Known backup-output directories are excluded from
+recursive source discovery to prevent capturing this operation's growing output.
+
+Write and verify a private temporary artifact on the output volume, then publish
+with a qualified atomic no-replace operation. An existence check followed by ordinary
+replace/rename is insufficient. If another file appears after preview, leave it
+untouched, retain or safely clean only this operation's temporary file, and offer
+a new destination. No completed-history entry is recorded before durable publication.
+Changing the destination reruns path/space checks; insufficient platform support
+does not permit a silent overwrite fallback. The same rule protects newly created
+rollback archives and later-rollback safety copies.
 
 ### Inspect and restore
 
@@ -216,6 +249,9 @@ and Open profile, consults bootstrap admission before opening affected owners. A
 custom-root launch option cannot disable this check. An interrupted registration
 is conservatively pending until reconciled against the operation journal; commit
 or verified rollback is recorded durably before its admission fence is cleared.
+Before clearing that operation fence, atomically associate the installed generation
+with the separate durable activation-required state described in section 9. Ending
+replacement maintenance does not authorize automatic execution or reconnection.
 The settings catalog may be rebuilt from intact admission records without guessing
 whether a missing catalog means no operation. An unreachable custom control root
 keeps its affected namespaces blocked and provides explicit-path recovery.
@@ -303,6 +339,24 @@ Use .tldw-backup.zip for plaintext and .tldw-backup.zip.age for encrypted output
 Only stored and deflated regular-file entries are allowed. Already compressed
 media/model files use stored entries. All payload names are generated relative
 identifiers; destination paths are chosen locally, never obeyed from archive paths.
+
+Directory structure is represented explicitly in the manifest, rather than by ZIP
+directory entries or inference from file names. Record selected root IDs, validated
+relative directory paths (including empty roots/directories), parent relationships,
+and a versioned supported-metadata record. Files map to this tree through logical
+IDs. Directory records count against manifest/count/path budgets and share the file
+namespace for duplicate, case/Unicode, ancestor, and file-versus-directory collision
+checks. No link, mount traversal, or absolute locator becomes a directory record.
+
+Restore directories only below an approved newly created root, create parents before
+children, and apply supported final metadata after publishing their children. v1
+preserves directory modification times and, on qualified POSIX destinations, ordinary
+permission bits subject to the existing private-storage policy; never restore
+special privilege bits or foreign ownership. ACLs, extended attributes, file flags,
+alternate streams, and platform-specific metadata without a qualified round-trip
+adapter are reported as unsupported. Private app-owned directories remain owner-only.
+Preview metadata changes or omissions, and require explicit acceptance of a partial
+metadata restore rather than silently claiming an exact filesystem round trip.
 
 The manifest includes format version, producer version, capture time, profile IDs,
 owner/schema versions, payload sizes and SHA-256, dependency groups, capture
@@ -454,7 +508,8 @@ the product makes no forensic-erasure or encrypted-working-disk guarantee.
 
 ### Shared preparation
 
-Inventory -> Validate archive -> Choose destination -> Build mapping -> Stage ->
+Acquire bounded archive input -> Validate archive -> Choose destination -> Discover
+and verify destination scope -> Build mapping -> Stage ->
 Validate candidate -> Obtain maintenance -> Revalidate targets -> Preserve rollback
 (replacement only) -> Journal publication -> Publish -> Validate installed state ->
 Commit -> Offer isolated first launch.
@@ -504,8 +559,8 @@ block publication until classified and reviewed; no inferred garbage deletion.
 Require explicit selection changes when shared dependencies cross the scope.
 Checked SQLite owners handle old sidecars only after connections close and the
 rollback snapshot includes committed WAL state. Journal every restore, retire,
-and preserve decision, and validate the final live owner inventory
-against the approved plan. A stale database or attachment absent from the desired
+and preserve decision, and validate the final live owner inventory against the
+approved plan. A stale database or attachment absent from the desired
 generation cannot survive as an accidentally active store.
 
 Stop affected services and prevent new participants from opening their storage.
@@ -514,24 +569,47 @@ change. Require a rollback password at this step, even when the incoming backup 
 plaintext; the UI can explicitly offer to reuse the entered archive password.
 Never persist that password. On restart, recovery can ask for it before rollback.
 
-Rollback retains exact pre-restore data and managed credentials, without portable
-export redaction. Raw pre-restore config is retained as bytes even if normal config
-parsing is broken. If a required current store is damaged beyond the qualified
+Rollback retains the exact pre-restore stored-data snapshot and supported captured
+managed credentials, without portable export redaction. Exact stored-data recovery
+does not promise externally usable authentication. Raw pre-restore config is retained
+as bytes even if normal config parsing is broken. If a required current store is
+damaged beyond the qualified
 rollback capture contract, refuse in-place replacement and offer isolated restore;
 do not label an unverifiable rollback copy safe. The source backup and rollback
 archive are immutable. Rollback does not depend on successful schema migration.
 
-Stage credential material separately and do not overwrite shared OS-keyring entries.
-Exact rollback may preserve original credential reference bytes because this is the
-same local installation; it does not need to enumerate or copy the entire keyring.
-Revert only credential entries newly created by this recovery operation, after
-checking their identities. Portable credential-exclusion rules remain unchanged.
+Capture the readable supported Chatbook-owned credential values used by affected
+owners in the encrypted rollback artifact, with their scope/reference mapping and
+capture status. Select entries through those owners, not whole-keychain enumeration.
+Retaining only a keyring reference is not evidence that its value can be recovered
+after another action changes or deletes it. The immutable stored-data snapshot keeps
+original references as recovery evidence; activation can require explicit remapping.
+
+Stage credential material separately. Reuse an existing keyring entry only if its
+scope and value still match the captured entry. Otherwise restore the captured value
+into a new non-conflicting scope and remap through the affected owner, without
+overwriting another profile's credential. Journal newly created scopes and changes
+to references; rollback cleanup removes only entries still provably owned by that
+operation. If an owner cannot safely remap, retain the encrypted value for its
+explicit credential-recovery flow rather than silently changing a shared entry.
+
+List unreadable/unexportable owned credentials and external dependencies before
+replacement. These are excluded from the credential-recovery guarantee and require
+explicit acknowledgement if replacement proceeds; they do not invalidate a verified
+stored-data snapshot. Do not capture the process environment or memory-only Sync
+keys. Revoked provider tokens, expired sessions, unavailable environment values, and
+other externally controlled authentication may require setup even after exact local
+data recovery. No provider validation occurs automatically. Portable backup credential
+inclusion remains opt-in; this separate encrypted rollback policy is unchanged by
+that export choice.
 
 After publication, validate installed artifacts while normal admission stays closed.
 Failure triggers rollback when the password remains available or enters Recoverable
 interruption awaiting unlock. If neither direction is provable, show Needs attention
 and retain all evidence; never boot into an ambiguous mixture of generations.
-Successful validation records a durable commit before normal startup can proceed.
+Successful validation records a durable commit and activation-required generation
+state before the maintenance fence can clear. Normal startup then permits local
+inspection under that persistent activation restriction.
 
 ### Separate profile
 
@@ -576,9 +654,27 @@ back at a safe boundary, not abandon work halfway through.
 Restored content is available for local inspection without starting schedules, sync,
 agents, MCP servers, skill scripts, managed model processes, downloads, updates,
 model catalog refresh, remote authentication checks, or network index rebuilding.
-A recovery launch policy applies before service composition, not after a first
-background task has already started. The persistent Needs setup report owns review
-actions; ordinary future activation uses existing capability/permission owners.
+A durable activation-required record for each restored generation applies before
+service composition through every supported launch route, not only Open profile or
+the recovery launcher. It is local control state, separate from the operation journal
+and the convenience report. Commit associates the generation and its affected owner
+namespaces with that record before releasing maintenance. Clearing a completed
+operation's startup fence does not clear activation requirements.
+
+Record review status per execution/reconnection owner. Existing capability/permission
+owners clear only their own requirement after explicit review; enabling one provider
+does not resume schedules or sync. Closing the UI, rebooting, normal command launch,
+or rebuilding the report cannot grant activation. Missing, corrupt, or mismatched
+activation state for a known restored generation keeps those capabilities inactive
+while allowing safe local inspection. Imported archives cannot supply already-
+approved activation records; every restore, including a later rollback, creates a
+new locally controlled generation requiring review. Protocol-unaware old launchers
+remain outside the guarantee defined in section 6.
+
+The persistent Needs setup report presents these authoritative requirements rather
+than owning them. Normal local content access does not require globally enabling
+automatic execution. Activation does not imply replay of old queued work; existing
+owners retain their normal explicit reconciliation and permission checks.
 
 Preserve historical runs and definitions, but never resume a queued mutation or
 replay a captured operation merely because its old status was running. Retain old
@@ -675,6 +771,11 @@ Implementation release evidence must include:
   device identities, unsupported newer schemas, staged migration failures, missing
   optional engines, and malformed current config. Prove original isolated-profile
   sources remain unchanged and restored profiles can be reopened later.
+- Damaged-installation recovery with missing/malformed/encrypted-unavailable current
+  configuration and unreadable current databases. Inspection and isolated restore
+  must work without loading those sources; replacement must refuse unverified target
+  mappings instead of falling back to default paths. Raw-config rollback capture
+  must not depend on successful parsing.
 - Target-inventory reconciliation with newer managed files absent from an older
   backup, declared optional exclusions, unknown files, shared stores, and old SQLite
   sidecars. Assert restore/retire/preserve sets, rollback recovery of retired objects,
@@ -702,6 +803,11 @@ Implementation release evidence must include:
 - Credential fixtures spanning config history, supported DB locations, encrypted
   values, references, keyring scopes, and SQLite unused pages. Search emitted plaintext
   artifacts for known managed-secret sentinels; do not rely only on JSON field checks.
+- Rollback credential fixtures with affected keyring values changed or deleted after
+  capture, scope conflicts, unsupported/unreadable entries, and expired/revoked external
+  credentials. Verify readable owned values are retained encrypted, new scopes do not
+  alter another profile, remapping is journaled, and unavailable authentication is
+  reported distinctly from verified stored-data recovery.
 - Encryption interoperability against the official age implementation, bounded
   memory on large archives, packaging on each advertised platform, wrong-password
   behavior, and truncated final-stream detection. Verify secrets never enter process
@@ -723,6 +829,19 @@ Implementation release evidence must include:
 - A first-open test with network/process-spawn sentinels and restored queued work,
   proving no remote contact, code execution, synchronization, or schedule catch-up
   occurs before explicit activation.
+- Repeat that first-open proof after closing recovery UI, clearing the completed
+  operation fence, ordinary CLI/headless launch, reboot-equivalent process restart,
+  catalog/report rebuild, and activation-record corruption. Approving one owner must
+  not enable another; every restored generation, including rollback, remains gated
+  until its own local review completes.
+- Output publication with pre-existing filenames, a destination created after preview,
+  symlink/hardlink aliases, output nested in selected source folders, and cancellation
+  or failure immediately around no-replace publication. Existing source/backups/control
+  files remain unchanged and failed output never appears as a completed archive.
+- Directory round trips with empty roots, nested empty directories, metadata-only
+  changes, mixed file/directory name collisions, case/Unicode collisions, unsupported
+  metadata, and platform differences. Recreated structure and supported metadata must
+  match the approved manifest; metadata omissions are explicitly reported.
 
 Ship replacement only for qualified OS/filesystem combinations; the UI must derive
 availability from the same capability evidence. Self-review and targeted static
@@ -759,6 +878,11 @@ is qualified. Existing selective exports remain available during development.
 | Backup pause promise applied to replacement | Separate downtime contracts; replacement keeps admission closed through verified encrypted rollback and publication. |
 | Encryption helper selected before packaging proof | Early platform/package/protocol qualification with no runtime download or silent implementation substitution. |
 | Recovered media has no complete ownership lifecycle | Stable references, transcript lookup, baseline re-backup, explicit deletion, and guarded orphan cleanup. |
+| Damaged config prevents recovery discovery | Separate backup-source and restore-destination discovery; isolated recovery never opens damaged current profiles. |
+| Activation restriction disappears on ordinary relaunch | Durable per-generation, per-owner activation state independent of completed-operation fences and reports. |
+| Exact rollback promises external credential availability | Capture supported owned values encrypted, remap conflicting scopes, and report external/unreadable authentication separately. |
+| Backup publication overwrites an existing good archive | New-file-only flow, source/control alias checks, and atomic no-replace publication under destination races. |
+| File-only archive loses empty folder structure | Explicit bounded directory manifest, parent ordering, collision checks, and supported metadata/omission policy. |
 
 ## 12. Written review boundary
 

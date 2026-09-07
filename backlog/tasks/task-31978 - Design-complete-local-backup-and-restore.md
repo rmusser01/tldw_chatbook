@@ -62,6 +62,15 @@ They also require early helper packaging qualification and a complete recovered-
 reference, deletion, cleanup, and subsequent-backup lifecycle. Corresponding release
 evidence was added for every correction. The amendments remain documentation-only.
 
+Revision 3 incorporates the third review's five accepted corrections: backup-source
+discovery no longer gates inspection/isolated recovery from damaged configuration;
+restored generations retain per-owner activation requirements across all supported
+launches; encrypted rollback captures supported affected credential values and
+distinguishes stored-data recovery from external authentication; archive publication
+uses new-file-only atomic no-replace semantics; and a directory manifest preserves
+empty structure with an explicit supported-metadata policy. Spec/ADR decisions,
+review-resolution rows, and targeted release evidence were updated together.
+
 Self-review checked coverage, activation boundaries, profile/credential isolation,
 rollback versus portable redaction, cancellation, compatibility, resource limits,
 interruption outcomes, and the accepted-review mapping. Local Markdown links and
