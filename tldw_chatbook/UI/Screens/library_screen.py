@@ -34951,15 +34951,24 @@ class LibraryScreen(BaseAppScreen):
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
-        self.call_after_refresh(self._sync_library_media_viewer_mutation_gate)
+        # task-31950: both tail follow-ups read the viewer's children (the
+        # edit Save, the content body's scroller) and the rebuild above runs
+        # on the VIEWER's pump, so they ride the viewer's hook rather than
+        # the screen's -- the same ordering PR H2 gave the focus follow-ups.
+        # On the no-change path nothing was rebuilt and the seam falls back
+        # to ``call_after_refresh``, exactly as before.
+        self._queue_after_library_media_viewer_recompose(
+            self._sync_library_media_viewer_mutation_gate, viewer
+        )
         loaded_id = self._library_media_reader_session.loaded_id
         if (
             loaded_id is not None
             and self._library_media_progress_restored_id != loaded_id
         ):
             self._library_media_progress_restored_id = loaded_id
-            self.call_after_refresh(
-                self._restore_library_media_loaded_progress, loaded_id
+            self._queue_after_library_media_viewer_recompose(
+                partial(self._restore_library_media_loaded_progress, loaded_id),
+                viewer,
             )
         return True
 
@@ -35048,8 +35057,6 @@ class LibraryScreen(BaseAppScreen):
             return
         mode = button_id.removeprefix(prefix)
         self._capture_library_media_loaded_progress()
-        if mode == "read":
-            self._library_media_progress_restored_id = None
         self._reset_library_media_search_on_mode_change(mode)
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session,
@@ -35060,6 +35067,14 @@ class LibraryScreen(BaseAppScreen):
         # the OLD children (or after they are detached) is the same race.
         loaded_id = self._library_media_reader_session.loaded_id
         if mode == "read" and loaded_id is not None:
+            # task-31954: ONE owner. This used to re-arm the sync tail's
+            # arm-once guard (``_library_media_progress_restored_id = None``)
+            # as well, so a single Analysis -> Read press restored twice --
+            # harmless only while the restore stays an idempotent
+            # ``scroll_to``. Claiming the id here instead keeps the tail
+            # quiet for this sync and leaves it owning the LOAD path, where
+            # the id genuinely changes.
+            self._library_media_progress_restored_id = loaded_id
             self._after_library_media_viewer_sync(
                 partial(self._restore_library_media_loaded_progress, loaded_id)
             )
@@ -35496,12 +35511,38 @@ class LibraryScreen(BaseAppScreen):
             None.
         """
         self._sync_library_media_viewer_or_recompose()
-        callback = (
+        self._queue_after_library_media_viewer_recompose(
             partial(self._focus_library_control, follow_up)
             if isinstance(follow_up, str)
             else follow_up
         )
-        viewer = self._mounted_library_media_viewer()
+
+    def _queue_after_library_media_viewer_recompose(
+        self,
+        callback: Callable[[], object],
+        viewer: LibraryMediaViewer | None = None,
+    ) -> None:
+        """Run ``callback`` against the viewer's NEW children.
+
+        Split out of ``_after_library_media_viewer_sync`` for task-31950:
+        ``_sync_library_media_viewer_state``'s own tail queues follow-ups
+        too -- the edit-Save mutation gate and the load path's progress
+        restore -- and both read children the rebuild it just asked for is
+        about to replace. On the screen's pump they took the same race,
+        only quieter: measured, the gate flushed before the recomposed Save
+        mounted, returned on ``NoMatches``, and the edit form came up with
+        a live Save on top of an unsettled write.
+
+        Args:
+            callback: Zero-argument follow-up to run once the rebuild lands.
+            viewer: The viewer being synced, when the caller already holds
+                it (the sync's tail does); looked up otherwise.
+
+        Returns:
+            None.
+        """
+        if viewer is None:
+            viewer = self._mounted_library_media_viewer()
         # ``refresh(recompose=True)`` arms this flag synchronously and only
         # ``_check_recompose`` (on the viewer's pump) clears it, before
         # awaiting ``recompose()``; read here with no await in between it is
@@ -35517,7 +35558,7 @@ class LibraryScreen(BaseAppScreen):
             return
         pending = viewer._post_recompose_callback
 
-        def follow_up_then_pending() -> None:
+        def callback_then_pending() -> None:
             # Qodo on #2473: ``finally``, not a bare sequence. A raising
             # follow-up (the scroll-progress restore is one) used to take
             # task-31567's focus restore down with it and strand focus on a
@@ -35532,7 +35573,7 @@ class LibraryScreen(BaseAppScreen):
                 if pending is not None:
                     pending()
 
-        viewer.queue_after_recompose(follow_up_then_pending)
+        viewer.queue_after_recompose(callback_then_pending)
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         """Disable a still-mounted edit Save while its write is unsettled."""
