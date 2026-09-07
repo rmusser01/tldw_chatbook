@@ -35,6 +35,7 @@ from Tests.UI.test_library_shell import (
     _build_test_app,
     _active_library_screen,
     _conversation_records,
+    _painted_label_column,
     _seed_conversations,
     _wait_for_condition,
     _two_conversations,
@@ -519,6 +520,57 @@ async def test_library_conversation_stale_state_disables_actions_but_allows_reco
         )
         LibraryScreen.handle_library_conversation_row(screen, event)
         assert screen._selected_conversation_id == selected_before
+
+
+# ---------------------------------------------------------------------------
+# task-31959: the select-mode "Export selected" label must not move when the
+# first selection enables it. The "○ " disabled marker is part of the label,
+# so crossing 0 -> 1 selected shifted the word two cells left, right under
+# the row the user had just checked (PR J padded Media's bulk row only).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_conversations_export_label_holds_its_column_across_the_first_selection():
+    """The painted "Export selected" label starts in the same column.
+
+    Drives the REAL screen, because the shift lives on the in-place
+    ``_apply_library_row_toggle`` patch a row press takes -- not on
+    compose. At the conversations pane's own width the label is clipped,
+    so the pin is where it starts painting: "○" at that column while
+    disabled, "Export…" at the SAME column once the first selection
+    enables it.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.query_one("#library-conversations-select-toggle", Button).press()
+        export = await _wait_for_selector(
+            screen, pilot, "#library-conversations-export-selected"
+        )
+        assert export.disabled
+        before = _painted_label_column(host, export)
+
+        screen.query_one("#library-conversation-row-0", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-conversations-export-selected", Button
+            ).disabled,
+            message="The row press never enabled Export selected.",
+        )
+        await pilot.pause()
+
+        export = screen.query_one("#library-conversations-export-selected", Button)
+        after = _painted_label_column(host, export)
+        assert after == before, (before, after)
 
 
 # ---------------------------------------------------------------------------

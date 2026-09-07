@@ -1536,3 +1536,60 @@ def test_create_keeps_the_cap_warning_the_banner_cannot_carry(tmp_path):
     assert any(
         "capped at the first" in message for message, _severity in fake._notices
     ), fake._notices
+
+
+# ---------------------------------------------------------------------------
+# task-31962: the "Review selected" handler shares the ONE id coercion
+# ---------------------------------------------------------------------------
+
+
+def test_review_selected_handler_shares_the_one_id_coercion():
+    """Every shape the handler's own inline ``rsplit`` used to handle.
+
+    A prefixed display id and a bare int both convert; a legacy ``media-<n>``
+    row id is skipped rather than raising. ``local:media:0`` is skipped too
+    -- the shared helper refuses non-positive ids, and no media row has one.
+    """
+    captured: dict[str, object] = {}
+
+    def worker(backing_ids):
+        captured["ids"] = backing_ids
+        return "coroutine-stand-in"
+
+    started: list[dict] = []
+    fake = SimpleNamespace(
+        _library_media_bulk_delete_in_flight=False,
+        _library_media_row_selection=SimpleNamespace(
+            count=4,
+            ids=("local:media:7", "3", "media-9", "local:media:0"),
+        ),
+        _review_selected_worker=worker,
+        run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
+    )
+
+    LibraryScreen.handle_library_media_review_selected(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert captured["ids"] == (7, 3)
+    assert len(started) == 1, started
+    assert started[0]["group"] == "library_review_set"
+
+
+def test_review_selected_handler_starts_nothing_when_no_id_coerces():
+    """All-junk selection: no worker, rather than an empty review set."""
+    started: list[dict] = []
+    fake = SimpleNamespace(
+        _library_media_bulk_delete_in_flight=False,
+        _library_media_row_selection=SimpleNamespace(
+            count=2, ids=("media-9", "local:media:abc")
+        ),
+        _review_selected_worker=lambda backing_ids: "unused",
+        run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
+    )
+
+    LibraryScreen.handle_library_media_review_selected(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert started == []
