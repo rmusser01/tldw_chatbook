@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from types import SimpleNamespace
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Button, Input, OptionList, Static, TextArea
 from textual.worker import WorkerState
 
 from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
@@ -40,9 +40,11 @@ from tldw_chatbook.Widgets.Library.library_media_reader_shell import (
 )
 
 from Tests.UI.test_library_media_side_by_side import (
+    _active_library_screen,
     _build_media_test_app,
     _open_media_list,
     _two_media_items,
+    _wait_for_library_shell,
 )
 from Tests.UI.test_library_media_reader_flow import (
     ControlledDetailMediaService,
@@ -3089,3 +3091,471 @@ async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone(
             "An absent follow-up target",
         )
         assert not screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 items 12, 14): the empty Reader under a failed list,
+# and the rendered Markdown H1's alignment against the reading column.
+# ---------------------------------------------------------------------------
+
+
+def _first_glyph_column(host, widget) -> int:
+    """Absolute column of the first painted glyph inside ``widget``."""
+    region = widget.region
+    strips = list(host.screen._compositor.render_strips())
+    for y in range(region.y, min(region.bottom, len(strips))):
+        row = strips[y].crop(region.x, region.right).text
+        if row.strip():
+            return region.x + len(row) - len(row.lstrip())
+    raise AssertionError(f"Nothing painted inside {widget!r} at {region}.")
+
+
+async def _open_media_with_a_failed_first_page(host, pilot, exc: BaseException):
+    """Open Media with its FIRST page failing, so no rows are ever retained.
+
+    ``_force_media_page_failure`` fails a page that already applied, which
+    keeps ``retained_items`` -- the state where rows stay painted and
+    pressable. This is the other one: nothing was ever applied, so there is
+    genuinely nothing to select.
+    """
+
+    async def _fails(**_kwargs):
+        raise exc
+
+    host.app_instance.media_reading_scope_service.search_media = _fails
+    screen = _active_library_screen(host)
+    await _wait_for_library_shell(screen, pilot)
+    screen.query_one("#library-row-browse-media").press()
+    controller = screen._library_media_browse_controller
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            controller.failure is not None
+            and not controller.loading
+            and not controller.retained_items
+            and bool(screen.query("#library-media-load-failure-copy"))
+        ),
+        message="The first-page Media failure never settled.",
+    )
+    await pilot.pause()
+    return screen
+
+
+@pytest.mark.asyncio
+async def test_empty_reader_placeholder_names_a_failed_list():
+    """task-31635 (critique #5 item 12): "Select a media item" was a lie.
+
+    With the FIRST list load failed there is nothing to select, and the
+    empty Reader still invited the user to select something -- the only
+    line on screen saying so while the callout beside it said the load
+    had failed.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_with_a_failed_first_page(
+            host, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        assert not screen.query(".library-media-row")
+        empty = screen.query_one("#library-media-reader-empty", Static)
+        assert str(empty.content) == "Nothing loaded — the list could not be loaded."
+        assert "Nothing loaded" in _painted(host, empty.region)
+
+
+@pytest.mark.asyncio
+async def test_page_failure_that_retains_rows_keeps_the_select_invitation():
+    """task-31635 fix round 1: retained rows ARE selectable, so say so.
+
+    A page-1 failure after page 1 applied keeps every row painted, enabled
+    and pressable (the recovery callout's whole point). Telling the reader
+    "the list could not be loaded" there contradicts the two rows it can
+    still open.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        empty = screen.query_one("#library-media-reader-empty", Static)
+        assert str(empty.content) == "Select a media item to read it here."
+
+        await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 2
+        assert not any(row.disabled for row in rows)
+        empty = screen.query_one("#library-media-reader-empty", Static)
+        assert str(empty.content) == "Select a media item to read it here."
+        assert "Select a media item to read it here." in _painted(host, empty.region)
+
+
+def _h1_markdown_host() -> LibraryProductionCSSHarness:
+    """Two Markdown items whose first line is an H1 heading."""
+    app = _build_media_test_app()
+    items = [
+        {
+            "id": f"media-{index}",
+            "title": f"Quarterly notes {index}",
+            "type": "markdown",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "content": (
+                "# Quarterly budget\n\n"
+                "The reading column starts at the left edge of the box.\n"
+            ),
+            "version": 1,
+        }
+        for index in (1, 2)
+    ]
+    _seed_conversations(app, _two_conversations(), media=items)
+    return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.asyncio
+async def test_rendered_markdown_h1_starts_in_the_body_column():
+    """task-31635 (critique #5 item 14): the H1 aligns with the prose.
+
+    Textual's ``MarkdownH1`` default is ``content-align: center middle``,
+    so a document title floated to the middle of the 92-cell reading
+    measure while every other line began at its left edge -- the heading
+    read as a banner detached from the text it introduces.
+    """
+    from textual.widgets._markdown import MarkdownH1, MarkdownParagraph
+
+    host = _h1_markdown_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+
+        markdown = screen.query_one("#library-media-viewer-content-markdown")
+        heading = markdown.query_one(MarkdownH1)
+        body = markdown.query_one(MarkdownParagraph)
+
+        assert "Quarterly budget" in _painted(host, heading.region)
+        assert _first_glyph_column(host, heading) == _first_glyph_column(host, body), (
+            heading.region,
+            body.region,
+            _painted(host, heading.region),
+        )
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 item 6): with the FIRST list load failed and
+# nothing behind it, "Export…" -- which exports the whole filtered list --
+# stayed live and colour-normal beside the failure callout, while "Select"
+# next to it already rendered its "○" marker and said why.
+#
+# Fix round 1 narrows it to the same predicate the empty Reader uses
+# (`_library_media_list_unselectable`): a failure with NO retained rows. A
+# later-page failure keeps its rows -- that retention is the callout's whole
+# point -- and those rows export fine. "Trash" is never gated: it is a route
+# into a view with its own fetch, callout and Retry, and disabling it would
+# remove the only way to reach deleted items exactly when the store is
+# unhappy.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+async def test_failed_first_page_gates_export_with_its_reason(size):
+    """A first load that failed with nothing behind it disables Export…."""
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_with_a_failed_first_page(
+            host, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        export = screen.query_one("#library-media-export", Button)
+        assert export.disabled
+        assert str(export.label) == "○ Export…"
+        assert str(export.tooltip) == "Couldn't load media · database is locked."
+        assert "○" in _painted(host, export.region), _painted(host, export.region)
+
+        # Trash stays the live route into the deleted items.
+        trash = screen.query_one("#library-media-trash-open", Button)
+        assert not trash.disabled
+        assert str(trash.label) == "Trash"
+        assert "Trash" in _painted(host, trash.region)
+
+
+@pytest.mark.asyncio
+async def test_page_failure_that_retains_rows_leaves_export_live():
+    """Fix round 1's negative control: retained rows export fine."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _force_media_page_failure(
+            host, screen, pilot, sqlite3.OperationalError("database is locked")
+        )
+
+        # The callout IS up (the broad predicate this used to gate on)...
+        assert screen.query("#library-media-load-failure-copy")
+        assert screen._library_media_browse_controller.failure is not None
+        assert len(screen.query(".library-media-row")) == 2
+        # ...and Export… is still live over the rows that survived it.
+        export = screen.query_one("#library-media-export", Button)
+        assert not export.disabled
+        assert str(export.label) == "Export…"
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_list_leaves_export_and_trash_live():
+    """The other negative control: no failure, no gate (task-31635 item 6)."""
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        export = screen.query_one("#library-media-export", Button)
+        trash = screen.query_one("#library-media-trash-open", Button)
+        assert not export.disabled
+        assert not trash.disabled
+        assert str(export.label) == "Export…"
+        assert str(trash.label) == "Trash"
+
+
+# --- task-31635 Task 3 (critique #5 items 7/8/11/19 + Qodo 18) ----------------
+
+
+@pytest.mark.asyncio
+async def test_raising_follow_up_still_runs_the_queued_focus_restore():
+    """Qodo on #2473 (item 18): the chained restore rides a ``finally``.
+
+    ``_after_library_media_viewer_sync`` chains its own follow-up ahead of
+    whatever the sync already queued -- PR F's task-31567 focus restore. A
+    follow-up that raises (the scroll-progress restore is one) dropped that
+    restore on the floor and left focus wherever the recompose put it. The
+    exception must still surface; only the ordering guarantee changes.
+    """
+    host = _host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        viewer = screen.query_one("#library-media-viewer")
+        # Stand on a child the viewer owns so the sync's own restore has
+        # something to put back.
+        screen.query_one("#library-media-reader-more", Button).focus()
+        await pilot.pause()
+        # A real compose-input flip, so the sync genuinely recomposes and
+        # queues task-31567's restore for us to chain behind.
+        screen._library_media_reader_session = set_more_open(
+            screen._library_media_reader_session, True
+        )
+
+        def boom() -> None:
+            raise RuntimeError("follow-up blew up")
+
+        with pytest.raises(RuntimeError, match="follow-up blew up"):
+            screen._after_library_media_viewer_sync(boom)
+            chained = viewer._post_recompose_callback
+            assert chained is not None
+            chained()
+
+        await pilot.pause()
+        await pilot.pause()
+        focused = screen.focused
+        assert focused is not None
+        assert focused is viewer or viewer in focused.ancestors, focused
+
+
+@pytest.mark.asyncio
+async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
+    """Qodo on #2475 (item 19): the row follows the analysis it just gained.
+
+    ``analysed`` is projected in SQL and frozen into the retained row at
+    browse-state build, so a freshly saved analysis left its own row
+    unmarked until the next page fetch -- the one row the user just proved
+    has an analysis. The save seam re-reads that ONE row from the same SQL
+    projection (an id-scoped re-fetch on a human-paced gesture, never on the
+    page path) and the existing canvas patch paints it.
+
+    It asks the projection rather than trusting the write's own claim,
+    because live on 2026-09-07 those disagreed -- see
+    ``_reproject_library_media_analysis_row``.
+    """
+    host = _review_state_host(count=4, analysed=0)
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        for _ in range(3):
+            await pilot.pause()
+        _titles, before = _painted_media_rows(host, screen)
+        assert [line.strip() for line in before] == ["document · 5m"] * 4, before
+
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-select-analysis")
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+        screen.query_one("#library-media-analysis-edit", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
+        screen.query_one(
+            "#library-media-analysis-edit-text", TextArea
+        ).text = "A brand new analysis"
+        searches_before = len(host.app_instance.media_reading_scope_service.search_calls)
+        screen.query_one("#library-media-analysis-save", Button).press()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(host.app_instance.media_reading_scope_service.analysis_calls)
+            and not screen._library_media_editing_analysis,
+            message="The analysis save never completed.",
+        )
+        for _ in range(3):
+            await pilot.pause()
+
+        _titles, after = _painted_media_rows(host, screen)
+        assert [line.strip() for line in after] == [
+            _ANALYSED_SECONDARY,
+            "document · 5m",
+            "document · 5m",
+            "document · 5m",
+        ], after
+        # ...and the only read it cost was one id-scoped row, never a
+        # re-page of the list.
+        extra = host.app_instance.media_reading_scope_service.search_calls[
+            searches_before:
+        ]
+        assert len(extra) == 1, extra
+        assert extra[0]["id_allowlist"] == [1], extra[0]
+        assert extra[0]["limit"] == 1, extra[0]
+
+
+async def _apply_media_filter(screen, pilot, query: str) -> None:
+    """Type ``query`` into the Media filter and settle the authoritative page."""
+    screen.query_one("#library-media-filter", Input).value = query
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            screen._library_media_browse_controller.applied_scope is not None
+            and screen._library_media_browse_controller.applied_scope.query == query
+            and not screen._library_media_browse_controller.loading
+        ),
+        message=f"The filter {query!r} never applied.",
+    )
+    for _ in range(3):
+        await pilot.pause()
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_zero_result_filter_keeps_the_sets_entry(size):
+    """Item 7: Sets is navigation, not a result.
+
+    The fresh-empty page distils to exactly ONE recovery action, and the
+    Sets opener was composed under that same gate -- so filtering to zero
+    rows took away the only route back to a saved review set at the moment
+    the list had nothing else to offer. The picker opens over any list
+    (it carries its own empty copy and "Read later"), so it is never
+    disabled here.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "zzz-nothing-matches")
+
+        assert not screen.query(".library-media-row")
+        sets = screen.query_one("#library-media-review-sets", Button)
+        assert sets.display is True
+        assert not sets.disabled
+        assert "Sets" in _painted(host, sets.region)
+
+
+@pytest.mark.asyncio
+async def test_a_single_result_filter_announces_that_enter_opens_it():
+    """Item 8 (declined, announced): the filter's first hit auto-loads.
+
+    Selecting the first authoritative result is intentional and pinned
+    (``test_filter_uses_authoritative_search_and_restores_page_three_anchor``
+    in Tests/UI/test_library_media_reader_flow.py -- and clearing the
+    filter restores the previous anchor, the symmetric half). So the list
+    says what happened instead of changing it.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _apply_media_filter(screen, pilot, "Doc 3")
+
+        assert len(screen.query(".library-media-row")) == 1
+        status = screen.query_one("#library-media-status", Static)
+        assert status.display is True
+        assert str(status.renderable) == "1 result · Enter opens"
+        assert "1 result · Enter opens" in _painted(host, status.region)
+
+        # Two hits say nothing -- this line only explains the single-hit
+        # auto-load.
+        await _apply_media_filter(screen, pilot, "Doc")
+        assert len(screen.query(".library-media-row")) == 4
+        assert screen.query_one("#library-media-status", Static).display is False
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_the_reader_says_its_item_is_not_in_the_open_trash_list(size):
+    """Item 11: the Reader beside Trash still holds a LIVE media item.
+
+    Opening Trash swaps the Items pane for the deleted-items list and leaves
+    the Reader on whatever was open -- a live item sitting beside a list of
+    deleted ones, with nothing saying which list it came from. The cheaper
+    honest option of the two on offer: one identity line, in the slot the
+    server-item line already uses (task-31277's grammar), instead of
+    clearing the Reader -- clearing would throw away the reading position
+    the user comes back to.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        assert not screen.query("#library-media-reader-identity")
+
+        screen.query_one("#library-media-trash-open", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-canvas")
+        for _ in range(3):
+            await pilot.pause()
+
+        identity = screen.query_one("#library-media-reader-identity", Static)
+        assert str(identity.renderable) == "Showing a Media item · not in Trash"
+        assert "not in Trash" in _painted(host, identity.region)
+
+
+@pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
+@pytest.mark.asyncio
+async def test_more_row_actions_share_one_grid_column_grammar(size):
+    """Item 16 (declined, shipped by PR H #2470): the indent is the grid's.
+
+    "Open manager" used to sit one cell further in than its siblings. PR H
+    replaced the More disclosure's bare Vertical with a single ``ItemGrid``
+    (``#library-media-reader-more-actions``, fixed 15-16 cell columns), so
+    every action in the row is laid out on the same column origins by
+    construction. This is the painted proof, kept as a pin so the column
+    grammar cannot silently drift back.
+    """
+    host = _review_state_host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _open_first_reader_row(screen, pilot)
+        screen.query_one("#library-media-reader-more", Button).press()
+        grid = await _wait_for_selector(
+            screen, pilot, "#library-media-reader-more-actions"
+        )
+        for _ in range(2):
+            await pilot.pause()
+
+        actions = list(grid.query(Button))
+        assert [action.id for action in actions] == [
+            "library-media-edit",
+            "library-media-open",
+            "library-media-delete",
+        ], actions
+        columns = sorted({action.region.x for action in actions})
+        # One pitch for the whole row: "Open manager" starts exactly one
+        # column after "Edit metadata" and one before "Move to trash",
+        # never on an origin (or an extra cell of indent) of its own.
+        pitches = {
+            second - first for first, second in zip(columns, columns[1:])
+        }
+        assert len(pitches) == 1, [
+            (action.id, action.region) for action in actions
+        ]
+        # ...and every row of the grid starts at the same leftmost column.
+        rows: dict[int, list[int]] = {}
+        for action in actions:
+            rows.setdefault(action.region.y, []).append(action.region.x)
+        assert {min(xs) for xs in rows.values()} == {columns[0]}, rows
+        painted = _painted(host, grid.region)
+        assert "Open manager" in painted, painted

@@ -102,6 +102,12 @@ async def test_controller_sends_exact_summary_coordinates_and_full_scope() -> No
             "limit": 20,
             "offset": 20,
             "library_summary": True,
+            # Qodo on #2475 (item 20): the reason probe is opt-in, and this
+            # page fetch is the one caller that renders the reasons -- so it
+            # is the one caller that asks. The review-set enumeration loop
+            # pages the same scope without this key (pinned in
+            # Tests/UI/test_review_set_walker.py).
+            "match_reasons": True,
             "sort_by": "title_asc",
             "media_types": ["video"],
         }

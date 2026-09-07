@@ -7070,6 +7070,7 @@ async def test_library_browse_names_the_keyword_behind_an_otherwise_invisible_hi
             limit=20,
             offset=0,
             library_summary=True,
+            match_reasons=True,
             sort_by="last_modified_desc",
         )
 
@@ -7123,6 +7124,7 @@ async def test_library_browse_gives_no_reason_when_the_body_matched_too():
             limit=20,
             offset=0,
             library_summary=True,
+            match_reasons=True,
             sort_by="last_modified_desc",
         )
         assert [item["backing_media_id"] for item in payload["items"]] == [both_id]
@@ -7133,6 +7135,7 @@ async def test_library_browse_gives_no_reason_when_the_body_matched_too():
             limit=20,
             offset=0,
             library_summary=True,
+            match_reasons=True,
             sort_by="last_modified_desc",
         )
         assert "match_reasons" not in unfiltered
@@ -7167,6 +7170,7 @@ async def test_library_browse_reasons_are_scoped_to_the_browse_field_set():
             limit=20,
             offset=0,
             library_summary=True,
+            match_reasons=True,
             sort_by="last_modified_desc",
             fields=["title", "content", "author", "keywords"],
         )
@@ -7178,6 +7182,7 @@ async def test_library_browse_reasons_are_scoped_to_the_browse_field_set():
             limit=20,
             offset=0,
             library_summary=True,
+            match_reasons=True,
             sort_by="last_modified_desc",
             fields=list(LIBRARY_BROWSE_SEARCH_FIELDS),
         )
@@ -7213,6 +7218,7 @@ async def test_library_browse_page_survives_a_failing_match_reason_probe():
             limit=20,
             offset=0,
             library_summary=True,
+            match_reasons=True,
             sort_by="last_modified_desc",
         )
 
@@ -7250,6 +7256,7 @@ async def test_library_browse_page_survives_a_connect_failure_in_the_probe():
             limit=20,
             offset=0,
             library_summary=True,
+            match_reasons=True,
             sort_by="last_modified_desc",
         )
 
@@ -7279,11 +7286,108 @@ def test_library_browse_reasons_need_the_like_legs_a_preformatted_fts_query_drop
             limit=20,
             offset=0,
             library_summary=True,
+            match_reasons=True,
             sort_by="last_modified_desc",
             fields=list(LIBRARY_BROWSE_SEARCH_FIELDS),
             fts_match_query="roadmap",
         )
         assert [row["id"] for row in preformatted["items"]] == [tagged_id]
         assert "match_reasons" not in preformatted
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_browse_reason_probe_runs_only_for_a_caller_that_asks():
+    """Qodo on #2475 (item 20): the probe is opt-in, not per-page tax.
+
+    ``library_browse_keyword_only_matches`` is one extra SELECT for every
+    queried library-summary page. It was emitted for EVERY such caller,
+    including the "Review these" enumeration loop that pages the same scope
+    and throws ``match_reasons`` away. Only the browse's own page fetch
+    passes ``match_reasons=True``; everyone else gets no probe at all.
+    """
+    db = Database(db_path=":memory:", client_id="library-match-reason-optin")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Opening remarks",
+            content="Transcript of the opening session.",
+            media_type="article",
+            keywords=["day2"],
+        )
+        probes: list[tuple] = []
+        real = db.library_browse_keyword_only_matches
+
+        def spy(ids, query):
+            probes.append((tuple(ids), query))
+            return real(ids, query)
+
+        db.library_browse_keyword_only_matches = spy
+        scope_service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(db), server_service=None
+        )
+        page_kwargs = dict(
+            mode="local",
+            query="day2",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+        )
+
+        enumerated = await scope_service.search_media(**page_kwargs)
+        assert [item["backing_media_id"] for item in enumerated["items"]] == [
+            tagged_id
+        ]
+        assert "match_reasons" not in enumerated
+        assert probes == []
+
+        browsed = await scope_service.search_media(
+            **page_kwargs, match_reasons=True
+        )
+        assert browsed["match_reasons"] == {f"local:media:{tagged_id}": "day2"}
+        assert len(probes) == 1
+    finally:
+        db.close_connection()
+
+
+def test_local_library_summary_probe_is_opt_in_at_the_local_service_too():
+    """The gate lives in the leaf, so no caller can route around it."""
+    db = Database(db_path=":memory:", client_id="library-match-reason-leaf")
+    try:
+        tagged_id, _, _ = db.add_media_with_keywords(
+            url=None,
+            title="Session one",
+            content="A body about nothing.",
+            media_type="article",
+            keywords=["roadmap"],
+        )
+        probes: list[tuple] = []
+        real = db.library_browse_keyword_only_matches
+
+        def spy(ids, query):
+            probes.append((tuple(ids), query))
+            return real(ids, query)
+
+        db.library_browse_keyword_only_matches = spy
+        service = LocalMediaReadingService(db)
+        call = dict(
+            query="roadmap",
+            limit=20,
+            offset=0,
+            library_summary=True,
+            sort_by="last_modified_desc",
+            fields=list(LIBRARY_BROWSE_SEARCH_FIELDS),
+        )
+
+        silent = service.search_media(**call)
+        assert [row["id"] for row in silent["items"]] == [tagged_id]
+        assert "match_reasons" not in silent
+        assert probes == []
+
+        asked = service.search_media(**call, match_reasons=True)
+        assert asked["match_reasons"] == {tagged_id: "roadmap"}
+        assert len(probes) == 1
     finally:
         db.close_connection()

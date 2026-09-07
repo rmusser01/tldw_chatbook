@@ -880,6 +880,11 @@ class LibraryMediaTrashState:
         notice: Restore feedback line (e.g. "Restored 'Title'."), "" when
             nothing to report. Feedback only -- never a receipt: ADR-055's
             receipts accompany destruction, and restore is recovery.
+        reference_now: The instant every row's "trashed <age>" was measured
+            against (task-31635 fix round 1). Kept so a surface derived
+            from the SAME state -- the permanent-delete confirmation -- can
+            date its captured item against the same clock instead of
+            re-reading `now` and disagreeing by an hour at a boundary.
     """
 
     rows: tuple[LibraryMediaTrashRow, ...]
@@ -890,6 +895,28 @@ class LibraryMediaTrashState:
     loading: bool = False
     error: str = ""
     notice: str = ""
+    reference_now: datetime | None = None
+
+
+def media_trash_age_copy(trash_date: str | None, *, now: datetime | None = None) -> str:
+    """Render one trash timestamp the way the Trash list renders it.
+
+    task-31635 (critique #5 item 2): the rows say ``trashed 6h`` and the
+    permanent-delete confirmation said ``2026-08-11T11:00:00+00:00``, so
+    one screen named the same instant two ways and neither matched the
+    other. Both now read this.
+
+    Args:
+        trash_date: ISO-8601-ish deletion timestamp, or ``None``.
+        now: Reference time; defaults to the current UTC time.
+
+    Returns:
+        ``"trashed <age>"``, or ``""`` when the value is absent or
+        unparseable (the caller decides what to say instead).
+    """
+    reference = now if now is not None else datetime.now(timezone.utc)
+    age = format_console_relative_age(str(trash_date or ""), now=reference)
+    return f"trashed {age}" if age else ""
 
 
 def build_library_media_trash_state(
@@ -950,11 +977,10 @@ def build_library_media_trash_state(
 
     rows = []
     for media_id, title, media_type, trash_date in entries:
-        age = format_console_relative_age(trash_date, now=reference_now)
         # The list's own secondary vocabulary ("{type} · {age}" / "{type}"
         # / "media"), with the age labelled for what it is here: when the
         # item was trashed, not when it was updated.
-        trashed_age = f"trashed {age}" if age else ""
+        trashed_age = media_trash_age_copy(trash_date, now=reference_now)
         rows.append(
             LibraryMediaTrashRow(
                 media_id=media_id,
@@ -986,6 +1012,7 @@ def build_library_media_trash_state(
         loading=resolved_loading,
         error=str(error or ""),
         notice=str(notice or ""),
+        reference_now=reference_now,
     )
 
 
@@ -1092,6 +1119,18 @@ def build_library_media_browse_state(
             f"Type: {media_type}",
             f"Updated: {age or 'unknown'}",
         )
+    # task-31635 (critique #5 item 8, declined-and-announced): a filter that
+    # narrows to exactly one row has that row loaded into the Reader before
+    # the user asks -- deliberate, and pinned both ways (the first result is
+    # selected; clearing the filter restores the previous anchor). Saying so
+    # is the honest half the list was missing; changing it would break the
+    # pinned behaviour. Only for a single hit: with several rows nothing
+    # surprising happened, and the line would just spend a row.
+    status_copy = (
+        "1 result · Enter opens"
+        if result.scope.query and len(rows) == 1
+        else ""
+    )
     empty_copy = ""
     if not rows:
         if result.scope.query:
@@ -1109,7 +1148,7 @@ def build_library_media_browse_state(
         rows=rows,
         type_options=(None, *normalized_types),
         active_type=result.scope.media_type,
-        status_copy="",
+        status_copy=status_copy,
         empty_copy=empty_copy,
         selected_id=resolved_selected_id,
         preview_lines=preview_lines,

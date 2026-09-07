@@ -80,7 +80,11 @@ list-and-preview layout.
 **Row markers.** An item's second row says what it is and how old it is, and
 adds **· analysed** when that item already carries an analysis — so you can
 see what is worth generating without opening anything (`document · 5m ·
-analysed`). Its title row starts with a single one-cell **state slot**. With
+analysed`). The row re-reads its state from the database the moment an
+analysis is saved — from the Reader's Generate, or from a bulk Analyze run —
+without re-paging the list; until task-31942 lands (the save does not yet
+commit durably), the mark can lag the Reader on a real profile. Its title row
+starts with a single one-cell **state slot**. With
 no review set active it carries only the current-row pointer **▸** in the wide
 layout (blank otherwise); once a set is active (see "Review these" below),
 every item in the set carries **·** until you review it and **✓** afterwards,
@@ -221,19 +225,34 @@ a status line says "showing X of N" honestly. Entering Trash clears any
 durable path that receipt pointed at. Trashed items are **excluded from
 search** (Library search and RAG keyword retrieval both skip them) until
 restored.
-A selected row offers two actions and no others: **"Restore"**, and
-**"Delete permanently"**, which arms an inline "Cancel | Delete
+A selected row offers two actions and no others: **"Restore"** (key `r`),
+and **"Delete forever"** (key `x`), which arms an inline "Cancel | Delete
 permanently" confirmation and, once confirmed, removes that one item for
-good — there is no undo and no receipt afterwards. There is no
-empty-trash or bulk permanent delete; each item is deleted on its own.
+good — there is no undo and no receipt afterwards. The two sit two cells
+apart, the destructive one set apart in the quiet danger styling the
+select-mode "Delete" uses; both keys are advertised in the footer, and
+only while the actions they stand for are genuinely pressable. The
+confirmation names the item, its type and when it was trashed in the same
+words the row does ("trashed 6h"), with the exact timestamp on the
+tooltip. There is no empty-trash or bulk permanent delete; each item is
+deleted on its own.
 Whichever Trash action you take, "‹ Media" returns you to a
 current list: the app refreshes the page it fenced for its own write, so it
 never asks you to press "Retry" for a change you just made here.
+The Reader beside the Trash list keeps whatever live item you had open —
+your reading position is not thrown away — and says which list that item
+belongs to: **Showing a Media item · not in Trash**, above its title.
 
 *Verified against fix/media-wave4-c — 2026-09-04 (task-31275: Trash ▸ Restore
 and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 235x52 — the list came back with live rows and its exact "1-3 of 3" / "1-2 of
 2" range, no stale banner and no "Retry").*
+
+*Verified against fix/media-wave5-j — 2026-09-07 (task-31635: live in tmux at
+235x52 and 100x30 — the row read "article · trashed 6h" and the confirmation
+it opened read the same, "r" restored it ("Restored '…'." with the count
+going 4 → 3 items), and the footer carried "r restore | x delete" on the
+list and dropped both while the confirmation was armed).*
 
 ### Media list
 
@@ -245,9 +264,15 @@ and Trash ▸ "Delete permanently", each followed by "‹ Media", live in tmux
 | "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. With only one page, the controls do not render at all — just the item range. |
 | "Retry" | Repeats the failed load. When a load fails, the reason and this Retry sit together in one bordered callout above the rows ("Couldn't load page 1 · database is locked"; red for a hard failure, amber for a timeout) — that is the only Retry on screen, and it also reloads the type list when that is what failed. The reason is the failure's own words only for an operating-system or database error; anything else is reduced to its type name (for example `ValueError`), so a private path never reaches the screen. If retained rows may be out of date, rows stay open (a row press is a read, never disabled by staleness) but Select, Export, Delete, sort, and Select all stay disabled with a reason until recovery succeeds. A Retry that fails again shows "Couldn't retry · \<reason\>" so a second failed attempt reads differently from the first, instead of repeating the unchanged staleness copy. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
-| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
+| "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". It is never disabled by a failed Media load — it is the route to your deleted items exactly when the list is unhappy — whereas "Export…" renders as "○ Export…" with the reason on its tooltip when the list has nothing to select. |
 | Row press / Enter | Selects the item and loads it into the permanent Reader; Enter bypasses the short traversal-settle delay. In Select mode, it toggles the row's checkbox instead. |
+| "Sets" (title row) | Opens the saved-set picker (see "Review sets" below). It stays put on an empty or filtered-to-zero list — it is navigation, not a result, and it is the way back to a saved set when the list itself has nothing to offer. Hidden only in Select mode, like the other list-level actions. |
 | Library / Items grip | Collapses or expands that pane and remembers the manual choice. Responsive collapses caused by terminal width are not saved. |
+
+A filter that narrows to exactly one row loads that row into the Reader for
+you, and the list says so: **1 result · Enter opens** under the toolbar.
+(Clearing the filter puts your previous selection back.) With several hits
+nothing is auto-loaded and the line does not appear.
 
 Empty states: with nothing imported, "No media in your Library yet. Import
 something to see it here."; with a type that matches nothing, "No media
@@ -312,13 +337,18 @@ still spans the pane.
   Raw" toggle appears above the box and defaults to **Rendered** — headings,
   tables, and code render properly instead of showing literal `#`/`##`/`|`
   characters, using the same renderer as Notes' own "Preview". Press
-  "Raw" to see the plain source instead. Below the toggle (or directly
+  "Raw" to see the plain source instead. A rendered heading starts in the
+  same column as the prose beneath it. A plain `article` or `document`
+  with no markdown gets no toggle; that slot reads "Rendered view is for
+  Markdown and transcripts" instead of going silently blank. Below the toggle (or directly
   above Content for everything else) is a "Search content…" box — its
   placeholder reads "Search content (raw text)…" whenever the toggle is
   present, since search always matches the raw stored text regardless of
-  which view is showing. Typing a query shows "Match 1 of 4 matches" (or
+  which view is showing. Typing a query shows "Match 1 of 4" (or
   "No matches") and a "◀ Prev" / "Next ▶" pair that steps through matches
-  and wraps at either end — in both views. Only the visual highlighting of
+  and wraps at either end — in both views. With no matches both controls
+  are disabled and read "○ Prev" / "○ Next", the same marker the Media
+  pager uses, so there is nothing live to press. Only the visual highlighting of
   the current match is Raw-only; Rendered shows the same step count with
   no on-screen mark. The search bar stays exactly where Find opened it,
   directly under the Read/Analysis/Highlights/Info row: submitting a query
@@ -358,6 +388,16 @@ still spans the pane.
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
 | "Move to trash" | Two-step, title-specific confirmation. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
 
+*Verified against fix/media-wave5-j — 2026-09-06 (task-31635 items 1, 5, 13,
+14: a seeded Markdown item and a seeded plain `article` opened live at 235x52.
+The rendered H1 "Quarterly budget review", the body line, and the H2 all begin
+at painted column 98. Find on the Markdown item shows "No matches" with
+"○ Prev" / "○ Next" for a query with no hits, and "Match 1 of 4" with
+"◀ Prev" / "Next ▶" for one with hits. The `article` paints "Rendered view is
+for Markdown and transcripts" in the row the Rendered|Raw strip occupies for a
+Markdown item. The failed-list placeholder (item 12) is pinned by test, not
+live: forcing it needs the Media page load to fail.)*
+
 *Verified against fix/media-wave5-h @ a4682f17e — 2026-09-06 (task-31633
 AC#3: More opened live at 235x52 and at 100x30 over a seeded document.
 At 235x52 the four actions paint on one row and the "Read" tab row moves
@@ -383,7 +423,10 @@ them one by one, with your place and progress saved between visits.
   list order and leaves Select mode. Creating a set activates it and opens its
   first item in the Reader. If another set was mid-walk, a notice names it and
   its progress ("Paused 'Read later' at 1 of 2 · 0 reviewed. Resume from
-  Sets.") — creating never silently strands a walk.
+  Sets.") — creating never silently strands a walk. There is no separate
+  "Reviewing N items." notice: the banner the Reader opens with says the
+  same thing and more, and in a narrow terminal that notice landed on the
+  Reader's own border.
 - **Resume on entry** — opening the media area with a set active loads its
   current item into the Reader automatically, on every entry, so the banner
   and the open document always agree (in narrower layouts Escape shows the
@@ -391,9 +434,13 @@ them one by one, with your place and progress saved between visits.
   the Items pane throughout).
 - **Walk** — while a set is active the Reader carries a banner naming the
   set, your place, and the open item's own state ("Reviewing: All media — 2
-  of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place. `]` advances and marks the item you leave as reviewed;
+  of 14 · 1 reviewed · ✓ reviewed"), and the footer shows the same place —
+  and the footer chip says what the key does: **`]` next (marks reviewed)**.
+  `]` advances and marks the item you leave as reviewed;
   `[` goes back without marking; `m` toggles the loaded item's reviewed mark;
-  a final `]` on the last item marks it done in place. **Escape** steps out
+  a final `]` on the last item marks it done in place. Clicking a row of the
+  set in the Items pane moves both readouts to that item (it does not commit
+  a new resume point — `]`/`[` walk from what the Reader is showing anyway). **Escape** steps out
   of the Reader — to the loaded Items row, and to the list itself in
   narrower layouts — and keeps the set active; re-entering resumes at your
   cursor.
@@ -476,7 +523,7 @@ setting**; it supplies one bundle of **staged context** for the next send.
 ### Open a media item and search inside it
 1. Click a row; it loads into Reader without replacing Items.
 2. Press **Find**, type into "Search content…", and press Enter. The status shows
-   "Match 1 of N matches", the matches are highlighted in the content, and the
+   "Match 1 of N", the matches are highlighted in the content, and the
    count plus "◀ Prev" / "Next ▶" appear directly beneath the box — the bar
    itself does not move, and neither does the header above it.
 3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized and
