@@ -898,6 +898,15 @@ def test_narrow_keyword_reason_cut_is_unchanged() -> None:
     assert _keyword_reason_term("notes") == "notes"
 
 
+def test_zero_width_keyword_reason_does_not_break_the_page() -> None:
+    """A keyword that paints nothing survives the caller's non-empty check.
+
+    ``chop_cells`` has no line to return for it, and an IndexError here
+    would take down the whole page projection, not just one row's suffix.
+    """
+    assert _keyword_reason_term("\u200d") == "\u200d"
+
+
 # ---------------------------------------------------------------------------
 # task-31962: ONE spelling of the display-id -> int backing-id coercion
 # ---------------------------------------------------------------------------

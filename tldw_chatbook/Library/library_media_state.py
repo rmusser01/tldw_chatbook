@@ -1250,14 +1250,15 @@ def _secondary_text(
       'document · 5m · analysed' (24 cells) fits.
     - task-28008 (critique #5 P2): a row the browse filter found through a
       keyword alone gets a trailing ' · keyword: <term>', the term capped
-      at ten characters so an arbitrarily long tag cannot run away with
-      the line. The cap does NOT buy a fit: at the Items pane's 36-cell
-      floor 'article · 2m · keyword: notes' already clips at the pane edge,
-      and 'type · age · analysed · keyword: term' clips at the default
-      width too -- the cap bounds the damage, it does not remove it. It is
-      unconditional (not width-aware) so the line does not change under the
-      in-place density and select-mode rebuilds, which re-derive the label
-      from this text.
+      at ten CELLS (task-31955 -- a code-point cap let ten CJK characters
+      take twenty) so an arbitrarily long tag cannot run away with the
+      line. The cap does NOT buy a fit: at the Items pane's 36-cell floor
+      'article · 2m · keyword: notes' already clips at the pane edge, and
+      'type · age · analysed · keyword: term' clips at the default width
+      too -- the cap bounds the damage, it does not remove it. The cap is
+      the term's OWN width, not the pane's, so the line does not change
+      under the in-place density and select-mode rebuilds, which re-derive
+      the label from this text.
     """
     has_type = bool(media_type)
     has_age = bool(age)
@@ -1277,7 +1278,11 @@ def _secondary_text(
         # costs the two cells it actually paints (task-31955). Rich is
         # already a hard dependency and ``console_prompt_queue`` uses the
         # same module, so this adds nothing to install.
-        head = chop_cells(keyword, _KEYWORD_REASON_CELLS)[0]
+        # ``chop_cells`` returns NOTHING for text that paints nothing (a
+        # lone ZWJ or combining mark survives the caller's non-empty
+        # check), so the whole keyword is the fallback -- a zero-width one
+        # has nothing to cut.
+        head = next(iter(chop_cells(keyword, _KEYWORD_REASON_CELLS)), keyword)
         # A cut landing on a space would paint "abcdefghi …"; the space is
         # the cut's own artefact, not part of the term.
         term = head.rstrip()
