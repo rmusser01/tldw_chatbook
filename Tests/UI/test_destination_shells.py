@@ -4493,6 +4493,44 @@ async def test_sync_load_failure_callout_repaints_the_copy_and_the_tint():
 
 
 @pytest.mark.asyncio
+async def test_sync_load_failure_callout_repaints_the_retry_tooltip():
+    """A repaint must move the Retry's tooltip too, not just the copy and the
+    tint -- a shape-preserving reason change (same Retry id, a timeout's
+    "waited 5 s" turning into a hard failure's "database is locked")
+    otherwise leaves the tooltip naming the OLD reason while the sentence
+    beside it already names the new one.
+    """
+    warning = load_failure_recovery_state(
+        what="Couldn't load media",
+        reason="waited 5 s",
+        retry_id="library-media-retry",
+        stable_selector="#library-media-load-failure",
+        kind="timeout",
+    )
+    callout = load_failure_callout(
+        warning,
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+    )
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        retry = callout.query_one(Button)
+        assert str(retry.tooltip) == warning.disabled_tooltip
+
+        hard = load_failure_recovery_state(
+            what="Couldn't load media",
+            reason="database is locked",
+            retry_id="library-media-retry",
+            stable_selector="#library-media-load-failure",
+            kind="error",
+        )
+        assert sync_load_failure_callout(callout, hard) is True
+        assert str(retry.tooltip) == hard.disabled_tooltip
+
+
+@pytest.mark.asyncio
 async def test_sync_load_failure_callout_refuses_a_shape_it_did_not_build():
     """PR M carry M3: a failure with no Retry paints a BARE Static, so the
     in-place sync must report "remount me" rather than silently no-op when

@@ -104,8 +104,10 @@ knows more than the source owners do:
   returning to Library re-runs that read once by itself; a hard failure
   ("Library source services unavailable; retry Library later. · \<reason\>")
   is red and waits for you to press **Retry**. The reason is the failure's own
-  words for an operating-system or database error, and otherwise just its type
-  name (for example `RuntimeError`), so a private path is never painted.
+  words only for an operating-system or database error; anything else is
+  named by the kind of failure it is ("the connection failed", "the database
+  could not be read", or "an unexpected error" when it is none of those), so
+  a private path — and the exception's own text — never reaches the screen.
   Pressing **Retry** against an unchanged failure still repaints — the
   message gains "· attempt 2", "· attempt 3", and so on, so a press is never
   silent even when the outcome repeats. A brand-new profile sees the same

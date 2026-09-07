@@ -332,6 +332,12 @@ def sync_load_failure_callout(
         return False
     copy.update(failure.message)
     node.set_class(failure.severity == "error", "is-blocked")
+    # A shape-preserving reason change (e.g. a timeout repainted into a hard
+    # failure) otherwise leaves the Retry's tooltip naming the OLD reason
+    # while the sentence beside it already names the new one.
+    retry = next(iter(node.query(Button)), None)
+    if retry is not None and failure.disabled_tooltip:
+        retry.tooltip = failure.disabled_tooltip
     return True
 
 
