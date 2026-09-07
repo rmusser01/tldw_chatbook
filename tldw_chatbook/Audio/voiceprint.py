@@ -39,6 +39,17 @@ class ModelMismatch(Exception):
     """Raised by `VoiceprintStore.import_` when models differ and replace=False."""
 
 
+class StoreUnavailable(Exception):
+    """Raised when a store operation cannot safely proceed: the existing
+    record can't be read (locked key, corrupt file) and the caller either
+    didn't ask to replace it, or the failure mode is too ambiguous to
+    replace safely (a locked key never justifies overwriting)."""
+
+
+class _EnvelopeError(Exception):
+    """Internal: envelope file missing, corrupt, or not a JSON object."""
+
+
 @dataclass
 class Voiceprint:
     model_id: str
@@ -87,8 +98,42 @@ def _atomic_write(path: Path, content: str) -> None:
     """Write `content` to `path` via temp-file + `os.replace` (crash-safe)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(content)
-    os.replace(tmp_path, path)
+    try:
+        tmp_path.write_text(content)
+        os.replace(tmp_path, path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _write_restricted(path: Path, content: str) -> None:
+    """Atomically write `content` to `path`, owner-only (0o600) from the
+    moment the file is created -- never briefly world/group-readable under
+    a permissive umask."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.unlink(missing_ok=True)  # clear a stray leftover before O_EXCL
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(content)
+        os.replace(tmp_path, path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _read_envelope(path: Path) -> dict:
+    """Read and JSON-parse an envelope file, raising `_EnvelopeError` for
+    anything that isn't a readable JSON object (missing file, bad JSON, or
+    valid JSON that isn't a dict -- e.g. a bare `null`)."""
+    try:
+        envelope = json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise _EnvelopeError(str(exc)) from exc
+    if not isinstance(envelope, dict):
+        raise _EnvelopeError("envelope is not a JSON object")
+    return envelope
 
 
 class KeyringKeyProvider:
@@ -134,14 +179,15 @@ class KeyfileKeyProvider:
         self._path = Path(path)
 
     def get_or_create(self) -> str:
-        if self._path.exists() and self._has_safe_permissions():
+        if self._path.exists():
+            if not self._has_safe_permissions():
+                raise StoreUnavailable(
+                    f"key file {self._path} has unsafe permissions; chmod it "
+                    "to 600 (or delete it to mint a new key) before continuing"
+                )
             return self._path.read_text().strip()
         key = secrets.token_urlsafe(32)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self._path.with_suffix(".tmp")
-        tmp_path.write_text(key)
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, self._path)
+        _write_restricted(self._path, key)
         return key
 
     def get(self, timeout_s: float) -> str | None:
@@ -179,8 +225,8 @@ class VoiceprintStore:
             return LoadResult(voiceprint=None, reason="no_voiceprint", mode=None)
 
         try:
-            envelope = json.loads(self._path.read_text())
-        except (OSError, json.JSONDecodeError):
+            envelope = _read_envelope(self._path)
+        except _EnvelopeError:
             return LoadResult(voiceprint=None, reason="cannot_decrypt", mode=None)
 
         mode = envelope.get("mode")
@@ -255,18 +301,42 @@ class VoiceprintStore:
         _atomic_write(Path(dest), json.dumps(envelope))
 
     def import_(self, src: Path, passphrase: str, *, replace: bool) -> Voiceprint:
-        envelope = json.loads(Path(src).read_text())
+        try:
+            envelope = _read_envelope(src)
+        except _EnvelopeError as exc:
+            raise ValueError(f"import source is not readable: {exc}") from exc
         if envelope.get("mode") != "passphrase":
             raise ValueError("import source is not passphrase-encrypted")
 
         payload_json = ConfigEncryption().decrypt_value(envelope["payload"], passphrase)
         imported = Voiceprint(**json.loads(payload_json))
 
-        current = self.load().voiceprint
-        if current is None or current.model_id == imported.model_id:
-            if current is None:
-                self.save(imported)
-                return imported
+        # The existing record's readability gates whether -- and how -- we
+        # may proceed. "No record" is a genuinely empty store: always safe
+        # to adopt the import. A locked key or a corrupt file means we
+        # CANNOT SEE what's currently stored, which is not the same thing
+        # as nothing being stored -- silently overwriting it there would
+        # discard a different person's voiceprint with no gate at all. A
+        # locked key can unblock itself (unlock the keyring) so it is never
+        # a valid reason to replace; a corrupt file cannot recover on its
+        # own, so an explicit `replace=True` may discard it.
+        result = self.load()
+        if result.reason == "keyring_locked":
+            raise StoreUnavailable("cannot import: the existing voiceprint key is locked")
+        if result.reason == "cannot_decrypt":
+            if not replace:
+                raise StoreUnavailable(
+                    "cannot import: the existing voiceprint is unreadable "
+                    "(pass replace=True to overwrite it)"
+                )
+            self.save(imported)
+            return imported
+
+        current = result.voiceprint
+        if current is None:
+            self.save(imported)
+            return imported
+        if current.model_id == imported.model_id:
             weight = min(imported.sample_count, self._per_meeting_cap)
             return self.merge_sample(imported.centroid, weight=weight, model_id=imported.model_id)
 

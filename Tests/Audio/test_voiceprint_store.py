@@ -64,3 +64,90 @@ def test_keyfile_provider_refuses_broad_permissions(tmp_path):
 def test_delete_removes_file_only(tmp_path):
     keys = FakeKeys(); store = vp.VoiceprintStore(tmp_path / "voiceprint.json", keys); store.save(_rec())
     assert store.delete() is True and not (tmp_path / "voiceprint.json").exists() and keys.key
+
+
+# --- Review fix-round regressions (2026-09-06) -----------------------------
+
+def _export_donor_record(tmp_path, subdir, model):
+    donor = vp.VoiceprintStore(tmp_path / subdir / "voiceprint.json", FakeKeys(key="j" * 32))
+    donor.save(_rec(model=model))
+    out = tmp_path / f"{subdir}-out.json"
+    donor.export(out, "correct horse")
+    return out
+
+def test_import_locked_store_refuses_and_leaves_file_unchanged_either_way(tmp_path):
+    # CRITICAL: a locked/unreadable existing record must never be silently
+    # overwritten just because `current is None` looked the same as "empty".
+    keys = FakeKeys(); store = vp.VoiceprintStore(tmp_path / "voiceprint.json", keys)
+    store.save(_rec(model="ecapa@rev9"))
+    raw_before = (tmp_path / "voiceprint.json").read_bytes()
+    donor_out = _export_donor_record(tmp_path, "donor", "ecapa@rev1")
+
+    keys.blocked = True
+    with pytest.raises(vp.StoreUnavailable):
+        store.import_(donor_out, "correct horse", replace=False)
+    assert (tmp_path / "voiceprint.json").read_bytes() == raw_before
+
+    # A locked key never justifies a replace either -- it might unlock.
+    with pytest.raises(vp.StoreUnavailable):
+        store.import_(donor_out, "correct horse", replace=True)
+    assert (tmp_path / "voiceprint.json").read_bytes() == raw_before
+
+def test_import_undecryptable_store_refuses_without_replace(tmp_path):
+    keys = FakeKeys(); store = vp.VoiceprintStore(tmp_path / "voiceprint.json", keys)
+    store.save(_rec(model="ecapa@rev9"))
+    keys.key = "x" * 32  # wrong key now -> existing record is undecryptable
+    donor_out = _export_donor_record(tmp_path, "donor", "ecapa@rev1")
+
+    with pytest.raises(vp.StoreUnavailable):
+        store.import_(donor_out, "correct horse", replace=False)
+
+def test_import_undecryptable_store_may_be_overwritten_with_replace(tmp_path):
+    keys = FakeKeys(); store = vp.VoiceprintStore(tmp_path / "voiceprint.json", keys)
+    store.save(_rec(model="ecapa@rev9"))
+    keys.key = "x" * 32  # wrong key now -> existing record is undecryptable
+    donor_out = _export_donor_record(tmp_path, "donor", "ecapa@rev1")
+
+    result = store.import_(donor_out, "correct horse", replace=True)
+    assert result.model_id == "ecapa@rev1"
+
+def test_load_non_dict_envelope_reports_cannot_decrypt_without_raising(tmp_path):
+    path = tmp_path / "voiceprint.json"
+    path.write_text("null")
+    result = vp.VoiceprintStore(path, FakeKeys()).load()
+    assert result.voiceprint is None and result.reason == "cannot_decrypt"
+
+def test_keyfile_provider_creates_key_pre_restricted(tmp_path, monkeypatch):
+    p = tmp_path / "voiceprint.key"
+    modes_used = []
+    real_open = os.open
+    def spy_open(path, flags, mode=0o777, *a, **kw):
+        modes_used.append(mode)
+        return real_open(path, flags, mode, *a, **kw)
+    monkeypatch.setattr(os, "open", spy_open)
+
+    key = vp.KeyfileKeyProvider(p).get_or_create()
+
+    assert modes_used == [0o600]
+    assert stat.S_IMODE(p.stat().st_mode) == 0o600
+    assert vp.KeyfileKeyProvider(p).get(timeout_s=0.1) == key
+
+def test_keyfile_provider_get_or_create_refuses_unsafe_existing_file(tmp_path):
+    p = tmp_path / "voiceprint.key"; p.write_text("k" * 32); p.chmod(0o644)
+    with pytest.raises(vp.StoreUnavailable):
+        vp.KeyfileKeyProvider(p).get_or_create()
+    assert p.read_text() == "k" * 32  # untouched -- no silent new key minted
+
+def test_atomic_write_removes_stray_tmp_on_replace_failure(tmp_path, monkeypatch):
+    store = vp.VoiceprintStore(tmp_path / "voiceprint.json", FakeKeys()); store.save(_rec())
+    monkeypatch.setattr(os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    with pytest.raises(OSError):
+        store.save(_rec((0.0, 1.0)))
+    assert not (tmp_path / "voiceprint.tmp").exists()
+
+def test_keyfile_provider_removes_stray_tmp_on_replace_failure(tmp_path, monkeypatch):
+    p = tmp_path / "voiceprint.key"
+    monkeypatch.setattr(os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    with pytest.raises(OSError):
+        vp.KeyfileKeyProvider(p).get_or_create()
+    assert not p.with_suffix(".tmp").exists()
