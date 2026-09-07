@@ -134,3 +134,43 @@ async def test_trace_recovery_refusal_reenables_all_actions() -> None:
         assert "did not complete" in str(
             callout.query_one("#console-trace-status", Static).render()
         )
+
+
+async def test_trace_refusal_copy_survives_transcript_sync_and_is_painted() -> None:
+    """An unchanged trace pause must display the controller's actual refusal."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
+    from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+        ProviderContinuationTranscriptRegion,
+    )
+
+    class RefusingRegionApp(ConsolidatedCSSApp):
+        def compose(self) -> ComposeResult:
+            yield ProviderContinuationTranscriptRegion(
+                session_surface_builder=lambda: Static("Conversation"),
+                recovery_message_builder=lambda: None,
+                on_recovery_action=lambda *_args: False,
+                trace_recovery_state_builder=lambda: TraceCallRecoveryState(
+                    "preparation-1"
+                ),
+                on_trace_recovery_action=lambda *_args: ConsoleSubmitResult(
+                    False, False, "Trace storage is not writable."
+                ),
+            )
+
+    app = RefusingRegionApp()
+    async with app.run_test(size=(80, 32)) as pilot:
+        card = app.screen.query_one(TraceCallRecoveryCallout)
+        card.query_one("#console-trace-retry", Button).focus()
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        app.screen.query_one(ProviderContinuationTranscriptRegion).sync_recovery()
+        await pilot.pause()
+        assert card.display
+        assert "Trace storage is not writable." in str(
+            card.query_one("#console-trace-status", Static).render()
+        )
+        assert (
+            "Trace&#160;storage&#160;is&#160;not&#160;writable."
+            in app.export_screenshot()
+        )
