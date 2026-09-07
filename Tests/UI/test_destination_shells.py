@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import ComposeResult
+from textual.containers import Horizontal
+from textual.widgets import Button, Checkbox, Select, Static
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.containers import Horizontal
-from textual.widgets import Button, Checkbox, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
