@@ -14,6 +14,7 @@ from textual.app import ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from textual.containers import Horizontal
 from textual.widgets import Button, Checkbox, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -42,6 +43,11 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
 from tldw_chatbook.UI.Screens.destination_recovery import DestinationRecoveryState
+from tldw_chatbook.UI.destination_recovery import (
+    load_failure_callout,
+    load_failure_recovery_state,
+    sync_load_failure_callout,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.meetings_screen import MeetingsScreen
@@ -4365,3 +4371,183 @@ async def test_models_shell_keeps_external_paths_inside_the_dedicated_edit_view(
         assert len(path_nodes) == 1
         assert "external-model-path" in path_nodes[0].classes
         assert external in path_nodes[0].ancestors
+
+
+# --- PR M carry I1/M2/M3: the ONE load-failure callout builder --------------
+
+
+class _LoadFailureCalloutHost(ConsolidatedCSSApp):
+    """Mounts one callout built by the shared builder."""
+
+    def __init__(self, callout) -> None:
+        super().__init__()
+        self._callout = callout
+
+    def compose(self) -> ComposeResult:
+        yield self._callout
+
+
+def _media_load_failure(kind: str = "error") -> DestinationRecoveryState:
+    return load_failure_recovery_state(
+        what="Couldn't load media",
+        reason="database is locked",
+        retry_id="library-media-retry",
+        stable_selector="#library-media-load-failure",
+        kind=kind,
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_failure_callout_builds_one_shape_for_every_surface():
+    """PR M carry I1: three copies of this callout had already diverged (the
+    browse row's lost the tint refresh its siblings had). One builder now
+    serves the landing hub, the browse row and the Media canvas -- the reason
+    (1fr, wrapping) beside a Retry that keeps its content width.
+    """
+    failure = _media_load_failure()
+    callout = load_failure_callout(
+        failure,
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+    )
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        assert isinstance(callout, Horizontal)
+        assert callout.has_class("ds-recovery-callout")
+        # A hard failure carries the error tint...
+        assert callout.has_class("is-blocked")
+        copy = callout.query_one("#surface-load-failure-copy", Static)
+        assert _static_text(copy) == failure.message
+        retry = callout.query_one(Button)
+        # ...and the state's own Retry id wins over the caller's fallback.
+        assert retry.id == "library-media-retry"
+        assert str(retry.label) == "Retry"
+        assert str(retry.tooltip) == failure.disabled_tooltip
+        assert "console-action-subdued" in retry.classes
+        assert retry in list(callout.query(Button))
+
+
+@pytest.mark.asyncio
+async def test_load_failure_callout_takes_a_timeout_tint_a_fallback_id_and_a_gate():
+    """The per-surface knobs: a timeout is a warning (no ``is-blocked``), a
+    state with no Retry id of its own takes the caller's, and the Media
+    canvas's own button class and write-in-flight gate still apply.
+    """
+    failure = replace(_media_load_failure(kind="timeout"), retry_id="")
+    gated: list[str] = []
+
+    def gate(button: Button, base_label: str) -> Button:
+        gated.append(base_label)
+        button.disabled = True
+        return button
+
+    callout = load_failure_callout(
+        failure,
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+        retry_classes="library-canvas-action",
+        gate=gate,
+    )
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        assert not callout.has_class("is-blocked")
+        retry = callout.query_one(Button)
+        assert retry.id == "fallback-retry"
+        assert "library-canvas-action" in retry.classes
+        assert gated == ["Retry"]
+        assert retry.disabled
+
+
+@pytest.mark.asyncio
+async def test_sync_load_failure_callout_repaints_the_copy_and_the_tint():
+    """PR M carry M2: the in-place refresh must move the TINT too. A Retry
+    can turn a timeout (warning) into a hard failure (error), and repainting
+    only the sentence left an amber callout reading a hard failure.
+    """
+    warning = _media_load_failure(kind="timeout")
+    callout = load_failure_callout(
+        warning,
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+    )
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        copy = callout.query_one("#surface-load-failure-copy", Static)
+        assert not callout.has_class("is-blocked")
+
+        hard = _media_load_failure()
+        assert sync_load_failure_callout(callout, hard) is True
+        assert _static_text(copy) == hard.message
+        assert callout.has_class("is-blocked")
+
+        # ...and back down again, so a recovered severity is not sticky.
+        assert sync_load_failure_callout(callout, warning) is True
+        assert _static_text(copy) == warning.message
+        assert not callout.has_class("is-blocked")
+
+
+@pytest.mark.asyncio
+async def test_sync_load_failure_callout_repaints_the_retry_tooltip():
+    """A repaint must move the Retry's tooltip too, not just the copy and the
+    tint -- a shape-preserving reason change (same Retry id, a timeout's
+    "waited 5 s" turning into a hard failure's "database is locked")
+    otherwise leaves the tooltip naming the OLD reason while the sentence
+    beside it already names the new one.
+    """
+    warning = load_failure_recovery_state(
+        what="Couldn't load media",
+        reason="waited 5 s",
+        retry_id="library-media-retry",
+        stable_selector="#library-media-load-failure",
+        kind="timeout",
+    )
+    callout = load_failure_callout(
+        warning,
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+    )
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        retry = callout.query_one(Button)
+        assert str(retry.tooltip) == warning.disabled_tooltip
+
+        hard = load_failure_recovery_state(
+            what="Couldn't load media",
+            reason="database is locked",
+            retry_id="library-media-retry",
+            stable_selector="#library-media-load-failure",
+            kind="error",
+        )
+        assert sync_load_failure_callout(callout, hard) is True
+        assert str(retry.tooltip) == hard.disabled_tooltip
+
+
+@pytest.mark.asyncio
+async def test_sync_load_failure_callout_refuses_a_shape_it_did_not_build():
+    """PR M carry M3: a failure with no Retry paints a BARE Static, so the
+    in-place sync must report "remount me" rather than silently no-op when
+    the mounted node is the other shape (either direction).
+    """
+    callout = load_failure_callout(
+        _media_load_failure(),
+        id="surface-load-failure",
+        copy_id="surface-load-failure-copy",
+        retry_id="fallback-retry",
+    )
+    bare = Static("Library source services unavailable.", id="surface-load-failure")
+    host = _LoadFailureCalloutHost(callout)
+
+    async with host.run_test(size=(80, 24)):
+        # A bare Static is not this callout...
+        assert sync_load_failure_callout(bare, _media_load_failure()) is False
+        # ...and a failure with no callout of its own cannot repaint one.
+        assert sync_load_failure_callout(callout, None) is False
+        assert sync_load_failure_callout(None, _media_load_failure()) is False

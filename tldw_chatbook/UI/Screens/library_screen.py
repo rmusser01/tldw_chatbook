@@ -522,10 +522,12 @@ from ..Library_Modules.library_snapshot_cache import (
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from .destination_recovery import (
+from ..destination_recovery import (
     DestinationRecoveryState,
+    load_failure_callout,
     load_failure_recovery_state,
     policy_denied_recovery_state,
+    sync_load_failure_callout,
 )
 from .model_browser_state import install_failure_message
 from .study_scope_models import (
@@ -12772,12 +12774,17 @@ class LibraryScreen(BaseAppScreen):
             and self._library_lookup_error is not None
         ):
             expected_selector = "#library-canvas-error"
-            replacement = Static(
-                self._library_lookup_error,
-                id="library-canvas-error",
-                classes="destination-purpose",
-                markup=False,
-            )
+            # An already-mounted surface is never remounted below (no
+            # ``sync_kind``), so a repeat failure repaints here or nowhere.
+            # PR M carry M3/M6: only a SHAPE change (bare Static <-> callout
+            # with its own Retry) is worth a replacement widget -- clearing
+            # ``expected_selector`` sends it down the mount path, which
+            # removes the stale node first.
+            was_mounted = bool(self.query(expected_selector))
+            if not self._sync_library_canvas_error():
+                replacement = self._library_canvas_error_widget()
+                if was_mounted:
+                    expected_selector = ""
 
         if expected_selector and self.query(expected_selector):
             if sync_kind is None:
@@ -12919,6 +12926,71 @@ class LibraryScreen(BaseAppScreen):
         self._complete_library_entry_reconcile(generation, route_key)
         return LibraryEntryReconcileResult.APPLIED
 
+    def _library_canvas_error_widget(self) -> Widget:
+        """Build the browse canvas's failed-source surface.
+
+        task-31948: a failure a refetch can clear (the snapshot's own
+        deadline/hard-failure states, the only ones carrying
+        ``LIBRARY_SOURCE_RETRY_ID``) gets the same one-callout grammar the
+        landing hub already paints -- reason and Retry side by side, the
+        Retry running the same ``_refresh_local_source_snapshot``. Before
+        this, a browse row's only recovery from a failed snapshot was to
+        leave the surface and come back. Failures a Retry cannot clear (a
+        policy denial, a runtime with no source services) keep the bare
+        sentence: an inert Retry is worse than none.
+
+        Returns:
+            The callout, or the plain error Static. Either way it is the
+            ``#library-canvas-error`` node the reconcile mounts and
+            ``_sync_library_canvas_error`` refreshes.
+        """
+        failure = self._library_source_load_failure()
+        if failure is None:
+            return Static(
+                self._library_lookup_error or "",
+                id="library-canvas-error",
+                classes="destination-purpose",
+                markup=False,
+            )
+        return load_failure_callout(
+            failure,
+            id="library-canvas-error",
+            copy_id="library-canvas-error-copy",
+            retry_id=LIBRARY_SOURCE_RETRY_ID,
+        )
+
+    def _sync_library_canvas_error(self) -> bool:
+        """Refresh a MOUNTED browse error surface in place.
+
+        The reconcile treats an already-mounted ``#library-canvas-error``
+        as current and returns without remounting it, so without this a
+        Retry against a failure that has not cleared would repaint nothing
+        at all -- the "Retry reads as inert" bug task-31632 fixed on the
+        hub, where a canvas ``sync_state`` does this job instead.
+
+        PR M carry M2/M3: the shared sync moves the SEVERITY TINT with the
+        copy (a Retry can turn a deadline into a hard failure), and reports
+        a shape change -- the bare Static a failure with no Retry paints,
+        and the callout -- as "remount me" instead of silently no-op'ing.
+
+        Returns:
+            ``True`` when the mounted node still fits the current failure
+            and was repainted; ``False`` when the caller must build and
+            mount the other shape (including when nothing is mounted yet).
+        """
+        node = next(iter(self.query("#library-canvas-error")), None)
+        if node is None:
+            return False
+        failure = self._library_source_load_failure()
+        if failure is None:
+            # A failure a Retry cannot clear (a policy denial, a runtime
+            # with no source services) keeps the bare sentence.
+            if not isinstance(node, Static):
+                return False
+            node.update(self._library_lookup_error or "")
+            return True
+        return sync_load_failure_callout(node, failure)
+
     def _apply_local_source_snapshot(
         self,
         records: dict[str, tuple[Mapping[str, Any], ...]],
@@ -12957,9 +13029,11 @@ class LibraryScreen(BaseAppScreen):
                     recovery_state, attempt=previous_recovery.attempt + 1
                 )
                 # Keep the two in sync: every existing ``_library_lookup_
-                # error`` consumer (the rail's Details line, the bare
-                # ``#library-canvas-error`` Statics) already reads
-                # ``recovery_state.message`` through this field.
+                # error`` consumer (the rail's Details line, and the
+                # ``#library-canvas-error`` surface -- task-31948's callout
+                # for a retryable failure, the bare Static otherwise)
+                # already reads ``recovery_state.message`` through this
+                # field.
                 lookup_error = recovery_state.message
         presentation_changed = not self._library_loaded or (
             normalized_records != self._local_source_records
@@ -13518,9 +13592,10 @@ class LibraryScreen(BaseAppScreen):
             _log_source_snapshot_failure()
             # ``_retry_failure_reason`` is the shared leak rule the Media
             # callout already applies: an OS/SQLite message is the reader's
-            # own words, anything else is reduced to its class name so an
-            # arbitrary exception's text (which can carry a private path)
-            # never reaches the screen.
+            # own words, anything else is reduced to its KIND of failure
+            # (task-31944's map, or "an unexpected error") so an arbitrary
+            # exception's text -- which can carry a private path -- never
+            # reaches the screen.
             failure_state = load_failure_recovery_state(
                 what=LIBRARY_SERVICE_ERROR_COPY,
                 reason=_retry_failure_reason(exc),
@@ -14805,12 +14880,7 @@ class LibraryScreen(BaseAppScreen):
                     markup=False,
                 )
             elif self._library_lookup_error:
-                items_child = Static(
-                    self._library_lookup_error,
-                    id="library-canvas-error",
-                    classes="destination-purpose",
-                    markup=False,
-                )
+                items_child = self._library_canvas_error_widget()
             else:
                 items_child = LibraryNotesCanvas(
                     **self._library_notes_list_canvas_kwargs(),
@@ -15206,12 +15276,7 @@ class LibraryScreen(BaseAppScreen):
                         and self._library_lookup_error
                         and shell.canvas_kind != "conversations"
                     ):
-                        yield Static(
-                            self._library_lookup_error,
-                            id="library-canvas-error",
-                            classes="destination-purpose",
-                            markup=False,
-                        )
+                        yield self._library_canvas_error_widget()
                     elif shell.canvas_kind == "conversations":
                         conversations_state = self._build_library_conversations_state()
                         self._adopt_library_conversation_state_selection(
@@ -24254,7 +24319,20 @@ class LibraryScreen(BaseAppScreen):
                 failed = list(media_ids)
 
             if succeeded:
-                succeeded_ids = set(succeeded)
+                # task-31943: ``succeeded`` holds canvas row ids
+                # (``local:media:<backing>``), but the snapshot's own media
+                # records key on the BACKING id -- so compared raw the two
+                # never matched, and this prune silently kept every deleted
+                # row in the sample while the count below dropped. Undo's
+                # "already present, don't re-add (or re-count)" guard then
+                # read a row that had never left, leaving the rail's
+                # "Media N" stuck at the post-delete number after a restore.
+                # Both spellings are matched: a record carrying the canvas
+                # id is equally valid and equally this item.
+                succeeded_ids = set(succeeded) | {
+                    str(self._required_library_media_backing_id(media_id))
+                    for media_id in succeeded
+                }
                 self._local_source_records["media"] = tuple(
                     record
                     for record in self._local_source_records.get("media", ())
