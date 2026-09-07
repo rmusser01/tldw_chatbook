@@ -668,6 +668,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         in flight or a stale page still wins the tooltip: those are the
         more immediate blocker, and PR E's precedence is untouched.
 
+        task-31960 (J final review M1) settled the one asymmetry this gate
+        had: "Review these" pins the whole filtered list as an ordered
+        review set -- the same shape of action as "Export…" -- and it alone
+        stayed outside this gate, standing live beside a dimmed Export on a
+        failed first page. It was defensible (its worker re-fetches and
+        notifies on failure), but the asymmetry was unexplained at the
+        surface and symmetry cost one line, so both whole-list actions now
+        gate here. Still deliberately NOT gated: "Trash" (a route into a
+        view with its own fetch, callout and Retry) and the callout's own
+        Retry (``_gate_mutation_action`` only) -- both are how a reader
+        gets out of a failed list.
+
         Args:
             button: The list-wide action to gate.
             base_label: The action's plain enabled label.
@@ -896,6 +908,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             tooltip="Review every item in this list, one by one.",
         )
         review_btn.display = not select_mode
+        # task-31960: "Review these" pins the WHOLE filtered list, exactly
+        # like "Export…" -- so it takes the same failed-list gate, in the
+        # same order (failed first, stale second, so a write in flight or a
+        # stale page still wins the tooltip). Before this it was the one
+        # list-wide action outside that gate and stood live and
+        # colour-normal beside a dimmed Export on a failed first page.
+        self._gate_failed_action(review_btn, "Review these")
         self._gate_stale_action(review_btn, "Review these")
         # Disable only when there's nothing to select AND we're not
         # already in select mode -- in select mode the button is "Done"

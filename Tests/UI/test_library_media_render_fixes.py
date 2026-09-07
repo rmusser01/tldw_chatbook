@@ -3251,13 +3251,20 @@ async def test_rendered_markdown_h1_starts_in_the_body_column():
 # into a view with its own fetch, callout and Retry, and disabling it would
 # remove the only way to reach deleted items exactly when the store is
 # unhappy.
+#
+# task-31960: "Review these" -- the other whole-filtered-list action -- was
+# the one left outside that gate, so it stood live and colour-normal beside
+# a dimmed Export on the same failed first page. Symmetry was one line, so
+# both are pinned here together.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 async def test_failed_first_page_gates_export_with_its_reason(size):
-    """A first load that failed with nothing behind it disables Export…."""
+    """A first load that failed with nothing behind it disables the two
+    whole-filtered-list actions -- Export… and "Review these" (task-31960).
+    """
     host = _host()
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_with_a_failed_first_page(
@@ -3269,6 +3276,15 @@ async def test_failed_first_page_gates_export_with_its_reason(size):
         assert str(export.label) == "○ Export…"
         assert str(export.tooltip) == "Couldn't load media · database is locked."
         assert "○" in _painted(host, export.region), _painted(host, export.region)
+
+        # task-31960: the same gate, the same reason, the same marker --
+        # "Review these" pins the whole filtered list as a review set, and
+        # there is no list to pin.
+        review = screen.query_one("#library-media-review", Button)
+        assert review.disabled
+        assert str(review.label) == "○ Review these"
+        assert str(review.tooltip) == "Couldn't load media · database is locked."
+        assert "○" in _painted(host, review.region), _painted(host, review.region)
 
         # Trash stays the live route into the deleted items.
         trash = screen.query_one("#library-media-trash-open", Button)
@@ -3295,6 +3311,10 @@ async def test_page_failure_that_retains_rows_leaves_export_live():
         export = screen.query_one("#library-media-export", Button)
         assert not export.disabled
         assert str(export.label) == "Export…"
+        # task-31960: so is "Review these" -- retained rows are reviewable.
+        review = screen.query_one("#library-media-review", Button)
+        assert not review.disabled
+        assert str(review.label) == "Review these"
 
 
 @pytest.mark.asyncio
@@ -3305,10 +3325,13 @@ async def test_a_healthy_list_leaves_export_and_trash_live():
         screen = await _open_media_list(host, pilot)
         export = screen.query_one("#library-media-export", Button)
         trash = screen.query_one("#library-media-trash-open", Button)
+        review = screen.query_one("#library-media-review", Button)
         assert not export.disabled
         assert not trash.disabled
+        assert not review.disabled
         assert str(export.label) == "Export…"
         assert str(trash.label) == "Trash"
+        assert str(review.label) == "Review these"
 
 
 # --- task-31635 Task 3 (critique #5 items 7/8/11/19 + Qodo 18) ----------------
