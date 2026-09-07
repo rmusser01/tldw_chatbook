@@ -62,6 +62,7 @@ from tldw_chatbook.Canvas.gateway import (
 from tldw_chatbook.Canvas.limits import CanvasLimits, sha256_utf8
 from tldw_chatbook.Canvas.models import CanvasBridgeRequest, CanvasScope
 from tldw_chatbook.Canvas.native_authority import NativeConsoleCanvasAuthority
+from tldw_chatbook.Canvas.profiles import load_profile_snapshot, runtime_snapshot_id
 from tldw_chatbook.Canvas.service import CanvasService
 from tldw_chatbook.Canvas.web_auth import (
     SESSION_COOKIE_NAME,
@@ -135,7 +136,7 @@ class _MountedAuthority:
 
     async def read_source(self, scope):
         source = f"<!doctype html><h1>{scope.revision_id}</h1>"
-        return CanvasSourceResponse(source, sha256_utf8(source))
+        return CanvasSourceResponse(source, sha256_utf8(source), "canvas-v1")
 
     async def describe_selection(self, scope):
         source = f"<!doctype html><h1>{scope.revision_id}</h1>"
@@ -196,7 +197,7 @@ class _MountedAuthority:
         return BridgeConfirmationResponse(request.request.request_id, status)
 
 
-def _server(tmp_path: Path, *, port: int = 8000):
+def _server(tmp_path: Path, *, port: int = 8000, profile_snapshot=None):
     statics = tmp_path / "static"
     templates = tmp_path / "templates"
     (statics / "js").mkdir(parents=True)
@@ -216,6 +217,7 @@ def _server(tmp_path: Path, *, port: int = 8000):
         statics_path=str(statics),
         templates_path=str(templates),
         web_auth_policy=policy,
+        canvas_profile_snapshot=profile_snapshot,
     )
     server._canvas_control_broker = _FlowBroker()
     return server
@@ -535,12 +537,81 @@ async def test_actual_chatbook_scripted_gateway_emits_create_then_stable_update(
 
 
 @pytest.mark.loopback_network
+@pytest.mark.parametrize("failure", ["snapshot", "old-version"])
+async def test_actual_child_control_refusal_keeps_terminal_usable(
+    tmp_path, monkeypatch, failure
+):
+    from dataclasses import replace
+
+    if failure == "snapshot":
+        monkeypatch.setenv("TLDW_CANVAS_TEST_CANDIDATE", "1")
+    access_token = secrets.token_urlsafe(24)
+    stack = await start_live_served_stack(
+        tmp_path,
+        monkeypatch,
+        access_token=access_token,
+        child_module="Tests.Canvas.browser.canvas_live_chatbook_child",
+    )
+    if failure == "old-version":
+        issue_child = stack.server._canvas_control_broker.issue_child
+
+        def legacy_launch(child_id):
+            launch = issue_child(child_id)
+            return replace(
+                launch,
+                environment={
+                    **launch.environment,
+                    "CHATBOOK_CANVAS_CONTROL_VERSION": "1",
+                },
+            )
+
+        monkeypatch.setattr(
+            stack.server._canvas_control_broker, "issue_child", legacy_launch
+        )
+    try:
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                executable_path=live_chromium_executable(playwright.chromium),
+            )
+            page = await browser.new_page(ignore_https_errors=True)
+            await _login_live_page(page, origin=stack.origin, access_token=access_token)
+            await expect(page.locator("#terminal")).to_contain_text(
+                "Composer", timeout=45_000
+            )
+            child_id = await _live_child_for_page(stack.server, page, port=stack.port)
+            with pytest.raises(
+                ControlProtocolError, match="connection_deadline_exceeded"
+            ):
+                await stack.server._canvas_control_broker.wait_connected(
+                    child_id, timeout=0.2
+                )
+            await _send_console_prompt(
+                page,
+                "Create the requested Canvas",
+                tmp_path / "test_data" / "canvas-live-composer-focused",
+            )
+            await expect(page.locator("#terminal")).to_contain_text(
+                "CHATBOOK_CANVAS_CREATED", timeout=45_000
+            )
+            await expect(page.locator("#terminal.-connected")).to_be_visible()
+            await expect(page.locator("#served-canvas-region")).to_be_hidden()
+            await browser.close()
+    finally:
+        await stack.aclose()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("diagrams", [False, True])
 async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, candidate_snapshot, diagrams
 ) -> None:
     """Run deterministic provider tool cycles through an actual TldwCli child."""
 
     access_token = secrets.token_urlsafe(24)
+    if diagrams:
+        monkeypatch.setenv("TLDW_CANVAS_TEST_CANDIDATE", "1")
+        monkeypatch.setattr(serve, "load_profile_snapshot", lambda: candidate_snapshot)
     stack = await start_live_served_stack(
         tmp_path,
         monkeypatch,
@@ -608,6 +679,8 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
                 "CHATBOOK_APP_CANVAS", timeout=60_000
             )
             await expect(preview.locator("#chatbook-app-revision")).to_have_text("v1")
+            if diagrams:
+                await expect(preview.locator("svg")).to_be_visible()
             await expect(shell.get_by_text("Revision 1", exact=True)).to_be_visible()
 
             await page.wait_for_timeout(1_000)
@@ -1542,7 +1615,9 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
     server = _server(tmp_path, port=unused_tcp_port)
     app = await _browser_app(server)
     test_server = TestServer(app, host="127.0.0.1", port=unused_tcp_port)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     child: CanvasControlClient | None = None
     await test_server.start_server()
     try:
@@ -1577,7 +1652,9 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
             )
             child_launch = broker.issue_child("child-browser-mount")
             child = CanvasControlClient(
-                child_launch.environment, handler=handler.handle
+                child_launch.environment,
+                runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+                handler=handler.handle,
             )
             await child.start()
             cookies = await page.context.cookies()
@@ -1626,8 +1703,9 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.parametrize("diagrams", [False, True])
 async def test_mounted_production_authority_renders_and_settles_submit(
-    tmp_path: Path, unused_tcp_port: int
+    tmp_path: Path, unused_tcp_port: int, candidate_snapshot, diagrams
 ) -> None:
     """Catch opaque-renderer auth and durable-conversation bridge mismatches."""
 
@@ -1667,7 +1745,10 @@ async def test_mounted_production_authority_renders_and_settles_submit(
         active_leaf_message_id=assistant_id,
         before_message_id=None,
     )
-    controller = ConsoleCanvasController(durable_service=CanvasService(db))
+    snapshot = candidate_snapshot if diagrams else load_profile_snapshot()
+    controller = ConsoleCanvasController(
+        durable_service=CanvasService(db, profile_snapshot=snapshot)
+    )
 
     def scope_resolver(requested: str) -> CanvasScope:
         assert requested == session_id
@@ -1692,6 +1773,11 @@ async def test_mounted_production_authority_renders_and_settles_submit(
             "<button id='send-result'>Send result</button>"
             "<script>document.getElementById('send-result').addEventListener("
             "'click', () => canvas.submit({profile: 'alpha'}));</script>"
+            + (
+                '<pre data-canvas-diagram="mermaid">flowchart TD\nA[Tea]</pre>'
+                if diagrams
+                else ""
+            )
         ),
         create_new=True,
     )
@@ -1704,17 +1790,21 @@ async def test_mounted_production_authority_renders_and_settles_submit(
     handler = ServedCanvasControlHandler()
     handler.bind(authority, child_scope)
 
-    server = _server(tmp_path, port=unused_tcp_port)
+    server = _server(tmp_path, port=unused_tcp_port, profile_snapshot=snapshot)
     app = await _browser_app(server)
     test_server = TestServer(app, host="127.0.0.1", port=unused_tcp_port)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(runtime_snapshot_id=runtime_snapshot_id(snapshot))
     child: CanvasControlClient | None = None
     await test_server.start_server()
     await broker.start()
     server._canvas_control_broker = broker
     try:
         child_launch = broker.issue_child(child_id)
-        child = CanvasControlClient(child_launch.environment, handler=handler.handle)
+        child = CanvasControlClient(
+            child_launch.environment,
+            runtime_snapshot_id=runtime_snapshot_id(snapshot),
+            handler=handler.handle,
+        )
         await child.start()
 
         async with async_playwright() as playwright:
@@ -1723,6 +1813,11 @@ async def test_mounted_production_authority_renders_and_settles_submit(
                 executable_path=_chromium_executable(playwright.chromium),
             )
             page = await browser.new_page(viewport={"width": 1100, "height": 760})
+            recorder = ProductRouteRecorder(
+                served=True, profile="canvas-v2-mermaid-1" if diagrams else "canvas-v1"
+            )
+            await recorder.install_execution_boundary(page.context)
+            recorder.attach(page.context, page)
             page.set_default_timeout(7_000)
             await page.goto(str(test_server.make_url("/")))
             outer_cookie = next(
@@ -1749,11 +1844,28 @@ async def test_mounted_production_authority_renders_and_settles_submit(
             )
             await expect(canvas_shell.locator("#loading-state")).to_be_hidden()
 
+            if diagrams:
+                await expect(preview.locator("svg")).to_be_visible()
+            await expect(page.locator("#terminal-region")).to_be_visible()
+
             await preview.get_by_role("button", name="Send result").click()
             await expect(canvas_shell.locator("#bridge-dialog")).to_be_visible()
             await canvas_shell.get_by_role("button", name="Send to composer").click()
             await expect(canvas_shell.locator("#bridge-dialog")).to_be_hidden()
             assert drafts == ['{"profile":"alpha"}']
+            suffix = "_v2" if diagrams else ""
+            shell_url = await page.locator("#served-canvas-frame").get_attribute("src")
+            recorder.assert_generated_confined(
+                trusted_origin=f"http://127.0.0.1:{unused_tcp_port}",
+                trusted_route_root=urlsplit(shell_url).path,
+                forbidden_canary_path="/canvas-forbidden-canary",
+                trusted_shell_paths=(("/canvas/api/session", "GET", "fetch"),),
+                trusted_static_paths=(
+                    f"/static/chatbook-canvas/canvas_renderer{suffix}.js",
+                    f"/static/chatbook-canvas/canvas_runtime_worker{suffix}.js",
+                    "/static/chatbook-canvas/quickjs-runtime.js",
+                ),
+            )
             await browser.close()
     finally:
         if child is not None:
@@ -1770,7 +1882,9 @@ async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnect
     server = _server(tmp_path, port=unused_tcp_port)
     app = await _browser_app(server)
     test_server = TestServer(app, host="127.0.0.1", port=unused_tcp_port)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     children: list[CanvasControlClient] = []
     await test_server.start_server()
     await broker.start()
@@ -1791,7 +1905,11 @@ async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnect
                 ),
             )
             launch = broker.issue_child(child_id)
-            child = CanvasControlClient(launch.environment, handler=handler.handle)
+            child = CanvasControlClient(
+                launch.environment,
+                runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+                handler=handler.handle,
+            )
             await child.start()
             children.append(child)
 
@@ -1908,7 +2026,9 @@ async def test_terminal_websocket_echo_survives_private_control_channel_loss(
         async def start(self, width: int, height: int) -> None:
             del width, height
             self.control_client = CanvasControlClient(
-                self._build_environment(), handler=self.handler.handle
+                self._build_environment(),
+                runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+                handler=self.handler.handle,
             )
             await self.control_client.start()
 
@@ -1930,7 +2050,9 @@ async def test_terminal_websocket_echo_survives_private_control_channel_loss(
             return None
 
     server = _server(tmp_path)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     await broker.start()
     server._canvas_control_broker = broker
     server._chatbook_app_service_class = serve.build_chatbook_app_service_class(
@@ -2155,12 +2277,18 @@ async def test_connected_child_without_canvas_is_terminal_only_then_reconnecting
 ) -> None:
     server = _server(tmp_path)
     await _browser_app(server)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     await broker.start()
     server._canvas_control_broker = broker
     handler = ServedCanvasControlHandler()
     child_launch = broker.issue_child("child-empty")
-    child = CanvasControlClient(child_launch.environment, handler=handler.handle)
+    child = CanvasControlClient(
+        child_launch.environment,
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+        handler=handler.handle,
+    )
     await child.start()
     server.bind_served_browser("browser-empty", "child-empty")
 
@@ -2823,7 +2951,9 @@ async def test_mounted_canvas_url_is_not_transferable_between_authenticated_brow
     tmp_path: Path,
 ) -> None:
     server = _server(tmp_path)
-    broker = CanvasControlBroker()
+    broker = CanvasControlBroker(
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot())
+    )
     await broker.start()
     server._canvas_control_broker = broker
     app = await _browser_app(server)
@@ -2852,8 +2982,16 @@ async def test_mounted_canvas_url_is_not_transferable_between_authenticated_brow
     )
     launch_a = broker.issue_child("child-a")
     launch_b = broker.issue_child("child-b")
-    child_a = CanvasControlClient(launch_a.environment, handler=handler_a.handle)
-    child_b = CanvasControlClient(launch_b.environment, handler=handler_b.handle)
+    child_a = CanvasControlClient(
+        launch_a.environment,
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+        handler=handler_a.handle,
+    )
+    child_b = CanvasControlClient(
+        launch_b.environment,
+        runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
+        handler=handler_b.handle,
+    )
     await child_a.start()
     await child_b.start()
 

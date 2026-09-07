@@ -7611,17 +7611,23 @@ class TldwCli(
         )
         self.served_canvas_handler = None
         self.served_canvas_control = None
-        if any(key in os.environ for key in canvas_control_keys):
+        self._served_canvas_mode = any(key in os.environ for key in canvas_control_keys)
+        if self._served_canvas_mode:
             from .Canvas.control_protocol import (
                 CanvasControlClient,
                 ControlProtocolError,
             )
             from .Canvas.gateway import ServedCanvasControlHandler
+            from .Canvas.profiles import load_profile_snapshot, runtime_snapshot_id
 
+            self._canvas_profile_snapshot = load_profile_snapshot()
             self.served_canvas_handler = ServedCanvasControlHandler()
             try:
                 self.served_canvas_control = CanvasControlClient.from_environment(
                     os.environ,
+                    runtime_snapshot_id=runtime_snapshot_id(
+                        self._canvas_profile_snapshot
+                    ),
                     handler=self.served_canvas_handler.handle,
                 )
             except ControlProtocolError:

@@ -34,9 +34,12 @@ from ..Canvas.gateway import (
     CanvasSelectionChanged,
     CanvasSourceResponse,
 )
-from ..Canvas.limits import (
-    SUPPORTED_CANVAS_RUNTIME_PROFILE,
-    UnsupportedCanvasRuntimeProfile,
+from ..Canvas.limits import UnsupportedCanvasRuntimeProfile
+from ..Canvas.profiles import (
+    ProfileSnapshot,
+    load_profile_snapshot,
+    resolve_profile,
+    runtime_snapshot_id,
 )
 from ..Canvas.web_auth import (
     CSRF_HEADER_NAME,
@@ -185,13 +188,28 @@ class _ServedCanvasAuthorityProxy:
             raise ServedCanvasUnavailable("canvas_session_unavailable")
         return payload, metadata
 
+    @property
+    def profile_snapshot(self) -> ProfileSnapshot:
+        return self._owner._canvas_profile_snapshot
+
     async def resolve_render_plan(self, scope: CanvasGatewayScope):
         captured = await self._plan_scope(scope)
         _payload, metadata = await self._read(scope)
-        if metadata.get("runtime_profile") != SUPPORTED_CANVAS_RUNTIME_PROFILE:
+        snapshot = self._owner._canvas_profile_snapshot
+        resolved = resolve_profile(
+            snapshot,
+            operation="load",
+            parent_profile=metadata.get("runtime_profile"),
+            has_diagrams=False,
+        )
+        if not resolved.executable:
             raise UnsupportedCanvasRuntimeProfile("unsupported Canvas runtime profile")
         plan = await self._compilation.run_async(
-            lambda: compile_canvas_document(metadata["source"])
+            lambda: compile_canvas_document(
+                metadata["source"],
+                runtime_profile=resolved.profile_id,
+                snapshot=snapshot,
+            )
         )
         if await self._plan_scope(scope) != captured:
             raise ServedCanvasUnavailable("canvas_session_unavailable")
@@ -511,6 +529,7 @@ class ChatbookWebServerMixin:
         web_auth_policy: WebAuthPolicy | None = None,
         web_ssl_context: ssl.SSLContext | None = None,
         canvas_policy: CanvasConfigPolicy | None = None,
+        canvas_profile_snapshot: ProfileSnapshot | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -526,8 +545,12 @@ class ChatbookWebServerMixin:
         self._canvas_disabled_latched = not self._canvas_policy.enabled
         self._canvas_policy_watch_task: asyncio.Task[None] | None = None
         self._served_browser_children: dict[str, str] = {}
+        self._canvas_profile_snapshot = (
+            canvas_profile_snapshot or load_profile_snapshot()
+        )
         self._served_canvas_gateway = CanvasGateway(
-            authority=_ServedCanvasAuthorityProxy(self)
+            authority=_ServedCanvasAuthorityProxy(self),
+            profile_snapshot=self._canvas_profile_snapshot,
         )
         self._served_canvas_launches: dict[str, tuple[CanvasGatewayScope, object]] = {}
 
@@ -823,7 +846,9 @@ class ChatbookWebServerMixin:
         """Start the private loopback control broker before children spawn."""
 
         if self._canvas_enabled():
-            self._canvas_control_broker = CanvasControlBroker()
+            self._canvas_control_broker = CanvasControlBroker(
+                runtime_snapshot_id=runtime_snapshot_id(self._canvas_profile_snapshot)
+            )
             await self._canvas_control_broker.start()
             self._canvas_policy_watch_task = asyncio.create_task(
                 self._watch_canvas_policy(),

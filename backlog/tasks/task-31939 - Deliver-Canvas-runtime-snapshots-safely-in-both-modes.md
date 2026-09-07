@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-06 22:14'
-updated_date: '2026-09-07 06:10'
+updated_date: '2026-09-07 06:44'
 labels:
   - canvas
   - v2
@@ -28,9 +28,9 @@ Keep native and served browser delivery consistent with verified restart-bound r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Native host and served parent-child delivery use matching immutable build, catalog and policy snapshots and verified cached bytes.
-- [ ] #2 Restart into a revoked policy, mixed process identities and stale loads fail closed; explicit Canvas disable still stops live execution.
-- [ ] #3 Two-browser capability, selection freshness, source-only recovery and confirmed bridge isolation pass without adding a public port or weakening authentication.
+- [x] #1 Native host and served parent-child delivery use matching immutable build, catalog and policy snapshots and verified cached bytes.
+- [x] #2 Restart into a revoked policy, mixed process identities and stale loads fail closed; explicit Canvas disable still stops live execution.
+- [x] #3 Two-browser capability, selection freshness, source-only recovery and confirmed bridge isolation pass without adding a public port or weakening authentication.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,3 +43,9 @@ ADR required: yes
 ADR path: backlog/decisions/124-canvas-mermaid-subset-and-immutable-runtime-profiles.md (existing, extends ADR-121)
 Reason: Direct implementation of approved process-lifetime snapshot authentication and immutable asset delivery; no new listener or guest permissions.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented protocol-v2 snapshot authentication before child scope attachment, exact shared owner snapshots across native and real served app initialization, retained runtime/shell bytes, and capability-scoped V2 data separated from the closed plan. Refused served launches cannot fall back to native delivery; unavailable previews preserve artifact acceptance. Source-only recovery and delayed plan failures preserve selection/load fences. ADR-124/ADR-121 applied; no new ADR or production V2 admission. Evidence: 155 targeted protocol/gateway/native/kill-switch tests and 72 native/served Chromium tests pass, including actual separate TldwCli V1/V2 create/update/save/reopen and strict bootstrap/confinement checks. Follow-up refused-child coverage and detailed RED/GREEN receipts are in .superpowers/sdd/2026-09-06-chatbook-canvas-v2-mermaid-implementation/task-6-report.md. Restart policy testing uses new-owner simulation plus existing old-load/receipt invalidation, not a deployed package replacement. Existing screen-size ratchet remains failing at baseline; chat_screen is reduced by two lines, library untouched, ceilings unchanged. Existing app/Console/screen lint baselines retained; modified Canvas/serve/tests clean. README and testing lesson updated. Leave In Progress for independent review.
+<!-- SECTION:NOTES:END -->

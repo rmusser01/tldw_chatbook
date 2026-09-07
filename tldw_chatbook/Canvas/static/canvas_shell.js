@@ -37,6 +37,7 @@
   let closed = false;
   let pollTimer = null;
   let pendingPlan = null;
+  let pendingRuntimeData = null;
   let currentPort = null;
   let currentLoadNonce = "";
   let rendererReady = false;
@@ -570,6 +571,7 @@
     branchUnavailable = true;
     rendererReady = false;
     pendingPlan = null;
+    pendingRuntimeData = null;
     latestRevisionId = "";
     if (currentPort) currentPort.close();
     currentPort = null;
@@ -614,6 +616,7 @@
     if (closed || operation !== selectionOperation) return;
     rendererReady = false;
     pendingPlan = null;
+    pendingRuntimeData = null;
     if (currentPort) currentPort.close();
     currentPort = null;
     currentLoadNonce = "";
@@ -622,18 +625,43 @@
     const frame = await post("api/frame", {});
     if (closed || operation !== selectionOperation) return;
     const planResponse = await fetch(api("api/plan"), {cache: "no-store"});
-    if (!planResponse.ok) throw new Error("Canvas render plan is unavailable.");
+    if (closed || operation !== selectionOperation) return;
+    if (!planResponse.ok) {
+      await openInertSource(operation);
+      return;
+    }
     const planPayload = await planResponse.json();
     if (closed || operation !== selectionOperation) return;
     const issues = Array.isArray(planPayload.compatibility_issues) ? planPayload.compatibility_issues : [];
-    const {compatibility_issues: _shellOnlyIssues, ...rendererPlan} = planPayload;
+    const {compatibility_issues: _shellOnlyIssues, runtime_data: runtimeData, ...rendererPlan} = planPayload;
+    if (scriptsDisabled && rendererPlan.runtime_profile !== "canvas-v1") {
+      await openInertSource(operation);
+      return;
+    }
     pendingPlan = rendererPlan;
+    pendingRuntimeData = runtimeData || null;
     if (scriptsDisabled) pendingPlan.scripts = [];
     ui.compatibility.hidden = issues.length === 0;
     ui.compatibilityCopy.textContent = issues.map((issue) => issue.message).join(" ");
     ui.frame.src = frame.renderer_url;
     if (updated) showNotice("Updated · View previous", {previous: Boolean(previousRevisionId || displayedMetadata.parent_revision_id)});
     if (scriptsDisabled) showNotice("Opened with generated scripts disabled.");
+  }
+
+  async function openInertSource(operation) {
+    if (closed || operation !== selectionOperation) return;
+    ui.frame.src = "about:blank";
+    const source = await readSource();
+    if (closed || operation !== selectionOperation) return;
+    pendingPlan = null;
+    pendingRuntimeData = null;
+    ui.loading.textContent = "Preview unavailable. Source is preserved.";
+    ui.sourceView.value = source;
+    ui.sourcePanel.hidden = false;
+    for (const child of document.querySelector(".canvas-workbench").children) {
+      if (child !== ui.sourcePanel) child.inert = true;
+    }
+    ui.sourceClose.focus();
   }
 
   function initializeRenderer() {
@@ -668,7 +696,9 @@
     // A sandboxed renderer has an opaque receiving origin, so the browser
     // requires "*" here. Authority remains bound to this exact contentWindow,
     // the private MessagePort, the one-load nonce, and server-minted plan.
-    ui.frame.contentWindow.postMessage({type: "canvas:init", nonce, plan: pendingPlan}, "*", [channel.port2]);
+    const init = {type: "canvas:init", nonce, plan: pendingPlan};
+    if (pendingRuntimeData) init.runtime_data = pendingRuntimeData;
+    ui.frame.contentWindow.postMessage(init, "*", [channel.port2]);
   }
 
   async function pollEvents() {

@@ -726,6 +726,7 @@ class ConsoleRuntime:
                 mutated.
         """
         self._app = app
+        self._canvas_profile_snapshot = getattr(app, "_canvas_profile_snapshot", None)
         # -- setters, for the screen handles that now READ THROUGH here ----
         # `ChatScreen._console_chat_store`/`_console_provider_gateway`/
         # `_console_chat_controller` (and `ConsoleAgentController.
@@ -897,9 +898,21 @@ class ConsoleRuntime:
         """Replace the chat-controller handle."""
         self._chat_controller = value
 
+    def _ensure_canvas_profile_snapshot(self) -> Any:
+        """Share one lazy process owner with an early served-child handshake."""
+        snapshot = self._canvas_profile_snapshot
+        if snapshot is None:
+            from tldw_chatbook.Canvas.profiles import load_profile_snapshot
+
+            snapshot = load_profile_snapshot()
+            self._canvas_profile_snapshot = snapshot
+        return snapshot
+
     def ensure_canvas_gateway(self, *, authority: Any) -> Any:
         """Return this app runtime's native Canvas gateway, creating it lazily."""
 
+        if getattr(self._app, "_served_canvas_mode", False):
+            return None
         if not self._canvas_enabled():
             return None
         if self._canvas_gateway is not None:
@@ -913,7 +926,9 @@ class ConsoleRuntime:
             return None
         from tldw_chatbook.Canvas.gateway import CanvasGateway
 
-        self._canvas_gateway = CanvasGateway(authority=authority)
+        self._canvas_gateway = CanvasGateway(
+            authority=authority, profile_snapshot=self._ensure_canvas_profile_snapshot()
+        )
         self._canvas_gateway_authority = authority
         binder = getattr(authority, "bind_gateway_invalidator", None)
         if callable(binder):
@@ -1221,15 +1236,16 @@ class ConsoleRuntime:
             ConsoleCanvasController,
         )
 
+        snapshot = self._ensure_canvas_profile_snapshot()
         durable_canvas_service = None
         if db is not None:
             from tldw_chatbook.Canvas.service import CanvasService
             from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
             if isinstance(db, CharactersRAGDB):
-                durable_canvas_service = CanvasService(db)
+                durable_canvas_service = CanvasService(db, profile_snapshot=snapshot)
         self._canvas_controller = ConsoleCanvasController(
-            durable_service=durable_canvas_service
+            durable_service=durable_canvas_service, profile_snapshot=snapshot
         )
         self._chat_store = ConsoleChatStore(
             persistence=persistence,
