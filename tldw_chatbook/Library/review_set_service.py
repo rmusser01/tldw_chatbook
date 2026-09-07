@@ -88,6 +88,10 @@ class ReviewSetService:
         mismatches and re-reads. What a reader must NOT do is stamp a
         revision read AFTER its own load -- that claims a write it never
         saw (fix round 1).
+
+        Returns:
+            int: the number of writes committed through this instance so
+            far; equal values mean nothing has changed since the last read.
         """
         return self._revision
 
