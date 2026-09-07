@@ -5,6 +5,7 @@ from loguru import logger
 
 from textual.message import Message
 from textual.app import ComposeResult
+from textual.css.query import QueryError
 from textual.geometry import Region
 from textual.screen import Screen
 from textual.containers import Container
@@ -13,6 +14,7 @@ from textual.widgets import Static
 from .main_navigation import MainNavigationBar
 
 if TYPE_CHECKING:
+    from textual.widget import Widget
     from tldw_chatbook.app import TldwCli
 
 
@@ -119,7 +121,22 @@ class BaseAppScreen(Screen):
         able to fire either. Releasing the capture here, mirroring that
         existing Textual idiom, closes the gap at its root: any widget about
         to be recomposed away is released *before* it can be orphaned.
+
+        task-31946: this is also the ONE seam that puts KEYBOARD focus back
+        after a whole-screen recompose. ``Widget.recompose()`` removes every
+        child, so the widget holding focus goes with them and nothing
+        re-picks a target on remount -- ``screen.focused`` ends ``None`` and
+        the keyboard is dead until the user clicks. PR F patched that on the
+        Library's Media route only (``LibraryScreen.refresh``); a background
+        job tick or an ad-hoc repaint on any other route still dropped it.
+        Capturing here rather than at each call site is what makes it one
+        seam: every ``refresh(recompose=True)`` on any screen in the app
+        goes through this method. The restore itself is
+        ``restore_focus_after_recompose``, which subclasses override (the
+        Library composes its Media rules into it) so there is exactly ONE
+        restore callback per recompose, never two competing ones.
         """
+        focus_identity: Optional[str] = None
         if recompose and self.is_running:
             try:
                 self.app.capture_mouse(None)
@@ -127,9 +144,124 @@ class BaseAppScreen(Screen):
                 logger.debug(
                     "Mouse-capture release before recompose skipped.", exc_info=True
                 )
-        return super().refresh(
+            focus_identity = self._focus_identity_for_recompose()
+        result = super().refresh(
             *regions, repaint=repaint, layout=layout, recompose=recompose
         )
+        if focus_identity is not None:
+            # ``call_after_refresh`` (not ``call_next``): Textual only
+            # SCHEDULES the teardown here -- ``Widget.refresh`` queues
+            # ``_check_recompose`` via ``call_next``, which always runs
+            # before the ``InvokeLater`` that ``call_after_refresh``
+            # posts, so the new children exist by the time this runs.
+            #
+            # TWO hops on purpose. ``call_after_refresh`` posts an
+            # ``InvokeLater`` message, so callbacks run in POST order --
+            # and a subclass queues its own post-recompose work AFTER
+            # calling ``super().refresh()``, i.e. behind this one. Posting
+            # the real restore from inside the first hop puts it at the
+            # BACK of that queue instead, so the restore always runs after
+            # the subclass's own passes. Concretely (PR L review item 3):
+            # the Library's stage-visibility pass hides containers, and a
+            # widget that becomes hidden BLURS ITSELF (``Widget._on_hide``
+            # -> ``blur()``), so a restore that landed before it would put
+            # focus straight back to ``None``. ``Widget.focusable`` reads
+            # ``visible``, which cannot see a hide that has not happened
+            # yet -- ordering is the only fix.
+            self.call_after_refresh(
+                self._queue_focus_restore_after_recompose, focus_identity
+            )
+        return result
+
+    def _queue_focus_restore_after_recompose(self, previous: Optional[str]) -> None:
+        """Re-post the restore behind everything else this refresh queued."""
+        self.call_after_refresh(self.restore_focus_after_recompose, previous)
+
+    def _focus_identity_for_recompose(self) -> Optional[str]:
+        """Id selector of whatever holds focus right now, or ``None``.
+
+        ``None`` means "restore nothing", and covers both cases where a
+        restore would be wrong rather than merely unhelpful: the screen had
+        no focus to lose (a recompose that starts unfocused should not
+        seize the keyboard), or the focused widget has no id and therefore
+        cannot be identified again after the remount. Subclasses narrow
+        this further -- the Library refuses to record a reader pane GRIP,
+        which is where Textual dumps focus by accident and never a target
+        worth restoring.
+        """
+        widget_id = getattr(self.focused, "id", None)
+        return f"#{widget_id}" if widget_id else None
+
+    def restore_focus_after_recompose(self, previous: Optional[str]) -> None:
+        """Re-focus the equivalent widget after a recompose (task-31946).
+
+        Only acts when the recompose actually LOST focus: an explicit
+        follow-up that already focused something real (the Library's
+        ``then=`` callbacks, a canvas-scoped restore) wins untouched, which
+        is also what keeps this from double-firing with the Media restore
+        ``LibraryScreen`` runs from its own override of this method.
+
+        Order of preference:
+
+        1. the same-id widget, when the remount produced one again (the
+           overwhelmingly common case -- a recompose rebuilds the same
+           tree) and it is still ``focusable``; ``Screen.set_focus``
+           silently NO-OPS on a widget whose ``focusable`` is False, so a
+           row that came back disabled must fall through rather than count
+           as success;
+        2. otherwise the first focusable widget INSIDE ``#screen-content``
+           -- the defined fallback. Scoped to the content area on purpose
+           (PR L review item 1): ``focus_chain[0]`` is the
+           ``MainNavigationBar``'s first tab on every screen, where a
+           blind Enter LEAVES THE SCREEN -- a key that was inert before
+           this seam existed. Nothing screen-recomposes a ``LabScreen``
+           today (``lab_frame.py`` re-lays its rail without a recompose),
+           but its body mounts in a later ``call_after_refresh``, so a
+           future recompose would find the captured id absent and land
+           here -- on ``LabModeStrip``'s chips, where Enter switches Lab
+           mode. Narrower than leaving the screen; excluding the chips
+           is a follow-up if that path ever fires.
+           The bare ``focus_chain[0]`` remains the last resort for a
+           screen whose content area holds nothing focusable at all;
+           mounted and keyboard-reachable still beats ``None``.
+
+        ``scroll_visible=False``: this restores FOCUS, never scroll
+        position (PR F measured the default re-scrolling a Media row back
+        into view and reinstating a restore the user's wheel had cancelled).
+
+        Args:
+            previous: Identity from ``_focus_identity_for_recompose``, or
+                ``None`` to leave focus alone.
+        """
+        if previous is None or not self.is_running:
+            return
+        focused = self.focused
+        if focused is not None and focused.is_attached:
+            return
+        try:
+            target = self.query_one(previous)
+        except QueryError:
+            target = None
+        if target is None or not target.focusable:
+            target = self._first_focusable_in_content()
+        if target is not None:
+            self.set_focus(target, scroll_visible=False)
+
+    def _first_focusable_in_content(self) -> "Widget | None":
+        """The fallback target: first focusable widget under content.
+
+        Falls back to the screen's own first focusable widget only when
+        the content area holds none (or has not been composed yet) --
+        see ``restore_focus_after_recompose`` for why the nav bar must
+        not be the first choice.
+        """
+        chain = self.focus_chain
+        content = next(iter(self.query("#screen-content")), None)
+        if content is not None:
+            inside = next((w for w in chain if content in w.ancestors), None)
+            if inside is not None:
+                return inside
+        return next(iter(chain), None)
 
     async def recompose(self) -> None:
         """Release any mouse capture again immediately before the actual

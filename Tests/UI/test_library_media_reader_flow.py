@@ -1210,6 +1210,11 @@ def _escape_fake(
     fake._after_library_media_viewer_sync = MethodType(
         LibraryScreen._after_library_media_viewer_sync, fake
     )
+    # PR L (task-31950): the seam's ordering half is its own method now, so
+    # the fakes bind it too and keep exercising the real logic.
+    fake._queue_after_library_media_viewer_recompose = MethodType(
+        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+    )
     # task-31271 seam (a): Escape and its footer label read one seam now.
     fake._library_media_find_state = MethodType(
         LibraryScreen._library_media_find_state, fake
@@ -1279,6 +1284,11 @@ def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
     fake._after_library_media_viewer_sync = MethodType(
         LibraryScreen._after_library_media_viewer_sync, fake
     )
+    # PR L (task-31950): the seam's ordering half is its own method now, so
+    # the fakes bind it too and keep exercising the real logic.
+    fake._queue_after_library_media_viewer_recompose = MethodType(
+        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+    )
 
     LibraryScreen.handle_library_media_reader_more(
         fake, SimpleNamespace(stop=lambda: None)
@@ -1307,6 +1317,11 @@ def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
     )
     fake._after_library_media_viewer_sync = MethodType(
         LibraryScreen._after_library_media_viewer_sync, fake
+    )
+    # PR L (task-31950): the seam's ordering half is its own method now, so
+    # the fakes bind it too and keep exercising the real logic.
+    fake._queue_after_library_media_viewer_recompose = MethodType(
+        LibraryScreen._queue_after_library_media_viewer_recompose, fake
     )
 
     LibraryScreen.handle_library_media_reader_more(
@@ -1339,6 +1354,9 @@ def test_viewer_sync_seam_skips_the_hook_when_no_recompose_was_armed():
         _mounted_library_media_viewer=lambda: viewer,
         _focus_library_control=lambda selector: calls.append(("focus", selector)),
         call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
+    )
+    fake._queue_after_library_media_viewer_recompose = MethodType(
+        LibraryScreen._queue_after_library_media_viewer_recompose, fake
     )
 
     LibraryScreen._after_library_media_viewer_sync(
@@ -1696,6 +1714,11 @@ def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
     fake._mounted_library_media_viewer = lambda: None
     fake._after_library_media_viewer_sync = MethodType(
         LibraryScreen._after_library_media_viewer_sync, fake
+    )
+    # PR L (task-31950): the seam's ordering half is its own method now, so
+    # the fakes bind it too and keep exercising the real logic.
+    fake._queue_after_library_media_viewer_recompose = MethodType(
+        LibraryScreen._queue_after_library_media_viewer_recompose, fake
     )
     # Qodo on #2378: the handler refuses when the tab has nothing to search.
     fake._library_media_find_unavailable_reason = MethodType(

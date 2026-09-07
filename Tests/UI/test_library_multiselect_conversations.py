@@ -1,4 +1,7 @@
+import ast
 import dataclasses
+import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -568,3 +571,150 @@ async def test_conversations_export_label_holds_its_column_across_the_first_sele
         export = screen.query_one("#library-conversations-export-selected", Button)
         after = _painted_label_column(host, export)
         assert after == before, (before, after)
+
+
+# ---------------------------------------------------------------------------
+# task-31945 AC#1/#3: a sibling canvas's row survives a fast second click.
+#
+# Textual's ``Button._on_click`` DROPS any click landing while the previous
+# press's 0.2s ``-active`` flash is still on the widget (``if not
+# self.has_class("-active"): self.press()``). PR F cleared that flash on the
+# MEDIA rows only; the conversations/notes/prompts rows kept the default, so
+# clicking ☐ and then the same row's title -- what a reviewer does -- lost
+# the second click and the row read as a one-cell target.
+#
+# Driven with REAL mouse events: a ``Button.press()`` call bypasses
+# ``_on_click`` entirely and can never see this bug.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_every_click_on_a_conversation_row_toggles_it_in_select_mode():
+    """task-31945: marker cell and title cells are the same target."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        screen.query_one("#library-conversations-select-toggle", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._conversations_state.select_mode,
+            message="Conversations select mode did not open.",
+        )
+
+        row = screen.query_one("#library-conversation-row-0", Button)
+        marker_x = row.region.x
+        # Past the marker cell and its padding: inside the title text.
+        title_x = row.region.x + 6
+        row_y = row.region.y
+        assert title_x < row.region.right, row.region
+
+        # Two assertions on purpose, because the wall-clock one cannot be
+        # relied on alone: ``Pilot.click`` awaits its own pause, and on a
+        # loaded box two of those already cost ~0.28s -- past the window,
+        # where the behavioural assertion below would pass for the WRONG
+        # reason (the flash simply expired). The ``-active`` check is the
+        # load-independent core: that class is what makes
+        # ``Button._on_click`` drop the next click, and with the flash off
+        # it is never set at all. ``elapsed`` says whether the second
+        # click really landed inside the window, and rides into the
+        # failure message either way (PR L review item 5).
+        started = time.monotonic()
+        await pilot.click(offset=(marker_x, row_y))
+        await pilot.pause()
+        assert screen._conversations_state.row_selection.count == 1, "marker click"
+        # The same widget instance survives the toggle (the label is
+        # rewritten in place), which is exactly why the flash can swallow
+        # the next click -- and what makes this assertion meaningful
+        # rather than a check on a fresh widget that never flashed.
+        assert screen.query_one("#library-conversation-row-0", Button) is row
+        assert not row.has_class("-active"), (
+            "the row still flashes -active after a press, so Button._on_click "
+            "will drop the next click that lands on it"
+        )
+
+        # The title, immediately after -- the click the flash swallowed.
+        await pilot.click(offset=(title_x, row_y))
+        elapsed = time.monotonic() - started
+        await pilot.pause()
+        await pilot.pause()
+        inside_window = elapsed < _ACTIVE_EFFECT_WINDOW
+        assert screen._conversations_state.row_selection.count == 0, (
+            "a title click right after a marker click did not toggle the row "
+            f"(second click landed {elapsed:.3f}s after the first, "
+            f"{'inside' if inside_window else 'OUTSIDE'} the "
+            f"{_ACTIVE_EFFECT_WINDOW}s active-effect window)"
+        )
+
+
+#: Textual's ``Button.active_effect_duration`` default -- the window in
+#: which ``Button._on_click`` drops the next click on the same widget.
+_ACTIVE_EFFECT_WINDOW = 0.2
+
+#: task-31945 AC#2: every Library LIST row is built by one helper, so the
+#: press behaviour cannot drift back apart one canvas at a time. Keyed by
+#: the row's DOM id prefix (the ``classes=`` argument is a variable at
+#: three of these sites, the id is a literal f-string at all of them).
+_LIBRARY_ROW_ID_PREFIXES = {
+    "library-media-row-",
+    "library-conversation-row-",
+    "library-notes-row-",
+    "library-notes-tree-note-",
+    "library-notes-tree-folder-",
+    "library-prompt-row-",
+    "library-skill-row-",
+}
+
+
+def test_every_library_row_button_is_built_by_the_shared_helper():
+    """task-31945 AC#2: one press behaviour, enforced at the source.
+
+    A census, not a spot check: a NEW row canvas (or a revert of one of
+    the converted sites to a bare ``Button``) fails here rather than
+    silently shipping a row that swallows every fast second click. The
+    expected-prefix set is asserted too, so a rename cannot make this
+    pass vacuously by finding nothing.
+    """
+    canvas_dir = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Widgets" / "Library"
+    found: dict[str, set[str]] = {}
+    for path in sorted(canvas_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "id":
+                    continue
+                rendered = ast.unparse(keyword.value)
+                prefix = next(
+                    (p for p in _LIBRARY_ROW_ID_PREFIXES if p in rendered), None
+                )
+                if prefix is None:
+                    continue
+                callee = getattr(node.func, "id", None) or getattr(
+                    node.func, "attr", ""
+                )
+                if callee not in {"Button", "library_row_button"}:
+                    # Containers keyed off the same id stem (the media
+                    # rows' own scroll host) are not row buttons.
+                    continue
+                found.setdefault(prefix, set()).add(f"{path.name}:{callee}")
+
+    assert set(found) == _LIBRARY_ROW_ID_PREFIXES, (
+        "row-button census found the wrong set of construction sites "
+        f"(a rename or a new canvas?): {sorted(found)}"
+    )
+    offenders = {
+        prefix: sorted(sites)
+        for prefix, sites in found.items()
+        if any(not site.endswith(":library_row_button") for site in sites)
+    }
+    assert not offenders, (
+        "these row buttons bypass library_row_button(), so Textual's 0.2s "
+        f"active-effect flash will swallow their next click: {offenders}"
+    )
