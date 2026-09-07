@@ -63,5 +63,16 @@ def summary_row(
 
 
 def summary_rows(n: int, *, start: int = 1, **overrides: Any) -> list[dict[str, Any]]:
-    """Build ``n`` seven-key rows with ids ``start .. start + n - 1``."""
+    """Build ``n`` seven-key rows with ids ``start .. start + n - 1``.
+
+    Args:
+        n: How many rows to build.
+        start: The first backing media id; ids run consecutively from here.
+        **overrides: Any :func:`summary_row` keyword, applied to EVERY row
+            (``id`` excepted -- it is supplied per row from ``start``).
+
+    Returns:
+        ``n`` fresh mutable dicts, each carrying exactly the seven contract
+        keys, in ascending id order.
+    """
     return [summary_row(id=index, **overrides) for index in range(start, start + n)]

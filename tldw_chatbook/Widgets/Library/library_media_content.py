@@ -15,11 +15,23 @@ from textual.containers import (
 from textual.widgets import Button, Input, Markdown, Static
 
 from tldw_chatbook.Library.library_media_viewer_state import find_content_matches
+from tldw_chatbook.Library.library_shell_state import (
+    library_disabled_action_label,
+)
 from tldw_chatbook.Utils.markdown_parsing import front_matter_parser_factory
 from tldw_chatbook.Widgets.Library.library_media_raw_view import (
     EMPTY_CONTENT_MESSAGE,
     VirtualizedRawContent,
 )
+
+
+# task-31635 (critique #5 item 5): the enabled Find navigation labels.
+# While the query has NO matches both controls render disabled and the
+# Library's non-colour disabled marker takes the direction glyph's slot
+# ("○ Prev" / "○ Next"), exactly as the Media pager's "○ Previous" /
+# "○ Next" does -- pressing them was previously a silent no-op.
+FIND_PREV_LABEL = "◀ Prev"
+FIND_NEXT_LABEL = "Next ▶"
 
 
 def build_raw_content_match_lines(content: str, query: str) -> tuple[int, ...]:
@@ -418,18 +430,22 @@ class LibraryMediaContentSearchControls(Vertical):
         )
         toolbar.styles.height = "auto"
         toolbar.display = is_active
+        nav_disabled = self._nav_disabled()
+        prev_label, next_label = self._nav_labels()
         with toolbar:
             yield Button(
-                "◀ Prev",
+                prev_label,
                 id="library-media-content-search-prev",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=nav_disabled,
             )
             yield Button(
-                "Next ▶",
+                next_label,
                 id="library-media-content-search-next",
                 classes="library-canvas-action",
                 compact=True,
+                disabled=nav_disabled,
             )
 
     def sync_query_state(
@@ -468,6 +484,7 @@ class LibraryMediaContentSearchControls(Vertical):
         self.query_one("#library-media-content-search-nav", Horizontal).display = (
             is_active
         )
+        self._sync_nav_controls()
 
     def sync_match_index(
         self, *, matches: tuple[int, ...], match_index: int
@@ -486,6 +503,40 @@ class LibraryMediaContentSearchControls(Vertical):
         self.query_one("#library-media-content-search-status", Static).update(
             self._status_text()
         )
+        self._sync_nav_controls()
+
+    def _nav_disabled(self) -> bool:
+        """Whether Prev/Next have nothing to walk (task-31635, item 5)."""
+        return not self.matches
+
+    def _nav_labels(self) -> tuple[str, str]:
+        """Return the (Prev, Next) labels for the current match count."""
+        if self._nav_disabled():
+            return (
+                library_disabled_action_label("Prev", True),
+                library_disabled_action_label("Next", True),
+            )
+        return FIND_PREV_LABEL, FIND_NEXT_LABEL
+
+    def _sync_nav_controls(self) -> None:
+        """Patch both navigation controls in place; never recompose them."""
+        disabled = self._nav_disabled()
+        for selector, label in zip(
+            (
+                "#library-media-content-search-prev",
+                "#library-media-content-search-next",
+            ),
+            self._nav_labels(),
+        ):
+            button = self.query_one(selector, Button)
+            button.label = label
+            if disabled and button.has_focus:
+                # Textual BLURS a focused widget when it is disabled, which
+                # leaves screen focus on nothing -- the task-28002 keyboard
+                # deadlock (every Escape gate reads ``self.focused``). Hand
+                # focus back to the search box the query came from.
+                self._focus_search_input()
+            button.disabled = disabled
 
     def _placeholder_text(self) -> str:
         return "Search content (raw text)…" if self.is_markdown else "Search content…"
@@ -496,4 +547,4 @@ class LibraryMediaContentSearchControls(Vertical):
         if not self.matches:
             return "No matches"
         wrapped = self.match_index % len(self.matches)
-        return f"Match {wrapped + 1} of {len(self.matches)} matches"
+        return f"Match {wrapped + 1} of {len(self.matches)}"

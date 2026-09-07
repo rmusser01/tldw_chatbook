@@ -43,6 +43,7 @@ from tldw_chatbook.Library.library_media_state import (
     build_media_trash_result,
     build_library_media_trash_state,
     commit_media_trash_mutation,
+    media_trash_age_copy,
     fail_media_trash_mutation,
     fail_media_trash_request,
 )
@@ -240,10 +241,16 @@ async def test_media_trash_permanent_confirmation_disambiguates_full_long_title(
             app.query_one("#library-media-trash-delete-confirm-type", Static).renderable
             == "video"
         )
-        assert (
-            app.query_one("#library-media-trash-delete-confirm-time", Static).renderable
-            == "2026-08-11T11:00:00+00:00"
+        # task-31635 item 2: the row's own relative phrasing, with the exact
+        # stamp on the tooltip.
+        time_identity = app.query_one(
+            "#library-media-trash-delete-confirm-time", Static
         )
+        assert time_identity.renderable == media_trash_age_copy(
+            "2026-08-11T11:00:00+00:00"
+        )
+        assert str(time_identity.renderable).startswith("trashed ")
+        assert time_identity.tooltip == "2026-08-11T11:00:00+00:00"
         assert not app.query("#library-media-trash-restore")
         assert not app.query("#library-media-trash-delete")
         assert app.query_one("#library-media-trash-delete-cancel", Button)
@@ -2596,12 +2603,17 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
             if posture == "confirmation":
                 assert "cannot be undone" in painted
                 assert confirmation_target.media_type in painted
-                assert confirmation_target.trash_date in painted
+                # task-31635 item 2: the relative form, not the raw stamp.
+                assert (
+                    media_trash_age_copy(confirmation_target.trash_date) in painted
+                )
                 assert "Cancel" in painted
                 assert "Delete permanently" in painted
             else:
                 assert "Restore" in painted
-                assert "Delete permanently" in painted, (
+                # task-31635 item 3: the shorter destructive word is what
+                # makes the two-cell gap fit this 32-cell pane.
+                assert "Delete forever" in painted, (
                     f"{posture}: items={items_pane.region!r}, "
                     f"actions={action_region.region!r}, "
                     f"delete={delete.region!r}, label={str(delete.label)!r}"
@@ -4619,3 +4631,188 @@ async def test_tab_reaches_restore_from_a_trash_row():
             if seen[-1] == "library-media-trash-restore":
                 break
         assert seen[-1] == "library-media-trash-restore", seen
+
+
+# ---------------------------------------------------------------------------
+# task-31635 (critique #5 items 2 and 3): the confirmation's deletion time
+# reads like the row it came from, and the two Trash row actions are neither
+# adjacent nor typographically alike -- plus keyboard access to both.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_media_trash_confirmation_dates_the_item_in_relative_words():
+    """Item 2: the confirm reads "trashed 6h", the raw stamp lives in the tip.
+
+    The row that opened this confirmation says "document · trashed 6h";
+    the confirmation answered with a raw ISO timestamp, so the one screen
+    named the same instant two different ways and neither matched the
+    other. The absolute value is still available -- as the tooltip.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    trashed_at = datetime.now(timezone.utc) - timedelta(hours=6, minutes=3)
+    raw = trashed_at.isoformat()
+    records = [
+        {
+            "id": "local:media:11",
+            "title": "Recently trashed",
+            "type": "video",
+            "trash_date": raw,
+        }
+    ]
+    target = MediaTrashMutationTarget(
+        stable_id="local:media:11",
+        backing_media_id=11,
+        title="Recently trashed",
+        media_type="video",
+        trash_date=raw,
+        page_index=0,
+    )
+    app = _TrashCanvasApp(
+        _trash_state(records=records, selected_id="local:media:11"),
+        confirmation_target=target,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        time_identity = app.query_one(
+            "#library-media-trash-delete-confirm-time", Static
+        )
+        assert time_identity.renderable == "trashed 6h"
+        assert time_identity.tooltip == raw
+        # The row this confirmation came from says exactly the same thing.
+        assert "trashed 6h" in str(
+            app.query_one("#library-media-trash-row-0", Button).label
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action_disabled_reason", ("", "Refresh Trash before changing this item.")
+)
+async def test_media_trash_delete_is_gapped_and_classed_apart_from_restore(
+    action_disabled_reason,
+):
+    """Item 3: recovery and destruction are two cells and one class apart.
+
+    They shared their adjacent line-pad cells (a NEGATIVE gap), so the
+    irreversible action began one cell after the recoverable one ended, in
+    the same weight -- at the pane's 32-cell floor, in both action states.
+    """
+    app = _TrashCanvasApp(
+        _trash_state(),
+        pager=_fresh_trash_pager(total=2, rows=2),
+        action_disabled_reason=action_disabled_reason,
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-media-trash-canvas")
+        canvas.styles.width = 32
+        await pilot.pause()
+        await pilot.pause()
+        restore = app.query_one("#library-media-trash-restore", Button)
+        delete = app.query_one("#library-media-trash-delete", Button)
+        assert delete.has_class("library-media-action-danger")
+        assert delete.region.x - restore.region.right >= 2, (
+            restore.region,
+            delete.region,
+        )
+        # Both still whole inside the 32-cell Items floor: a gap that
+        # clips the label it separates is not an improvement.
+        assert canvas.region.contains_region(restore.region), (
+            canvas.region,
+            restore.region,
+        )
+        assert canvas.region.contains_region(delete.region), (
+            canvas.region,
+            delete.region,
+        )
+        painted = _compositor_text(app.export_screenshot(simplify=True))
+        assert "Restore" in painted
+        assert "Delete forever" in painted
+
+
+@pytest.mark.asyncio
+async def test_media_trash_keys_restore_and_arm_permanent_delete():
+    """Item 3: "r" and "x" do what the two Trash row actions do.
+
+    Both actions were mouse-or-Tab only -- Tab from a row needed six
+    presses to reach Restore (the test above this block) and the footer
+    named neither.
+    """
+    from Tests.UI.test_library_shell import _wait_for_condition
+
+    restored: list[dict[str, object]] = []
+
+    host = _trash_production_host()
+
+    async def restore_media_item(_service: object, **kwargs: object):
+        restored.append(dict(kwargs))
+        return {"id": int(kwargs["media_id"]), "title": "Trashed item 01"}
+
+    host.app_instance.media_reading_scope_service.restore_media_item = types.MethodType(
+        restore_media_item,
+        host.app_instance.media_reading_scope_service,
+    )
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = await _open_trash_production(host, pilot, _one_trash_item())
+        controller = screen._library_media_trash_browse_controller
+        screen.query_one("#library-media-trash-row-0", Button).focus()
+        await pilot.pause()
+
+        # "x" arms the same confirmation the button opens...
+        await pilot.press("x")
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.confirmation_target is not None,
+            message='"x" never armed the permanent-delete confirmation.',
+        )
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.confirmation_target is None,
+            message="Escape never cancelled the armed confirmation.",
+        )
+
+        # ...and "r" runs the same restore.
+        screen.query_one("#library-media-trash-row-0", Button).focus()
+        await pilot.pause()
+        await pilot.press("r")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(restored),
+            message='"r" never reached the restore seam.',
+        )
+        assert restored[0]["media_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_media_trash_footer_advertises_the_restore_and_delete_keys():
+    """Item 3: the keys are announced where every other Library key is.
+
+    Honest-footer rule (task-28005): they appear only while the actions
+    they invoke are genuinely pressable, so a stale page drops both chips
+    rather than teaching a key that no-ops.
+    """
+    host = _trash_production_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = await _open_trash_production(host, pilot, _one_trash_item())
+        shortcuts = screen._library_footer_shortcuts_for_current_state()
+        assert ("r", "restore") in shortcuts, shortcuts
+        assert ("x", "delete") in shortcuts, shortcuts
+        painted = _compositor_text(host.export_screenshot(simplify=True))
+        assert "restore" in painted
+        assert "delete" in painted
+
+        controller = screen._library_media_trash_browse_controller
+        controller.state = dataclasses.replace(
+            controller.state,
+            freshness="stale",
+            stale_copy="List may be out of date.",
+        )
+        screen._sync_library_media_trash_state(None)
+        await pilot.pause()
+        stale_shortcuts = screen._library_footer_shortcuts_for_current_state()
+        assert ("r", "restore") not in stale_shortcuts, stale_shortcuts
+        assert ("x", "delete") not in stale_shortcuts, stale_shortcuts

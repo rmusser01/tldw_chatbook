@@ -96,7 +96,8 @@ def test_completed_set_footer_drops_walk_keys_and_offers_the_finish():
 def test_in_progress_set_footer_keeps_the_walk_keys():
     """An in-progress set keeps ]/[/m/R and the progress chip."""
     entries = LibraryScreen._review_footer_entries("2 of 6 · 1 reviewed")
-    assert ("]", "next in set") in entries
+    # task-31635 item 9: ] still walks -- and now says it marks as it goes.
+    assert ("]", "next (marks reviewed)") in entries
     assert ("[", "prev in set") in entries
     assert ("R", "exit review") in entries
     assert ("", "2 of 6 · 1 reviewed") in entries

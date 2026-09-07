@@ -63,6 +63,11 @@ def _walker_fake(
     fake._active_review_progress = MethodType(
         LibraryScreen._active_review_progress, fake
     )
+    # task-31635 item 10: the progress ordinal resolves through the shared
+    # "what is the Reader showing" seam, so the fake carries the real one.
+    fake._review_cursor_for_display = MethodType(
+        LibraryScreen._review_cursor_for_display, fake
+    )
     fake._select_calls = calls
     fake._notices = notices
     fake._syncs = syncs
@@ -382,6 +387,17 @@ def _entry_fake(service):
     )
     fake._REVIEW_SET_STORAGE_UNAVAILABLE = (
         LibraryScreen._REVIEW_SET_STORAGE_UNAVAILABLE
+    )
+    # task-31635 item 17: the create asks whether the Reader banner will
+    # carry the same fact before it toasts it, so the fake carries the real
+    # banner builder and the two state reads it needs.
+    fake._library_media_reader_session = SimpleNamespace(loaded_backing_id=None)
+    fake._review_set_live_ids = lambda ids: {int(i) for i in ids}
+    fake._review_cursor_for_display = MethodType(
+        LibraryScreen._review_cursor_for_display, fake
+    )
+    fake._active_review_set_banner = MethodType(
+        LibraryScreen._active_review_set_banner, fake
     )
     fake._opened = opened
     fake._notices = notices
@@ -1302,8 +1318,9 @@ def test_review_footer_names_the_completion_gesture_on_the_last_item():
     assert ("[", "prev in set") in at_last
     assert ("", "6 of 6 · 5 reviewed") in at_last
 
+    # task-31635 item 9: the mid-set label now admits to the auto-mark.
     mid_set = LibraryScreen._review_footer_entries("2 of 6 · 1 reviewed")
-    assert mid_set[0] == ("]", "next in set")
+    assert mid_set[0] == ("]", "next (marks reviewed)")
 
     # A complete set keeps task-31225's shape (no ]/[ at all).
     complete = LibraryScreen._review_footer_entries("All 6 reviewed", at_last=True)
@@ -1329,7 +1346,7 @@ def test_review_footer_at_last_follows_the_loaded_item_not_the_cursor(tmp_path):
     assert LibraryScreen._active_review_loaded_at_last(off_set) is False
     assert LibraryScreen._review_footer_entries("3 of 3 · 0 reviewed")[0] == (
         "]",
-        "next in set",
+        "next (marks reviewed)",
     )
 
     mid_set = _walker_fake(service, loaded=11)
@@ -1437,3 +1454,85 @@ def test_decoration_fails_open_on_a_storage_error(tmp_path):
     rows = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
 
     assert [row["reviewed"] for row in rows] == [None]
+
+
+@pytest.mark.asyncio
+async def test_review_set_enumeration_never_asks_for_the_keyword_reason_probe(
+    tmp_path,
+):
+    """Qodo on #2475 (item 20): the enumeration pages, it does not decorate.
+
+    Both entry-point workers page the same library-summary scope the browse
+    list does, and both throw ``match_reasons`` away. The probe is one extra
+    SELECT per page, so neither may ask for it -- the browse controller's own
+    page fetch is the single opt-in caller (pinned in
+    Tests/UI/test_library_media_browse_controller.py).
+    """
+    service = _service(tmp_path)
+    calls: list[dict] = []
+
+    async def search_media(**kwargs):
+        calls.append(kwargs)
+        offset = kwargs.get("offset", 0)
+        return {
+            "items": [{"backing_media_id": 10 + offset, "title": "A"}],
+            "total": 1,
+        }
+
+    scope = SimpleNamespace(
+        query="needle", media_type=None, sort_by="last_modified_desc", page_size=2
+    )
+    fake = _worker_fake(service, search_media=search_media, scope=scope)
+    await fake._review_these_worker()
+    await fake._review_selected_worker((10,))
+
+    assert calls, "the enumeration never called search_media"
+    assert all(call.get("library_summary") is True for call in calls), calls
+    assert all("match_reasons" not in call for call in calls), calls
+
+
+def test_create_drops_the_reviewing_toast_the_banner_already_carries(tmp_path):
+    """Item 17 (ruling): no toast while the banner says the same thing.
+
+    At 100x30 the "Reviewing N items." toast landed over the Reader's own
+    border, and the Reader it covered was already painting
+    "Reviewing: <name> — 1 of N · 0 reviewed" -- strictly more than the
+    toast said. So the toast is dropped whenever that banner will paint,
+    and kept as the fallback when it will not.
+    """
+    fake = _entry_fake(_service(tmp_path))
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "Talks", "browse", [(10, "A"), (11, "B")]
+    )
+
+    assert fake._opened == ["local:media:10"]
+    assert not [
+        message for message, _severity in fake._notices if "Reviewing" in message
+    ], fake._notices
+
+
+def test_create_still_announces_when_no_banner_can_carry_it(tmp_path):
+    """The fallback: a Reader with no banner still gets told."""
+    fake = _entry_fake(_service(tmp_path))
+    fake._active_review_set_banner = lambda: None
+
+    LibraryScreen._create_and_open_review_set(
+        fake, "Talks", "browse", [(10, "A"), (11, "B")]
+    )
+
+    assert ("Reviewing 2 items.", "information") in fake._notices
+
+
+def test_create_keeps_the_cap_warning_the_banner_cannot_carry(tmp_path):
+    """Truncation is not in the banner, so it stays a notice."""
+    from tldw_chatbook.Library.review_set_state import REVIEW_SET_CAP
+
+    fake = _entry_fake(_service(tmp_path))
+    pairs = [(index, f"Item {index}") for index in range(1, REVIEW_SET_CAP + 3)]
+
+    LibraryScreen._create_and_open_review_set(fake, "Big", "browse", pairs)
+
+    assert any(
+        "capped at the first" in message for message, _severity in fake._notices
+    ), fake._notices

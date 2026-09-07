@@ -4808,3 +4808,82 @@ async def test_a_single_install_command_yields_a_single_copy_control():
         buttons[0].press()
         await pilot.pause()
     assert copied == ['pip install -e ".[extra0]"'], copied
+
+
+# --- task-31635 Task 3 (critique #5 item 15) ---------------------------------
+
+
+class _FieldIdiomHost(ConsolidatedCSSApp):
+    """Mount the real Import form with the shipped stylesheet sequence."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+    def compose(self) -> ComposeResult:
+        yield LibraryIngestCanvas(
+            build_library_ingest_state(
+                (),
+                form=LibraryIngestFormState(path="/tmp/report.txt", title="T"),
+            ),
+            id="library-ingest-canvas",
+        )
+
+
+def _painted_rows(app, region) -> list[str]:
+    strips = list(app.screen._compositor.render_strips())
+    return [
+        strips[y].crop(region.x, region.right).text
+        for y in range(region.y, min(region.bottom, len(strips)))
+    ]
+
+
+def _edge_glyphs(app, widget) -> tuple[str, str, str]:
+    """The three border glyphs a field paints: top-left, left, bottom-left."""
+    rows = _painted_rows(app, widget.region)
+    return (rows[0][0], rows[1][0], rows[2][0])
+
+
+@pytest.mark.asyncio
+async def test_import_form_fields_share_one_border_idiom():
+    """Item 15 (declined): the path field's thick box IS its focus cue.
+
+    The critique read the Import form as mixing two idioms -- a thick box
+    around the path field, thin ``▊…▎`` bars around the metadata fields.
+    They are the same idiom: all four carry ``.library-ingest-field``'s
+    ``border: tall``, and the box is ``outline: heavy`` from
+    ``.library-ingest-field:focus`` (task-3302 / MI-05, DESIGN.md's focus
+    contract -- before it, focus on these fields was colour-only and the
+    form rendered byte-identical in monochrome). The Import canvas focuses
+    the path field on entry, which is the whole of the difference.
+
+    Declining trades an inconsistency the user saw for the focus cue the
+    whole form depends on: pinning ``▊…▎`` on the focused path field would
+    restore task-3302's defect, and giving every metadata field the box
+    permanently would erase the cue outright.
+    """
+    app = _FieldIdiomHost()
+    async with app.run_test(size=(120, 45)) as pilot:
+        await pilot.pause()
+        path = app.query_one("#library-ingest-path", Input)
+        title = app.query_one("#library-ingest-title", Input)
+        author = app.query_one("#library-ingest-author", Input)
+
+        # Unfocused, all four fields paint the same edge.
+        assert app.focused is not path
+        thin = ("▊", "▊", "▊")  # ▊ on every row of `tall`
+        assert _edge_glyphs(app, path) == thin
+        assert _edge_glyphs(app, title) == thin
+        assert _edge_glyphs(app, author) == thin
+        assert _painted_rows(app, path.region)[0][1] == "▔"  # ▔
+
+        # Focus is the ONLY thing that swaps the glyph set, and it swaps it
+        # for a metadata field exactly as it does for the path field.
+        path.focus()
+        await pilot.pause()
+        heavy = ("┏", "┃", "┗")  # ┏ ┃ ┗
+        assert _edge_glyphs(app, path) == heavy
+        assert _edge_glyphs(app, title) == thin
+
+        title.focus()
+        await pilot.pause()
+        assert _edge_glyphs(app, title) == heavy
+        assert _edge_glyphs(app, path) == thin

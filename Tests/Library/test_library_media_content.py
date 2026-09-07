@@ -265,7 +265,7 @@ async def test_match_index_sync_preserves_navigation_identity_and_focus() -> Non
         assert app.query_one("#library-media-content-search-next") is next_button
         assert app.focused is next_button
         assert str(app.query_one("#library-media-content-search-status", Static).renderable) == (
-            "Match 2 of 2 matches"
+            "Match 2 of 2"
         )
 
 
@@ -292,7 +292,7 @@ async def test_active_query_sync_preserves_search_and_navigation_identity() -> N
         assert app.query_one("#library-media-content-search-next", Button) is next_button
         assert search_input.value == "cost"
         assert str(app.query_one("#library-media-content-search-status", Static).renderable) == (
-            "Match 1 of 1 matches"
+            "Match 1 of 1"
         )
 
 
@@ -322,7 +322,7 @@ async def test_match_index_sync_wraps_status_index() -> None:
         await pilot.pause()
 
         assert str(app.query_one("#library-media-content-search-status", Static).renderable) == (
-            "Match 2 of 2 matches"
+            "Match 2 of 2"
         )
 
 
@@ -373,7 +373,7 @@ async def test_active_query_sync_reveals_controls_and_markdown_placeholder() -> 
         assert app.query_one("#library-media-content-search-next", Button).display
         assert str(
             app.query_one("#library-media-content-search-status", Static).renderable
-        ) == "Match 1 of 1 matches"
+        ) == "Match 1 of 1"
 
 
 @pytest.mark.asyncio
