@@ -2,8 +2,8 @@
 
 - **Date:** 2026-09-05 (rev 2 — post design-review corrections)
 - **Base branch:** `origin/dev` (artifacts screen and importer have evolved substantially vs `main`; this design reads `origin/dev`'s `UI/Screens/artifacts_screen.py` and `Chatbooks/` modules)
-- **Status:** Draft — awaiting user review
-- **ADR required:** yes — new network serving boundary, security/auth surface, and child-process lifecycle. Path: `backlog/decisions/NNN-artifact-share-web-export.md` (assign the next free number at implementation time; ADR-number-collision cleanup is in flight on `docs/lesson-adr-number-collisions`).
+- **Status:** Implemented — ADR-123 (see the appendix for implementation notes/deviations)
+- **ADR required:** yes — new network serving boundary, security/auth surface, and child-process lifecycle. Path: `backlog/decisions/123-artifact-share-web-export.md`.
 
 ## Problem
 
@@ -146,3 +146,42 @@ Pydantic model per repo validation conventions. Paths in the manifest are stagin
 - Daily-report sharing; Canvas artifact sharing (tasks 31230/31003).
 - TLS via documented reverse-proxy example; dual-stack IPv6 binding.
 - Browser-terminal viewer experience (Approach C) layered on the same manifest/auth.
+
+## Implementation notes (post-implementation appendix)
+
+The feature shipped on branch `codex/artifact-share-web-export` under ADR-123.
+Deviations from the design text above, discovered during implementation:
+
+- **LAN-IP discovery order** ("URL display", above): the hostname is resolved
+  first (`socket.getaddrinfo(socket.gethostname(), …)`, no socket egress) and
+  the UDP route probe is kept only as a fallback for hosts whose name maps to
+  loopback. Reason: the repo's test-suite network guard (task-15111) records
+  even a swallowed UDP connect, which would fail loopback-marked tests at
+  teardown. Production behavior is unchanged.
+- **aiohttp 3.14 middleware markers:** both middlewares are plain
+  new-style `(request, handler)` methods with `__middleware_version__ = 1`
+  set directly (what `@web.middleware` does) — aiohttp 3.14 ignores unmarked
+  new-style middleware; doing it manually keeps aiohttp lazily imported so
+  the module loads without the `[web]` extra.
+- **App-exit idempotency:** `TldwCli._shutdown_artifact_share` nulls the
+  controller reference in a `finally`, making shutdown strictly once per
+  controller (safe re-entry from a late `on_unmount`); screen-side consumers
+  already read the attribute with `getattr(..., None)`.
+- **Dialog widget choice:** the multi-select is a Textual `SelectionList`
+  (not a `DataTable`) with per-option disabled state — records without an
+  on-disk bundle carry the reason inline in their label. No separate
+  select-all control was added; the list's built-in selection interactions
+  cover multi-select.
+- **Manifest field names:** the auth verifier fields are
+  `pbkdf2_salt_hex`/`pbkdf2_hash_hex` (the design sketch wrote
+  `pbkdf2_salt`/`pbkdf2_hash`), and the child's PID lives in `status.json`
+  (alongside the bound URL) rather than a separate `pid` file; the startup
+  sweep reads it from there.
+- **Child-crash UX (known gap vs "Error handling", above):** there is no
+  mid-share watcher or "share stopped unexpectedly / restart" banner action.
+  A dead child is detected and cleaned up on the next stop/start or by the
+  startup sweep, and the child's own PPID guard exits it if the app dies
+  first; until then the banner can show a share whose server is already
+  gone. Recorded here rather than silently diverging; a crash watcher
+  remains future work.
+
