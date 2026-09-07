@@ -536,6 +536,51 @@ def test_parsed_block_identity_is_idempotent_branch_bound_and_preserves_origin()
     assert "<p>one</p>" not in str(error.value)
 
 
+def test_same_turn_html_and_mermaid_replay_and_promote_separately(candidate_snapshot):
+    from tldw_chatbook.Canvas.authoring import wrap_mermaid_document
+
+    controller = ConsoleCanvasController(profile_snapshot=candidate_snapshot)
+    controller.activate_session("mixed-fences")
+    scope = _scope("mixed-fences")
+    authority = NativeConsoleCanvasAuthority(
+        scope_resolver=lambda _: scope, canvas_controller=controller
+    )
+    common = {
+        "session_id": scope.session_id,
+        "source_message_id": "assistant-1",
+        "origin_message_id": "assistant-1",
+        "source_turn_id": "assistant-turn",
+        "block_index": 0,
+    }
+    html = dict(
+        common, source="<p>HTML</p>", block_identity="assistant-1:canvas-html:0"
+    )
+    mermaid = dict(
+        common,
+        source=wrap_mermaid_document("flowchart TD\nA --> B"),
+        block_identity="assistant-1:canvas-mermaid:0",
+    )
+    try:
+        first = authority.import_html(**html)
+        scope = replace(scope, run_id="interaction-2")
+        second = authority.import_html(**mermaid)
+        assert first.revision_id != second.revision_id
+        assert first.origin.run_id == second.origin.run_id == "assistant-turn"
+        assert authority.import_html(**html) == first
+        assert authority.import_html(**mermaid) == second
+        scope = replace(scope, run_id="interaction-3")
+        third = authority.import_html(**mermaid, create_new=True)
+        assert third.canvas_id not in {first.canvas_id, second.canvas_id}
+        contribution = controller.promotion_contribution(scope.session_id)
+        assert contribution.revision_count == 3
+        assert {row.source for row in contribution.turn.revisions} == {
+            html["source"],
+            mermaid["source"],
+        }
+    finally:
+        controller.discard_session(scope.session_id)
+
+
 def test_durable_parsed_block_identity_survives_real_store_hydration(tmp_path):
     db = CharactersRAGDB(tmp_path / "canvas-native-hydration.sqlite", "canvas-native")
     try:

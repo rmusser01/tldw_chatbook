@@ -20230,7 +20230,7 @@ class ChatScreen(BaseAppScreen):
                 source_message_id=message.id,
                 origin_message_id=message.persisted_message_id or message.id,
                 source_turn_id=canvas_block_origin_turn_id(
-                    message, reference.block_index
+                    message, reference.block_index, language=reference.language
                 ),
                 block_index=reference.block_index,
                 block_identity=reference.identity,

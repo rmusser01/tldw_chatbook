@@ -39,12 +39,12 @@
       "sha256": "9b4caf7be494664ff543370a7b8e1d4972a196702149ae2b06c5a19a0e4a4e2f"
     },
     "canvas_renderer_v2.js": {
-      "bytes": 58462,
-      "sha256": "6ca86a1486b7c2df11174dc01ac24254f39de284b71088635c9b7fba14cb45bd"
+      "bytes": 59472,
+      "sha256": "f31b287fc68e810893755b140b292b150f38299ed938950972f17ffb02282c98"
     },
     "canvas_runtime_worker_v2.js": {
-      "bytes": 84203,
-      "sha256": "d7a5f58bbb2d607b2841c6460aa2f9fb4cd066559905bdee26b92a8012bb51f4"
+      "bytes": 85299,
+      "sha256": "a09d9874e8b5fe860c70c190f089535c3f05ce7c00c6dd593fd6a2fae4be8a7a"
     },
     "quickjs-runtime.js": {
       "bytes": 737944,
@@ -129,7 +129,7 @@
     },
     "facade": {
       "id": "canvas-virtual-dom-v2-mermaid-1",
-      "sha256": "d7a5f58bbb2d607b2841c6460aa2f9fb4cd066559905bdee26b92a8012bb51f4"
+      "sha256": "a09d9874e8b5fe860c70c190f089535c3f05ce7c00c6dd593fd6a2fae4be8a7a"
     },
     "grammar": {
       "id": "mermaid-11.17.2-jison-0.4.18-canvas-subset-1",
@@ -141,7 +141,7 @@
     },
     "plan": {
       "id": "canvas-render-plan-v2-mermaid-1",
-      "sha256": "6ca86a1486b7c2df11174dc01ac24254f39de284b71088635c9b7fba14cb45bd"
+      "sha256": "f31b287fc68e810893755b140b292b150f38299ed938950972f17ffb02282c98"
     },
     "quotas": {
       "css_rules": 900,

@@ -4161,7 +4161,7 @@ def build_console_first_request_plan(
                 build_canvas_runtime_guidance,
             )
 
-            canvas_guidance = build_canvas_runtime_guidance(disclosed_schemas)
+            canvas_guidance = build_canvas_runtime_guidance(disclosed_schemas, messages=messages)
             if canvas_guidance:
                 budget_system_prompt = f"{budget_system_prompt}\n\n{canvas_guidance}"
             if workspace_note:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import TYPE_CHECKING, Literal
 
@@ -61,6 +61,7 @@ class ConsoleCanvasHtmlBlock:
     html: str
     compatible: bool | None = None
     compatibility_codes: tuple[str, ...] = ()
+    language: str = "html"
 
 
 def assistant_canvas_html_blocks(
@@ -74,18 +75,21 @@ def assistant_canvas_html_blocks(
     ):
         return ()
     blocks: list[ConsoleCanvasHtmlBlock] = []
+    ordinals = {"html": 0, "mermaid": 0}
     for token in MarkdownIt("commonmark").parse(message.content):
         language = (
             token.info.strip().split(maxsplit=1)[0].casefold() if token.info else ""
         )
-        if token.type != "fence" or language != "html":
+        if token.type != "fence" or language not in ordinals:
             continue
-        index = len(blocks)
+        index = ordinals[language]
+        ordinals[language] += 1
         blocks.append(
             ConsoleCanvasHtmlBlock(
                 index=index,
-                identity=f"{message.id}:canvas-html:{index}",
+                identity=f"{message.id}:canvas-{language}:{index}",
                 html=token.content,
+                language=language,
             )
         )
     return tuple(blocks)
@@ -94,6 +98,8 @@ def assistant_canvas_html_blocks(
 def canvas_block_origin_turn_id(
     message: ConsoleChatMessage,
     block_index: int,
+    *,
+    language: str = "html",
 ) -> str:
     """Return a restart-stable, source-free identity for one Canvas import.
 
@@ -108,7 +114,11 @@ def canvas_block_origin_turn_id(
     if message.persisted_message_id is not None:
         stable_owner = message.trace_turn_id or message.persisted_message_id
         digest = sha256(
-            f"{stable_owner}\0{block_index}".encode("utf-8")
+            (
+                f"{stable_owner}\0{block_index}"
+                if language == "html"
+                else f"{stable_owner}\0canvas-mermaid\0{block_index}"
+            ).encode("utf-8")
         ).hexdigest()
         return f"canvas-import-{digest}"
     return message.turn_id or message.trace_turn_id or message.id
@@ -121,15 +131,25 @@ def resolve_canvas_html_block(
 
     if message.id != reference.message_id:
         return None
-    return next(
+    if reference.message_digest and reference.message_digest != sha256(
+        message.content.encode("utf-8", errors="surrogatepass")
+    ).hexdigest():
+        return None
+    block = next(
         (
             block
             for block in assistant_canvas_html_blocks(message)
             if block.index == reference.block_index
             and block.identity == reference.identity
+            and block.language == reference.language
         ),
         None,
     )
+    if block is not None and block.language == "mermaid":
+        from tldw_chatbook.Canvas.authoring import wrap_mermaid_document
+
+        return replace(block, html=wrap_mermaid_document(block.html))
+    return block
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +232,8 @@ class ConsoleCanvasBlockReference:
     block_index: int
     identity: str
     create_new: bool
+    language: str = "html"
+    message_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -243,10 +265,19 @@ def canvas_compile_repair_result(
         visible_copy="Prepared a Canvas compatibility repair request.",
         target_message_id=message.id,
         target_content=(
-            "Please rewrite HTML block "
-            f"{reference.block_index + 1} from your previous response as one "
-            "self-contained Canvas V1 HTML document with inline CSS and "
-            f"JavaScript only. Resolve these compatibility issues: {codes}."
+            (
+                "Please rewrite Mermaid block "
+                if reference.language == "mermaid"
+                else "Please rewrite HTML block "
+            )
+            + f"{reference.block_index + 1} from your previous response as one "
+            + (
+                "complete HTML document with escaped text-only Mermaid declarations. "
+                "Use its exact admitted profile; unavailable profiles remain source-only. "
+                if reference.language == "mermaid"
+                else "self-contained Canvas V1 HTML document with inline CSS and JavaScript only. "
+            )
+            + f"Resolve these compatibility issues: {codes}."
         ),
         target_invocation_id=reference.identity,
     )
@@ -569,10 +600,11 @@ class ConsoleMessageActionService:
             completed_actions = completed_actions + list(self._VIDEO_ACTIONS)
         if self._canvas_enabled():
             for block in assistant_canvas_html_blocks(message):
+                prefix = "canvas-open" if block.language == "html" else "canvas-open-mermaid"
                 completed_actions.extend(
                     (
-                        (f"canvas-open-{block.index}", "Open in Canvas"),
-                        (f"canvas-open-new-{block.index}", "Open as new"),
+                        (f"{prefix}-{block.index}", "Open in Canvas"),
+                        (f"{prefix}-new-{block.index}", "Open as new"),
                     )
                 )
         if not self._is_forkable_row(message):
@@ -900,22 +932,37 @@ class ConsoleMessageActionService:
             except (ValueError, IndexError):
                 block_index = -1
             blocks = assistant_canvas_html_blocks(message)
-            block = next((item for item in blocks if item.index == block_index), None)
+            language = "mermaid" if action_id.startswith("canvas-open-mermaid-") else "html"
+            block = next((item for item in blocks if item.index == block_index
+                          and item.language == language), None)
             if block is None:
                 return ConsoleActionResult(
                     action_id=action_id,
                     status="blocked",
-                    visible_copy="That HTML block is no longer available.",
+                    visible_copy="That source block is no longer available.",
                     target_message_id=message.id,
                 )
-            create_new = action_id.startswith("canvas-open-new-")
+            create_new = "-new-" in action_id
+            if language == "mermaid":
+                from tldw_chatbook.Canvas.authoring import wrap_mermaid_document
+                from tldw_chatbook.Canvas.limits import CanvasLimitError
+
+                try:
+                    wrap_mermaid_document(block.html)
+                except CanvasLimitError:
+                    return ConsoleActionResult(
+                        action_id=action_id, status="blocked",
+                        visible_copy=("Mermaid source must be nonempty valid Unicode "
+                                      "within 8 KiB. Shorten or split the diagram."),
+                        target_message_id=message.id,
+                    )
             return ConsoleActionResult(
                 action_id=action_id,
                 status="canvas_open_requested",
                 visible_copy=(
-                    "Opening HTML as a new Canvas."
+                    "Opening source as a new Canvas."
                     if create_new
-                    else "Opening HTML in Canvas."
+                    else "Opening source in Canvas."
                 ),
                 target_message_id=message.id,
                 canvas_block_ref=ConsoleCanvasBlockReference(
@@ -923,6 +970,10 @@ class ConsoleMessageActionService:
                     block_index=block.index,
                     identity=block.identity,
                     create_new=create_new,
+                    language=language,
+                    message_digest=sha256(message.content.encode(
+                        "utf-8", errors="surrogatepass"
+                    )).hexdigest(),
                 ),
             )
         if (

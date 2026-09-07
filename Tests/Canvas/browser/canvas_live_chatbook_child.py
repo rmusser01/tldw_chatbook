@@ -46,6 +46,12 @@ def _publish_counter(path: Path, value: int) -> None:
     staged.replace(path)
 
 
+def _publish_owner_receipt(path: Path, value: dict) -> None:
+    staged = path.with_name(f".{path.name}.tmp")
+    staged.write_text(json.dumps(value), encoding="ascii")
+    staged.replace(path)
+
+
 class _ScriptedCanvasGateway:
     """Replay two genuine agent/tool cycles without contacting a provider."""
 
@@ -403,17 +409,15 @@ def main() -> None:
         app._bindings.bind("f12", "canvas_fixture_reopen", priority=True)
 
         def acknowledge_composer_focus():
-            (data_root / "canvas-live-delivery-owner").write_text(
-                json.dumps(
-                    {
-                        "served": app._served_canvas_mode,
-                        "native_gateway": app.screen._console_runtime().canvas_gateway
-                        is not None,
-                        "enabled": app.screen._console_runtime()._canvas_enabled(),
-                        "control": app.served_canvas_control is not None,
-                    }
-                ),
-                encoding="ascii",
+            _publish_owner_receipt(
+                data_root / "canvas-live-delivery-owner",
+                {
+                    "served": app._served_canvas_mode,
+                    "native_gateway": app.screen._console_runtime().canvas_gateway
+                    is not None,
+                    "enabled": app.screen._console_runtime()._canvas_enabled(),
+                    "control": app.served_canvas_control is not None,
+                },
             )
             focused = app.focused
             while focused is not None and focused.id != "console-native-composer":

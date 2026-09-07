@@ -38,6 +38,15 @@ discarding evidence or weakening its inventory policy.
 
 ## A test counter is neither atomic publication nor completion evidence
 
+**TASK-31940, Mermaid recovery, 2026-09-07.** The actual served-child
+control-refusal browser fixture also published its owner receipt with direct
+`write_text`. The reader observed changed mtime and then parsed an empty string.
+A deterministic test opened the destination before writing and observed `''`;
+publishing through a sibling plus replacement preserved the previous complete
+JSON during that same interval. Apply atomic publication to every cross-process
+receipt, not only invocation counters; changed mtime does not prove a write has
+finished.
+
 **TASK-31742, Canvas integration, 2026-09-06.** A full Chromium run failed
 at `int('')`: the served child rewrote its call-count file with `write_text`,
 and the parent read between truncation and writing. A synchronized regression
