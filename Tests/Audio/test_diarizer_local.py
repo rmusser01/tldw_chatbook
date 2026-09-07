@@ -979,6 +979,32 @@ def test_diarize_self_matches_nearest_batch_centroid_and_export_centroid_prefers
     assert out[1]["seconds"] == pytest.approx(2.0)                  # ... with seconds summed from its segments
 
 
+def test_a_wrong_dimension_voiceprint_never_matches_on_the_stop_pass(capsys):
+    """Final re-review: the `diarize` branch compared through a `zip`-truncating
+    cosine, so a 2-d voiceprint against 4-d batch centroids "matched" on the
+    first two dims -- a stranger marked as the user, plus a learning offer on
+    them -- and it is reachable on a cold first run (no `assign` reaches the
+    worker while the model downloads; `wait_ready` then succeeds at Stop).
+    The Stop pass must degrade exactly like `assign`: one framed line,
+    matching off, segments untouched."""
+    def ctl(d): return (json.dumps(d) + "\n").encode()
+    segs = [{"start_s": 0.0, "end_s": 2.0, "speaker": "S1"}]
+
+    def fake_batch(*_a, **_k):
+        return segs, {"S1": [0.99, 0.01, 0.0, 0.0]}   # 4-d centroid vs a 2-d print
+
+    lines = [
+        ctl({"cmd": "enroll", "vector": [1.0, 0.0], "threshold": 0.2, "min_seconds": 0.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
+        ctl({"cmd": "diarize", "wav": "mixed.wav", "start": 0.0, "end": 2.0}),
+    ]
+    out = _serve_lines(lines, embed=lambda pcm: [0.0, 0.0, 0.0, 0.0], batch=fake_batch)
+    assert [o["self"] for o in out] == [None, None]
+    assert [o["segments"] for o in out] == [segs, segs]          # diarization itself unaffected
+    errors = [line for line in capsys.readouterr().err.splitlines() if line.startswith("ERROR")]
+    assert len(errors) == 1 and errors[0].startswith("ERROR enroll ")   # once, then matching is off
+
+
 def test_diarize_self_is_null_when_no_batch_centroid_is_within_threshold():
     def ctl(d): return (json.dumps(d) + "\n").encode()
     segs = [{"start_s": 0.0, "end_s": 2.0, "speaker": "S1"}]

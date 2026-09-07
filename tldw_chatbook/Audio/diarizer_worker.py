@@ -82,6 +82,12 @@ def _cos_dist(a, b) -> float:
     `diarizer_cluster._cos`'s zero-safety without importing a private name
     across modules (review round 1, Minor 5/10)."""
     a = [float(x) for x in a]; b = [float(x) for x in b]
+    if len(a) != len(b):
+        # Strict on purpose (final re-review): `zip` would silently compare
+        # the first k dims of a wrong-dimension voiceprint and could "match"
+        # a stranger on the Stop pass. The caller frames this as a
+        # matching-off condition, exactly like `assign`'s guard.
+        raise ValueError("dimension mismatch")
     na = math.sqrt(sum(x * x for x in a)); nb = math.sqrt(sum(x * x for x in b))
     if na == 0.0 or nb == 0.0:
         return 1.0
@@ -391,11 +397,20 @@ def serve(stdin, stdout, live, embed, batch) -> int:
                 # M4: judged against THIS batch's own centroids, not whatever
                 # a previous successful diarize left behind.
                 if enrolled is not None and final_centroids:
-                    evec, ethresh = enrolled[0], enrolled[1]
-                    dists = [(cid, _cos_dist(cen, evec)) for cid, cen in final_centroids.items()]
-                    best_id, best_dist = min(dists, key=lambda t: t[1])
-                    if best_dist <= ethresh:
-                        self_id = best_id
+                    # Same scoping as `assign`'s guard (final re-review): a
+                    # wrong-dimension voiceprint turns MATCHING off for this
+                    # process; the segments themselves are never affected.
+                    try:
+                        evec, ethresh = enrolled[0], enrolled[1]
+                        dists = [(cid, _cos_dist(cen, evec)) for cid, cen in final_centroids.items()]
+                        best_id, best_dist = min(dists, key=lambda t: t[1])
+                        if best_dist <= ethresh:
+                            self_id = best_id
+                    except Exception as exc:  # noqa: BLE001 - type only, once
+                        sys.stderr.write(f"ERROR enroll {type(exc).__name__}\n")
+                        sys.stderr.flush()
+                        enrolled = None
+                        self_id = None
                 _write(stdout, {"segments": segs, "self": self_id})
             elif op == "pin":
                 live.pin(str(cmd.get("id", "")))
