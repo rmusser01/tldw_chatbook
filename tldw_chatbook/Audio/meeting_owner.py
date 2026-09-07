@@ -580,9 +580,14 @@ class MeetingSessionOwner:
         self._watchdog: threading.Thread | None = None
         self._watchdog_stop = threading.Event()
         self._lock = threading.RLock()
-        # Re-entrant (review C1): the offer bookkeeping takes it too, and
-        # `start()` clears a pending offer while already holding it.
-        self._stop_lock = threading.RLock()
+        self._stop_lock = threading.Lock()
+        # Guards ONLY the offer pointer swap, and is never held across a
+        # `close()` or anything else that can block (re-review N1): the
+        # offer-answer paths are called from the UI thread, while `stop()`
+        # holds `_stop_lock` across a `session.stop()` that marshals the
+        # ingest submit back onto that same UI thread -- sharing a lock
+        # between the two deadlocked the app.
+        self._offer_lock = threading.Lock()
         #: Self-voiceprint state (TASK-31826). `_voice_load` caches the ONE
         #: store read (vector + rail state) until something changes it.
         self.voice_match = VoiceMatchState("off", None)
@@ -817,12 +822,6 @@ class MeetingSessionOwner:
         # one. stop() takes `_lock` only briefly and releases it before
         # taking `_stop_lock`, so there is no lock-order cycle.
         with self._stop_lock:
-            # A new meeting lapses the previous one's unanswered learning
-            # offer (spec §3.4) and releases the worker kept for it. INSIDE
-            # `_stop_lock`: an in-flight stop() is still driving that worker's
-            # batch pass, and closing it from under that pass would cost the
-            # previous meeting its authoritative labels.
-            self._clear_offer()
             with self._lock:
                 if self.is_active:
                     raise RuntimeError("a meeting is already running")
@@ -928,6 +927,11 @@ class MeetingSessionOwner:
                     # the worker subprocess.
                     self._release_session_diarizer()
                     raise RuntimeError(failure)
+                # A meeting that ACTUALLY started lapses the previous one's
+                # unanswered offer (spec §3.4) and releases the worker kept
+                # for it -- not a Start that was refused or failed, which used
+                # to destroy the offer on its way out (re-review N3).
+                self._clear_offer()
                 self._start_watchdog()
                 return session
 
@@ -1034,23 +1038,26 @@ class MeetingSessionOwner:
     def _clear_offer(self, offer: LearningOffer | None = None) -> None:
         """Answer or lapse the pending offer and release its worker.
 
+        Callable from the UI thread at any time, including during an
+        in-flight Stop: only the pointer swap is locked, and `close()` -- up
+        to ~12 s on a busy backend -- runs outside it (re-review N1). Nothing
+        can be closed mid-batch-pass regardless, because the retained slot is
+        only ever written after `session.stop()` has returned.
+
         Args:
             offer: The offer being answered (accept/decline). It must still
                 be the pending one -- otherwise a Start (or another answer)
                 already took over and this call must do nothing, or it would
                 close a worker that is no longer this offer's (review C1).
                 None means "whatever is pending" (dismiss / lapse).
-
-        Held under `_stop_lock` throughout, so nothing is ever closed while a
-        Stop is still driving its batch pass (ruling 6).
         """
-        with self._stop_lock:
+        with self._offer_lock:
             if offer is not None and offer is not self._pending_offer:
                 return
             self._pending_offer = None
             self._offer_handed = False
             diarizer, self._retained_diarizer = self._retained_diarizer, None
-            self._close_diarizer(diarizer)
+        self._close_diarizer(diarizer)
 
     def _settle_offer(self, result: MeetingResult | None) -> None:
         """Decide this meeting's offer and place or release its worker.
@@ -1068,11 +1075,12 @@ class MeetingSessionOwner:
         if offer is None:
             self._close_diarizer(diarizer)
             return
-        self._pending_offer = offer
-        self._offer_handed = False
-        # May be None for a `mic_channel` offer with no live diarizer at all:
-        # `_sample_for` then spawns (and closes) its own.
-        self._retained_diarizer = diarizer
+        with self._offer_lock:
+            self._pending_offer = offer
+            self._offer_handed = False
+            # May be None for a `mic_channel` offer with no live diarizer at
+            # all: `_sample_for` then spawns (and closes) its own.
+            self._retained_diarizer = diarizer
 
     def _offer_for(self, result: MeetingResult) -> LearningOffer | None:
         """Whether this meeting produced a sample worth learning from (§3.4).
@@ -1128,11 +1136,12 @@ class MeetingSessionOwner:
             The offer to present, or None when this meeting has none (or its
             offer was already taken, answered, or lapsed).
         """
-        offer = self._pending_offer
-        if offer is None or self._offer_handed or Path(result.meta.folder) != offer.folder:
-            return None
-        self._offer_handed = True
-        return offer
+        with self._offer_lock:
+            offer = self._pending_offer
+            if offer is None or self._offer_handed or Path(result.meta.folder) != offer.folder:
+                return None
+            self._offer_handed = True
+            return offer
 
     def accept_learning(self, offer: LearningOffer) -> bool:
         """Merge the meeting's clean sample into the stored voiceprint.
@@ -1200,7 +1209,9 @@ class MeetingSessionOwner:
         self._clear_offer()
 
     # ---- explicit enrollment ----------------------------------------------
-    def _embedding_diarizer(self, progress: Callable[[str], None] | None = None) -> tuple[Any | None, bool]:
+    def _embedding_diarizer(
+        self, progress: Callable[[str], None] | None = None, *, borrow: bool = True
+    ) -> tuple[Any | None, bool]:
         """A diarizer able to embed audio, spawning (and warming) one if needed.
 
         Reuses the worker kept for a pending offer when there is one -- that
@@ -1209,6 +1220,11 @@ class MeetingSessionOwner:
 
         Args:
             progress: Optional `(status) -> None` for the warm-up indicator.
+            borrow: Whether the retained worker may be reused. False for
+                explicit enrollment (re-review N2): its 30 s recording is
+                long enough for the user to answer the pending offer
+                meanwhile, which would close a borrowed worker and leave the
+                finished sample to embed on a dead one.
 
         Returns:
             `(diarizer, spawned_here)` -- the caller closes it when
@@ -1216,7 +1232,7 @@ class MeetingSessionOwner:
             one is never closed out from under its owner. `(None, False)`
             when one cannot be built or never warms up.
         """
-        diarizer = self._retained_diarizer
+        diarizer = self._retained_diarizer if borrow else None
         if diarizer is not None and hasattr(diarizer, "enroll_from_pcm"):
             return diarizer, False
         try:
@@ -1258,15 +1274,25 @@ class MeetingSessionOwner:
         """
         if not recorder.start_recording(callback=None, save_to_file=None):   # memory only
             raise AudioCaptureRefused()
-        remaining = max(0.0, float(seconds))
-        while remaining > 0.0:
-            if cancel is not None and cancel.is_set():
-                recorder.stop_recording()
-                return None
-            slice_s = min(ENROLL_SLICE_S, remaining)
-            self._sleep(slice_s)
-            remaining -= slice_s
-        return recorder.stop_recording() or b""
+        recorded = b""
+        # try/finally: once the microphone is open, EVERY way out of this
+        # loop has to close it again -- a cancel, or a raising sleep/slice
+        # (re-review N5), which would otherwise leave the mic live with no
+        # object left holding it.
+        try:
+            remaining = max(0.0, float(seconds))
+            while remaining > 0.0:
+                if cancel is not None and cancel.is_set():
+                    return None
+                slice_s = min(ENROLL_SLICE_S, remaining)
+                self._sleep(slice_s)
+                remaining -= slice_s
+        finally:
+            try:
+                recorded = recorder.stop_recording() or b""
+            except Exception as exc:  # noqa: BLE001 - types only
+                logger.warning("meeting: enrollment recorder stop failed ({})", type(exc).__name__)
+        return recorded
 
     def enroll_from_mic(
         self,
@@ -1306,7 +1332,7 @@ class MeetingSessionOwner:
         try:
             # The worker FIRST (review M8): warm-up can fail, and giving up
             # then must not have opened the microphone at all.
-            diarizer, spawned = self._embedding_diarizer(progress=progress)
+            diarizer, spawned = self._embedding_diarizer(progress=progress, borrow=False)
             if diarizer is None:
                 return EnrollResult(ok=False, reason="diarizer_unavailable")
             spawned_diarizer = diarizer if spawned else None

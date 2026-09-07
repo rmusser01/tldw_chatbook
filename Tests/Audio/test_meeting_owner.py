@@ -1622,32 +1622,142 @@ def test_declining_a_stale_offer_is_a_no_op(tmp_path, monkeypatch):
     assert backend.closed == 1 and owner.pending_offer is None
 
 
-def test_dismiss_waits_for_an_in_flight_stop(tmp_path, monkeypatch):
-    """Ruling 6's third variant: a dismiss landing mid-Stop must not close the
-    worker while the batch pass is still using it."""
+@pytest.mark.parametrize("with_pending_offer", [False, True])
+def test_dismiss_never_blocks_behind_an_in_flight_stop(tmp_path, monkeypatch, with_pending_offer):
+    """Re-review N1: the offer-answer paths run on the UI thread, and a Stop
+    holds `_stop_lock` across a `session.stop()` that marshals the ingest
+    submit back onto that same UI thread. Sharing a lock between the two hung
+    the app permanently -- with or without an offer pending, since the lock
+    used to be taken before the "is anything pending?" test."""
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     backend, _ = _backend_spy(monkeypatch)
     owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path))
     owner.prepare()
+
+    if with_pending_offer:
+        first = owner.start()
+        first.meta.matched_self = "S1"
+        owner.stop()
+        assert owner.pending_offer is not None
+
+    session = owner.start()
+    held = threading.Event()
+    release = threading.Event()
+    real_stop = session.stop
+
+    def blocking_stop(reason="user"):
+        held.set()
+        release.wait(5.0)          # stands in for the blocked call_from_thread
+        return real_stop(reason=reason)
+
+    session.stop = blocking_stop
+    # Daemon threads and a `finally` release: when this assertion regresses it
+    # must FAIL the test, not wedge the suite at exit the way it wedges the app.
+    stopper = threading.Thread(target=owner.stop, daemon=True)
+    stopper.start()
+    try:
+        assert held.wait(2.0)      # stop() is inside session.stop(), holding _stop_lock
+
+        dismissed = threading.Event()
+
+        def ui_dismiss() -> None:
+            owner.dismiss_learning()   # the UI thread, e.g. hiding the offer card
+            dismissed.set()
+
+        threading.Thread(target=ui_dismiss, daemon=True).start()
+        assert dismissed.wait(1.0), "dismiss_learning() blocked behind an in-flight stop()"
+    finally:
+        release.set()
+    stopper.join(5.0)
+    assert not stopper.is_alive()
+    owner.dismiss_learning()       # tidy up whatever the Stop settled
+
+
+def test_a_refused_start_keeps_the_pending_offer(tmp_path, monkeypatch):
+    """Re-review N3: only a meeting that actually starts lapses the previous
+    one's offer -- a Start refused during an enrollment used to destroy it on
+    its way out."""
+    monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
+    offer_backend, next_backend = FakeBackend(), FakeBackend()
+    built = iter([offer_backend, next_backend])
+    monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: next(built))
+    owner, _, _ = _owner(tmp_path, live_diarization=True, voiceprint_store=_store(tmp_path))
+    owner.prepare()
     session = owner.start()
     session.meta.matched_self = "S1"
-    during_pass: list[int] = []
-    dismisser: list[threading.Thread] = []
+    offer = owner.learning_offer(owner.stop())
+    assert offer is not None
 
-    def slow_diarize(wav_path, start_s, end_s):
-        thread = threading.Thread(target=owner.dismiss_learning)
-        thread.start()
-        dismisser.append(thread)
-        time.sleep(0.1)                        # the dismiss is now waiting on the lock
-        during_pass.append(backend.closed)     # ... so the worker is still open
-        return []
+    owner._enrolling = True                       # an enrollment is recording
+    with pytest.raises(RuntimeError, match="enrolling"):
+        owner.start()
+    owner._enrolling = False
+    assert owner.pending_offer is offer and offer_backend.closed == 0
 
-    backend.diarize = slow_diarize
-    owner.stop()
-    dismisser[0].join(2.0)
-    assert during_pass == [0]                  # never closed under the batch pass
-    assert backend.closed == 1                 # ... and released once it was over
-    assert owner.pending_offer is None
+    monkeypatch.setattr(FakeDictation, "start_dictation", lambda self, **kw: False)
+    with pytest.raises(RuntimeError, match="failed to start"):
+        owner.start()                              # a Start that fails, too
+    assert owner.pending_offer is offer and offer_backend.closed == 0
+    assert next_backend.closed == 1                # ... its own worker was released
+
+    monkeypatch.undo()
+    assert owner.accept_learning(offer) is True    # the offer is still answerable
+    assert offer_backend.closed == 1
+
+
+def test_enrollment_owns_its_worker_while_an_offer_is_answered(tmp_path, monkeypatch):
+    """Re-review N2: a 30 s recording is long enough for the user to answer
+    the pending offer meanwhile. Borrowing that offer's worker meant the
+    finished sample was embedded on a worker the answer had just closed."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    store = _store(tmp_path)
+    owner, result, offer_backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=store)
+    offer = owner.learning_offer(result)
+    assert offer is not None
+
+    enroll_backend = FakeBackend(centroid=(3.0, 4.0), seconds=27.0)
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: enroll_backend)
+    owner._mic_factory = PcmRecorder
+    answered: list = []
+
+    def sleep(seconds):
+        if not answered:
+            answered.append(owner.decline_learning(offer))   # the offer card goes away
+
+    owner._sleep = sleep
+
+    res = owner.enroll_from_mic(seconds=1)
+
+    assert res.ok is True and res.seconds == 27.0            # the sample still lands
+    assert enroll_backend.enrolled                            # embedded on its OWN worker
+    assert offer_backend.closed == 1                          # the offer's, closed once
+    assert enroll_backend.closed == 1                         # enrollment's, closed once
+    assert store.load().voiceprint.centroid == pytest.approx([0.6, 0.8])
+
+
+def test_the_recorder_is_released_when_a_recording_slice_raises(tmp_path, monkeypatch):
+    """Re-review N5: once the mic is open, every way out of the loop has to
+    close it again -- 120 slices are 120 chances to raise."""
+    import tldw_chatbook.Audio.diarizer_local as diarizer_local
+
+    backend = FakeBackend()
+    monkeypatch.setattr(diarizer_local, "SpeechBrainDiarizer", lambda *a, **kw: backend)
+    PcmRecorder.instances = []
+    store = _store(tmp_path, enrolled=False)
+    owner, _, _ = _owner(tmp_path, voiceprint_store=store)
+    owner._mic_factory = PcmRecorder
+
+    def boom(seconds):
+        raise OSError("the input device went away")
+
+    owner._sleep = boom
+
+    res = owner.enroll_from_mic(seconds=30)
+    assert res.ok is False and res.reason == "OSError"
+    assert PcmRecorder.instances[-1].stopped == 1     # the microphone was released
+    assert store.load().voiceprint is None
+    assert backend.closed == 1
 
 
 def test_pending_offer_survives_a_screen_remount(tmp_path, monkeypatch):
