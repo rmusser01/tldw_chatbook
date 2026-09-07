@@ -13833,9 +13833,9 @@ class TldwCli(
                 navigation_context = self._LEGACY_ROUTE_LIBRARY_NAV_CONTEXT.get(
                     requested_screen, {}
                 )
-            if message.require_character_inspection_admission:
-                prepared = None
-                try:
+            prepared = None
+            try:
+                if message.require_character_inspection_admission:
                     current = message.is_current or (lambda: True)
                     prepare = getattr(new_screen, "prepare_character_inspection", None)
                     commit = getattr(new_screen, "commit_character_inspection", None)
@@ -13853,123 +13853,126 @@ class TldwCli(
                         return False
                     if not commit(prepared):
                         return False
-                finally:
-                    if prepared is not None:
-                        prepared.discard()
-            elif navigation_context and hasattr(new_screen, "apply_navigation_context"):
+                elif navigation_context and hasattr(new_screen, "apply_navigation_context"):
+                    try:
+                        result = new_screen.apply_navigation_context(navigation_context)
+                        if inspect.isawaitable(result):
+                            await result
+                    except Exception as exc:
+                        logger.warning(
+                            "Navigation context application failed "
+                            "(route=%s, exception_category=%s).",
+                            current_tab_value,
+                            type(exc).__name__,
+                        )
+
+                # TASK-16300: `switch_screen` replaces the TOP of the stack, so
+                # the content screen has to BE the top before it runs -- see
+                # `_dismiss_navigation_overlays`. Done here, after the veto
+                # hooks and the construction of the incoming screen, so a
+                # navigation that never happens never costs the user the dialog
+                # they had open. Failing to reduce aborts: switching anyway is
+                # exactly how the outgoing screen is left resident.
+                if not await self._dismiss_navigation_overlays(screen_name):
+                    logger.warning(
+                        "Aborting navigation: a pushed screen would not leave "
+                        "the stack (route=%s).",
+                        screen_name,
+                    )
+                    self._notify_navigation_failure(screen_name)
+                    return False
+
+                # Textual replaces the top stack entry synchronously, then its
+                # awaitable finishes mounting/removing. The source callback must
+                # commit at that ownership transfer rather than after unrelated
+                # bookkeeping below.
                 try:
-                    result = new_screen.apply_navigation_context(navigation_context)
-                    if inspect.isawaitable(result):
-                        await result
+                    switch_result = self.switch_screen(new_screen)
+                except Exception as exc:
+                    if self._navigation_target_owns_stack(new_screen):
+                        message.commit_target_ownership()
+                        logger.warning(
+                            "Screen switch raised after target ownership "
+                            "(route=%s, exception_category=%s).",
+                            screen_name,
+                            type(exc).__name__,
+                        )
+                        raise
+                    # Sibling of the construction guard above: a screen can also
+                    # fail while composing/mounting (the MCP audit canvas reads
+                    # `Select.NULL` inside compose()), and Textual surfaces that
+                    # through switch_screen. Same rule -- report the broken
+                    # destination instead of taking the app down with it.
+                    logger.opt(exception=True).error(
+                        "Screen mount failed (route={}, exception_category={}).",
+                        screen_name,
+                        type(exc).__name__,
+                    )
+                    self._notify_navigation_failure(screen_name)
+                    return False
+
+                if self._navigation_target_owns_stack(new_screen):
+                    message.commit_target_ownership()
+
+                try:
+                    await switch_result
+                except Exception as exc:
+                    if self._navigation_target_owns_stack(new_screen):
+                        message.commit_target_ownership()
+                    if message.target_ownership_committed:
+                        logger.warning(
+                            "Screen mount reported after target ownership "
+                            "(route=%s, exception_category=%s).",
+                            screen_name,
+                            type(exc).__name__,
+                        )
+                        raise
+                    logger.opt(exception=True).error(
+                        "Screen mount failed (route={}, exception_category={}).",
+                        screen_name,
+                        type(exc).__name__,
+                    )
+                    self._notify_navigation_failure(screen_name)
+                    return False
+
+                if self._navigation_target_owns_stack(new_screen):
+                    message.commit_target_ownership()
+                if not message.target_ownership_committed:
+                    logger.error(
+                        "Screen switch returned without target stack ownership (route=%s).",
+                        screen_name,
+                    )
+                    self._notify_navigation_failure(screen_name)
+                    return False
+
+                try:
+                    # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
+                    self.current_tab = current_tab_value
+
+                    # task-18812: the exit rule runs only once the switch has
+                    # SUCCEEDED -- flush vetoes, confirmations, admission, and mount
+                    # failures above all `return` with the Console still resident, so
+                    # clearing earlier would desync the app flag from the mounted
+                    # screen's -focus class (the next toggle would do the wrong
+                    # visible action).
+                    self._clear_focus_if_leaving_console(screen_name)
                 except Exception as exc:
                     logger.warning(
-                        "Navigation context application failed "
-                        "(route=%s, exception_category=%s).",
-                        current_tab_value,
-                        type(exc).__name__,
-                    )
-
-            # TASK-16300: `switch_screen` replaces the TOP of the stack, so
-            # the content screen has to BE the top before it runs -- see
-            # `_dismiss_navigation_overlays`. Done here, after the veto
-            # hooks and the construction of the incoming screen, so a
-            # navigation that never happens never costs the user the dialog
-            # they had open. Failing to reduce aborts: switching anyway is
-            # exactly how the outgoing screen is left resident.
-            if not await self._dismiss_navigation_overlays(screen_name):
-                logger.warning(
-                    "Aborting navigation: a pushed screen would not leave "
-                    "the stack (route=%s).",
-                    screen_name,
-                )
-                self._notify_navigation_failure(screen_name)
-                return False
-
-            # Textual replaces the top stack entry synchronously, then its
-            # awaitable finishes mounting/removing. The source callback must
-            # commit at that ownership transfer rather than after unrelated
-            # bookkeeping below.
-            try:
-                switch_result = self.switch_screen(new_screen)
-            except Exception as exc:
-                if self._navigation_target_owns_stack(new_screen):
-                    message.commit_target_ownership()
-                    logger.warning(
-                        "Screen switch raised after target ownership "
+                        "Post-switch bookkeeping failed after target ownership "
                         "(route=%s, exception_category=%s).",
                         screen_name,
                         type(exc).__name__,
                     )
                     raise
-                # Sibling of the construction guard above: a screen can also
-                # fail while composing/mounting (the MCP audit canvas reads
-                # `Select.NULL` inside compose()), and Textual surfaces that
-                # through switch_screen. Same rule -- report the broken
-                # destination instead of taking the app down with it.
-                logger.opt(exception=True).error(
-                    "Screen mount failed (route={}, exception_category={}).",
-                    screen_name,
-                    type(exc).__name__,
-                )
-                self._notify_navigation_failure(screen_name)
-                return False
 
-            if self._navigation_target_owns_stack(new_screen):
-                message.commit_target_ownership()
-
-            try:
-                await switch_result
-            except Exception as exc:
-                if self._navigation_target_owns_stack(new_screen):
-                    message.commit_target_ownership()
-                if message.target_ownership_committed:
-                    logger.warning(
-                        "Screen mount reported after target ownership "
-                        "(route=%s, exception_category=%s).",
-                        screen_name,
-                        type(exc).__name__,
+                logger.info(f"Successfully switched to {screen_name} screen")
+                return True
+            finally:
+                if prepared is not None:
+                    prepared.finish(
+                        target_owned=message.target_ownership_committed
+                        or self._navigation_target_owns_stack(new_screen)
                     )
-                    raise
-                logger.opt(exception=True).error(
-                    "Screen mount failed (route={}, exception_category={}).",
-                    screen_name,
-                    type(exc).__name__,
-                )
-                self._notify_navigation_failure(screen_name)
-                return False
-
-            if self._navigation_target_owns_stack(new_screen):
-                message.commit_target_ownership()
-            if not message.target_ownership_committed:
-                logger.error(
-                    "Screen switch returned without target stack ownership (route=%s).",
-                    screen_name,
-                )
-                self._notify_navigation_failure(screen_name)
-                return False
-
-            try:
-                # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
-                self.current_tab = current_tab_value
-
-                # task-18812: the exit rule runs only once the switch has
-                # SUCCEEDED -- flush vetoes, confirmations, admission, and mount
-                # failures above all `return` with the Console still resident, so
-                # clearing earlier would desync the app flag from the mounted
-                # screen's -focus class (the next toggle would do the wrong
-                # visible action).
-                self._clear_focus_if_leaving_console(screen_name)
-            except Exception as exc:
-                logger.warning(
-                    "Post-switch bookkeeping failed after target ownership "
-                    "(route=%s, exception_category=%s).",
-                    screen_name,
-                    type(exc).__name__,
-                )
-                raise
-
-            logger.info(f"Successfully switched to {screen_name} screen")
-            return True
         else:
             # No class for the route: unroutable target, or the screen module
             # failed to import (`load_screen_class` degrades ImportError/

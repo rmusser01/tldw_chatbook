@@ -145,6 +145,25 @@ create a parallel navigation service, or redesign generic overlay rollback for
 an unrelated late synchronous screen-switch failure. The existing Context
 Character return anchor remains unchanged.
 
+Task5 failed-transfer correction (2026-09-07, TASK-31245): Library retains a
+request-owned commit receipt until the app determines target stack ownership.
+It captures only the synchronous inspection commit's changed destination,
+navigation, conversation-page/reader, prepared-marker, workspace-cache and
+transient Notes-phase fields, after save guards have completed. A transfer
+that fails without target ownership restores those fields only while the
+captured destination owners, monotonic navigation/page generations, reader
+identity and installed state still agree. A newer Library operation wins:
+stale completion clears only its own still-identical prepared marker and must
+not rewind newer state. Generations and completed saves are never rolled back.
+Synchronous partial-commit exceptions restore immediately before escaping.
+Once target ownership is acquired, later mounting or bookkeeping failure does
+not roll back that target. Receipt retirement releases only its own lease,
+exactly once. No dismissed source overlay or global screen stack is recreated.
+Deferring commit until after switching was rejected because cold mount/resume
+and synchronous screen-change observers require the exact prepared selection
+already installed. Moving commit only past overlay teardown would leave the
+subsequent no-ownership switch-failure gap.
+
 Surface roles remain distinct:
 
 - Console Context owns a bounded ambient Character section directly after

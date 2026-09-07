@@ -19,6 +19,108 @@ if TYPE_CHECKING:
     from ..Screens.library_screen import LibraryScreen
 
 
+_ABSENT = object()
+# Exactly the synchronous inspection commit's write set, not a screen snapshot.
+_SCREEN_FIELDS = (
+    "_pending_library_character_navigation",
+    "_library_unavailable_browse_scope",
+    "_pending_library_source_open",
+    "_library_selected_row_id",
+    "_selected_conversation_id",
+    "_library_workspace_depth_state_cache",
+    "_prepared_library_inspection_entry",
+    "_library_notes_work_session_phase",
+    "_library_notes_work_session_activation_pending",
+)
+_CONVERSATION_FIELDS = (
+    "projection",
+    "page_records",
+    "page",
+    "total",
+    "has_more",
+    "total_known",
+    "page_loaded",
+    "query",
+    "requested_query",
+    "requested_page",
+    "freshness",
+    "stale_copy",
+    "error",
+    "loading",
+    "reader_state",
+)
+_NAVIGATION_FIELDS = ("character_candidate", "character_route")
+
+
+@dataclasses.dataclass
+class _InspectionProjection:
+    screen: LibraryScreen
+    conversations: Any
+    navigation: Any
+    screen_values: tuple[Any, ...]
+    conversation_values: tuple[Any, ...]
+    navigation_values: tuple[Any, ...]
+
+    @classmethod
+    def capture(cls, screen: LibraryScreen) -> _InspectionProjection:
+        return cls(
+            screen,
+            screen._conversations_state,
+            screen._navigation_controller,
+            tuple(getattr(screen, name, _ABSENT) for name in _SCREEN_FIELDS),
+            tuple(
+                getattr(screen._conversations_state, name)
+                for name in _CONVERSATION_FIELDS
+            ),
+            tuple(
+                getattr(screen._navigation_controller, name)
+                for name in _NAVIGATION_FIELDS
+            ),
+        )
+
+    def _groups(self):
+        return (
+            (self.screen, _SCREEN_FIELDS, self.screen_values),
+            (self.conversations, _CONVERSATION_FIELDS, self.conversation_values),
+            (self.navigation, _NAVIGATION_FIELDS, self.navigation_values),
+        )
+
+    def matches(self) -> bool:
+        if (
+            self.screen._conversations_state is not self.conversations
+            or self.screen._navigation_controller is not self.navigation
+        ):
+            return False
+        for owner, names, values in self._groups():
+            for name, expected in zip(names, values, strict=True):
+                actual = getattr(owner, name, _ABSENT)
+                if actual is expected:
+                    continue
+                if (
+                    type(expected) in (str, int, bool, float, type(None))
+                    and actual == expected
+                ):
+                    continue
+                return False
+        return True
+
+    def restore(self) -> None:
+        for owner, names, values in self._groups():
+            for name, value in zip(names, values, strict=True):
+                if value is _ABSENT:
+                    if hasattr(owner, name):
+                        delattr(owner, name)
+                else:
+                    setattr(owner, name, value)
+
+
+@dataclasses.dataclass
+class _LibraryInspectionCommitReceipt:
+    before: _InspectionProjection
+    after: _InspectionProjection
+    request_generation: int
+
+
 @dataclasses.dataclass
 class PreparedLibraryInspection:
     """One display-neutral locator result and its request-owned source lease."""
@@ -35,6 +137,7 @@ class PreparedLibraryInspection:
     release: Callable[[], None] | None = None
     consumed: bool = False
     disposed: bool = False
+    receipt: _LibraryInspectionCommitReceipt | None = None
 
     def is_current(self) -> bool:
         """Check the unconsumed preparation against its captured owners.
@@ -64,6 +167,43 @@ class PreparedLibraryInspection:
         release, self.release = self.release, None
         if release is not None:
             release()
+
+    def finish(self, *, target_owned: bool) -> None:
+        """Retire a transfer, restoring only an unowned, unsuperseded projection.
+
+        Args:
+            target_owned: Whether this request ever acquired destination ownership.
+                Later mounting/bookkeeping failure must not revoke that ownership.
+        """
+        receipt, self.receipt = self.receipt, None
+        try:
+            if target_owned or receipt is None:
+                return
+            screen = self.screen
+            if (
+                self.admission.generation
+                == screen._library_navigation_context_generation
+                and receipt.request_generation
+                == screen._conversations_state.request_generation
+                and getattr(screen.app_instance, "chachanotes_db", None)
+                is self.admission.database
+                and getattr(
+                    screen.app_instance, "chat_conversation_scope_service", None
+                )
+                is self.service
+                and getattr(self.service, "local_service", None) is self.local_service
+                and getattr(self.local_service, "db", None) is self.admission.database
+                and receipt.after.matches()
+            ):
+                receipt.before.restore()
+            elif (
+                getattr(screen, "_prepared_library_inspection_entry", None)
+                is self.admission
+            ):
+                # Newer Library work wins; retire only this request's marker.
+                screen._prepared_library_inspection_entry = None
+        finally:
+            self.discard()
 
 
 async def _flush_library_navigation_sources(self, *, is_current) -> bool:
@@ -195,27 +335,36 @@ def commit_character_inspection(
 
     if prepared.screen is not self or not prepared.is_current():
         return False
-    admission = prepared.admission
-    prepared.consumed = True
-    self._navigation_controller.character_candidate = admission
-    _apply_navigation_context_state(
-        self, {}, recompose=False, character_admission=admission
-    )
-    self._pending_library_character_navigation = None
-    state = self._conversations_state
-    state.page_records, state.page = prepared.records, prepared.page
-    state.total, state.has_more = prepared.total, prepared.has_more
-    state.total_known = state.page_loaded = True
-    state.query = state.requested_query = ""
-    state.requested_page = prepared.page
-    state.freshness, state.stale_copy, state.error = "fresh", "", ""
-    state.loading = False
-    self._selected_conversation_id = admission.route.unresolved.conversation_id
-    state.reader_state = ConversationReaderState(
-        selected_id=self._selected_conversation_id,
-        generation=state.reader_state.generation + 1,
-    )
-    self._prepared_library_inspection_entry = admission
+    before = _InspectionProjection.capture(self)
+    try:
+        admission = prepared.admission
+        prepared.consumed = True
+        self._navigation_controller.character_candidate = admission
+        _apply_navigation_context_state(
+            self, {}, recompose=False, character_admission=admission
+        )
+        self._pending_library_character_navigation = None
+        state = self._conversations_state
+        state.page_records, state.page = prepared.records, prepared.page
+        state.total, state.has_more = prepared.total, prepared.has_more
+        state.total_known = state.page_loaded = True
+        state.query = state.requested_query = ""
+        state.requested_page = prepared.page
+        state.freshness, state.stale_copy, state.error = "fresh", "", ""
+        state.loading = False
+        self._selected_conversation_id = admission.route.unresolved.conversation_id
+        state.reader_state = ConversationReaderState(
+            selected_id=self._selected_conversation_id,
+            generation=state.reader_state.generation + 1,
+        )
+        self._prepared_library_inspection_entry = admission
+        prepared.receipt = _LibraryInspectionCommitReceipt(
+            before, _InspectionProjection.capture(self), state.request_generation
+        )
+    except BaseException:
+        # No await or ownership transfer occurred: undo a partial synchronous write.
+        before.restore()
+        raise
     return True
 
 

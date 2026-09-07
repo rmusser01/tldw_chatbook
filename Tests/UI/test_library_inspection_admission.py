@@ -151,6 +151,134 @@ async def test_missing_inspection_does_not_replace_existing_selection(library):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "newer", ["none", "route", "page", "reader", "notes", "service", "marker"]
+)
+async def test_inspection_finish_restores_only_its_owned_projection(library, newer):
+    from dataclasses import replace
+
+    from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_MODE
+
+    owner, screen, db = library
+    before = (
+        screen._selected_conversation_id,
+        screen._conversations_state.reader_state,
+    )
+    prepared = await screen.prepare_character_inspection(
+        _context(db), is_current=lambda: True
+    )
+    assert prepared is not None
+    releases = []
+    prepared.release = lambda: releases.append("own")
+    try:
+        assert screen.commit_character_inspection(prepared)
+        if newer == "route":
+            screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "notes"})
+        elif newer == "page":
+            screen._conversations_state.request_generation += 1
+            screen._conversations_state.requested_query = "newer"
+        elif newer == "reader":
+            screen._selected_conversation_id = "newer"
+            screen._conversations_state.reader_state = replace(
+                screen._conversations_state.reader_state,
+                selected_id="newer",
+                generation=99,
+            )
+        elif newer == "notes":
+            screen._library_notes_work_session_activation_pending = True
+        elif newer == "service":
+            owner.chat_conversation_scope_service = object()
+        elif newer == "marker":
+            screen._prepared_library_inspection_entry = object()
+        marker = getattr(screen, "_prepared_library_inspection_entry", None)
+        current = (
+            screen._library_selected_row_id,
+            screen._selected_conversation_id,
+            screen._conversations_state.reader_state,
+            screen._conversations_state.requested_query,
+            screen._library_notes_work_session_activation_pending,
+        )
+        prepared.finish(target_owned=False)
+        prepared.finish(target_owned=False)
+        if newer == "none":
+            assert (
+                screen._selected_conversation_id,
+                screen._conversations_state.reader_state,
+            ) == before
+        else:
+            assert (
+                screen._library_selected_row_id,
+                screen._selected_conversation_id,
+                screen._conversations_state.reader_state,
+                screen._conversations_state.requested_query,
+                screen._library_notes_work_session_activation_pending,
+            ) == current
+        assert getattr(screen, "_prepared_library_inspection_entry", None) is (
+            marker if newer == "marker" else None
+        )
+    finally:
+        prepared.discard()
+    assert releases == ["own"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("committed", [False, True])
+async def test_inspection_finish_disposes_once_without_undoing_owned_target(
+    library, committed
+):
+    _, screen, db = library
+    prepared = await screen.prepare_character_inspection(
+        _context(db), is_current=lambda: True
+    )
+    assert prepared is not None
+    releases = []
+    prepared.release = lambda: releases.append("own")
+    if committed:
+        assert screen.commit_character_inspection(prepared)
+    selected = screen._selected_conversation_id
+    prepared.finish(target_owned=committed)
+    prepared.finish(target_owned=False)
+    prepared.discard()
+    assert screen._selected_conversation_id == selected
+    assert releases == ["own"]
+
+
+@pytest.mark.asyncio
+async def test_inspection_partial_commit_exception_restores_before_disposal(
+    library, monkeypatch
+):
+    from tldw_chatbook.UI.Library_Modules import (
+        library_inspection_admission as admission,
+    )
+
+    _, screen, db = library
+    before = (
+        screen._library_selected_row_id,
+        screen._navigation_controller.character_route,
+    )
+    prepared = await screen.prepare_character_inspection(
+        _context(db), is_current=lambda: True
+    )
+    assert prepared is not None
+    apply = admission._apply_navigation_context_state
+
+    def broken(*args, **kwargs):
+        apply(*args, **kwargs)
+        raise RuntimeError("after partial route mutation")
+
+    monkeypatch.setattr(admission, "_apply_navigation_context_state", broken)
+    try:
+        with pytest.raises(RuntimeError, match="partial route"):
+            screen.commit_character_inspection(prepared)
+        assert (
+            screen._library_selected_row_id,
+            screen._navigation_controller.character_route,
+        ) == before
+    finally:
+        prepared.discard()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("warm", [False, True])
 @pytest.mark.parametrize(
     "cancel",
@@ -159,6 +287,9 @@ async def test_missing_inspection_does_not_replace_existing_selection(library):
         True,
         "replace-visit",
         "commit-false",
+        "teardown-false",
+        "switch-false",
+        "owned-bookkeeping-false",
         "projection-accept",
         "projection-cancel",
         "projection-authority",
@@ -248,7 +379,7 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
             projection["receipt"],
         )
 
-    accepts = cancel in (False, "projection-accept")
+    accepts = cancel in (False, "projection-accept", "owned-bookkeeping-false")
     service = owner.chat_conversation_scope_service
     locate = service.locate_conversation_page
 
@@ -294,6 +425,52 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
         )
         await app.push_screen(modal)
         await pilot.pause()
+        if cancel in ("teardown-false", "switch-false"):
+            from tldw_chatbook.Library.library_shell_state import (
+                LIBRARY_ROW_BROWSE_NOTES,
+            )
+            from tldw_chatbook.UI.Library_Modules.library_notes_work_session import (
+                NotesWorkSessionPhase,
+            )
+
+            target._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+            target._library_notes_work_session_phase = NotesWorkSessionPhase.ACTIVE
+            target._library_notes_work_session_activation_pending = True
+            target._selected_conversation_id = "previous"
+            target._conversations_state.page_records = ({"id": "previous"},)
+            target._conversations_state.query = "previous search"
+            target._conversations_state.page = 3
+            before_transfer = (
+                target._library_selected_row_id,
+                target._selected_conversation_id,
+                target._conversations_state.page_records,
+                target._conversations_state.query,
+                target._conversations_state.page,
+                target._conversations_state.reader_state,
+                target._navigation_controller.character_route,
+                target._library_notes_work_session_phase,
+                target._library_notes_work_session_activation_pending,
+                getattr(target, "_prepared_library_inspection_entry", None),
+            )
+            # Real app overlay teardown sees a modal that refuses to leave.
+            # Keep the original method for finite run_test cleanup.
+            original_dismiss = modal.dismiss
+            if cancel == "teardown-false":
+                monkeypatch.setattr(modal, "dismiss", lambda *_args, **_kwargs: None)
+            else:
+
+                def fail_switch(_target):
+                    raise RuntimeError("no destination ownership")
+
+                monkeypatch.setattr(app, "switch_screen", fail_switch)
+        if cancel == "owned-bookkeeping-false":
+
+            def fail_bookkeeping(_name):
+                raise RuntimeError("after destination ownership")
+
+            monkeypatch.setattr(
+                app, "_clear_focus_if_leaving_console", fail_bookkeeping
+            )
         await pilot.press("enter")
         await pilot.pause()
         committed = modal._committed_character_result
@@ -330,7 +507,7 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
             release.set()
         for _ in range(60):
             await pilot.pause(0.05)
-            if cancel in ("replace-visit", "projection-authority"):
+            if cancel in ("replace-visit", "projection-authority", "switch-false"):
                 if modal._activation_task.done():
                     break
                 continue
@@ -346,7 +523,10 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
                 and app.screen._selected_conversation_id == "exact"
             ):
                 break
-        if cancel == "projection-authority":
+        if cancel == "switch-false":
+            assert app.screen is not modal and app.screen is not target
+            assert modal._activation_task.done()
+        elif cancel == "projection-authority":
             assert app.screen is not modal
             assert not isinstance(app.screen, LibraryScreen)
             assert target._selected_conversation_id != "exact"
@@ -374,6 +554,20 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
             assert app.screen._conversations_state.reader_state.selected_id == "exact"
             assert app.screen._pending_library_character_navigation is None
         assert calls == 1
+        if cancel in ("teardown-false", "switch-false"):
+            monkeypatch.setattr(modal, "dismiss", original_dismiss)
+            assert (
+                target._library_selected_row_id,
+                target._selected_conversation_id,
+                target._conversations_state.page_records,
+                target._conversations_state.query,
+                target._conversations_state.page,
+                target._conversations_state.reader_state,
+                target._navigation_controller.character_route,
+                target._library_notes_work_session_phase,
+                target._library_notes_work_session_activation_pending,
+                getattr(target, "_prepared_library_inspection_entry", None),
+            ) == before_transfer
         if cancel == "projection-cancel":
             await pilot.press("escape")
             assert app.screen is not modal

@@ -635,6 +635,19 @@ admission rejection and precommit cancellation are not excluded. See ADR-120's
 Task5 admission correction. Repair authority and Context Character return
 origins are unchanged.
 
+Task5 failed-transfer correction (2026-09-07): retain a Library-owned receipt
+through the app's ownership decision. A failed transfer without destination
+ownership restores only the exact inspection commit's changed retained state,
+including nested Notes phase and pending marker, if destination identities,
+monotonic navigation/page generations, reader identity and installed state still
+match. Newer Library work is never overwritten; stale completion removes only
+its own still-identical prepared marker. Completed saves and generations are
+not rolled back. Partial synchronous commit failure restores immediately;
+once stack ownership is acquired, later failures do not restore the old view.
+Finalize or rollback releases the request's lease exactly once. This is
+destination-only rollback, not recreation of a dismissed source or global stack.
+See ADR-120's failed-transfer correction.
+
 User-visible failures say `Conversation no longer exists`, `Profile changed`,
 `Character unavailable`, or `Could not open chat`; technical authority details
 remain in diagnostics. State-specific actions are Retry, Refresh results, Open

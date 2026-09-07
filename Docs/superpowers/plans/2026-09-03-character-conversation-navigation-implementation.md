@@ -1091,6 +1091,24 @@ is search.
 
 - [ ] **Step 7: Implement compact and wider switcher presentation**
 
+Task5 repair addendum (2026-09-07): before release, implement ADR120's
+destination-only failed-transfer receipt. The first-use Library admission helper
+captures exactly its commit write set after saves; the app retains the token
+through teardown/switch and calls `finish(target_owned=...)` on every terminal
+path. Restore only when destination-owner/generation/reader/installed-state
+fences agree; otherwise retire only the request's own marker. Never restore
+completed saves or monotonic generations, and never roll back an owned target.
+Cover cold/warm refused teardown, no-ownership switch failure, partial commit
+exception, newer route/page/selection, owned-target failure and once-only lease
+release with real-owner regressions. No global screen/source-overlay rollback.
+ADR required: yes, amendment to
+`backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md`.
+Reason: close the existing prepared-token/app lifecycle contract without new
+navigation ownership. Then diagnose resource growth by post-teardown resource
+type/owner, remediate the observed owner, and qualify frozen source with the
+specified native and Keyword scale/latency protocols; no warning suppression or
+cap increases count as remediation.
+
 At compact width, inline Active group status tokens rather than adding group
 headers. In Character chats, show character/title and recency/state on each
 two-line result; render excerpt and absolute timestamp only in the fixed
