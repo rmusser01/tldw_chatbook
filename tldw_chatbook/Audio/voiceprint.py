@@ -23,7 +23,7 @@ import secrets
 import stat
 import tempfile
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,6 +82,28 @@ class _EnvelopeError(Exception):
 
 @dataclass
 class Voiceprint:
+    """The stored self voiceprint: one speaker centroid and its provenance.
+
+    Attributes:
+        model_id: The embedding model that produced `centroid`
+            (`diarizer_worker.MODEL_ID`). A record from another model is
+            reported as `needs_reenrollment` rather than matched.
+        centroid: The unit-normalised speaker vector. NEVER logged, notified,
+            or written anywhere unencrypted.
+        sample_count: Effective samples behind the centroid -- the weight in
+            `VoiceprintStore.merge_sample`'s running mean, not a count of
+            meetings.
+        meetings_contributed: How many meetings have merged into this record.
+        created_at: ISO timestamp of the first enrollment.
+        updated_at: ISO timestamp of the last save.
+        threshold_used: The cosine-distance threshold enrollment was made
+            with, handed to the worker as the match gate.
+        last_best_similarity: The best similarity seen for this speaker in
+            the last meeting, for the Settings diagnostic; None until one
+            has run.
+        format_version: On-disk record shape; only `1` is readable.
+    """
+
     model_id: str
     centroid: list[float]  # unit-normalised
     sample_count: float  # effective samples
@@ -95,12 +117,35 @@ class Voiceprint:
 
 @dataclass
 class LoadResult:
+    """What `VoiceprintStore.load` found -- a record, or why there is none.
+
+    Attributes:
+        voiceprint: The record, or None. `reason` says which.
+        reason: None when `voiceprint` is set, else one of "no_voiceprint",
+            "needs_reenrollment" (a record from another model),
+            "cannot_decrypt" (corrupt file, or a key that no longer opens
+            it) or "keyring_locked" (the key is present but blocked, and may
+            unblock itself). The Meetings rail maps each to static copy.
+        mode: The envelope's declared key mode ("keyring" | "keyfile"), or
+            None when no envelope could be read.
+    """
+
     voiceprint: Voiceprint | None
-    reason: str | None  # None | "no_voiceprint" | "needs_reenrollment" | "cannot_decrypt" | "keyring_locked"
+    reason: str | None
     mode: str | None
 
 
 class KeyProvider(Protocol):
+    """Supplies the key the record is encrypted with.
+
+    Two implementations ship: `KeyringKeyProvider` (the OS keyring) and
+    `KeyfileKeyProvider` (an owner-only file beside the record).
+
+    Attributes:
+        mode: "keyring" | "keyfile" -- stamped into the envelope and shown in
+            Settings. Reading it must never touch the key itself.
+    """
+
     mode: str
 
     def get_or_create(self) -> str:
@@ -165,7 +210,15 @@ def _validated(payload: object) -> Voiceprint:
 
 
 def unit_normalise(v: Sequence[float]) -> list[float]:
-    """Return `v` scaled to unit length (the zero vector maps to itself)."""
+    """Scale a vector to unit length.
+
+    Args:
+        v: The vector to normalise.
+
+    Returns:
+        `v` as a list scaled to length 1 -- the zero vector maps to itself,
+        since there is no direction to preserve.
+    """
     values = [float(x) for x in v]
     magnitude = math.sqrt(sum(x * x for x in values))
     if magnitude == 0.0:
@@ -210,11 +263,24 @@ def _read_envelope(path: Path) -> dict:
 
 
 class KeyringKeyProvider:
-    """Stores the voiceprint key in the OS keyring."""
+    """Stores the voiceprint key in the OS keyring.
+
+    Chosen by `default_store` whenever a real keyring backend is installed.
+    """
 
     mode = "keyring"
 
     def get_or_create(self) -> str:
+        """Return the keyring's key, minting and storing one if absent.
+
+        Returns:
+            The key, as a URL-safe token.
+
+        Raises:
+            Exception: Whatever the keyring backend raises -- an unavailable
+                or refused Keychain is the caller's (enrollment's) problem to
+                report, since it is the only path that may prompt.
+        """
         import keyring
 
         existing = keyring.get_password(_KEYRING_SERVICE, _KEYRING_USERNAME)
@@ -225,6 +291,18 @@ class KeyringKeyProvider:
         return new_key
 
     def get(self, timeout_s: float) -> str | None:
+        """Return the keyring's key, or None if it is missing or blocked.
+
+        The read runs on a daemon thread and is abandoned on timeout: a
+        Keychain that prompts (or hangs) must never delay a meeting Start.
+
+        Args:
+            timeout_s: How long to wait for the backend before giving up.
+
+        Returns:
+            The key, or None -- which callers render as "keyring locked", a
+            condition that can clear itself once the user unlocks it.
+        """
         result: list[str | None] = [None]
 
         def _read() -> None:
@@ -244,14 +322,32 @@ class KeyringKeyProvider:
 
 
 class KeyfileKeyProvider:
-    """Stores the voiceprint key in an owner-only key file (keyring fallback)."""
+    """Stores the voiceprint key in an owner-only key file (keyring fallback).
+
+    Used when no real keyring backend is installed. The file is created at
+    0o600 and refused if it is ever readable by group or other, as ssh does.
+    """
 
     mode = "keyfile"
 
     def __init__(self, path: Path):
+        """Args:
+            path: The key file, created on first use beside the record.
+        """
         self._path = Path(path)
 
     def get_or_create(self) -> str:
+        """Return the key file's key, minting the file if it is absent.
+
+        Returns:
+            The key, as a URL-safe token.
+
+        Raises:
+            StoreUnavailable: An existing key file is readable by group or
+                other. It is never silently re-minted -- that would discard
+                the voiceprint it opens; the repair is a chmod to 600.
+            OSError: The file could not be read or written.
+        """
         if self._path.exists():
             if not self._has_safe_permissions():
                 raise StoreUnavailable(
@@ -264,6 +360,21 @@ class KeyfileKeyProvider:
         return key
 
     def get(self, timeout_s: float) -> str | None:
+        """Return the key file's key, or None if there is no key file.
+
+        Args:
+            timeout_s: Accepted for `KeyProvider` symmetry; a local file read
+                cannot block the way a Keychain can, so it is unused.
+
+        Returns:
+            The key, or None when no key file exists (or it cannot be read).
+
+        Raises:
+            StoreUnavailable: The key file is readable by group or other.
+                Raised rather than returned as None, which callers render as
+                "keyring locked" -- a key-file install has no keyring to
+                unlock, and the repair is a chmod to 600 (task 6 review M8).
+        """
         try:
             if not self._path.exists():
                 return None
@@ -286,16 +397,30 @@ class KeyfileKeyProvider:
 
 
 class VoiceprintStore:
-    """Owns the single encrypted self voiceprint at `path`."""
+    """Owns the single encrypted self voiceprint at `path`.
+
+    Reads never raise for an absent, locked or corrupt record -- `load`
+    reports a reason instead -- while writes raise, so a caller that thought
+    it saved something always did.
+    """
 
     def __init__(
         self,
         path: Path,
         key_provider: KeyProvider,
         *,
-        clock=None,
+        clock: Callable[[], str] | None = None,
         per_meeting_cap: float = 20.0,
     ) -> None:
+        """Args:
+            path: The record file. Its parent is created on first save.
+            key_provider: Supplies the encryption key (`KeyringKeyProvider`
+                or `KeyfileKeyProvider`; `default_store` picks one).
+            clock: Zero-argument callable returning the ISO timestamp
+                `merge_sample` stamps as `updated_at`. Defaults to UTC now.
+            per_meeting_cap: Ceiling on one merge's weight, so a single long
+                meeting cannot dominate the running mean.
+        """
         self._path = Path(path)
         self._key_provider = key_provider
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
@@ -329,6 +454,23 @@ class VoiceprintStore:
         return self._path.exists()
 
     def load(self, expected_model_id: str | None = None, timeout_s: float = 1.5) -> LoadResult:
+        """Read the stored record, reporting failures instead of raising.
+
+        May touch the key, so it may prompt: call it at meeting Start, on a
+        thread, never from a screen's mount (use `exists`).
+
+        Args:
+            expected_model_id: When given, a record from another model is
+                reported as `needs_reenrollment` rather than returned -- its
+                vector is not comparable with this build's embeddings.
+            timeout_s: How long the key provider may take before the record
+                counts as blocked ("keyring_locked").
+
+        Returns:
+            A `LoadResult`; `voiceprint` is None exactly when `reason` is set.
+            This never raises for a missing, locked or corrupt record -- a
+            meeting must start either way, with matching simply off.
+        """
         if not self._path.exists():
             return LoadResult(voiceprint=None, reason="no_voiceprint", mode=None)
 
@@ -354,6 +496,22 @@ class VoiceprintStore:
         return LoadResult(voiceprint=record, reason=None, mode=mode)
 
     def save(self, record: Voiceprint) -> None:
+        """Encrypt `record` and replace the stored one atomically.
+
+        Mints the key on first use, so this is the path that may raise a
+        Keychain prompt. Holds the writer lock (Qodo review 9).
+
+        Args:
+            record: The complete record to store. It replaces whatever is
+                there -- `merge_sample` is the averaging path.
+
+        Raises:
+            StoreUnavailable: The key file exists with unsafe permissions.
+            OSError: The record could not be written (the previous file is
+                left intact -- the write is a temp file plus a rename).
+            Exception: Whatever the keyring backend raises when it cannot
+                mint or store a key.
+        """
         with self._write_lock:
             key = self._key_provider.get_or_create()
             payload_json = json.dumps(asdict(record))
@@ -365,6 +523,30 @@ class VoiceprintStore:
             _atomic_write(self._path, json.dumps(envelope))
 
     def merge_sample(self, centroid: Sequence[float], weight: float, model_id: str) -> Voiceprint:
+        """Average one meeting's centroid into the stored record and save it.
+
+        The whole load-average-save runs under the writer lock, so a learning
+        merge cannot overwrite a concurrent enrollment (Qodo review 9).
+
+        Args:
+            centroid: The sample's speaker vector; normalised here.
+            weight: The sample's weight in seconds, capped at
+                `per_meeting_cap` so one meeting cannot dominate.
+            model_id: The model that produced `centroid`. A stored record
+                from another model is refused, not merged.
+
+        Returns:
+            The saved, updated record (`meetings_contributed` incremented).
+
+        Raises:
+            ValueError: There is nothing to merge into (the reason names
+                which: no record, locked key, unreadable file), or `centroid`
+                holds a non-finite value.
+            ModelMismatch: The stored vector has a different dimension --
+                `zip` would truncate it silently, and the short vector that
+                produced broke every comparison in the worker (final review
+                I2). The screen renders this as "Different model".
+        """
         with self._write_lock:      # load-average-save: one writer at a time
             result = self.load(expected_model_id=model_id)
             if result.voiceprint is None:
@@ -407,6 +589,17 @@ class VoiceprintStore:
             return updated
 
     def delete(self) -> bool:
+        """Remove the stored record. The key stays and then holds nothing.
+
+        A meeting already running keeps its in-memory copy until it ends
+        (spec §3.1).
+
+        Returns:
+            True if a record was removed, False if there was none.
+
+        Raises:
+            OSError: The file exists but could not be removed.
+        """
         with self._write_lock:
             if self._path.exists():
                 self._path.unlink()
@@ -414,6 +607,24 @@ class VoiceprintStore:
             return False
 
     def export(self, dest: Path, passphrase: str) -> None:
+        """Write the record to `dest`, re-encrypted under a typed passphrase.
+
+        The file is owner-only (0o600) and written through a unique temp
+        file, so a neighbouring `<name>.tmp` of the user's own is never
+        clobbered (final review Minor 1/2).
+
+        Args:
+            dest: Destination file. Its parent is created if needed.
+            passphrase: Non-empty; the only thing that opens the export.
+
+        Raises:
+            ValueError: The passphrase is empty, or there is nothing to
+                export (the reason names why the record could not be read).
+            ExportRefused: `dest` IS the store's own record -- a passphrase
+                envelope over it makes every later `load` report
+                `cannot_decrypt`, unrecoverably (final review Minor 3).
+            OSError: The destination could not be written.
+        """
         if not passphrase:
             raise ValueError("export requires a non-empty passphrase")
         dest = Path(dest)
@@ -436,6 +647,34 @@ class VoiceprintStore:
         _atomic_write(dest, json.dumps(envelope))
 
     def import_(self, src: Path, passphrase: str, *, replace: bool) -> Voiceprint:
+        """Adopt a passphrase-encrypted export, merging or replacing.
+
+        A same-model import is merged into the stored record; a different
+        model needs `replace=True`. An existing record that cannot be READ is
+        never overwritten silently: a locked key may unlock itself so it is
+        never a reason to replace, while a corrupt file may be discarded with
+        an explicit `replace=True`.
+
+        Args:
+            src: The export file to read.
+            passphrase: The passphrase it was exported under.
+            replace: Whether the user has confirmed discarding what is
+                stored. Merging never needs it.
+
+        Returns:
+            The record now stored (the merged one on the merge path).
+
+        Raises:
+            ValueError: `src` is unreadable or is not a passphrase envelope.
+            WrongPassphrase: The passphrase did not open it. A `ValueError`
+                too, so existing callers are unaffected.
+            InvalidVoiceprint: It opened but does not hold a usable record.
+                Checked BEFORE anything is stored (Qodo review 5).
+            StoreUnavailable: The existing record cannot be read (locked
+                key, or a corrupt file without `replace=True`).
+            ModelMismatch: A different model, or a same-model vector of a
+                different dimension, without `replace=True`.
+        """
         try:
             envelope = _read_envelope(src)
         except _EnvelopeError as exc:
@@ -506,7 +745,17 @@ def _has_real_keyring_backend() -> bool:
 
 
 def default_store(user_data_dir: Path | None = None) -> VoiceprintStore:
-    """Return the app's real voiceprint store: keyring key, keyfile fallback."""
+    """Return the app's real voiceprint store: keyring key, keyfile fallback.
+
+    Args:
+        user_data_dir: Where `voiceprint.json` (and, in keyfile mode,
+            `voiceprint.key`) live. Defaults to the app's user data dir,
+            imported lazily so this module stays config-free at import time.
+
+    Returns:
+        A store whose key mode is "keyring" when a real keyring backend is
+        installed, else "keyfile".
+    """
     if user_data_dir is None:
         from tldw_chatbook.config import get_user_data_dir
 
