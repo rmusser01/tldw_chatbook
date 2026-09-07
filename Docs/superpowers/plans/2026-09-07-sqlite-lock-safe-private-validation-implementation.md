@@ -88,7 +88,7 @@ Subsequent tasks select their own enumerated files, including new files. Every t
 - `prepare_batch(request: PrepareRequest) -> PrepareResult` in `private_sqlite_files.py` delegates the existing no-follow generation logic to each fixed artifact.
 - Child operations initially support `prepare`, `pin_source`, `recheck_source`, `close`; source rechecks accept no new path. TTS operations are added only in Task 4.
 
-- [ ] Write codec tests with actual adversarial frames, including duplicate JSON keys, non-finite numbers, booleans in integer identity fields, unknown fields/version/operation, oversized length/body, invalid UTF-8, truncation and trailing bytes.
+- [x] Write codec tests with actual adversarial frames, including duplicate JSON keys, non-finite numbers, booleans in integer identity fields, unknown fields/version/operation, oversized length/body, invalid UTF-8, truncation and trailing bytes.
 
 ```python
 import struct
@@ -115,8 +115,8 @@ def test_oversize_length_is_rejected_before_body_allocation():
         decode_frame(struct.pack("!I", 65537))
 ```
 
-- [ ] Run `../../.venv/bin/python -m pytest -q Tests/DB/test_private_sqlite_protocol.py` and record RED.
-- [ ] Implement the four-byte unsigned network-order length prefix, 65,536-byte body limit and closed per-direction schemas. The stream reader checks the length before allocating/reading the body; codec tests alone do not establish bounded pipe I/O.
+- [x] Run `../../.venv/bin/python -m pytest -q Tests/DB/test_private_sqlite_protocol.py` and record RED.
+- [x] Implement the four-byte unsigned network-order length prefix, 65,536-byte body limit and closed per-direction schemas. The stream reader checks the length before allocating/reading the body; codec tests alone do not establish bounded pipe I/O.
 
 ```python
 def _unique_object(pairs):
@@ -130,10 +130,10 @@ def _unique_object(pairs):
 
 Use this object hook with `json.loads`, reject non-finite constants and cap nesting before accepting a frame. Decode errors never include source/path/payload text. Response schemas distinguish existing private-path statuses from unavailable/protocol/timeout errors.
 
-- [ ] Move `_open_artifact_fd`, `_prepare_posix_artifact_generation` and their actual dependency closure into the file leaf. Keep the four-generation optional-sidecar policy and all double-open/fstat/fchmod postconditions. Existing private-seam callers delegate to the same implementation, not a copied algorithm. Run direct leaf tests for correct/wrong mode, missing main/optional sidecars, link/owner/parent substitution, read-only preservation and churn exhaustion.
-- [ ] Implement the fixed helper entry for `[sys.executable, '-I', '-S', absolute_entry_path]`. Use private stdin/stdout pipes and discarded stderr. Since importing `tldw_chatbook` executes startup code, bootstrap only fixed package namespaces for `tldw_chatbook`, `DB` and `Utils`, with `__path__` set from the installed entry's verified package location; do not execute their `__init__.py`. No caller-controlled module names or search paths. The only child imports at this stage are the named helper/protocol/files modules, `Utils.private_paths` and stdlib. Test from a hostile cwd containing fake package files; do not add cwd to `sys.path`.
-- [ ] Run the new tests plus `Tests/Utils/test_private_paths.py` and relevant existing artifact-generation cases in `Tests/DB/test_private_sqlite.py`. Parent monkeypatches cannot affect an exec child: direct leaf fault injection remains in-process, while future integration tests must invoke the real helper. Do not rewrite an integration test to mock away the process boundary.
-- [ ] Commit the five named new Python files and the modified private seam with message `refactor(db): isolate private SQLite file validation and protocol`; review the leaf extraction and child import boundary.
+- [x] Move `_open_artifact_fd`, `_prepare_posix_artifact_generation` and their actual dependency closure into the file leaf. Keep the four-generation optional-sidecar policy and all double-open/fstat/fchmod postconditions. Existing private-seam callers delegate to the same implementation, not a copied algorithm. Run direct leaf tests for correct/wrong mode, missing main/optional sidecars, link/owner/parent substitution, read-only preservation and churn exhaustion.
+- [x] Implement the fixed helper entry for `[sys.executable, '-I', '-S', absolute_entry_path]`. Use private stdin/stdout pipes and discarded stderr. Since importing `tldw_chatbook` executes startup code, bootstrap only fixed package namespaces for `tldw_chatbook`, `DB` and `Utils`, with `__path__` set from the installed entry's verified package location; do not execute their `__init__.py`. No caller-controlled module names or search paths. The only child imports at this stage are the named helper/protocol/files modules, `Utils.private_paths` and stdlib. Test from a hostile cwd containing fake package files; do not add cwd to `sys.path`.
+- [x] Run the new tests plus `Tests/Utils/test_private_paths.py` and relevant existing artifact-generation cases in `Tests/DB/test_private_sqlite.py`. Parent monkeypatches cannot affect an exec child: direct leaf fault injection remains in-process, while future integration tests must invoke the real helper. Do not rewrite an integration test to mock away the process boundary.
+- [x] Commit the five named new Python files and the modified private seam with message `refactor(db): isolate private SQLite file validation and protocol`; review the leaf extraction and child import boundary.
 
 ### Task 2: Own helper reservations, pipe deadlines and process cleanup
 
@@ -197,7 +197,7 @@ if not events:
 
 **Interfaces:**
 
-- Add explicit keyword-only `operation_deadline: float | None = None` and internal `reservation: HelperReservation | None = None` at `_connect_registered_sqlite`; consume both before `_SQLITE_CONNECT(**kwargs)`. Public `connect_private_sqlite` accepts the operation deadline without changing existing SQLite kwargs or `expected_identity: os.stat_result | None` callers.
+- Add explicit keyword-only `operation_deadline: float | None = None` and internal `reservation: HelperReservation | None = None` at `_connect_registered_sqlite`; consume both before its existing `sqlite3.connect` call. Do not switch normal opens to the captured `_SQLITE_CONNECT`, which is currently reserved for descriptor views. Public `connect_private_sqlite` accepts the operation deadline without changing existing SQLite kwargs or `expected_identity: os.stat_result | None` callers.
 - `_PinnedSQLiteSource` retains `selected`, `identity: FileIdentity`, `enforce_private_mode` and `lease: HelperLease`, not main/sidecar FDs. Alias comparisons accept validated identity projections internally while public stat-result input remains valid.
 - Backup/copy/restore entry points acquire the two-slot envelope once and pass it plus the absolute deadline through pinning, every recheck and sequential connection preparation. Borrowed SQLite connections remain caller-owned.
 
@@ -229,7 +229,7 @@ Copy `_other_process_can_begin_write` from the preserved diagnostic with a fixed
 # Ordering inside the existing registered seam, after policy admission:
 prepared = prepare_in_helper(request, reservation=reservation, deadline=deadline)
 verify_expected_named_identity(selected, expected_identity)
-connection = _SQLITE_CONNECT(database_argument, **sqlite_kwargs)
+connection = sqlite3.connect(database_argument, **sqlite_kwargs)
 return connection
 ```
 
@@ -434,7 +434,7 @@ On the existing implementation the fstat assertion fails with a closed FD after 
 
 ### Task 7: Qualify installed isolation, storage behavior and actual Canvas children
 
-**Files:** Create `Tests/Packaging/test_private_sqlite_helper_distribution.py`; extend appropriate tests in `Tests/Performance/test_app_startup_performance.py`; update `Docs/Canvas/V2_VERIFICATION.md`, TASK-31942 implementation notes and the preserved evidence/progress records. Modify `pyproject.toml` only if the wheel test proves a missing helper/leaf file.
+**Files:** Create `Tests/Packaging/test_private_sqlite_helper_distribution.py`; extend appropriate tests in `Tests/Performance/test_app_startup_performance.py`; run the existing import-weight, UI-ready census and screen-preimport budget guards without changing their ceilings; update `Docs/Canvas/V2_VERIFICATION.md`, TASK-31942 implementation notes and the preserved evidence/progress records. Modify `pyproject.toml` only if the wheel test proves a missing helper/leaf file.
 
 **Interfaces:** No new runtime API. Consume the actual launcher, fixed operations and repository lifecycle from Tasks 1–6. Preserve V2 disabled policy while running candidate fixtures.
 
@@ -473,10 +473,13 @@ The test defines `installed_entry` by inspecting the built wheel's installed fil
   Tests/TTS/test_profile_migration_publication.py \
   Tests/TTS/test_profile_migration_recovery.py \
   Tests/Packaging/test_private_sqlite_helper_distribution.py \
-  Tests/Performance/test_app_startup_performance.py
+  Tests/Performance/test_app_startup_performance.py \
+  Tests/Performance/test_app_import_weight.py \
+  Tests/Performance/test_ui_ready_module_census.py \
+  Tests/Performance/test_screen_preimport_payload_budget.py
 ```
 
-- [ ] Benchmark identical synthetic workloads against the immutable baseline in a separate temporary checkout, never move this worktree's HEAD. Measure full helper launch/batch, threaded app startup, TTS metadata-only open, repeated proof rechecks, peak live helpers/FDs and real child readiness. Keep existing performance ceilings unchanged. The earlier 21.34ms bare-interpreter median is only a historical launch floor.
+- [ ] Benchmark identical synthetic workloads against the immutable baseline in a separate temporary checkout, never move this worktree's HEAD. Measure full helper launch/batch, threaded app startup, TTS metadata-only open, repeated proof rechecks, peak live helpers/FDs and real child readiness. Keep existing performance ceilings unchanged, including the 972-module UI-ready ceiling governed by ADR-097 (`backlog/decisions/097-boot-budget-ratchets.md`); read its measurement/exception rules before interpreting a breach. The earlier 21.34ms bare-interpreter median is only a historical launch floor.
 - [ ] Run the exact previously failed actual-child nodes using their existing candidate fixtures:
 
 ```bash
