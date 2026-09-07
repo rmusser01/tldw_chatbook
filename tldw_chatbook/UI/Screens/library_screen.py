@@ -522,6 +522,10 @@ from ..Library_Modules.library_snapshot_cache import (
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..destination_recovery import (
+    load_failure_callout,
+    sync_load_failure_callout,
+)
 from .destination_recovery import (
     DestinationRecoveryState,
     load_failure_recovery_state,
@@ -12659,10 +12663,17 @@ class LibraryScreen(BaseAppScreen):
             and self._library_lookup_error is not None
         ):
             expected_selector = "#library-canvas-error"
-            replacement = self._library_canvas_error_widget()
-            # An already-mounted callout is never remounted below (no
+            # An already-mounted surface is never remounted below (no
             # ``sync_kind``), so a repeat failure repaints here or nowhere.
-            self._sync_library_canvas_error()
+            # PR M carry M3/M6: only a SHAPE change (bare Static <-> callout
+            # with its own Retry) is worth a replacement widget -- clearing
+            # ``expected_selector`` sends it down the mount path, which
+            # removes the stale node first.
+            was_mounted = bool(self.query(expected_selector))
+            if not self._sync_library_canvas_error():
+                replacement = self._library_canvas_error_widget()
+                if was_mounted:
+                    expected_selector = ""
 
         if expected_selector and self.query(expected_selector):
             if sync_kind is None:
@@ -12830,56 +12841,44 @@ class LibraryScreen(BaseAppScreen):
                 classes="destination-purpose",
                 markup=False,
             )
-        # The reason WRAPS, the Retry keeps its content width -- left to the
-        # defaults the 1fr Static swallows the row and pushes the button
-        # outside the callout (the measurement the hub callout records).
-        copy = Static(
-            failure.message,
-            id="library-canvas-error-copy",
-            markup=False,
-        )
-        copy.styles.width = "1fr"
-        copy.styles.min_width = 0
-        retry = Button(
-            "Retry",
-            id=failure.retry_id or LIBRARY_SOURCE_RETRY_ID,
-            classes="console-action-subdued",
-            compact=True,
-            tooltip=failure.disabled_tooltip,
-        )
-        retry.styles.width = "auto"
-        retry.styles.min_width = 0
-        callout = Horizontal(
-            copy,
-            retry,
+        return load_failure_callout(
+            failure,
             id="library-canvas-error",
-            classes=(
-                "ds-recovery-callout is-blocked"
-                if failure.severity == "error"
-                else "ds-recovery-callout"
-            ),
+            copy_id="library-canvas-error-copy",
+            retry_id=LIBRARY_SOURCE_RETRY_ID,
         )
-        # Bare harnesses never load the bundle, and Horizontal defaults to
-        # 1fr height -- the callout must wrap to its copy either way.
-        callout.styles.height = "auto"
-        return callout
 
-    def _sync_library_canvas_error(self) -> None:
-        """Refresh a MOUNTED browse error callout's copy in place.
+    def _sync_library_canvas_error(self) -> bool:
+        """Refresh a MOUNTED browse error surface in place.
 
         The reconcile treats an already-mounted ``#library-canvas-error``
         as current and returns without remounting it, so without this a
         Retry against a failure that has not cleared would repaint nothing
         at all -- the "Retry reads as inert" bug task-31632 fixed on the
         hub, where a canvas ``sync_state`` does this job instead.
+
+        PR M carry M2/M3: the shared sync moves the SEVERITY TINT with the
+        copy (a Retry can turn a deadline into a hard failure), and reports
+        a shape change -- the bare Static a failure with no Retry paints,
+        and the callout -- as "remount me" instead of silently no-op'ing.
+
+        Returns:
+            ``True`` when the mounted node still fits the current failure
+            and was repainted; ``False`` when the caller must build and
+            mount the other shape (including when nothing is mounted yet).
         """
+        node = next(iter(self.query("#library-canvas-error")), None)
+        if node is None:
+            return False
         failure = self._library_source_load_failure()
         if failure is None:
-            return
-        with suppress(NoMatches, QueryError):
-            self.query_one("#library-canvas-error-copy", Static).update(
-                failure.message
-            )
+            # A failure a Retry cannot clear (a policy denial, a runtime
+            # with no source services) keeps the bare sentence.
+            if not isinstance(node, Static):
+                return False
+            node.update(self._library_lookup_error or "")
+            return True
+        return sync_load_failure_callout(node, failure)
 
     def _apply_local_source_snapshot(
         self,
@@ -12919,9 +12918,11 @@ class LibraryScreen(BaseAppScreen):
                     recovery_state, attempt=previous_recovery.attempt + 1
                 )
                 # Keep the two in sync: every existing ``_library_lookup_
-                # error`` consumer (the rail's Details line, the bare
-                # ``#library-canvas-error`` Statics) already reads
-                # ``recovery_state.message`` through this field.
+                # error`` consumer (the rail's Details line, and the
+                # ``#library-canvas-error`` surface -- task-31948's callout
+                # for a retryable failure, the bare Static otherwise)
+                # already reads ``recovery_state.message`` through this
+                # field.
                 lookup_error = recovery_state.message
         presentation_changed = not self._library_loaded or (
             normalized_records != self._local_source_records

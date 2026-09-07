@@ -50,7 +50,10 @@ from tldw_chatbook.Library.library_shell_state import (
     library_disabled_action_label,
 )
 from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
-from tldw_chatbook.UI.destination_recovery import DestinationRecoveryState
+from tldw_chatbook.UI.destination_recovery import (
+    DestinationRecoveryState,
+    load_failure_callout,
+)
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
@@ -1345,38 +1348,19 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # later attempt) and a hard failure never paint alike.
         failure = self.load_failure
         if failure is not None:
-            classes = "ds-recovery-callout"
-            if failure.severity == "error":
-                classes += " is-blocked"
-            callout = Horizontal(
-                id="library-media-load-failure", classes=classes
+            # PR M carry I1: the widget is the shared
+            # ``load_failure_callout`` -- the landing hub and the Library
+            # browse row paint the same one, from the same builder. This
+            # canvas keeps its own action styling and its write-in-flight
+            # gate (even recovery controls wait for an unsettled write).
+            yield load_failure_callout(
+                failure,
+                id="library-media-load-failure",
+                copy_id="library-media-load-failure-copy",
+                retry_id="library-media-retry",
+                retry_classes="library-canvas-action",
+                gate=self._gate_mutation_action,
             )
-            # Bare harnesses never load the bundle, and Horizontal defaults
-            # to 1fr height -- the callout must wrap to its copy either way.
-            callout.styles.height = "auto"
-            with callout:
-                copy = Static(
-                    failure.message,
-                    id="library-media-load-failure-copy",
-                    markup=False,
-                )
-                # The reason WRAPS; the Retry keeps its content width. Left
-                # to the defaults the copy swallowed the whole row and the
-                # button rendered outside the callout, clipped (measured at
-                # 235x52 and 100x30 -- the same trap the title row above
-                # documents). Inline because no rule targets these ids.
-                copy.styles.width = "1fr"
-                copy.styles.min_width = 0
-                yield copy
-                retry = Button(
-                    "Retry",
-                    id="library-media-retry",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                retry.styles.width = "auto"
-                retry.styles.min_width = 0
-                yield self._gate_mutation_action(retry, "Retry")
 
         status_text = (
             self.pager.status_copy

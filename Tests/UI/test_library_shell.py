@@ -60,6 +60,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
@@ -16300,8 +16301,22 @@ async def test_browse_row_error_callout_carries_its_own_retry():
             lambda: screen._library_lookup_recovery_state is not None,
             message="Snapshot hard failure never produced a recovery state.",
         )
+        # PR M carry I1: the hub's own callout, for the SAME failure --
+        # captured before the browse row replaces it, so the two surfaces
+        # can be compared shape for shape below.
+        hub_callout = await _wait_for_selector(
+            screen, pilot, "#library-hub-load-failure"
+        )
+        hub_shape = _load_failure_callout_shape(hub_callout)
+
         screen.query_one("#library-row-browse-notes", Button).press()
         callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+
+        # PR M carry I1: three hand-rolled copies of this callout had
+        # already drifted apart. One builder, one shape, per-surface ids.
+        assert _load_failure_callout_shape(callout) == hub_shape, (
+            "the browse row and the landing hub must paint ONE callout shape"
+        )
 
         # AC#1: the message and its Retry are one callout, side by side.
         state = screen._library_lookup_recovery_state
@@ -16357,6 +16372,168 @@ async def test_browse_row_error_callout_carries_its_own_retry():
         assert screen._library_lookup_error is None
         assert screen.query("#library-notes-canvas")
         assert host.seen_routes == []
+
+
+def _load_failure_callout_shape(node):
+    """The structural fingerprint two surfaces' callouts must share."""
+    return (
+        type(node).__name__,
+        sorted(node.classes),
+        [type(child).__name__ for child in node.children],
+    )
+
+
+class _TimeoutThenFailingLibraryNotesScopeService:
+    """A notes source that misses its deadline, then fails hard (PR M M2)."""
+
+    def __init__(self, delay: float = 1.0) -> None:
+        self.delay = delay
+        self.calls = 0
+        self.hard_failure = False
+
+    def list_notes(self, **_kwargs):
+        self.calls += 1
+        if self.hard_failure:
+            raise RuntimeError("private-snapshot-failure")
+        time.sleep(self.delay)
+        return {"items": []}
+
+
+class _FailingThenDeniedLibraryNotesScopeService:
+    """A notes source whose hard failure turns into a policy denial."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.denied = False
+
+    def list_notes(self, **_kwargs):
+        self.calls += 1
+        if self.denied:
+            raise PolicyDeniedError(
+                action_id="library.notes.list",
+                reason_code="capability_disabled",
+                user_message="Notes are disabled by workspace policy.",
+                effective_source="local",
+                authority_owner="workspace policy",
+            )
+        raise RuntimeError("private-snapshot-failure")
+
+
+@pytest.mark.asyncio
+async def test_browse_row_error_callout_keeps_the_right_tint_across_a_retry(
+    monkeypatch,
+):
+    """PR M carry M2/M6: the in-place repaint must move the TINT too.
+
+    A Retry can turn a deadline (warning, amber) into a hard failure (error,
+    red) -- the browse row's sync repainted only the sentence, so an amber
+    callout stood over a hard-failure reason. Its siblings (the landing hub,
+    the Media canvas) had always moved the tint; this is the divergence that
+    made the three copies one builder. M6: the same shape repaints in place,
+    so no replacement widget is built for it.
+    """
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS", 0.05
+    )
+    notes = _TimeoutThenFailingLibraryNotesScopeService()
+    app = _library_source_failure_app(notes)
+    host = LibraryHarness(app)
+
+    builds: list[int] = []
+    build_widget = library_screen_module.LibraryScreen._library_canvas_error_widget
+
+    def counted_build(self):
+        builds.append(1)
+        return build_widget(self)
+
+    monkeypatch.setattr(
+        library_screen_module.LibraryScreen,
+        "_library_canvas_error_widget",
+        counted_build,
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot timeout never produced a recovery state.",
+        )
+        screen.query_one("#library-row-browse-notes", Button).press()
+        callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+        assert callout.has_class("ds-recovery-callout")
+        assert not callout.has_class("is-blocked"), "a deadline is a warning"
+        builds_after_mount = len(builds)
+
+        notes.hard_failure = True
+        calls_before = notes.calls
+        screen.query_one("#library-source-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: notes.calls > calls_before,
+            message="Retry never re-ran the source snapshot.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: callout.has_class("is-blocked"),
+            message="A hard failure never repainted the callout's error tint.",
+        )
+        state = screen._library_lookup_recovery_state
+        assert state.severity == "error"
+        copy = screen.query_one("#library-canvas-error-copy", Static)
+        painted = " ".join(_painted_text(host, copy.region).split())
+        assert painted == state.message, painted
+        assert "private-snapshot-failure" not in _visible_text(screen)
+        # M6: the mounted callout still fits the failure, so the reconcile
+        # repaints it instead of building a replacement it then discards.
+        assert len(builds) == builds_after_mount
+
+
+@pytest.mark.asyncio
+async def test_browse_row_error_callout_remounts_when_the_failure_shape_changes():
+    """PR M carry M3/M4: a failure a Retry cannot clear paints a BARE
+    sentence -- an inert Retry is worse than none (task-31948's rule).
+
+    So when a retryable failure becomes a policy denial, the mounted callout
+    must be REMOUNTED as that bare Static, never left standing with a Retry
+    that can no longer recover anything.
+    """
+    notes = _FailingThenDeniedLibraryNotesScopeService()
+    app = _library_source_failure_app(notes)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_lookup_recovery_state is not None,
+            message="Snapshot hard failure never produced a recovery state.",
+        )
+        screen.query_one("#library-row-browse-notes", Button).press()
+        callout = await _wait_for_selector(screen, pilot, "#library-canvas-error")
+        assert list(callout.query(Button)), "a retryable failure keeps its Retry"
+
+        notes.denied = True
+        calls_before = notes.calls
+        screen.query_one("#library-source-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: notes.calls > calls_before,
+            message="Retry never re-ran the source snapshot.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_source_load_failure() is None
+            and len(screen.query("#library-canvas-error")) == 1
+            and isinstance(screen.query_one("#library-canvas-error"), Static),
+            message="The denied snapshot never remounted the bare error surface.",
+        )
+        node = screen.query_one("#library-canvas-error", Static)
+        assert not list(node.query(Button))
+        assert not screen.query("#library-source-retry")
+        assert "Notes are disabled by workspace policy." in _visible_text(screen)
+        # The taxonomy label for this denial, painted -- not a Retry.
+        assert "Capability disabled" in _painted_text(host, node.region)
 
 
 @pytest.mark.asyncio

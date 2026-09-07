@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Literal
+from typing import Any, Callable, Iterable, Literal
+
+from textual.containers import Horizontal
+from textual.widget import Widget
+from textual.widgets import Button, Static
 
 
 @dataclass(frozen=True)
@@ -235,6 +239,100 @@ def load_failure_recovery_state(
         severity="warning" if kind == "timeout" else "error",
         retry_id=retry_id,
     )
+
+
+def load_failure_callout(
+    failure: DestinationRecoveryState,
+    *,
+    id: str,
+    copy_id: str,
+    retry_id: str,
+    retry_classes: str = "console-action-subdued",
+    gate: Callable[[Button, str], Button] | None = None,
+) -> Horizontal:
+    """Build the one load-failure callout: the reason, then its own Retry.
+
+    PR M carry I1: the landing hub, the Library browse row and the Media
+    canvas each grew their own copy of this widget, and they had already
+    drifted apart (only two of the three refreshed the severity tint in
+    place). One builder, one shape, three ids.
+
+    Args:
+        failure: The load failure to paint.
+        id: Id for the callout row itself -- the node a surface mounts and
+            re-queries.
+        copy_id: Id for the reason Static inside it.
+        retry_id: Id for the Retry when ``failure`` carries none of its own.
+        retry_classes: Button classes for the surface's own action styling.
+        gate: Optional per-surface gate applied to the Retry (the Media
+            canvas disables even recovery controls while a write is
+            unsettled).
+
+    Returns:
+        The assembled ``Horizontal``: ``.ds-recovery-callout``, plus
+        ``.is-blocked`` (the repo-wide error tint) for a hard failure.
+    """
+    # The reason WRAPS, the Retry keeps its content width -- left to the
+    # defaults the 1fr Static swallows the row and pushes the button outside
+    # the callout (measured on the Media callout at 235x52 and 100x30).
+    copy = Static(failure.message, id=copy_id, markup=False)
+    copy.styles.width = "1fr"
+    copy.styles.min_width = 0
+    retry = Button(
+        "Retry",
+        id=failure.retry_id or retry_id,
+        classes=retry_classes,
+        compact=True,
+        tooltip=failure.disabled_tooltip,
+    )
+    retry.styles.width = "auto"
+    retry.styles.min_width = 0
+    if gate is not None:
+        gate(retry, "Retry")
+    callout = Horizontal(
+        copy,
+        retry,
+        id=id,
+        classes=(
+            "ds-recovery-callout is-blocked"
+            if failure.severity == "error"
+            else "ds-recovery-callout"
+        ),
+    )
+    # Bare harnesses never load the bundle, and Horizontal defaults to 1fr
+    # height -- the callout must wrap to its copy either way.
+    callout.styles.height = "auto"
+    return callout
+
+
+def sync_load_failure_callout(
+    node: Widget | None, failure: DestinationRecoveryState | None
+) -> bool:
+    """Repaint a MOUNTED load-failure callout in place.
+
+    PR M carry M2/M3: the copy alone is not enough -- a Retry can turn a
+    timeout (warning) into a hard failure (error), so the tint moves with
+    it; and a failure a Retry cannot clear paints a bare Static instead of
+    this callout, so a shape change must be reported rather than no-op'd.
+
+    Args:
+        node: The mounted node a surface believes is its callout.
+        failure: The failure to repaint it with.
+
+    Returns:
+        ``True`` when the node was repainted; ``False`` when the caller must
+        remount (no node, no failure, or a node this builder did not build).
+    """
+    if node is None or failure is None:
+        return False
+    if not node.has_class("ds-recovery-callout"):
+        return False
+    copy = next(iter(node.query(Static)), None)
+    if copy is None:
+        return False
+    copy.update(failure.message)
+    node.set_class(failure.severity == "error", "is-blocked")
+    return True
 
 
 def _dependency_names(missing_dependencies: Iterable[str] | str) -> str:
